@@ -166,7 +166,7 @@ stroke(main, T.border)
 
 -- Title bar
 local titleBar = make("Frame", {
-    Size             = UDim2.new(1, 0, 0, 32),
+    Size             = UDim2.new(1, 0, 0, 30),
     BackgroundColor3 = T.panel,
     BorderSizePixel  = 0,
 }, main)
@@ -186,14 +186,23 @@ local accentLine = make("Frame", {
 }, titleBar)
 table.insert(accentFrames, accentLine)
 
+local titleDot = make("Frame", {
+    Size             = UDim2.new(0, 7, 0, 7),
+    Position         = UDim2.new(0, 11, 0.5, -3),
+    BackgroundColor3 = T.accent,
+    BorderSizePixel  = 0,
+}, titleBar)
+make("UICorner", {CornerRadius = UDim.new(1, 0)}, titleDot)
+table.insert(accentFrames, titleDot)
+
 local titleLbl = make("TextLabel", {
-    Text              = "Money / Free Hub  ·  Age of Titans",
-    TextSize          = 13,
+    Text              = "Money / Free Hub",
+    TextSize          = 12,
     TextColor3        = T.text,
     Font              = CurFont,
     BackgroundTransparency = 1,
-    Position          = UDim2.new(0, 10, 0, 0),
-    Size              = UDim2.new(1, -70, 1, 0),
+    Position          = UDim2.new(0, 24, 0, 0),
+    Size              = UDim2.new(1, -90, 1, 0),
     TextXAlignment    = Enum.TextXAlignment.Left,
 }, titleBar)
 table.insert(allTextObjs, {titleLbl, "normal"})
@@ -214,8 +223,8 @@ table.insert(allTextObjs, {closeBtn, "normal"})
 
 -- Content area
 local content = make("Frame", {
-    Size             = UDim2.new(1, 0, 1, -32),
-    Position         = UDim2.new(0, 0, 0, 32),
+    Size             = UDim2.new(1, 0, 1, -30),
+    Position         = UDim2.new(0, 0, 0, 30),
     BackgroundTransparency = 1,
     BorderSizePixel  = 0,
 }, main)
@@ -372,13 +381,13 @@ end
 local function makeCheck(parent, label, key, cb)
     local row = make("Frame", {
         BackgroundTransparency = 1,
-        Size = UDim2.new(1, 0, 0, 26),
+        Size = UDim2.new(1, 0, 0, 23),
         BorderSizePixel = 0,
     }, parent)
 
     local dot = make("Frame", {
-        Size             = UDim2.new(0, 10, 0, 10),
-        Position         = UDim2.new(0, 0, 0.5, -5),
+        Size             = UDim2.new(0, 9, 0, 9),
+        Position         = UDim2.new(0, 0, 0.5, -4),
         BackgroundColor3 = S[key] and T.green or T.red,
         BorderSizePixel  = 0,
     }, row)
@@ -386,7 +395,7 @@ local function makeCheck(parent, label, key, cb)
 
     local lbl = make("TextLabel", {
         Text           = label,
-        TextSize       = 13,
+        TextSize       = 12,
         TextColor3     = T.text,
         Font           = CurFont,
         BackgroundTransparency = 1,
@@ -412,23 +421,23 @@ end
 local function makeSlider(parent, label, key, minV, maxV)
     local row = make("Frame", {
         BackgroundTransparency = 1,
-        Size = UDim2.new(1, 0, 0, 42),
+        Size = UDim2.new(1, 0, 0, 38),
         BorderSizePixel = 0,
     }, parent)
 
     local lbl = make("TextLabel", {
         Text = label .. ": " .. tostring(S[key]),
-        TextSize = 12, TextColor3 = T.text, Font = CurFont,
+        TextSize = 11, TextColor3 = T.text, Font = CurFont,
         BackgroundTransparency = 1,
-        Size = UDim2.new(1, 0, 0, 16),
+        Size = UDim2.new(1, 0, 0, 15),
         TextXAlignment = Enum.TextXAlignment.Left,
     }, row)
     table.insert(allTextObjs, {lbl, "normal"})
 
     local track = make("Frame", {
         BackgroundColor3 = T.border,
-        Size = UDim2.new(1, 0, 0, 6),
-        Position = UDim2.new(0, 0, 0, 22),
+        Size = UDim2.new(1, 0, 0, 5),
+        Position = UDim2.new(0, 0, 0, 20),
         BorderSizePixel = 0,
     }, row)
     make("UICorner", {CornerRadius = UDim.new(1, 0)}, track)
@@ -1179,7 +1188,7 @@ end
 minBtn.MouseButton1Click:Connect(function()
     S.Minimized = not S.Minimized
     content.Visible = not S.Minimized
-    main.Size = S.Minimized and UDim2.new(0, WIN_W, 0, 32) or UDim2.new(0, WIN_W, 0, WIN_H)
+    main.Size = S.Minimized and UDim2.new(0, WIN_W, 0, 30) or UDim2.new(0, WIN_W, 0, WIN_H)
 end)
 closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
 
