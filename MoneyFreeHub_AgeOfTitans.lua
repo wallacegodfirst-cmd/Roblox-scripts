@@ -1,9 +1,8 @@
--- Money/Free Hub | Age of Titans | v3.1 (real remotes wired up)
+-- Money/Free Hub | Age of Titans | v3.2
 
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
 local UserInputService  = game:GetService("UserInputService")
-local TweenService      = game:GetService("TweenService")
 
 local player = Players.LocalPlayer
 local UIS    = UserInputService
@@ -20,8 +19,6 @@ local T = {
     accent   = Color3.fromRGB(64,  110, 200),
     text     = Color3.fromRGB(206, 210, 219),
     dim      = Color3.fromRGB(120, 125, 138),
-    green    = Color3.fromRGB(80,  180, 100),
-    red      = Color3.fromRGB(190, 70,  70),
 }
 
 local ACCENT_PRESETS = {
@@ -39,7 +36,7 @@ local FONTS      = {Enum.Font.Code, Enum.Font.RobotoMono, Enum.Font.Gotham, Enum
 local FONT_NAMES = {"Code","RobotoMono","Gotham","GothamBold","SourceSans"}
 local CurFont    = Enum.Font.Code
 
-local allTextObjs   = {}   -- {obj, role}  role = normal | accent | dim | tab
+local allTextObjs   = {}
 local accentFrames  = {}
 local accentStrokes = {}
 local scrollFrames  = {}
@@ -48,16 +45,16 @@ local function refreshTheme()
     for _, pr in pairs(allTextObjs) do
         pcall(function()
             local role = pr[2]
-            if role == "accent" then pr[1].TextColor3 = T.accent
-            elseif role == "dim" then pr[1].TextColor3 = T.dim
-            elseif role == "tab"  then -- color managed by setTab
-            else pr[1].TextColor3 = T.text end
+            if     role == "accent" then pr[1].TextColor3 = T.accent
+            elseif role == "dim"    then pr[1].TextColor3 = T.dim
+            elseif role == "tab"    then -- managed by setTab
+            else                         pr[1].TextColor3 = T.text end
             pr[1].Font = CurFont
         end)
     end
-    for _, f in pairs(accentFrames)  do pcall(function() f.BackgroundColor3 = T.accent end) end
-    for _, s in pairs(accentStrokes) do pcall(function() s.Color = T.accent end) end
-    for _, sf in pairs(scrollFrames) do pcall(function() sf.ScrollBarImageColor3 = T.accent end) end
+    for _, f  in pairs(accentFrames)  do pcall(function() f.BackgroundColor3       = T.accent end) end
+    for _, s  in pairs(accentStrokes) do pcall(function() s.Color                  = T.accent end) end
+    for _, sf in pairs(scrollFrames)  do pcall(function() sf.ScrollBarImageColor3  = T.accent end) end
 end
 
 -- ── State ──────────────────────────────────────────────────────────────────
@@ -88,12 +85,10 @@ local S = {
     InfZoom          = false,
     BypassCooldown   = false,
     SelectedMap      = "Pit",
-    SelectedSkin     = "None",
     Minimized        = false,
     ToggleKey        = Enum.KeyCode.RightShift,
 }
 
--- internal
 local speedOriginal   = nil
 local speedStateLast  = false
 local godOrigMax      = nil
@@ -104,8 +99,10 @@ local ultClock        = 0
 local farmClock       = 0
 local cdClock         = 0
 local espClock        = 0
-local blockClock      = 0
+local blockClock      = 0      -- inf-block re-assert timer
 local infBlockLast    = false
+local blockHoldEnd    = 0      -- tick() deadline: hold F until this time
+local blockHolding    = false  -- whether we currently have F held down
 local respawnClock    = 0
 local saveActive      = false
 local saveClock       = 0
@@ -118,16 +115,16 @@ local autoBlockConns  = {}
 local origZoom        = nil
 local Connections     = {}
 
+-- Attack key names stored on enemy Player objects (player.Keybinds.Attack1 etc.)
+local AB_KEYS = {"Attack1","Attack2","Attack3","Attack4","Attack5","Lc1","Lc2","Lc3"}
+local AB_HOLD_TIME = 4.5   -- seconds to hold F after detecting an enemy attack
+
 -- ── Helpers ────────────────────────────────────────────────────────────────
 local function chr() return player.Character end
-local function hum()
-    local c = chr(); return c and c:FindFirstChildOfClass("Humanoid")
-end
-local function hrp()
-    local c = chr(); return c and c:FindFirstChild("HumanoidRootPart")
-end
--- The combat RemoteEvent lives INSIDE the character (LocalPlayer.Character.RemoteEvent).
--- Fall back to ReplicatedStorage only if it isn't found there.
+local function hum() local c = chr(); return c and c:FindFirstChildOfClass("Humanoid") end
+local function hrp() local c = chr(); return c and c:FindFirstChild("HumanoidRootPart") end
+
+-- RemoteEvent lives INSIDE the character: LocalPlayer.Character.RemoteEvent
 local function re()
     local c = chr()
     if c then
@@ -137,12 +134,14 @@ local function re()
     local rs = game:GetService("ReplicatedStorage")
     return rs:FindFirstChild("RemoteEvent") or rs:FindFirstChildWhichIsA("RemoteEvent")
 end
--- ReplicatedStorage.Remotes.Died  ->  used for Instant Respawn bypass
+
+-- ReplicatedStorage.Remotes.Died used for Instant Respawn bypass
 local function diedRemote()
-    local rs = game:GetService("ReplicatedStorage")
+    local rs  = game:GetService("ReplicatedStorage")
     local rem = rs:FindFirstChild("Remotes")
     return rem and rem:FindFirstChild("Died")
 end
+
 local function nearest(maxD)
     local best, dist = nil, maxD or math.huge
     local mh = hrp(); if not mh then return nil end
@@ -156,6 +155,10 @@ local function nearest(maxD)
         end
     end
     return best
+end
+
+local function pressBlockFor(t)
+    blockHoldEnd = math.max(blockHoldEnd, tick() + t)
 end
 
 -- ── GUI root ───────────────────────────────────────────────────────────────
@@ -189,13 +192,10 @@ local main = make("Frame", {
 make("UICorner", {CornerRadius = UDim.new(0, 5)}, main)
 stroke(main, T.outline, 1)
 
--- Title bar
 local titleBar = make("Frame", {
-    Size             = UDim2.new(1, 0, 0, TITLE_H),
-    BackgroundColor3 = T.titlebar,
-    BorderSizePixel  = 0,
+    Size = UDim2.new(1, 0, 0, TITLE_H), BackgroundColor3 = T.titlebar, BorderSizePixel = 0,
 }, main)
-make("Frame", {  -- bottom hairline
+make("Frame", {
     Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1),
     BackgroundColor3 = T.border, BorderSizePixel = 0,
 }, titleBar)
@@ -219,13 +219,11 @@ local closeBtn = make("TextButton", {
     Position = UDim2.new(1, -22, 0, 0), Size = UDim2.new(0, 22, 1, 0),
 }, titleBar)
 
--- Body (everything under the title; toggled by minimize)
 local content = make("Frame", {
     Size = UDim2.new(1, 0, 1, -TITLE_H), Position = UDim2.new(0, 0, 0, TITLE_H),
     BackgroundTransparency = 1, BorderSizePixel = 0,
 }, main)
 
--- Top tab bar
 local tabBar = make("Frame", {
     Size = UDim2.new(1, 0, 0, TAB_H), BackgroundColor3 = T.bg, BorderSizePixel = 0,
 }, content)
@@ -237,10 +235,11 @@ local tabRow = make("Frame", {
     Size = UDim2.new(1, -10, 1, 0), Position = UDim2.new(0, 8, 0, 0),
     BackgroundTransparency = 1, BorderSizePixel = 0,
 }, tabBar)
-make("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 2),
-    VerticalAlignment = Enum.VerticalAlignment.Center}, tabRow)
+make("UIListLayout", {
+    FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 2),
+    VerticalAlignment = Enum.VerticalAlignment.Center,
+}, tabRow)
 
--- Page area
 local pageArea = make("Frame", {
     Size = UDim2.new(1, 0, 1, -TAB_H), Position = UDim2.new(0, 0, 0, TAB_H),
     BackgroundTransparency = 1, BorderSizePixel = 0,
@@ -278,8 +277,10 @@ local function makePage()
             CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
         }, page)
         table.insert(scrollFrames, c)
-        make("UIListLayout", {FillDirection = Enum.FillDirection.Vertical,
-            Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder}, c)
+        make("UIListLayout", {
+            FillDirection = Enum.FillDirection.Vertical,
+            Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder,
+        }, c)
         return c
     end
     return {page = page, left = col(0, 8), right = col(0.5, 4)}
@@ -311,16 +312,18 @@ local function makeGroup(col, title)
     }, col)
     make("UICorner", {CornerRadius = UDim.new(0, 4)}, frame)
     stroke(frame, T.border)
-    make("UIListLayout", {FillDirection = Enum.FillDirection.Vertical,
-        SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 0)}, frame)
+    make("UIListLayout", {
+        FillDirection = Enum.FillDirection.Vertical,
+        SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 0),
+    }, frame)
 
-    local al = make("Frame", {  -- blue top accent line
+    local al = make("Frame", {
         Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = T.accent,
         BorderSizePixel = 0, LayoutOrder = 0,
     }, frame)
     table.insert(accentFrames, al)
 
-    local head = make("Frame", {  -- header strip
+    local head = make("Frame", {
         Size = UDim2.new(1, 0, 0, 22), BackgroundColor3 = T.cardhead,
         BorderSizePixel = 0, LayoutOrder = 1,
     }, frame)
@@ -340,10 +343,14 @@ local function makeGroup(col, title)
         AutomaticSize = Enum.AutomaticSize.Y, Size = UDim2.new(1, 0, 0, 0),
         LayoutOrder = 2,
     }, frame)
-    make("UIListLayout", {FillDirection = Enum.FillDirection.Vertical,
-        Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder}, inner)
-    make("UIPadding", {PaddingLeft = UDim.new(0, 9), PaddingRight = UDim.new(0, 9),
-        PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 8)}, inner)
+    make("UIListLayout", {
+        FillDirection = Enum.FillDirection.Vertical,
+        Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder,
+    }, inner)
+    make("UIPadding", {
+        PaddingLeft = UDim.new(0, 9), PaddingRight = UDim.new(0, 9),
+        PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 8),
+    }, inner)
     return inner
 end
 
@@ -351,7 +358,6 @@ local function makeCheck(parent, label, key, cb, hasConfig, cfgCb)
     local row = make("Frame", {
         BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 18), BorderSizePixel = 0,
     }, parent)
-
     local box = make("Frame", {
         Size = UDim2.new(0, 13, 0, 13), Position = UDim2.new(0, 0, 0.5, -6),
         BackgroundColor3 = T.input, BorderSizePixel = 0,
@@ -364,14 +370,12 @@ local function makeCheck(parent, label, key, cb, hasConfig, cfgCb)
     }, box)
     make("UICorner", {CornerRadius = UDim.new(0, 1)}, fill)
     table.insert(accentFrames, fill)
-
     local lbl = make("TextLabel", {
         Text = label, TextSize = 12, TextColor3 = T.text, Font = CurFont,
         BackgroundTransparency = 1, Position = UDim2.new(0, 20, 0, 0),
         Size = UDim2.new(1, -50, 1, 0), TextXAlignment = Enum.TextXAlignment.Left,
     }, row)
     table.insert(allTextObjs, {lbl, "normal"})
-
     if hasConfig then
         local cfg = make("TextButton", {
             Text = "...", TextSize = 12, TextColor3 = T.dim, Font = CurFont,
@@ -383,7 +387,6 @@ local function makeCheck(parent, label, key, cb, hasConfig, cfgCb)
         table.insert(allTextObjs, {cfg, "dim"})
         if cfgCb then cfg.MouseButton1Click:Connect(cfgCb) end
     end
-
     local btn = make("TextButton", {
         Text = "", BackgroundTransparency = 1,
         Size = UDim2.new(1, hasConfig and -30 or 0, 1, 0), ZIndex = 2,
@@ -401,35 +404,30 @@ local function makeSlider(parent, label, key, minV, maxV, suffix)
     local row = make("Frame", {
         BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 34), BorderSizePixel = 0,
     }, parent)
-
     local lbl = make("TextLabel", {
         Text = label, TextSize = 11, TextColor3 = T.text, Font = CurFont,
         BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 14),
         TextXAlignment = Enum.TextXAlignment.Left,
     }, row)
     table.insert(allTextObjs, {lbl, "normal"})
-
     local bar = make("Frame", {
         BackgroundColor3 = T.input, Size = UDim2.new(1, 0, 0, 15),
         Position = UDim2.new(0, 0, 0, 17), BorderSizePixel = 0,
     }, row)
     make("UICorner", {CornerRadius = UDim.new(0, 3)}, bar)
     stroke(bar, T.border)
-
     local pct  = math.clamp((S[key] - minV) / (maxV - minV), 0, 1)
     local fill = make("Frame", {
         BackgroundColor3 = T.accent, Size = UDim2.new(pct, 0, 1, 0), BorderSizePixel = 0,
     }, bar)
     make("UICorner", {CornerRadius = UDim.new(0, 3)}, fill)
     table.insert(accentFrames, fill)
-
     local val = make("TextLabel", {
         Text = tostring(S[key]) .. suffix, TextSize = 10, TextColor3 = T.text, Font = CurFont,
         BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0),
         TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 3,
     }, bar)
     table.insert(allTextObjs, {val, "normal"})
-
     local dragging = false
     local function set(px)
         local np  = math.clamp((px - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
@@ -478,14 +476,12 @@ local function makeDD(parent, label, opts, key, cb)
         BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 38),
         BorderSizePixel = 0, ClipsDescendants = false,
     }, parent)
-
     local lbl = make("TextLabel", {
         Text = label, TextSize = 11, TextColor3 = T.text, Font = CurFont,
         BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 14),
         TextXAlignment = Enum.TextXAlignment.Left,
     }, con)
     table.insert(allTextObjs, {lbl, "normal"})
-
     local sel = S[key] or opts[1]
     local mb  = make("TextButton", {
         Text = "  " .. sel, TextSize = 11, TextColor3 = T.text, Font = CurFont,
@@ -502,7 +498,6 @@ local function makeDD(parent, label, opts, key, cb)
         Size = UDim2.new(0, 14, 0, 18),
     }, con)
     table.insert(allTextObjs, {arrow, "dim"})
-
     local df = make("Frame", {
         BackgroundColor3 = T.card, Size = UDim2.new(1, 0, 0, 0),
         Position = UDim2.new(0, 0, 0, 36), BorderSizePixel = 0, Visible = false,
@@ -517,7 +512,6 @@ local function makeDD(parent, label, opts, key, cb)
     }, df)
     table.insert(scrollFrames, ds)
     make("UIListLayout", {FillDirection = Enum.FillDirection.Vertical}, ds)
-
     local open = false
     local function close() open = false; df.Visible = false; df.Size = UDim2.new(1, 0, 0, 0) end
     for _, opt in pairs(opts) do
@@ -540,7 +534,68 @@ local function makeDD(parent, label, opts, key, cb)
     return con
 end
 
--- ── Build Tabs ─────────────────────────────────────────────────────────────
+-- ── Auto Block: watch enemy Keybinds folder ────────────────────────────────
+-- Each enemy player has player.Keybinds.Attack1 … Attack5, Lc1 … Lc3.
+-- When any of those values fires (Changed → truthy) AND that player is within
+-- range, we hold F for AB_HOLD_TIME seconds.
+
+local function hookAutoBlockPlayer(p2)
+    if p2 == player then return end
+
+    local function wireKeybinds(kbFolder)
+        for _, keyName in pairs(AB_KEYS) do
+            local kv = kbFolder:FindFirstChild(keyName)
+            if kv then
+                local conn = kv.Changed:Connect(function(val)
+                    if not (S.AutoBlock and val) then return end
+                    local ph = p2.Character and p2.Character:FindFirstChild("HumanoidRootPart")
+                    local mh = hrp()
+                    if ph and mh and (ph.Position - mh.Position).Magnitude < 120 then
+                        pressBlockFor(AB_HOLD_TIME)
+                    end
+                end)
+                table.insert(autoBlockConns, conn)
+            end
+        end
+    end
+
+    -- Wire existing Keybinds folder
+    local kbNow = p2:FindFirstChild("Keybinds")
+    if kbNow then wireKeybinds(kbNow) end
+
+    -- Also wire if Keybinds appears later (sometimes added after load)
+    local addConn = p2.ChildAdded:Connect(function(child)
+        if child.Name == "Keybinds" then
+            -- ChildAdded fires synchronously — values may not be parented yet,
+            -- wait one frame before iterating
+            task.defer(function() wireKeybinds(child) end)
+        end
+    end)
+    table.insert(autoBlockConns, addConn)
+end
+
+local function startAutoBlock()
+    for _, c in pairs(autoBlockConns) do pcall(function() c:Disconnect() end) end
+    autoBlockConns = {}
+    for _, p2 in pairs(Players:GetPlayers()) do hookAutoBlockPlayer(p2) end
+    table.insert(autoBlockConns, Players.PlayerAdded:Connect(hookAutoBlockPlayer))
+end
+
+local function stopAutoBlock()
+    for _, c in pairs(autoBlockConns) do pcall(function() c:Disconnect() end) end
+    autoBlockConns = {}
+    -- Release F if we were holding it
+    if blockHolding then
+        blockHolding  = false
+        blockHoldEnd  = 0
+        pcall(function()
+            local vim = game:GetService("VirtualInputManager")
+            vim:SendKeyEvent(false, Enum.KeyCode.F, false, game)
+        end)
+    end
+end
+
+-- ── Build tabs ─────────────────────────────────────────────────────────────
 
 -- COMBAT
 do
@@ -548,54 +603,23 @@ do
 
     local hb = makeGroup(L, "Hitbox")
     makeCheck(hb, "Extend Hitbox", "ExtendHitbox", nil, true)
-    makeCheck(hb, "Show Hitbox", "ShowHitbox", function(on)
+    makeCheck(hb, "Show Hitbox",   "ShowHitbox", function(on)
         if not on then
             for _, b in pairs(showHitboxBoxes) do pcall(function() b:Destroy() end) end
             showHitboxBoxes = {}
         end
     end)
     makeCheck(hb, "M1 Expand", "M1Expand")
-    makeSlider(hb, "Hitbox Size", "HitboxMultiplier", 1, 20)
-    makeSlider(hb, "M1 Size", "M1Multiplier", 1, 15)
+    makeSlider(hb, "Hitbox Size",  "HitboxMultiplier", 1, 20)
+    makeSlider(hb, "M1 Size",      "M1Multiplier",     1, 15)
 
     local df = makeGroup(L, "Defense")
-    makeCheck(df, "Inf Block", "InfBlock")
+    makeCheck(df, "Inf Block",  "InfBlock")
     makeCheck(df, "Auto Block", "AutoBlock", function(on)
-        for _, c in pairs(autoBlockConns) do pcall(function() c:Disconnect() end) end
-        autoBlockConns = {}
-        if on then
-            local function hookPlayer(p2)
-                if p2 == player then return end
-                local function hookChar(c2)
-                    if not c2 then return end
-                    local h2 = c2:FindFirstChildOfClass("Humanoid"); if not h2 then return end
-                    local ani = h2:FindFirstChildOfClass("Animator"); if not ani then return end
-                    local conn = ani.AnimationPlayed:Connect(function(tr)
-                        local id = (tr.Animation and tr.Animation.AnimationId) or ""
-                        local low = id:lower()
-                        if not (low:find("attack") or low:find("hit") or low:find("swing")) then return end
-                        local ph = p2.Character and p2.Character:FindFirstChild("HumanoidRootPart")
-                        local mh = hrp()
-                        if not ph or not mh then return end
-                        if (ph.Position - mh.Position).Magnitude > 50 then return end
-                        task.spawn(function()
-                            pcall(function()
-                                local vim = game:GetService("VirtualInputManager")
-                                vim:SendKeyEvent(true,  Enum.KeyCode.F, false, game)
-                                task.wait(0.05)
-                                vim:SendKeyEvent(false, Enum.KeyCode.F, false, game)
-                            end)
-                        end)
-                    end)
-                    table.insert(autoBlockConns, conn)
-                end
-                hookChar(p2.Character)
-                table.insert(autoBlockConns, p2.CharacterAdded:Connect(hookChar))
-            end
-            for _, p2 in pairs(Players:GetPlayers()) do hookPlayer(p2) end
-            table.insert(autoBlockConns, Players.PlayerAdded:Connect(hookPlayer))
-        end
+        if on then startAutoBlock() else stopAutoBlock() end
     end)
+    makeLabel(df, "Watches enemy Attack1-5, Lc1-3", true)
+    makeLabel(df, "Holds F for 4.5s on detect", true)
 
     local am = makeGroup(R, "Aim")
     makeCheck(am, "Silent Aim", "SilentAim", nil, true)
@@ -604,7 +628,7 @@ do
     makeCheck(ul, "Auto Ult  [V]", "AutoUlt")
 
     local fm = makeGroup(R, "Farm")
-    makeCheck(fm, "Auto Farm", "AutoFarm")
+    makeCheck(fm, "Auto Farm",  "AutoFarm")
     makeSlider(fm, "Farm Range", "AutoFarmRange", 20, 300)
 end
 
@@ -613,7 +637,7 @@ do
     local L, R = pages["Player"].left, pages["Player"].right
 
     local mv = makeGroup(L, "Movement")
-    makeCheck(mv, "Fly", "Fly")
+    makeCheck(mv, "Fly",        "Fly")
     makeSlider(mv, "Fly Speed", "FlySpeed", 10, 300)
     makeCheck(mv, "Noclip", "Noclip", function(on)
         if noclipConn then noclipConn:Disconnect(); noclipConn = nil end
@@ -633,16 +657,16 @@ do
             end)
         end
     end)
-    makeCheck(mv, "Speed Hack", "SpeedHack")
+    makeCheck(mv, "Speed Hack",  "SpeedHack")
     makeSlider(mv, "Walk Speed", "WalkSpeed", 16, 250)
     makeCheck(mv, "Auto Sprint", "AutoSprint")
 
     local sv = makeGroup(R, "Survival")
-    makeCheck(sv, "God Mode", "GodMode")
-    makeCheck(sv, "Save System", "SaveSystem")
-    makeSlider(sv, "HP Threshold", "SaveThreshold", 1, 99, "%")
-    makeCheck(sv, "Instant Respawn", "InstantRespawn")
-    makeCheck(sv, "Invisible", "Invisible")
+    makeCheck(sv, "God Mode",       "GodMode")
+    makeCheck(sv, "Save System",    "SaveSystem")
+    makeSlider(sv, "HP Threshold",  "SaveThreshold", 1, 99, "%")
+    makeCheck(sv, "Instant Respawn","InstantRespawn")
+    makeCheck(sv, "Invisible",      "Invisible")
 end
 
 -- VISUALS
@@ -664,48 +688,7 @@ end
 -- MISC
 do
     local L, R = pages["Misc"].left, pages["Misc"].right
-
-    local sk = makeGroup(L, "Skins")
-    local allSkins = {"None",
-        "EvolvedGodzillaRemodel/DefaultEvolvedGodzillaRemodel",
-        "EvolvedGodzillaRemodel/EvolvedGodzillaRemodelEnergized",
-        "EvolvedGodzillaRemodel/EvolvedGodzillaRemodelGold",
-        "EvolvedGodzillaRemodel/EvolvedGodzillaRemodelPreEvolved",
-        "EvolvedGodzillaRemodel/EvolvedGodzillaRemodelSuperCharged",
-        "EvolvedGodzillaRemodel/EvolvedGodzillaRemodelThermoNuclear",
-    }
-    pcall(function()
-        local built = {"None"}
-        local kf = player:FindFirstChild("Kaijus")
-        if kf then
-            for _, kaiju in pairs(kf:GetChildren()) do
-                local sf = kaiju:FindFirstChild("Skins")
-                if sf then
-                    for _, s2 in pairs(sf:GetChildren()) do
-                        table.insert(built, kaiju.Name .. "/" .. s2.Name)
-                    end
-                end
-            end
-        end
-        if #built > 1 then allSkins = built end
-    end)
-    makeDD(sk, "Skin", allSkins, "SelectedSkin")
-    makeBtn(sk, "Apply Skin", 22, function()
-        if S.SelectedSkin == "None" then return end
-        pcall(function()
-            local parts = S.SelectedSkin:split("/")
-            if #parts < 2 then return end
-            local kname, sname = parts[1], parts[2]
-            local kf = player:FindFirstChild("Kaijus"); if not kf then return end
-            local k  = kf:FindFirstChild(kname); if not k then return end
-            local sf = k:FindFirstChild("Skins"); if not sf then return end
-            local s3 = sf:FindFirstChild(sname); if not s3 then return end
-            if s3:IsA("BoolValue") then s3.Value = true
-            elseif s3:IsA("StringValue") then s3.Value = sname end
-        end)
-    end)
-
-    local cd = makeGroup(R, "Cooldown")
+    local cd = makeGroup(L, "Cooldown")
     makeCheck(cd, "Bypass Cooldowns", "BypassCooldown")
 end
 
@@ -742,7 +725,7 @@ do
                     pcall(function()
                         local ph = p2.Character and p2.Character:FindFirstChild("HumanoidRootPart")
                         local mh = hrp()
-                        if ph and mh then mh.CFrame = ph.CFrame + Vector3.new(3,0,0) end
+                        if ph and mh then mh.CFrame = ph.CFrame + Vector3.new(3, 0, 0) end
                     end)
                 end)
             end
@@ -773,8 +756,8 @@ do
 
     local sc = makeGroup(L, "Script")
     makeBtn(sc, "Disconnect All", 22, function()
-        for _, c in pairs(Connections) do pcall(function() c:Disconnect() end) end
-        for _, c in pairs(autoBlockConns) do pcall(function() c:Disconnect() end) end
+        for _, c in pairs(Connections)     do pcall(function() c:Disconnect() end) end
+        for _, c in pairs(autoBlockConns)  do pcall(function() c:Disconnect() end) end
         if noclipConn then pcall(function() noclipConn:Disconnect() end) end
         Connections, autoBlockConns, noclipConn = {}, {}, nil
     end)
@@ -819,7 +802,7 @@ end
 
 -- ── Feature Loops ──────────────────────────────────────────────────────────
 
--- Extend Hitbox / M1 Expand / Silent Aim: fire only on real M1 click
+-- Extend Hitbox / M1 Expand / Silent Aim fire on real M1 clicks only
 table.insert(Connections, UIS.InputBegan:Connect(function(i, gpe)
     if gpe then return end
     if i.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
@@ -835,13 +818,10 @@ table.insert(Connections, UIS.InputBegan:Connect(function(i, gpe)
     if S.M1Expand then
         pcall(function()
             local r = re(); if not r then return end
-            -- The 3 basic M1 combo hits are Lc1Hitbox / Lc2Hitbox / Lc3Hitbox
             for n = 1, 3 do r:FireServer("Lc"..n.."Hitbox", S.M1Multiplier) end
         end)
     end
     if S.SilentAim then
-        -- This game is hitbox-based (no aim vector), so "silent aim" means: when a
-        -- target is in range, blow every attack hitbox up so the swing always lands.
         pcall(function()
             local tgt = nearest(300); if not tgt then return end
             local ph  = tgt.Character and tgt.Character:FindFirstChild("HumanoidRootPart")
@@ -874,6 +854,7 @@ end
 
 table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
 
+    -- Speed Hack
     if S.SpeedHack ~= speedStateLast then
         speedStateLast = S.SpeedHack
         local h = hum()
@@ -888,6 +869,7 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         pcall(function() local h = hum(); if h then h.WalkSpeed = S.WalkSpeed end end)
     end
 
+    -- God Mode
     if S.GodMode ~= godStateLast then
         godStateLast = S.GodMode
         local h = hum()
@@ -906,11 +888,13 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         pcall(function() local h = hum(); if h then h.Health = math.huge end end)
     end
 
+    -- Invisible
     if S.Invisible ~= invisStateLast then
         invisStateLast = S.Invisible
         doInvisible(S.Invisible)
     end
 
+    -- Fly
     if S.Fly then
         pcall(function()
             local mh = hrp(); local h = hum()
@@ -931,6 +915,7 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end)
     end
 
+    -- Auto Sprint
     if S.AutoSprint then
         pcall(function()
             local vim = game:GetService("VirtualInputManager")
@@ -938,11 +923,10 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end)
     end
 
-    -- Inf Block: hold F down so the guard never drops. Re-assert the key every
-    -- 0.2s (covers respawns / focus loss). When toggled off, release F once.
+    -- Inf Block: re-assert F hold every 0.2s; release + BlockStop when toggled off
     if S.InfBlock then
         infBlockLast = true
-        blockClock = blockClock + dt
+        blockClock   = blockClock + dt
         if blockClock >= 0.2 then
             blockClock = 0
             pcall(function()
@@ -960,6 +944,31 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end)
     end
 
+    -- Auto Block: hold F down while blockHoldEnd deadline is in the future
+    -- (blockHoldEnd is set by pressBlockFor() when a Keybinds attack fires)
+    if S.AutoBlock and not S.InfBlock then
+        local now = tick()
+        if now < blockHoldEnd then
+            if not blockHolding then
+                blockHolding = true
+                pcall(function()
+                    local vim = game:GetService("VirtualInputManager")
+                    vim:SendKeyEvent(true, Enum.KeyCode.F, false, game)
+                end)
+            end
+        else
+            if blockHolding then
+                blockHolding = false
+                pcall(function()
+                    local vim = game:GetService("VirtualInputManager")
+                    vim:SendKeyEvent(false, Enum.KeyCode.F, false, game)
+                    local r = re(); if r then r:FireServer("BlockStop") end
+                end)
+            end
+        end
+    end
+
+    -- Auto Ult
     if S.AutoUlt then
         ultClock = ultClock + dt
         if ultClock >= 2 then
@@ -977,36 +986,35 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         ultClock = 0
     end
 
+    -- Auto Farm: TP behind target, extend hitboxes, swing M1
     if S.AutoFarm then
         farmClock = farmClock + dt
         if farmClock >= 0.35 then
             farmClock = 0
             pcall(function()
                 local tgt = nearest(S.AutoFarmRange); if not tgt then return end
-                local mh = hrp(); if not mh then return end
-                local ph = tgt.Character and tgt.Character:FindFirstChild("HumanoidRootPart")
+                local mh  = hrp(); if not mh then return end
+                local ph  = tgt.Character and tgt.Character:FindFirstChild("HumanoidRootPart")
                 if not ph then return end
-                -- TP just behind the target so our swing connects
                 mh.CFrame = ph.CFrame + (ph.CFrame.LookVector * -3)
-                local r = re()
+                local r   = re()
                 if r then
-                    -- Extend every basic-hit hitbox, then actually swing with M1
-                    for n = 1, 3 do r:FireServer("Lc"..n.."Hitbox", S.HitboxMultiplier) end
+                    for n = 1, 3 do r:FireServer("Lc"..n.."Hitbox",     S.HitboxMultiplier) end
                     for n = 1, 5 do r:FireServer("Attack"..n.."Hitbox", S.HitboxMultiplier) end
                 end
                 task.spawn(function()
                     pcall(function()
                         local vim = game:GetService("VirtualInputManager")
                         local vp  = workspace.CurrentCamera.ViewportSize
-                        local cx, cy = vp.X / 2, vp.Y / 2
-                        vim:SendMouseButtonEvent(cx, cy, 0, true,  game, 0)
-                        vim:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+                        vim:SendMouseButtonEvent(vp.X/2, vp.Y/2, 0, true,  game, 0)
+                        vim:SendMouseButtonEvent(vp.X/2, vp.Y/2, 0, false, game, 0)
                     end)
                 end)
             end)
         end
     end
 
+    -- Bypass Cooldown: zero every cooldown-looking value and attribute
     if S.BypassCooldown then
         cdClock = cdClock + dt
         if cdClock >= 0.25 then
@@ -1018,9 +1026,7 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
                         for _, desc in pairs(obj:GetDescendants()) do
                             local n = desc.Name:lower()
                             if n:find("cool") or n:find("^cd") or n:find("nexttp") or n:find("timer") then
-                                if desc:IsA("NumberValue") or desc:IsA("IntValue") then
-                                    desc.Value = 0
-                                end
+                                if desc:IsA("NumberValue") or desc:IsA("IntValue") then desc.Value = 0 end
                             end
                         end
                         for _, attr in pairs({"Cooldown","CD","NextTP","Timer","MapCooldown","TpCooldown"}) do
@@ -1035,13 +1041,13 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end
     end
 
+    -- Instant Respawn via ReplicatedStorage.Remotes.Died
     if S.InstantRespawn then
         local h = hum()
         if h and h.Health <= 0 then
             respawnClock = respawnClock + dt
             if respawnClock >= 0.5 then
                 respawnClock = 0
-                -- Bypass the "no respawn" screen via ReplicatedStorage.Remotes.Died
                 pcall(function()
                     local d = diedRemote()
                     if d then d:FireServer("Real", 3.8333332538604736) end
@@ -1052,12 +1058,12 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end
     end
 
+    -- Save System: on low HP launch to sky, drop back after 4s
     if S.SaveSystem then
         local h, mh = hum(), hrp()
         if h and mh and h.MaxHealth > 0 then
             if saveActive then
                 saveClock = saveClock + dt
-                -- Hold up in the sky out of melee range, then drop back down
                 mh.CFrame = CFrame.new(savePos + Vector3.new(0, 500, 0))
                 mh.AssemblyLinearVelocity = Vector3.zero
                 if saveClock >= 4 or (h.Health / h.MaxHealth * 100) > S.SaveThreshold + 20 then
@@ -1073,6 +1079,7 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end
     end
 
+    -- Show Hitbox
     if S.ShowHitbox ~= showHitboxLast then
         showHitboxLast = S.ShowHitbox
         if not S.ShowHitbox then
@@ -1084,12 +1091,12 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
                     local root = p2.Character:FindFirstChild("HumanoidRootPart")
                     if root then
                         local box = Instance.new("SelectionBox")
-                        box.Adornee            = root
-                        box.Color3             = T.accent
-                        box.LineThickness      = 0.05
+                        box.Adornee             = root
+                        box.Color3              = T.accent
+                        box.LineThickness       = 0.05
                         box.SurfaceTransparency = 0.7
-                        box.SurfaceColor3      = T.accent
-                        box.Parent             = gui
+                        box.SurfaceColor3       = T.accent
+                        box.Parent              = gui
                         table.insert(showHitboxBoxes, box)
                     end
                 end
@@ -1097,6 +1104,7 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end
     end
 
+    -- ESP
     if S.ESP then
         espClock = espClock + dt
         if espClock >= 0.5 then
@@ -1119,7 +1127,7 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
                         bill.Parent      = gui
                         local lbl2 = make("TextLabel", {
                             Text = p2.Name, TextSize = 13, TextColor3 = T.accent, Font = CurFont,
-                            BackgroundTransparency = 1, Size = UDim2.new(1,0,1,0),
+                            BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0),
                             TextStrokeTransparency = 0, TextStrokeColor3 = Color3.new(0,0,0),
                         }, bill)
                         table.insert(allTextObjs, {lbl2, "accent"})
@@ -1135,24 +1143,6 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end
     end
 
-    if S.AutoBlock then
-        local mh = hrp(); if not mh then return end
-        for _, p2 in pairs(Players:GetPlayers()) do
-            if p2 ~= player and p2.Character then
-                local ph = p2.Character:FindFirstChild("HumanoidRootPart")
-                if ph and (ph.Position - mh.Position).Magnitude < 14 then
-                    task.spawn(function()
-                        pcall(function()
-                            local vim = game:GetService("VirtualInputManager")
-                            vim:SendKeyEvent(true,  Enum.KeyCode.F, false, game)
-                            task.wait(0.03)
-                            vim:SendKeyEvent(false, Enum.KeyCode.F, false, game)
-                        end)
-                    end)
-                end
-            end
-        end
-    end
 end))
 
 -- ── Drag ───────────────────────────────────────────────────────────────────
@@ -1178,8 +1168,8 @@ end
 
 -- ── Minimize / Close ───────────────────────────────────────────────────────
 minBtn.MouseButton1Click:Connect(function()
-    S.Minimized = not S.Minimized
-    content.Visible = not S.Minimized
+    S.Minimized      = not S.Minimized
+    content.Visible  = not S.Minimized
     main.Size = S.Minimized and UDim2.new(0, WIN_W, 0, TITLE_H) or UDim2.new(0, WIN_W, 0, WIN_H)
 end)
 closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
@@ -1194,4 +1184,4 @@ end))
 setTab("Combat")
 refreshTheme()
 
-print("[Money/Free Hub] v3.1 | Toggle: " .. S.ToggleKey.Name)
+print("[Money/Free Hub] v3.2 | Toggle: " .. S.ToggleKey.Name)
