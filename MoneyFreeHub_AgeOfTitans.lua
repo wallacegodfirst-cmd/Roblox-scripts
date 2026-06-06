@@ -1,4 +1,4 @@
--- Money/Free Hub | Age of Titans | v3.7
+-- Money/Free Hub | Age of Titans | v3.8
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -63,6 +63,7 @@ local S = {
     AutoUlt        = false, InstantUlt     = false,
     KillAura       = false, KillAuraRange  = 40,
     AutoFarm       = false, AutoFarmRange  = 80,
+    AutoPlay       = false, AutoPlayRange  = 100,
     -- Player
     Fly            = false, FlySpeed       = 80,
     Noclip         = false,
@@ -99,6 +100,7 @@ local godOrigMax,    godStateLast     = nil, false
 local invisOrigTrans, invisStateLast  = {}, false
 local ultClock,  ultWasFull           = 0, false
 local farmClock, kauraClk, cdClock    = 0, 0, 0
+local autoPlayClock                   = 0
 local espClock,  fbClock,  hnClock    = 0, 0, 0
 local blockHoldEnd   = 0
 local blockWasHeld   = false
@@ -166,6 +168,32 @@ local function nearest(maxD)
     return best
 end
 
+-- Nearest enemy root part — checks Players AND workspace NPC Models
+local function nearestTargetRoot(maxD)
+    local best, dist = nil, maxD or math.huge
+    local mh = hrp(); if not mh then return nil end
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= player and p.Character then
+            local ph = p.Character:FindFirstChild("HumanoidRootPart") or p.Character.PrimaryPart
+            if ph then
+                local d = (ph.Position - mh.Position).Magnitude
+                if d < dist then best, dist = ph, d end
+            end
+        end
+    end
+    for _, obj in pairs(workspace:GetChildren()) do
+        if obj ~= player.Character and obj:IsA("Model") then
+            local h2   = obj:FindFirstChildOfClass("Humanoid")
+            local root = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
+            if h2 and root and h2.Health > 0 then
+                local d = (root.Position - mh.Position).Magnitude
+                if d < dist then best, dist = root, d end
+            end
+        end
+    end
+    return best
+end
+
 local function pressBlockFor(t) blockHoldEnd = math.max(blockHoldEnd, tick()+t) end
 
 -- ── Fly (Model-safe: direct CFrame teleport, no BodyVelocity) ───────────────
@@ -199,11 +227,34 @@ end
 local function blockStop()
     local r = re(); if r then pcall(function() r:FireServer("BlockStop") end) end
 end
+-- Multi-method block hold: VIM key + direct attribute/BoolValue override
+local function tryBlock()
+    vimKey(true, Enum.KeyCode.F)
+    pcall(function()
+        local c = chr(); if not c then return end
+        for _, a in ipairs({"Blocking","Block","IsBlocking","Guard","Guarding","Parry"}) do
+            if c:GetAttribute(a) ~= nil then c:SetAttribute(a, true) end
+            local bv = c:FindFirstChild(a)
+            if bv and bv:IsA("BoolValue") then bv.Value = true end
+        end
+    end)
+end
+local function tryUnblock()
+    vimKey(false, Enum.KeyCode.F)
+    pcall(function()
+        local c = chr(); if not c then return end
+        for _, a in ipairs({"Blocking","Block","IsBlocking","Guard","Guarding","Parry"}) do
+            if c:GetAttribute(a) ~= nil then c:SetAttribute(a, false) end
+            local bv = c:FindFirstChild(a)
+            if bv and bv:IsA("BoolValue") then bv.Value = false end
+        end
+    end)
+end
 
 -- ── Hitbox spam helper ─────────────────────────────────────────────────────
 local function spamHitbox(name, value, count, gap)
     task.spawn(function()
-        for _ = 1, (count or 5) do
+        for _ = 1, (count or 8) do
             local r = re()
             if r then pcall(function() r:FireServer(name, value) end) end
             task.wait(gap or 0.05)
@@ -688,6 +739,11 @@ do
     makeCheck(ka,"Kill Aura","KillAura")
     makeSlider(ka,"Aura Range","KillAuraRange",10,150)
 
+    local ap = makeGroup(L,"Auto Play")
+    makeCheck(ap,"Auto Play","AutoPlay")
+    makeLabel(ap,"Walks to enemies & attacks auto",true)
+    makeSlider(ap,"Play Range","AutoPlayRange",20,300)
+
     local fm = makeGroup(R,"Farm")
     makeCheck(fm,"Auto Farm","AutoFarm")
     makeSlider(fm,"Farm Range","AutoFarmRange",20,300)
@@ -1048,17 +1104,16 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
     end
 
     -- ── Block manager ─────────────────────────────────────────────────────────
-    -- Sends F key-down EVERY frame while blocking is wanted.
-    -- The game treats a continuous stream of key-down events as a held key.
-    -- When stopping, sends key-up once and fires BlockStop.
+    -- Multi-method: VIM key-down + attribute override every frame.
+    -- When stopping: VIM key-up + attribute false + BlockStop remote.
     do
         local want = S.InfBlock or (S.AutoBlock and tick() < blockHoldEnd)
         if want then
-            vimKey(true, Enum.KeyCode.F)  -- every frame = continuous hold
+            tryBlock()
             blockWasHeld = true
         elseif blockWasHeld then
             blockWasHeld = false
-            vimKey(false, Enum.KeyCode.F)
+            tryUnblock()
             blockStop()
         end
     end
@@ -1085,14 +1140,23 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         ultClock=0; ultWasFull=false
     end
 
-    -- Kill Aura: fire Attack1-5 + Hitbox remotes on nearest target
+    -- Kill Aura: snap close to nearest enemy (player OR NPC), then spam attacks+hitboxes
     if S.KillAura then
         kauraClk = kauraClk + dt
         if kauraClk >= 0.25 then
             kauraClk = 0
             pcall(function()
-                local tgt = nearest(S.KillAuraRange); if not tgt then return end
-                local r   = re();                     if not r   then return end
+                local tgt = nearestTargetRoot(S.KillAuraRange); if not tgt then return end
+                local mh  = hrp();                               if not mh  then return end
+                -- Snap within melee range so hitbox registers server-side
+                local diff = tgt.Position - mh.Position
+                if diff.Magnitude > 10 then
+                    local snap = tgt.Position - diff.Unit * 6 + Vector3.new(0, 2, 0)
+                    local c = chr()
+                    if c and c.PrimaryPart then c:SetPrimaryPartCFrame(CFrame.new(snap))
+                    else mh.CFrame = CFrame.new(snap) end
+                end
+                local r = re(); if not r then return end
                 for n=1,5 do
                     pcall(function() r:FireServer("Attack"..n, ATTACK_VALS[n] or 4.4666666984558105) end)
                     pcall(function() r:FireServer("Attack"..n.."Hitbox", S.HitboxSize) end)
@@ -1143,6 +1207,62 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
                         end
                     end)
                 end)
+            end)
+        end
+    end
+
+    -- Auto Play: walk/TP to nearest enemy and attack (players + NPCs)
+    if S.AutoPlay then
+        autoPlayClock = autoPlayClock + dt
+        if autoPlayClock >= 0.35 then
+            autoPlayClock = 0
+            pcall(function()
+                local tgt = nearestTargetRoot(S.AutoPlayRange); if not tgt then return end
+                local mh  = hrp();                               if not mh  then return end
+                local dist = (tgt.Position - mh.Position).Magnitude
+                if dist > 14 then
+                    -- Move towards target: use Humanoid:MoveTo if available, else CFrame step
+                    local h = hum()
+                    if h then
+                        h:MoveTo(tgt.Position)
+                    else
+                        local c   = chr()
+                        local dir = (tgt.Position - mh.Position).Unit
+                        local step = math.min(dist - 10, 20)
+                        if c and c.PrimaryPart then
+                            c:SetPrimaryPartCFrame(c.PrimaryPart.CFrame + dir * step)
+                        else
+                            mh.CFrame = mh.CFrame + dir * step
+                        end
+                    end
+                else
+                    -- In range: fire all attacks + hitboxes
+                    local r = re(); if not r then return end
+                    for n=1,5 do
+                        pcall(function() r:FireServer("Attack"..n, ATTACK_VALS[n] or 4.4666666984558105) end)
+                        pcall(function() r:FireServer("Attack"..n.."Hitbox", S.HitboxSize) end)
+                    end
+                    -- M1 click
+                    task.spawn(function()
+                        pcall(function()
+                            local vim=game:GetService("VirtualInputManager")
+                            local vp=workspace.CurrentCamera.ViewportSize
+                            vim:SendMouseButtonEvent(vp.X/2,vp.Y/2,0,true,game,0)
+                            vim:SendMouseButtonEvent(vp.X/2,vp.Y/2,0,false,game,0)
+                        end)
+                    end)
+                    -- Use ult if full
+                    if ultIsFull() then
+                        task.spawn(function()
+                            pcall(function()
+                                local vim=game:GetService("VirtualInputManager")
+                                vim:SendKeyEvent(true, Enum.KeyCode.V,false,game)
+                                task.wait(0.05)
+                                vim:SendKeyEvent(false,Enum.KeyCode.V,false,game)
+                            end)
+                        end)
+                    end
+                end
             end)
         end
     end
@@ -1315,4 +1435,4 @@ end))
 -- ── Init ───────────────────────────────────────────────────────────────────
 setTab("Combat")
 refreshTheme()
-print("[Money/Free Hub] v3.7 | Toggle: "..S.ToggleKey.Name)
+print("[Money/Free Hub] v3.8 | Toggle: "..S.ToggleKey.Name)
