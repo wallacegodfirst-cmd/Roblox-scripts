@@ -1,4 +1,4 @@
--- Money/Free Hub | Age of Titans | v2.0
+-- Money/Free Hub | Age of Titans | v3.0 (Sierra-style layout)
 
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
@@ -10,43 +10,49 @@ local UIS    = UserInputService
 
 -- ── Theme ──────────────────────────────────────────────────────────────────
 local T = {
-    bg     = Color3.fromRGB(13,  15,  15),
-    panel  = Color3.fromRGB(19,  21,  21),
-    panel2 = Color3.fromRGB(16,  18,  18),
-    border = Color3.fromRGB(3,   6,   8),
-    accent = Color3.fromRGB(54,  89,  174),
-    text   = Color3.fromRGB(235, 235, 235),
-    button = Color3.fromRGB(22,  24,  24),
-    red    = Color3.fromRGB(174, 54,  54),
-    green  = Color3.fromRGB(54,  174, 74),
-    off    = Color3.fromRGB(17,  19,  19),
+    bg       = Color3.fromRGB(17,  18,  22),
+    titlebar = Color3.fromRGB(24,  25,  30),
+    card     = Color3.fromRGB(20,  21,  26),
+    cardhead = Color3.fromRGB(24,  25,  31),
+    input    = Color3.fromRGB(26,  27,  33),
+    border   = Color3.fromRGB(50,  53,  62),
+    outline  = Color3.fromRGB(86,  91,  103),
+    accent   = Color3.fromRGB(64,  110, 200),
+    text     = Color3.fromRGB(206, 210, 219),
+    dim      = Color3.fromRGB(120, 125, 138),
+    green    = Color3.fromRGB(80,  180, 100),
+    red      = Color3.fromRGB(190, 70,  70),
 }
 
 local ACCENT_PRESETS = {
-    Color3.fromRGB(54,  89,  174),
-    Color3.fromRGB(174, 54,  54),
-    Color3.fromRGB(54,  174, 74),
-    Color3.fromRGB(174, 140, 54),
-    Color3.fromRGB(120, 54,  174),
-    Color3.fromRGB(54,  174, 174),
-    Color3.fromRGB(174, 54,  120),
+    Color3.fromRGB(64,  110, 200),
+    Color3.fromRGB(190, 70,  70),
+    Color3.fromRGB(80,  180, 100),
+    Color3.fromRGB(200, 150, 60),
+    Color3.fromRGB(140, 80,  200),
+    Color3.fromRGB(60,  185, 190),
+    Color3.fromRGB(200, 80,  150),
     Color3.fromRGB(200, 200, 200),
 }
 
-local FONTS      = {Enum.Font.GothamBold, Enum.Font.Gotham, Enum.Font.SourceSans, Enum.Font.RobotoMono, Enum.Font.Code}
-local FONT_NAMES = {"GothamBold","Gotham","SourceSans","RobotoMono","Code"}
-local CurFont    = Enum.Font.GothamBold
+local FONTS      = {Enum.Font.Code, Enum.Font.RobotoMono, Enum.Font.Gotham, Enum.Font.GothamBold, Enum.Font.SourceSans}
+local FONT_NAMES = {"Code","RobotoMono","Gotham","GothamBold","SourceSans"}
+local CurFont    = Enum.Font.Code
 
-local allTextObjs   = {}
+local allTextObjs   = {}   -- {obj, role}  role = normal | accent | dim | tab
 local accentFrames  = {}
 local accentStrokes = {}
 local scrollFrames  = {}
 
 local function refreshTheme()
-    for _, pair in pairs(allTextObjs) do
+    for _, pr in pairs(allTextObjs) do
         pcall(function()
-            pair[1].TextColor3 = (pair[2] == "accent") and T.accent or T.text
-            pair[1].Font       = CurFont
+            local role = pr[2]
+            if role == "accent" then pr[1].TextColor3 = T.accent
+            elseif role == "dim" then pr[1].TextColor3 = T.dim
+            elseif role == "tab"  then -- color managed by setTab
+            else pr[1].TextColor3 = T.text end
+            pr[1].Font = CurFont
         end)
     end
     for _, f in pairs(accentFrames)  do pcall(function() f.BackgroundColor3 = T.accent end) end
@@ -133,7 +139,7 @@ local function nearest(maxD)
     return best
 end
 
--- ── GUI ────────────────────────────────────────────────────────────────────
+-- ── GUI root ───────────────────────────────────────────────────────────────
 local gui = Instance.new("ScreenGui")
 gui.Name           = "MoneyFreeHub"
 gui.ResetOnSpawn   = false
@@ -147,119 +153,78 @@ local function make(cls, props, parent)
     if parent then o.Parent = parent end
     return o
 end
-
 local function stroke(parent, color, thick)
     return make("UIStroke", {Color = color or T.border, Thickness = thick or 1}, parent)
 end
 
-local WIN_W, WIN_H = 530, 430
+local WIN_W, WIN_H = 720, 560
+local TITLE_H, TAB_H = 26, 28
 
 local main = make("Frame", {
-    Size                = UDim2.new(0, WIN_W, 0, WIN_H),
-    Position            = UDim2.new(0.5, -WIN_W/2, 0.5, -WIN_H/2),
-    BackgroundColor3    = T.bg,
-    BorderSizePixel     = 0,
-    ClipsDescendants    = true,
+    Size             = UDim2.new(0, WIN_W, 0, WIN_H),
+    Position         = UDim2.new(0.5, -WIN_W/2, 0.5, -WIN_H/2),
+    BackgroundColor3 = T.bg,
+    BorderSizePixel  = 0,
+    ClipsDescendants = true,
 }, gui)
-make("UICorner", {CornerRadius = UDim.new(0, 6)}, main)
-stroke(main, T.border)
+make("UICorner", {CornerRadius = UDim.new(0, 5)}, main)
+stroke(main, T.outline, 1)
 
 -- Title bar
 local titleBar = make("Frame", {
-    Size             = UDim2.new(1, 0, 0, 30),
-    BackgroundColor3 = T.panel,
+    Size             = UDim2.new(1, 0, 0, TITLE_H),
+    BackgroundColor3 = T.titlebar,
     BorderSizePixel  = 0,
 }, main)
-make("UICorner", {CornerRadius = UDim.new(0, 6)}, titleBar)
-make("Frame", {
-    Size             = UDim2.new(1, 0, 0, 6),
-    Position         = UDim2.new(0, 0, 1, -6),
-    BackgroundColor3 = T.panel,
-    BorderSizePixel  = 0,
+make("Frame", {  -- bottom hairline
+    Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1),
+    BackgroundColor3 = T.border, BorderSizePixel = 0,
 }, titleBar)
-
-local accentLine = make("Frame", {
-    Size             = UDim2.new(1, 0, 0, 2),
-    Position         = UDim2.new(0, 0, 1, -2),
-    BackgroundColor3 = T.accent,
-    BorderSizePixel  = 0,
-}, titleBar)
-table.insert(accentFrames, accentLine)
-
-local titleDot = make("Frame", {
-    Size             = UDim2.new(0, 7, 0, 7),
-    Position         = UDim2.new(0, 11, 0.5, -3),
-    BackgroundColor3 = T.accent,
-    BorderSizePixel  = 0,
-}, titleBar)
-make("UICorner", {CornerRadius = UDim.new(1, 0)}, titleDot)
-table.insert(accentFrames, titleDot)
 
 local titleLbl = make("TextLabel", {
-    Text              = "Money / Free Hub",
-    TextSize          = 12,
-    TextColor3        = T.text,
-    Font              = CurFont,
+    Text = "Money/Free Hub", TextSize = 12, TextColor3 = T.text, Font = CurFont,
     BackgroundTransparency = 1,
-    Position          = UDim2.new(0, 24, 0, 0),
-    Size              = UDim2.new(1, -90, 1, 0),
-    TextXAlignment    = Enum.TextXAlignment.Left,
+    Position = UDim2.new(0, 9, 0, 0), Size = UDim2.new(1, -70, 1, 0),
+    TextXAlignment = Enum.TextXAlignment.Left,
 }, titleBar)
 table.insert(allTextObjs, {titleLbl, "normal"})
 
 local minBtn = make("TextButton", {
-    Text = "–", TextSize = 16, TextColor3 = T.text, Font = CurFont,
+    Text = "-", TextSize = 16, TextColor3 = T.dim, Font = CurFont,
     BackgroundTransparency = 1,
-    Position = UDim2.new(1, -60, 0, 0), Size = UDim2.new(0, 30, 1, 0),
+    Position = UDim2.new(1, -44, 0, 0), Size = UDim2.new(0, 22, 1, 0),
 }, titleBar)
-table.insert(allTextObjs, {minBtn, "normal"})
-
 local closeBtn = make("TextButton", {
-    Text = "×", TextSize = 18, TextColor3 = T.text, Font = CurFont,
+    Text = "x", TextSize = 14, TextColor3 = T.dim, Font = CurFont,
     BackgroundTransparency = 1,
-    Position = UDim2.new(1, -30, 0, 0), Size = UDim2.new(0, 30, 1, 0),
+    Position = UDim2.new(1, -22, 0, 0), Size = UDim2.new(0, 22, 1, 0),
 }, titleBar)
-table.insert(allTextObjs, {closeBtn, "normal"})
 
--- Content area
+-- Body (everything under the title; toggled by minimize)
 local content = make("Frame", {
-    Size             = UDim2.new(1, 0, 1, -30),
-    Position         = UDim2.new(0, 0, 0, 30),
-    BackgroundTransparency = 1,
-    BorderSizePixel  = 0,
+    Size = UDim2.new(1, 0, 1, -TITLE_H), Position = UDim2.new(0, 0, 0, TITLE_H),
+    BackgroundTransparency = 1, BorderSizePixel = 0,
 }, main)
 
--- Sidebar
-local sidebar = make("Frame", {
-    Size             = UDim2.new(0, 110, 1, 0),
-    BackgroundColor3 = T.panel2,
-    BorderSizePixel  = 0,
+-- Top tab bar
+local tabBar = make("Frame", {
+    Size = UDim2.new(1, 0, 0, TAB_H), BackgroundColor3 = T.bg, BorderSizePixel = 0,
 }, content)
-stroke(sidebar, T.border)
-
-local sideScroll = make("ScrollingFrame", {
-    Size                   = UDim2.new(1, 0, 1, -8),
-    Position               = UDim2.new(0, 0, 0, 4),
-    BackgroundTransparency = 1,
-    BorderSizePixel        = 0,
-    ScrollBarThickness     = 2,
-    ScrollBarImageColor3   = T.accent,
-    CanvasSize             = UDim2.new(0, 0, 0, 0),
-    AutomaticCanvasSize    = Enum.AutomaticSize.Y,
-}, sidebar)
-table.insert(scrollFrames, sideScroll)
-make("UIListLayout", {
-    FillDirection      = Enum.FillDirection.Vertical,
-    Padding            = UDim.new(0, 2),
-    HorizontalAlignment= Enum.HorizontalAlignment.Center,
-}, sideScroll)
+make("Frame", {
+    Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1),
+    BackgroundColor3 = T.border, BorderSizePixel = 0,
+}, tabBar)
+local tabRow = make("Frame", {
+    Size = UDim2.new(1, -10, 1, 0), Position = UDim2.new(0, 8, 0, 0),
+    BackgroundTransparency = 1, BorderSizePixel = 0,
+}, tabBar)
+make("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 2),
+    VerticalAlignment = Enum.VerticalAlignment.Center}, tabRow)
 
 -- Page area
 local pageArea = make("Frame", {
-    Size             = UDim2.new(1, -110, 1, 0),
-    Position         = UDim2.new(0, 110, 0, 0),
-    BackgroundTransparency = 1,
-    BorderSizePixel  = 0,
+    Size = UDim2.new(1, 0, 1, -TAB_H), Position = UDim2.new(0, 0, 0, TAB_H),
+    BackgroundTransparency = 1, BorderSizePixel = 0,
 }, content)
 
 local TAB_NAMES = {"Combat","Player","Visuals","Misc","Teleports","Settings"}
@@ -268,313 +233,289 @@ local pages     = {}
 
 local function makeTabBtn(name)
     local btn = make("TextButton", {
-        Text             = name,
-        TextSize         = 12,
-        TextColor3       = T.text,
-        Font             = CurFont,
-        BackgroundColor3 = T.button,
-        Size             = UDim2.new(0.9, 0, 0, 28),
-        AutoButtonColor  = false,
-    }, sideScroll)
-    make("UICorner", {CornerRadius = UDim.new(0, 4)}, btn)
-    local s = stroke(btn, T.border)
-    table.insert(allTextObjs, {btn, "normal"})
-    return btn, s
+        Text = name, TextSize = 12, TextColor3 = T.dim, Font = CurFont,
+        BackgroundColor3 = T.titlebar, BackgroundTransparency = 1,
+        Size = UDim2.new(0, 104, 1, -1), AutoButtonColor = false,
+    }, tabRow)
+    local under = make("Frame", {
+        Size = UDim2.new(1, 0, 0, 2), Position = UDim2.new(0, 0, 1, -1),
+        BackgroundColor3 = T.accent, BorderSizePixel = 0, Visible = false,
+    }, btn)
+    table.insert(accentFrames, under)
+    table.insert(allTextObjs, {btn, "tab"})
+    return btn, under
 end
 
 local function makePage()
-    local scroll = make("ScrollingFrame", {
-        Size                   = UDim2.new(1, -8, 1, -8),
-        Position               = UDim2.new(0, 4, 0, 4),
-        BackgroundTransparency = 1,
-        BorderSizePixel        = 0,
-        ScrollBarThickness     = 3,
-        ScrollBarImageColor3   = T.accent,
-        CanvasSize             = UDim2.new(0, 0, 0, 0),
-        AutomaticCanvasSize    = Enum.AutomaticSize.Y,
-        Visible                = false,
+    local page = make("Frame", {
+        Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
+        BorderSizePixel = 0, Visible = false,
     }, pageArea)
-    table.insert(scrollFrames, scroll)
-    make("UIListLayout", {FillDirection = Enum.FillDirection.Vertical, Padding = UDim.new(0, 6)}, scroll)
-    make("UIPadding", {PaddingLeft=UDim.new(0,4), PaddingRight=UDim.new(0,4), PaddingTop=UDim.new(0,4)}, scroll)
-    return scroll
+    local function col(xScale, xOff)
+        local c = make("ScrollingFrame", {
+            Size = UDim2.new(0.5, -12, 1, -16), Position = UDim2.new(xScale, xOff, 0, 8),
+            BackgroundTransparency = 1, BorderSizePixel = 0,
+            ScrollBarThickness = 2, ScrollBarImageColor3 = T.accent,
+            CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        }, page)
+        table.insert(scrollFrames, c)
+        make("UIListLayout", {FillDirection = Enum.FillDirection.Vertical,
+            Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder}, c)
+        return c
+    end
+    return {page = page, left = col(0, 8), right = col(0.5, 4)}
 end
 
 for _, name in pairs(TAB_NAMES) do
-    tabBtns[name] = {btn = makeTabBtn(name)}
+    local btn, under = makeTabBtn(name)
+    tabBtns[name] = {btn = btn, under = under}
     pages[name]   = makePage()
 end
 
 local function setTab(name)
-    for n, data in pairs(tabBtns) do
-        data.btn.BackgroundColor3 = (n == name) and T.panel or T.button
-        if data.stroke then
-            data.stroke.Color = (n == name) and T.accent or T.border
-        end
+    for n, d in pairs(tabBtns) do
+        d.btn.TextColor3 = (n == name) and T.text or T.dim
+        d.under.Visible  = (n == name)
+        pcall(function() pages[n].page.Visible = (n == name) end)
     end
-    for n, page in pairs(pages) do page.Visible = (n == name) end
 end
-
--- redo makeTabBtn to capture stroke
 for _, name in pairs(TAB_NAMES) do
-    local btn, s = tabBtns[name].btn, stroke(tabBtns[name].btn, T.border)
-    tabBtns[name].stroke = s
-    btn.MouseButton1Click:Connect(function() setTab(name) end)
+    tabBtns[name].btn.MouseButton1Click:Connect(function() setTab(name) end)
 end
 
 -- ── Widget builders ────────────────────────────────────────────────────────
-local function makeGroup(page, title)
-    -- Outer card: a vertical UIListLayout drives its height so AutomaticSize
-    -- resolves reliably (the previous absolute-positioned version collapsed to
-    -- ~0px, which the page's ScrollingFrame then clipped -> blank tabs).
+local function makeGroup(col, title)
     local frame = make("Frame", {
-        BackgroundColor3    = T.panel,
-        BorderSizePixel     = 0,
-        AutomaticSize       = Enum.AutomaticSize.Y,
-        Size                = UDim2.new(1, 0, 0, 0),
-        ClipsDescendants    = false,
-    }, page)
-    make("UICorner", {CornerRadius = UDim.new(0, 5)}, frame)
+        BackgroundColor3 = T.card, BorderSizePixel = 0,
+        AutomaticSize = Enum.AutomaticSize.Y, Size = UDim2.new(1, 0, 0, 0),
+        ClipsDescendants = false,
+    }, col)
+    make("UICorner", {CornerRadius = UDim.new(0, 4)}, frame)
     stroke(frame, T.border)
-    make("UIListLayout", {
-        FillDirection = Enum.FillDirection.Vertical,
-        SortOrder     = Enum.SortOrder.LayoutOrder,
-        Padding       = UDim.new(0, 0),
-    }, frame)
+    make("UIListLayout", {FillDirection = Enum.FillDirection.Vertical,
+        SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 0)}, frame)
 
-    -- full-width accent line at the very top
-    local al = make("Frame", {
-        Size             = UDim2.new(1, 0, 0, 2),
-        BackgroundColor3 = T.accent,
-        BorderSizePixel  = 0,
-        LayoutOrder      = 0,
+    local al = make("Frame", {  -- blue top accent line
+        Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = T.accent,
+        BorderSizePixel = 0, LayoutOrder = 0,
     }, frame)
     table.insert(accentFrames, al)
 
-    -- header
-    local header = make("TextLabel", {
-        Text           = title,
-        TextSize       = 12,
-        TextColor3     = T.accent,
-        Font           = CurFont,
-        BackgroundTransparency = 1,
-        Size           = UDim2.new(1, 0, 0, 24),
-        TextXAlignment = Enum.TextXAlignment.Left,
-        LayoutOrder    = 1,
+    local head = make("Frame", {  -- header strip
+        Size = UDim2.new(1, 0, 0, 22), BackgroundColor3 = T.cardhead,
+        BorderSizePixel = 0, LayoutOrder = 1,
     }, frame)
-    make("UIPadding", {PaddingLeft = UDim.new(0, 10)}, header)
-    table.insert(allTextObjs, {header, "accent"})
+    make("Frame", {
+        Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1),
+        BackgroundColor3 = T.border, BorderSizePixel = 0,
+    }, head)
+    local htxt = make("TextLabel", {
+        Text = title, TextSize = 12, TextColor3 = T.text, Font = CurFont,
+        BackgroundTransparency = 1, Position = UDim2.new(0, 8, 0, 0),
+        Size = UDim2.new(1, -16, 1, 0), TextXAlignment = Enum.TextXAlignment.Left,
+    }, head)
+    table.insert(allTextObjs, {htxt, "normal"})
 
-    -- body that holds the rows
     local inner = make("Frame", {
-        BackgroundTransparency = 1,
-        BorderSizePixel        = 0,
-        AutomaticSize          = Enum.AutomaticSize.Y,
-        Size                   = UDim2.new(1, 0, 0, 0),
-        LayoutOrder            = 2,
+        BackgroundTransparency = 1, BorderSizePixel = 0,
+        AutomaticSize = Enum.AutomaticSize.Y, Size = UDim2.new(1, 0, 0, 0),
+        LayoutOrder = 2,
     }, frame)
-    make("UIListLayout", {FillDirection = Enum.FillDirection.Vertical, Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder}, inner)
-    make("UIPadding", {PaddingLeft=UDim.new(0,10), PaddingRight=UDim.new(0,10), PaddingBottom=UDim.new(0,8), PaddingTop=UDim.new(0,2)}, inner)
+    make("UIListLayout", {FillDirection = Enum.FillDirection.Vertical,
+        Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder}, inner)
+    make("UIPadding", {PaddingLeft = UDim.new(0, 9), PaddingRight = UDim.new(0, 9),
+        PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 8)}, inner)
     return inner
 end
 
-local function makeCheck(parent, label, key, cb)
+local function makeCheck(parent, label, key, cb, hasConfig, cfgCb)
     local row = make("Frame", {
-        BackgroundTransparency = 1,
-        Size = UDim2.new(1, 0, 0, 23),
-        BorderSizePixel = 0,
+        BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 18), BorderSizePixel = 0,
     }, parent)
 
-    local dot = make("Frame", {
-        Size             = UDim2.new(0, 9, 0, 9),
-        Position         = UDim2.new(0, 0, 0.5, -4),
-        BackgroundColor3 = S[key] and T.green or T.red,
-        BorderSizePixel  = 0,
+    local box = make("Frame", {
+        Size = UDim2.new(0, 13, 0, 13), Position = UDim2.new(0, 0, 0.5, -6),
+        BackgroundColor3 = T.input, BorderSizePixel = 0,
     }, row)
-    make("UICorner", {CornerRadius = UDim.new(1, 0)}, dot)
+    make("UICorner", {CornerRadius = UDim.new(0, 2)}, box)
+    stroke(box, T.border)
+    local fill = make("Frame", {
+        Size = UDim2.new(1, -4, 1, -4), Position = UDim2.new(0, 2, 0, 2),
+        BackgroundColor3 = T.accent, BorderSizePixel = 0, Visible = S[key],
+    }, box)
+    make("UICorner", {CornerRadius = UDim.new(0, 1)}, fill)
+    table.insert(accentFrames, fill)
 
     local lbl = make("TextLabel", {
-        Text           = label,
-        TextSize       = 12,
-        TextColor3     = T.text,
-        Font           = CurFont,
-        BackgroundTransparency = 1,
-        Position       = UDim2.new(0, 16, 0, 0),
-        Size           = UDim2.new(1, -16, 1, 0),
-        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = label, TextSize = 12, TextColor3 = T.text, Font = CurFont,
+        BackgroundTransparency = 1, Position = UDim2.new(0, 20, 0, 0),
+        Size = UDim2.new(1, -50, 1, 0), TextXAlignment = Enum.TextXAlignment.Left,
     }, row)
     table.insert(allTextObjs, {lbl, "normal"})
+
+    if hasConfig then
+        local cfg = make("TextButton", {
+            Text = "...", TextSize = 12, TextColor3 = T.dim, Font = CurFont,
+            BackgroundColor3 = T.input, Size = UDim2.new(0, 26, 0, 15),
+            Position = UDim2.new(1, -26, 0.5, -7), AutoButtonColor = false,
+        }, row)
+        make("UICorner", {CornerRadius = UDim.new(0, 2)}, cfg)
+        stroke(cfg, T.border)
+        table.insert(allTextObjs, {cfg, "dim"})
+        if cfgCb then cfg.MouseButton1Click:Connect(cfgCb) end
+    end
 
     local btn = make("TextButton", {
         Text = "", BackgroundTransparency = 1,
-        Size = UDim2.new(1, 0, 1, 0), ZIndex = 2,
+        Size = UDim2.new(1, hasConfig and -30 or 0, 1, 0), ZIndex = 2,
     }, row)
-
     btn.MouseButton1Click:Connect(function()
         S[key] = not S[key]
-        dot.BackgroundColor3 = S[key] and T.green or T.red
+        fill.Visible = S[key]
         if cb then cb(S[key]) end
     end)
-    return row, dot
+    return row
 end
 
-local function makeSlider(parent, label, key, minV, maxV)
+local function makeSlider(parent, label, key, minV, maxV, suffix)
+    suffix = suffix or ""
     local row = make("Frame", {
-        BackgroundTransparency = 1,
-        Size = UDim2.new(1, 0, 0, 38),
-        BorderSizePixel = 0,
+        BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 34), BorderSizePixel = 0,
     }, parent)
 
     local lbl = make("TextLabel", {
-        Text = label .. ": " .. tostring(S[key]),
-        TextSize = 11, TextColor3 = T.text, Font = CurFont,
-        BackgroundTransparency = 1,
-        Size = UDim2.new(1, 0, 0, 15),
+        Text = label, TextSize = 11, TextColor3 = T.text, Font = CurFont,
+        BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 14),
         TextXAlignment = Enum.TextXAlignment.Left,
     }, row)
     table.insert(allTextObjs, {lbl, "normal"})
 
-    local track = make("Frame", {
-        BackgroundColor3 = T.border,
-        Size = UDim2.new(1, 0, 0, 5),
-        Position = UDim2.new(0, 0, 0, 20),
-        BorderSizePixel = 0,
+    local bar = make("Frame", {
+        BackgroundColor3 = T.input, Size = UDim2.new(1, 0, 0, 15),
+        Position = UDim2.new(0, 0, 0, 17), BorderSizePixel = 0,
     }, row)
-    make("UICorner", {CornerRadius = UDim.new(1, 0)}, track)
+    make("UICorner", {CornerRadius = UDim.new(0, 3)}, bar)
+    stroke(bar, T.border)
 
     local pct  = math.clamp((S[key] - minV) / (maxV - minV), 0, 1)
     local fill = make("Frame", {
-        BackgroundColor3 = T.accent,
-        Size = UDim2.new(pct, 0, 1, 0),
-        BorderSizePixel = 0,
-    }, track)
-    make("UICorner", {CornerRadius = UDim.new(1, 0)}, fill)
+        BackgroundColor3 = T.accent, Size = UDim2.new(pct, 0, 1, 0), BorderSizePixel = 0,
+    }, bar)
+    make("UICorner", {CornerRadius = UDim.new(0, 3)}, fill)
     table.insert(accentFrames, fill)
 
-    local handle = make("TextButton", {
-        Text = "", BackgroundColor3 = T.text,
-        Size = UDim2.new(0, 12, 0, 12),
-        Position = UDim2.new(pct, -6, 0.5, -6),
-        BorderSizePixel = 0,
-    }, track)
-    make("UICorner", {CornerRadius = UDim.new(1, 0)}, handle)
+    local val = make("TextLabel", {
+        Text = tostring(S[key]) .. suffix, TextSize = 10, TextColor3 = T.text, Font = CurFont,
+        BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0),
+        TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 3,
+    }, bar)
+    table.insert(allTextObjs, {val, "normal"})
 
     local dragging = false
-    handle.MouseButton1Down:Connect(function() dragging = true end)
-    track.MouseButton1Down:Connect(function() dragging = true end)
+    local function set(px)
+        local np  = math.clamp((px - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+        local v   = math.floor(minV + (maxV - minV) * np + 0.5)
+        S[key]    = v
+        fill.Size = UDim2.new(np, 0, 1, 0)
+        val.Text  = tostring(v) .. suffix
+    end
+    bar.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = true; set(i.Position.X) end
+    end)
     UIS.InputEnded:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
     end)
     UIS.InputChanged:Connect(function(i)
-        if not dragging then return end
-        if i.UserInputType ~= Enum.UserInputType.MouseMovement then return end
-        local np  = math.clamp((i.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
-        local val = math.floor(minV + (maxV - minV) * np)
-        S[key]       = val
-        fill.Size     = UDim2.new(np, 0, 1, 0)
-        handle.Position = UDim2.new(np, -6, 0.5, -6)
-        lbl.Text     = label .. ": " .. tostring(val)
+        if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then set(i.Position.X) end
     end)
     return row
 end
 
 local function makeBtn(parent, label, h, cb)
     local btn = make("TextButton", {
-        Text = label, TextSize = 13, TextColor3 = T.text, Font = CurFont,
-        BackgroundColor3 = T.button,
-        Size = UDim2.new(1, 0, 0, h or 28),
+        Text = label, TextSize = 12, TextColor3 = T.text, Font = CurFont,
+        BackgroundColor3 = T.input, Size = UDim2.new(1, 0, 0, h or 22),
         AutoButtonColor = false,
     }, parent)
-    make("UICorner", {CornerRadius = UDim.new(0, 4)}, btn)
+    make("UICorner", {CornerRadius = UDim.new(0, 3)}, btn)
     stroke(btn, T.border)
     table.insert(allTextObjs, {btn, "normal"})
     if cb then btn.MouseButton1Click:Connect(cb) end
     return btn
 end
 
-local function makeLabel(parent, text, size)
+local function makeLabel(parent, text, dim)
     local l = make("TextLabel", {
-        Text = text, TextSize = size or 11, TextColor3 = T.text, Font = CurFont,
-        BackgroundTransparency = 1,
-        Size = UDim2.new(1, 0, 0, 18),
+        Text = text, TextSize = 11, TextColor3 = dim and T.dim or T.text, Font = CurFont,
+        BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 16),
         TextXAlignment = Enum.TextXAlignment.Left,
     }, parent)
-    table.insert(allTextObjs, {l, "normal"})
+    table.insert(allTextObjs, {l, dim and "dim" or "normal"})
     return l
 end
 
 local function makeDD(parent, label, opts, key, cb)
     local con = make("Frame", {
-        BackgroundTransparency = 1,
-        Size = UDim2.new(1, 0, 0, 26),
-        BorderSizePixel = 0,
-        ClipsDescendants = false,
+        BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 38),
+        BorderSizePixel = 0, ClipsDescendants = false,
     }, parent)
 
     local lbl = make("TextLabel", {
-        Text = label, TextSize = 12, TextColor3 = T.text, Font = CurFont,
-        BackgroundTransparency = 1,
-        Size = UDim2.new(0.44, 0, 1, 0),
+        Text = label, TextSize = 11, TextColor3 = T.text, Font = CurFont,
+        BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 14),
         TextXAlignment = Enum.TextXAlignment.Left,
     }, con)
     table.insert(allTextObjs, {lbl, "normal"})
 
     local sel = S[key] or opts[1]
     local mb  = make("TextButton", {
-        Text = sel .. " ▾", TextSize = 11, TextColor3 = T.text, Font = CurFont,
-        BackgroundColor3 = T.button,
-        Size = UDim2.new(0.54, 0, 1, 0),
-        Position = UDim2.new(0.46, 0, 0, 0),
-        AutoButtonColor = false, ClipsDescendants = false,
+        Text = "  " .. sel, TextSize = 11, TextColor3 = T.text, Font = CurFont,
+        BackgroundColor3 = T.input, Size = UDim2.new(1, 0, 0, 18),
+        Position = UDim2.new(0, 0, 0, 17), AutoButtonColor = false,
+        TextXAlignment = Enum.TextXAlignment.Left,
     }, con)
     make("UICorner", {CornerRadius = UDim.new(0, 3)}, mb)
     stroke(mb, T.border)
     table.insert(allTextObjs, {mb, "normal"})
+    local arrow = make("TextLabel", {
+        Text = "v", TextSize = 10, TextColor3 = T.dim, Font = CurFont,
+        BackgroundTransparency = 1, Position = UDim2.new(1, -16, 0, 17),
+        Size = UDim2.new(0, 14, 0, 18),
+    }, con)
+    table.insert(allTextObjs, {arrow, "dim"})
 
     local df = make("Frame", {
-        BackgroundColor3 = T.panel,
-        Size = UDim2.new(0.54, 0, 0, 0),
-        Position = UDim2.new(0.46, 0, 1, 2),
-        BorderSizePixel = 0,
-        Visible = false,
-        ZIndex  = 10,
-        ClipsDescendants = true,
+        BackgroundColor3 = T.card, Size = UDim2.new(1, 0, 0, 0),
+        Position = UDim2.new(0, 0, 0, 36), BorderSizePixel = 0, Visible = false,
+        ZIndex = 20, ClipsDescendants = true,
     }, con)
-    make("UICorner", {CornerRadius = UDim.new(0, 4)}, df)
+    make("UICorner", {CornerRadius = UDim.new(0, 3)}, df)
     stroke(df, T.border)
-
     local ds = make("ScrollingFrame", {
-        BackgroundTransparency = 1, BorderSizePixel = 0,
-        Size = UDim2.new(1, 0, 1, 0),
-        ScrollBarThickness = 2, ScrollBarImageColor3 = T.accent,
+        BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(1, 0, 1, 0),
+        ScrollBarThickness = 2, ScrollBarImageColor3 = T.accent, ZIndex = 20,
         CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
     }, df)
     table.insert(scrollFrames, ds)
     make("UIListLayout", {FillDirection = Enum.FillDirection.Vertical}, ds)
 
     local open = false
-    local function close()
-        open = false; df.Visible = false; df.Size = UDim2.new(0.54, 0, 0, 0)
-    end
-
+    local function close() open = false; df.Visible = false; df.Size = UDim2.new(1, 0, 0, 0) end
     for _, opt in pairs(opts) do
         local ob = make("TextButton", {
-            Text = opt, TextSize = 11, TextColor3 = T.text, Font = CurFont,
-            BackgroundColor3 = T.button,
-            Size = UDim2.new(1, 0, 0, 22), AutoButtonColor = false, ZIndex = 11,
+            Text = "  " .. opt, TextSize = 11, TextColor3 = T.text, Font = CurFont,
+            BackgroundColor3 = T.input, Size = UDim2.new(1, 0, 0, 20),
+            AutoButtonColor = false, ZIndex = 21, TextXAlignment = Enum.TextXAlignment.Left,
         }, ds)
         table.insert(allTextObjs, {ob, "normal"})
         ob.MouseButton1Click:Connect(function()
-            S[key] = opt; mb.Text = opt .. " ▾"; close()
+            S[key] = opt; mb.Text = "  " .. opt; close()
             if cb then cb(opt) end
         end)
     end
-
     mb.MouseButton1Click:Connect(function()
         open = not open
-        if open then
-            local h2 = math.min(#opts * 22, 120)
-            df.Size = UDim2.new(0.54, 0, 0, h2); df.Visible = true
+        if open then df.Size = UDim2.new(1, 0, 0, math.min(#opts * 20, 110)); df.Visible = true
         else close() end
     end)
     return con
@@ -582,28 +523,25 @@ end
 
 -- ── Build Tabs ─────────────────────────────────────────────────────────────
 
--- COMBAT -----------------------------------------------------------------------
+-- COMBAT
 do
-    local p = pages["Combat"]
+    local L, R = pages["Combat"].left, pages["Combat"].right
 
-    local hbGrp = makeGroup(p, "Hitbox")
-    makeCheck(hbGrp, "Extend Hitbox", "ExtendHitbox")
-    makeSlider(hbGrp, "Hitbox Size", "HitboxMultiplier", 1, 20)
-    makeCheck(hbGrp, "Show Hitbox", "ShowHitbox", function(on)
+    local hb = makeGroup(L, "Hitbox")
+    makeCheck(hb, "Extend Hitbox", "ExtendHitbox", nil, true)
+    makeCheck(hb, "Show Hitbox", "ShowHitbox", function(on)
         if not on then
             for _, b in pairs(showHitboxBoxes) do pcall(function() b:Destroy() end) end
             showHitboxBoxes = {}
         end
     end)
-    makeCheck(hbGrp, "M1 Expand", "M1Expand")
-    makeSlider(hbGrp, "M1 Size", "M1Multiplier", 1, 15)
+    makeCheck(hb, "M1 Expand", "M1Expand")
+    makeSlider(hb, "Hitbox Size", "HitboxMultiplier", 1, 20)
+    makeSlider(hb, "M1 Size", "M1Multiplier", 1, 15)
 
-    local ultGrp = makeGroup(p, "Ultimate")
-    makeCheck(ultGrp, "Auto Ult  [V]", "AutoUlt")
-
-    local defGrp = makeGroup(p, "Defense")
-    makeCheck(defGrp, "Inf Block",  "InfBlock")
-    makeCheck(defGrp, "Auto Block", "AutoBlock", function(on)
+    local df = makeGroup(L, "Defense")
+    makeCheck(df, "Inf Block", "InfBlock")
+    makeCheck(df, "Auto Block", "AutoBlock", function(on)
         for _, c in pairs(autoBlockConns) do pcall(function() c:Disconnect() end) end
         autoBlockConns = {}
         if on then
@@ -621,11 +559,13 @@ do
                         local mh = hrp()
                         if not ph or not mh then return end
                         if (ph.Position - mh.Position).Magnitude > 50 then return end
-                        pcall(function()
-                            local vim = game:GetService("VirtualInputManager")
-                            vim:SendKeyEvent(true,  Enum.KeyCode.F, false, game)
-                            task.wait(0.05)
-                            vim:SendKeyEvent(false, Enum.KeyCode.F, false, game)
+                        task.spawn(function()
+                            pcall(function()
+                                local vim = game:GetService("VirtualInputManager")
+                                vim:SendKeyEvent(true,  Enum.KeyCode.F, false, game)
+                                task.wait(0.05)
+                                vim:SendKeyEvent(false, Enum.KeyCode.F, false, game)
+                            end)
                         end)
                     end)
                     table.insert(autoBlockConns, conn)
@@ -638,22 +578,25 @@ do
         end
     end)
 
-    local aimGrp = makeGroup(p, "Aim")
-    makeCheck(aimGrp, "Silent Aim", "SilentAim")
+    local am = makeGroup(R, "Aim")
+    makeCheck(am, "Silent Aim", "SilentAim", nil, true)
 
-    local farmGrp = makeGroup(p, "Farm")
-    makeCheck(farmGrp, "Auto Farm", "AutoFarm")
-    makeSlider(farmGrp, "Farm Range", "AutoFarmRange", 20, 300)
+    local ul = makeGroup(R, "Ultimate")
+    makeCheck(ul, "Auto Ult  [V]", "AutoUlt")
+
+    local fm = makeGroup(R, "Farm")
+    makeCheck(fm, "Auto Farm", "AutoFarm")
+    makeSlider(fm, "Farm Range", "AutoFarmRange", 20, 300)
 end
 
--- PLAYER -----------------------------------------------------------------------
+-- PLAYER
 do
-    local p = pages["Player"]
+    local L, R = pages["Player"].left, pages["Player"].right
 
-    local movGrp = makeGroup(p, "Movement")
-    makeCheck(movGrp, "Fly",        "Fly")
-    makeSlider(movGrp, "Fly Speed", "FlySpeed", 10, 300)
-    makeCheck(movGrp, "Noclip", "Noclip", function(on)
+    local mv = makeGroup(L, "Movement")
+    makeCheck(mv, "Fly", "Fly")
+    makeSlider(mv, "Fly Speed", "FlySpeed", 10, 300)
+    makeCheck(mv, "Noclip", "Noclip", function(on)
         if noclipConn then noclipConn:Disconnect(); noclipConn = nil end
         if on then
             noclipConn = RunService.Stepped:Connect(function()
@@ -671,25 +614,25 @@ do
             end)
         end
     end)
-    makeCheck(movGrp, "Speed Hack",   "SpeedHack")
-    makeSlider(movGrp, "Walk Speed",  "WalkSpeed", 16, 250)
-    makeCheck(movGrp, "Auto Sprint",  "AutoSprint")
+    makeCheck(mv, "Speed Hack", "SpeedHack")
+    makeSlider(mv, "Walk Speed", "WalkSpeed", 16, 250)
+    makeCheck(mv, "Auto Sprint", "AutoSprint")
 
-    local survGrp = makeGroup(p, "Survival")
-    makeCheck(survGrp, "God Mode",         "GodMode")
-    makeCheck(survGrp, "Save System",      "SaveSystem")
-    makeSlider(survGrp, "HP Threshold %",  "SaveThreshold", 1, 99)
-    makeCheck(survGrp, "Instant Respawn",  "InstantRespawn")
-    makeCheck(survGrp, "Invisible",        "Invisible")
+    local sv = makeGroup(R, "Survival")
+    makeCheck(sv, "God Mode", "GodMode")
+    makeCheck(sv, "Save System", "SaveSystem")
+    makeSlider(sv, "HP Threshold", "SaveThreshold", 1, 99, "%")
+    makeCheck(sv, "Instant Respawn", "InstantRespawn")
+    makeCheck(sv, "Invisible", "Invisible")
 end
 
--- VISUALS -----------------------------------------------------------------------
+-- VISUALS
 do
-    local p = pages["Visuals"]
-    local espGrp = makeGroup(p, "ESP")
-    makeCheck(espGrp, "Player ESP", "ESP")
-    local camGrp = makeGroup(p, "Camera")
-    makeCheck(camGrp, "Inf Zoom", "InfZoom", function(on)
+    local L, R = pages["Visuals"].left, pages["Visuals"].right
+    local es = makeGroup(L, "ESP")
+    makeCheck(es, "Player ESP", "ESP")
+    local cm = makeGroup(R, "Camera")
+    makeCheck(cm, "Inf Zoom", "InfZoom", function(on)
         if on then
             origZoom = player.CameraMaxZoomDistance
             player.CameraMaxZoomDistance = 9999
@@ -699,11 +642,11 @@ do
     end)
 end
 
--- MISC -----------------------------------------------------------------------
+-- MISC
 do
-    local p = pages["Misc"]
+    local L, R = pages["Misc"].left, pages["Misc"].right
 
-    local skinGrp = makeGroup(p, "Skins")
+    local sk = makeGroup(L, "Skins")
     local allSkins = {"None",
         "EvolvedGodzillaRemodel/DefaultEvolvedGodzillaRemodel",
         "EvolvedGodzillaRemodel/EvolvedGodzillaRemodelEnergized",
@@ -719,16 +662,16 @@ do
             for _, kaiju in pairs(kf:GetChildren()) do
                 local sf = kaiju:FindFirstChild("Skins")
                 if sf then
-                    for _, sk in pairs(sf:GetChildren()) do
-                        table.insert(built, kaiju.Name .. "/" .. sk.Name)
+                    for _, s2 in pairs(sf:GetChildren()) do
+                        table.insert(built, kaiju.Name .. "/" .. s2.Name)
                     end
                 end
             end
         end
         if #built > 1 then allSkins = built end
     end)
-    makeDD(skinGrp, "Skin", allSkins, "SelectedSkin")
-    makeBtn(skinGrp, "Apply Skin", 26, function()
+    makeDD(sk, "Skin", allSkins, "SelectedSkin")
+    makeBtn(sk, "Apply Skin", 22, function()
         if S.SelectedSkin == "None" then return end
         pcall(function()
             local parts = S.SelectedSkin:split("/")
@@ -737,47 +680,46 @@ do
             local kf = player:FindFirstChild("Kaijus"); if not kf then return end
             local k  = kf:FindFirstChild(kname); if not k then return end
             local sf = k:FindFirstChild("Skins"); if not sf then return end
-            local sk = sf:FindFirstChild(sname); if not sk then return end
-            if sk:IsA("BoolValue") then sk.Value = true
-            elseif sk:IsA("StringValue") then sk.Value = sname end
+            local s3 = sf:FindFirstChild(sname); if not s3 then return end
+            if s3:IsA("BoolValue") then s3.Value = true
+            elseif s3:IsA("StringValue") then s3.Value = sname end
         end)
     end)
 
-    local cdGrp = makeGroup(p, "Cooldown Bypass")
-    makeCheck(cdGrp, "Bypass Cooldowns", "BypassCooldown")
+    local cd = makeGroup(R, "Cooldown")
+    makeCheck(cd, "Bypass Cooldowns", "BypassCooldown")
 end
 
--- TELEPORTS -----------------------------------------------------------------------
+-- TELEPORTS
 do
-    local p = pages["Teleports"]
+    local L, R = pages["Teleports"].left, pages["Teleports"].right
     local MAPS = {"Pit","Village","Abandoned City","Mountain","Final Valley","Desert"}
 
-    local mapGrp = makeGroup(p, "Map Teleport")
-    makeDD(mapGrp, "Map", MAPS, "SelectedMap")
-    makeBtn(mapGrp, "Teleport", 28, function()
+    local mp = makeGroup(L, "Map Teleport")
+    makeDD(mp, "Map", MAPS, "SelectedMap")
+    makeBtn(mp, "Teleport", 22, function()
         pcall(function()
             local r = re(); if not r then return end
             r:FireServer("MapTeleport", S.SelectedMap)
         end)
     end)
 
-    local ptpGrp = makeGroup(p, "Player Teleport")
-    local ptpScroll = make("ScrollingFrame", {
-        BackgroundTransparency = 1, BorderSizePixel = 0,
-        Size = UDim2.new(1, 0, 0, 140),
-        ScrollBarThickness = 3, ScrollBarImageColor3 = T.accent,
+    local pt = makeGroup(R, "Player Teleport")
+    local list = make("ScrollingFrame", {
+        BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 150),
+        ScrollBarThickness = 2, ScrollBarImageColor3 = T.accent,
         CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    }, ptpGrp)
-    table.insert(scrollFrames, ptpScroll)
-    make("UIListLayout", {FillDirection = Enum.FillDirection.Vertical, Padding = UDim.new(0, 3)}, ptpScroll)
+    }, pt)
+    table.insert(scrollFrames, list)
+    make("UIListLayout", {FillDirection = Enum.FillDirection.Vertical, Padding = UDim.new(0, 3)}, list)
 
-    local function rebuildPTP()
-        for _, c in pairs(ptpScroll:GetChildren()) do
+    local function rebuild()
+        for _, c in pairs(list:GetChildren()) do
             if not c:IsA("UIListLayout") then c:Destroy() end
         end
         for _, p2 in pairs(Players:GetPlayers()) do
             if p2 ~= player then
-                makeBtn(ptpScroll, "→ " .. p2.Name, 24, function()
+                makeBtn(list, p2.Name, 20, function()
                     pcall(function()
                         local ph = p2.Character and p2.Character:FindFirstChild("HumanoidRootPart")
                         local mh = hrp()
@@ -787,69 +729,64 @@ do
             end
         end
     end
-    rebuildPTP()
-    Players.PlayerAdded:Connect(rebuildPTP)
-    Players.PlayerRemoving:Connect(rebuildPTP)
-    makeBtn(ptpGrp, "Refresh", 24, rebuildPTP)
+    rebuild()
+    Players.PlayerAdded:Connect(rebuild)
+    Players.PlayerRemoving:Connect(rebuild)
+    makeBtn(pt, "Refresh", 20, rebuild)
 end
 
--- SETTINGS -----------------------------------------------------------------------
+-- SETTINGS
 do
-    local p = pages["Settings"]
+    local L, R = pages["Settings"].left, pages["Settings"].right
 
-    local kbGrp = makeGroup(p, "Keybinds")
-    local kbLbl = makeLabel(kbGrp, "Toggle GUI: RightShift")
-    makeBtn(kbGrp, "Set Toggle Key", 26, function()
+    local kb = makeGroup(L, "Keybinds")
+    local kbLbl = makeLabel(kb, "Toggle GUI: RightShift")
+    makeBtn(kb, "Set Toggle Key", 22, function()
         kbLbl.Text = "Press any key..."
         local conn; conn = UIS.InputBegan:Connect(function(i, gpe)
             if gpe then return end
             if i.UserInputType ~= Enum.UserInputType.Keyboard then return end
-            S.ToggleKey  = i.KeyCode
-            kbLbl.Text   = "Toggle GUI: " .. i.KeyCode.Name
+            S.ToggleKey = i.KeyCode
+            kbLbl.Text  = "Toggle GUI: " .. i.KeyCode.Name
             conn:Disconnect()
         end)
     end)
 
-    local scGrp = makeGroup(p, "Script")
-    makeBtn(scGrp, "Disconnect All", 26, function()
+    local sc = makeGroup(L, "Script")
+    makeBtn(sc, "Disconnect All", 22, function()
         for _, c in pairs(Connections) do pcall(function() c:Disconnect() end) end
         for _, c in pairs(autoBlockConns) do pcall(function() c:Disconnect() end) end
         if noclipConn then pcall(function() noclipConn:Disconnect() end) end
         Connections, autoBlockConns, noclipConn = {}, {}, nil
     end)
-    makeBtn(scGrp, "Close Hub", 26, function() gui:Destroy() end)
+    makeBtn(sc, "Close Hub", 22, function() gui:Destroy() end)
 
-    local hubGrp = makeGroup(p, "Hub Appearance")
-
-    -- Accent color swatches
-    makeLabel(hubGrp, "Accent Color")
+    local hub = makeGroup(R, "Hub Appearance")
+    makeLabel(hub, "Accent Color")
     local colorRow = make("Frame", {
-        BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 22), BorderSizePixel = 0,
-    }, hubGrp)
+        BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 20), BorderSizePixel = 0,
+    }, hub)
     make("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 4)}, colorRow)
     for _, col in pairs(ACCENT_PRESETS) do
         local sw = make("TextButton", {
-            Text = "", BackgroundColor3 = col,
-            Size = UDim2.new(0, 18, 0, 18), AutoButtonColor = false,
+            Text = "", BackgroundColor3 = col, Size = UDim2.new(0, 18, 0, 18), AutoButtonColor = false,
         }, colorRow)
         make("UICorner", {CornerRadius = UDim.new(0, 3)}, sw)
         sw.MouseButton1Click:Connect(function() T.accent = col; refreshTheme() end)
     end
 
-    -- Font picker
-    makeLabel(hubGrp, "Font")
+    makeLabel(hub, "Font")
     local fontRow = make("Frame", {
-        BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 28), BorderSizePixel = 0,
-    }, hubGrp)
+        BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 22), BorderSizePixel = 0,
+    }, hub)
     make("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 3)}, fontRow)
     for i, fnt in pairs(FONTS) do
         local fb = make("TextButton", {
-            Text = FONT_NAMES[i], TextSize = 10, TextColor3 = T.text, Font = fnt,
-            BackgroundColor3 = T.button, Size = UDim2.new(0, 70, 0, 24), AutoButtonColor = false,
+            Text = FONT_NAMES[i], TextSize = 9, TextColor3 = T.text, Font = fnt,
+            BackgroundColor3 = T.input, Size = UDim2.new(0, 60, 0, 20), AutoButtonColor = false,
         }, fontRow)
         make("UICorner", {CornerRadius = UDim.new(0, 3)}, fb)
         stroke(fb, T.border)
-        table.insert(allTextObjs, {fb, "normal"})
         fb.MouseButton1Click:Connect(function()
             CurFont = fnt
             for _, obj in pairs(gui:GetDescendants()) do
@@ -859,13 +796,11 @@ do
             end
         end)
     end
-
-    makeLabel(hubGrp, "Drag title bar to move")
 end
 
 -- ── Feature Loops ──────────────────────────────────────────────────────────
 
--- Extend Hitbox: fires only on real M1 click, all attack slots
+-- Extend Hitbox / M1 Expand / Silent Aim: fire only on real M1 click
 table.insert(Connections, UIS.InputBegan:Connect(function(i, gpe)
     if gpe then return end
     if i.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
@@ -878,7 +813,6 @@ table.insert(Connections, UIS.InputBegan:Connect(function(i, gpe)
             for n = 1, 3 do r:FireServer("Lc"..n.."Hitbox",    m) end
         end)
     end
-
     if S.M1Expand then
         pcall(function()
             local r = re(); if not r then return end
@@ -886,7 +820,6 @@ table.insert(Connections, UIS.InputBegan:Connect(function(i, gpe)
             r:FireServer("Attack2Hitbox", S.M1Multiplier)
         end)
     end
-
     if S.SilentAim then
         pcall(function()
             local tgt = nearest(300); if not tgt then return end
@@ -898,7 +831,6 @@ table.insert(Connections, UIS.InputBegan:Connect(function(i, gpe)
     end
 end))
 
--- Invisible helper
 local function doInvisible(state)
     pcall(function()
         local c = chr(); if not c then return end
@@ -918,10 +850,8 @@ local function doInvisible(state)
     end)
 end
 
--- Main Heartbeat
 table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
 
-    -- Speed hack with restore on toggle-off
     if S.SpeedHack ~= speedStateLast then
         speedStateLast = S.SpeedHack
         local h = hum()
@@ -936,7 +866,6 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         pcall(function() local h = hum(); if h then h.WalkSpeed = S.WalkSpeed end end)
     end
 
-    -- God mode
     if S.GodMode ~= godStateLast then
         godStateLast = S.GodMode
         local h = hum()
@@ -955,13 +884,11 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         pcall(function() local h = hum(); if h then h.Health = math.huge end end)
     end
 
-    -- Invisible
     if S.Invisible ~= invisStateLast then
         invisStateLast = S.Invisible
         doInvisible(S.Invisible)
     end
 
-    -- Fly (CFrame-based, WASD + Space/Ctrl)
     if S.Fly then
         pcall(function()
             local mh = hrp(); local h = hum()
@@ -982,7 +909,6 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end)
     end
 
-    -- Auto Sprint
     if S.AutoSprint then
         pcall(function()
             local vim = game:GetService("VirtualInputManager")
@@ -990,12 +916,10 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end)
     end
 
-    -- Inf Block
     if S.InfBlock then
         pcall(function() local r = re(); if r then r:FireServer("InfBlock") end end)
     end
 
-    -- Auto Ult (V key every 2s)
     if S.AutoUlt then
         ultClock = ultClock + dt
         if ultClock >= 2 then
@@ -1013,7 +937,6 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         ultClock = 0
     end
 
-    -- Auto Farm
     if S.AutoFarm then
         farmClock = farmClock + dt
         if farmClock >= 0.4 then
@@ -1030,7 +953,6 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end
     end
 
-    -- Cooldown bypass (zero numeric values named with cooldown keywords)
     if S.BypassCooldown then
         cdClock = cdClock + dt
         if cdClock >= 0.25 then
@@ -1059,7 +981,6 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end
     end
 
-    -- Instant Respawn
     if S.InstantRespawn then
         local h = hum()
         if h and h.Health <= 0 then
@@ -1067,7 +988,6 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end
     end
 
-    -- Save System
     if S.SaveSystem then
         local h = hum()
         if h and h.MaxHealth > 0 then
@@ -1077,7 +997,6 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end
     end
 
-    -- Show Hitbox (event-driven)
     if S.ShowHitbox ~= showHitboxLast then
         showHitboxLast = S.ShowHitbox
         if not S.ShowHitbox then
@@ -1089,12 +1008,12 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
                     local root = p2.Character:FindFirstChild("HumanoidRootPart")
                     if root then
                         local box = Instance.new("SelectionBox")
-                        box.Adornee          = root
-                        box.Color3           = T.accent
-                        box.LineThickness     = 0.05
+                        box.Adornee            = root
+                        box.Color3             = T.accent
+                        box.LineThickness      = 0.05
                         box.SurfaceTransparency = 0.7
-                        box.SurfaceColor3    = T.accent
-                        box.Parent           = gui
+                        box.SurfaceColor3      = T.accent
+                        box.Parent             = gui
                         table.insert(showHitboxBoxes, box)
                     end
                 end
@@ -1102,12 +1021,10 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end
     end
 
-    -- ESP
     if S.ESP then
         espClock = espClock + dt
         if espClock >= 0.5 then
             espClock = 0
-            -- remove stale
             for name, data in pairs(espBoxes) do
                 if not Players:FindFirstChild(name) then
                     pcall(function() data.bill:Destroy() end)
@@ -1142,7 +1059,6 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end
     end
 
-    -- Auto Block proximity panic (supplement to anim hooks)
     if S.AutoBlock then
         local mh = hrp(); if not mh then return end
         for _, p2 in pairs(Players:GetPlayers()) do
@@ -1188,7 +1104,7 @@ end
 minBtn.MouseButton1Click:Connect(function()
     S.Minimized = not S.Minimized
     content.Visible = not S.Minimized
-    main.Size = S.Minimized and UDim2.new(0, WIN_W, 0, 30) or UDim2.new(0, WIN_W, 0, WIN_H)
+    main.Size = S.Minimized and UDim2.new(0, WIN_W, 0, TITLE_H) or UDim2.new(0, WIN_W, 0, WIN_H)
 end)
 closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
 
@@ -1202,4 +1118,4 @@ end))
 setTab("Combat")
 refreshTheme()
 
-print("[Money/Free Hub] v2.0 | Toggle: " .. S.ToggleKey.Name)
+print("[Money/Free Hub] v3.0 | Toggle: " .. S.ToggleKey.Name)
