@@ -1,4 +1,4 @@
--- Money/Free Hub | Age of Titans | v4.0
+-- Money/Free Hub | Age of Titans | v4.1
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -33,7 +33,7 @@ local S = {
     ShowHitbox     = false,
     M1Expand       = false, M1Size         = 8,
     ShowExpand     = false,
-    InfBlock       = false, AutoBlock      = false,
+    InfBlock       = false,
     AutoUlt        = false,
     AutoFarm       = false, AutoFarmRange  = 80,
     AutoPlay       = false, AutoPlayRange  = 100,
@@ -72,19 +72,17 @@ local farmClock, kauraClk, cdClock        = 0, 0, 0
 local autoPlayClock                        = 0
 local infBarClock, noStunClock, noclipClock = 0, 0, 0
 local espClock, fbClock, hnClock           = 0, 0, 0
-local blockHoldEnd, blockWasHeld           = 0, false
 local respawnClock                         = 0
 local saveActive, saveClock, savePos       = false, 0, Vector3.zero
 local espBoxes, showHitboxBoxes            = {}, {}
 local showHitboxLast                       = false
-local autoBlockConns                       = {}
 local origZoom                             = nil
 local Connections                          = {}
 local flyStateLast, noclipLast             = false, false
 local spinAngle                            = 0
 local expandPart, expandBox                = nil, nil
-local AB_KEYS      = {"Attack1","Attack2","Attack3","Attack4","Attack5","Lc1","Lc2","Lc3"}
-local AB_HOLD_TIME = 2.0
+local infBlockActive    = false
+local infBlockResendClk = 0
 
 -- ── Helpers ────────────────────────────────────────────────────────────────────
 local function chr() return player.Character end
@@ -144,8 +142,6 @@ local function nearestTargetRoot(maxD)
     end
     return best
 end
-local function pressBlockFor(t) blockHoldEnd=math.max(blockHoldEnd,tick()+t) end
-
 -- ── Fly ───────────────────────────────────────────────────────────────────────
 local function startFly()
     pcall(function()
@@ -155,44 +151,20 @@ local function startFly()
 end
 local function stopFly() end
 
--- ── Block (multi-method: VIM + remote tries + attribute override) ─────────────
+-- ── Block (Inf Block only — VIM sent ONCE on enable, attribute override every frame) ─────────
 local function vimKey(down, key)
     pcall(function() game:GetService("VirtualInputManager"):SendKeyEvent(down,key,false,game) end)
 end
 local function blockStop()
     local r=re(); if r then pcall(function() r:FireServer("BlockStop") end) end
 end
-local function tryBlock()
-    vimKey(true, Enum.KeyCode.F)
-    local r=re()
-    if r then
-        for _,name in ipairs({"Block","BlockStart","StartBlock","Guard","GuardStart","BlockActivate","Defend","DefendStart"}) do
-            pcall(function() r:FireServer(name) end)
-        end
-    end
+local function setBlockAttribs(state)
     pcall(function()
         local c=chr(); if not c then return end
         for _,a in ipairs({"Blocking","Block","IsBlocking","Guard","Guarding","Parry","Defending"}) do
-            if c:GetAttribute(a)~=nil then c:SetAttribute(a,true) end
+            if c:GetAttribute(a)~=nil then c:SetAttribute(a,state) end
             local bv=c:FindFirstChild(a)
-            if bv and bv:IsA("BoolValue") then bv.Value=true end
-        end
-    end)
-end
-local function tryUnblock()
-    vimKey(false, Enum.KeyCode.F)
-    local r=re()
-    if r then
-        for _,name in ipairs({"BlockStop","StopBlock","GuardStop","StopGuard","UnBlock","DefendStop"}) do
-            pcall(function() r:FireServer(name) end)
-        end
-    end
-    pcall(function()
-        local c=chr(); if not c then return end
-        for _,a in ipairs({"Blocking","Block","IsBlocking","Guard","Guarding","Parry","Defending"}) do
-            if c:GetAttribute(a)~=nil then c:SetAttribute(a,false) end
-            local bv=c:FindFirstChild(a)
-            if bv and bv:IsA("BoolValue") then bv.Value=false end
+            if bv and bv:IsA("BoolValue") then bv.Value=state end
         end
     end)
 end
@@ -308,7 +280,7 @@ corner(main,8)
 local titleBar = make("Frame",{Size=UDim2.new(1,0,0,TITLE_H),BackgroundColor3=T.title,BorderSizePixel=0},main)
 make("Frame",{Size=UDim2.new(1,0,0,2),Position=UDim2.new(0,0,1,-2),BackgroundColor3=T.accent,BorderSizePixel=0},titleBar)
 make("TextLabel",{
-    Text="MONEY/FREE HUB  |  AGE OF TITANS  |  v4.0",
+    Text="MONEY/FREE HUB  |  AGE OF TITANS  |  v4.1",
     TextSize=11, TextColor3=T.text, Font=Enum.Font.GothamBold,
     BackgroundTransparency=1, Position=UDim2.new(0,10,0,0), Size=UDim2.new(1,-60,1,0),
     TextXAlignment=Enum.TextXAlignment.Left,
@@ -493,40 +465,6 @@ local function destroyExpandVisual()
     if expandPart then pcall(function() expandPart:Destroy() end); expandPart=nil end
 end
 
--- ── Auto Block wiring ─────────────────────────────────────────────────────────
-local function hookAutoBlockPlayer(p2)
-    if p2==player then return end
-    local function wire(kbFolder)
-        for _,keyName in pairs(AB_KEYS) do
-            local kv=kbFolder:FindFirstChild(keyName)
-            if kv then
-                local conn=kv.Changed:Connect(function()
-                    if not S.AutoBlock then return end
-                    local ph=p2.Character and (p2.Character:FindFirstChild("HumanoidRootPart") or p2.Character.PrimaryPart)
-                    local mh=hrp()
-                    if ph and mh and (ph.Position-mh.Position).Magnitude<120 then pressBlockFor(AB_HOLD_TIME) end
-                end)
-                table.insert(autoBlockConns,conn)
-            end
-        end
-    end
-    local kb=p2:FindFirstChild("Keybinds"); if kb then wire(kb) end
-    local ac=p2.ChildAdded:Connect(function(ch)
-        if ch.Name=="Keybinds" then task.defer(function() wire(ch) end) end
-    end)
-    table.insert(autoBlockConns,ac)
-end
-local function startAutoBlock()
-    for _,c in pairs(autoBlockConns) do pcall(function() c:Disconnect() end) end
-    autoBlockConns={}
-    for _,p2 in pairs(Players:GetPlayers()) do hookAutoBlockPlayer(p2) end
-    table.insert(autoBlockConns,Players.PlayerAdded:Connect(hookAutoBlockPlayer))
-end
-local function stopAutoBlock()
-    for _,c in pairs(autoBlockConns) do pcall(function() c:Disconnect() end) end
-    autoBlockConns={}; blockHoldEnd=0
-end
-
 -- ── Misc helpers ──────────────────────────────────────────────────────────────
 local function applyFullbright()
     pcall(function()
@@ -602,7 +540,6 @@ do
     makeCheck(g1,"Bypass Cooldown","BypassCooldown")
     local g2 = makeGroup(R,"Defense / Auto")
     makeCheck(g2,"Infinite Block","InfBlock")
-    makeCheck(g2,"Auto Block","AutoBlock",function(on) if on then startAutoBlock() else stopAutoBlock() end end)
     makeCheck(g2,"Auto Ultimate","AutoUlt")
     makeCheck(g2,"Auto Play","AutoPlay")
     makeSlider(g2,"Auto Play Range","AutoPlayRange",20,300)
@@ -706,10 +643,12 @@ do
     end)
     local g2 = makeGroup(L,"Script")
     makeBtn(g2,"Disconnect All",22,function()
-        for _,c in pairs(Connections)    do pcall(function() c:Disconnect() end) end
-        for _,c in pairs(autoBlockConns) do pcall(function() c:Disconnect() end) end
+        for _,c in pairs(Connections) do pcall(function() c:Disconnect() end) end
         stopFly(); destroyExpandVisual()
-        Connections,autoBlockConns={},{};S.Fly,S.Noclip=false,false
+        Connections={};S.Fly,S.Noclip=false,false
+        if infBlockActive then
+            infBlockActive=false; vimKey(false,Enum.KeyCode.F); blockStop()
+        end
     end)
     makeBtn(g2,"Close Hub",22,function() destroyExpandVisual();gui:Destroy() end)
     local g3 = makeGroup(R,"Accent Color")
@@ -859,11 +798,16 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
             local c=chr(); if not c then return end
             local mh=hrp(); if not mh then return end
             local cam=workspace.CurrentCamera.CFrame
+            -- Flatten look/right to horizontal so W/A/S/D never drifts vertically
+            local fwd = Vector3.new(cam.LookVector.X, 0, cam.LookVector.Z)
+            if fwd.Magnitude > 0.01 then fwd = fwd.Unit end
+            local rgt = Vector3.new(cam.RightVector.X, 0, cam.RightVector.Z)
+            if rgt.Magnitude > 0.01 then rgt = rgt.Unit end
             local dir=Vector3.zero
-            if UIS:IsKeyDown(Enum.KeyCode.W)           then dir=dir+cam.LookVector  end
-            if UIS:IsKeyDown(Enum.KeyCode.S)           then dir=dir-cam.LookVector  end
-            if UIS:IsKeyDown(Enum.KeyCode.A)           then dir=dir-cam.RightVector end
-            if UIS:IsKeyDown(Enum.KeyCode.D)           then dir=dir+cam.RightVector end
+            if UIS:IsKeyDown(Enum.KeyCode.W)           then dir=dir+fwd end
+            if UIS:IsKeyDown(Enum.KeyCode.S)           then dir=dir-fwd end
+            if UIS:IsKeyDown(Enum.KeyCode.A)           then dir=dir-rgt end
+            if UIS:IsKeyDown(Enum.KeyCode.D)           then dir=dir+rgt end
             if UIS:IsKeyDown(Enum.KeyCode.Space)       then dir=dir+Vector3.new(0,1,0) end
             if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then dir=dir-Vector3.new(0,1,0) end
             mh.AssemblyLinearVelocity=Vector3.zero; mh.AssemblyAngularVelocity=Vector3.zero
@@ -916,11 +860,38 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end)
     end
 
-    -- Block manager (Inf Block + Auto Block)
+    -- Inf Block manager (VIM sent once, attributes held every frame)
     do
-        local want = S.InfBlock or (S.AutoBlock and tick()<blockHoldEnd)
-        if want then tryBlock(); blockWasHeld=true
-        elseif blockWasHeld then blockWasHeld=false;tryUnblock();blockStop() end
+        if S.InfBlock then
+            if not infBlockActive then
+                -- First frame: send key down once + fire start remotes once
+                infBlockActive = true
+                infBlockResendClk = 0
+                vimKey(true, Enum.KeyCode.F)
+                local r=re()
+                if r then
+                    for _,name in ipairs({"Block","BlockStart","StartBlock","Guard","GuardStart"}) do
+                        pcall(function() r:FireServer(name) end)
+                    end
+                end
+            else
+                -- Re-send VIM key hold every 0.6s (not every frame — prevents toggle spam)
+                infBlockResendClk = infBlockResendClk + dt
+                if infBlockResendClk >= 0.6 then
+                    infBlockResendClk = 0
+                    vimKey(true, Enum.KeyCode.F)
+                end
+            end
+            -- Attribute override every frame (safe — not a toggle)
+            setBlockAttribs(true)
+        elseif infBlockActive then
+            -- Just turned off
+            infBlockActive = false
+            infBlockResendClk = 0
+            vimKey(false, Enum.KeyCode.F)
+            setBlockAttribs(false)
+            blockStop()
+        end
     end
 
     -- Auto Ult
@@ -947,18 +918,17 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
     -- Kill Aura
     if S.KillAura then
         kauraClk=kauraClk+dt
-        if kauraClk>=0.25 then
+        if kauraClk>=0.15 then
             kauraClk=0
             pcall(function()
                 local tgt=nearestTargetRoot(S.KillAuraRange); if not tgt then return end
                 local mh=hrp(); if not mh then return end
                 local diff=tgt.Position-mh.Position
-                if diff.Magnitude>10 then
-                    local snap=tgt.Position-diff.Unit*6+Vector3.new(0,2,0)
-                    local c=chr()
-                    if c and c.PrimaryPart then c:SetPrimaryPartCFrame(CFrame.new(snap))
-                    else mh.CFrame=CFrame.new(snap) end
-                end
+                -- Always snap close so attacks land
+                local snap=tgt.Position-(diff.Magnitude>0.1 and diff.Unit or Vector3.new(0,0,1))*5+Vector3.new(0,2,0)
+                local c=chr()
+                if c and c.PrimaryPart then c:SetPrimaryPartCFrame(CFrame.new(snap))
+                else mh.CFrame=CFrame.new(snap) end
                 local r=re(); if not r then return end
                 for n=1,5 do
                     pcall(function() r:FireServer("Attack"..n,ATTACK_VALS[n] or 4.4666666984558105) end)
@@ -1213,4 +1183,4 @@ end))
 
 -- ── Init ──────────────────────────────────────────────────────────────────────
 setTab("Combat")
-print("[Money/Free Hub] v4.0 | Toggle: "..S.ToggleKey.Name)
+print("[Money/Free Hub] v4.1 | Toggle: "..S.ToggleKey.Name)
