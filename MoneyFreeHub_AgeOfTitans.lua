@@ -1,4 +1,4 @@
--- Money/Free Hub | Age of Titans | v3.4
+-- Money/Free Hub | Age of Titans | v3.5
 
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
@@ -96,6 +96,7 @@ local godStateLast    = false
 local invisOrigTrans  = {}
 local invisStateLast  = false
 local ultClock        = 0
+local ultWasFull      = false  -- debounce: only press V on the rising edge of "full"
 local farmClock       = 0
 local cdClock         = 0
 local espClock        = 0
@@ -244,6 +245,61 @@ local function ensureLoggerHook()
     end)
     loggerInstalled = true
     return true
+end
+
+-- Detect when the ultimate bar is full so Auto Ult only presses V then.
+-- Looks at (1) number attributes, (2) NumberValue/IntValue with a Max sibling,
+-- (3) a fill bar in PlayerGui — whichever exists, matched by name keyword.
+local ULT_KEYS = {"ult","charge","energy","special","rage","meter","super","mana","fury"}
+local function nameMatchesUlt(n)
+    n = tostring(n):lower()
+    for _, k in ipairs(ULT_KEYS) do if n:find(k) then return true end end
+    return false
+end
+local function ultIsFull()
+    for _, root in ipairs({chr(), player}) do
+        if root then
+            -- (1) attributes
+            local hit = false
+            pcall(function()
+                for attr, v in pairs(root:GetAttributes()) do
+                    if type(v) == "number" and nameMatchesUlt(attr) then
+                        local maxV = root:GetAttribute("Max"..attr) or root:GetAttribute(attr.."Max")
+                        if type(maxV) == "number" and maxV > 0 and v >= maxV - 0.01 then hit = true end
+                    end
+                end
+            end)
+            if hit then return true end
+            -- (2) value objects with a Max sibling
+            for _, d in ipairs(root:GetDescendants()) do
+                if (d:IsA("NumberValue") or d:IsA("IntValue")) and nameMatchesUlt(d.Name) then
+                    local p = d.Parent
+                    local m = p and (p:FindFirstChild("Max"..d.Name) or p:FindFirstChild(d.Name.."Max") or p:FindFirstChild("Max"))
+                    if m and (m:IsA("NumberValue") or m:IsA("IntValue")) and m.Value > 0 and d.Value >= m.Value - 0.01 then
+                        return true
+                    end
+                end
+            end
+        end
+    end
+    -- (3) GUI fill bar
+    local pg = player:FindFirstChild("PlayerGui")
+    if pg then
+        for _, d in ipairs(pg:GetDescendants()) do
+            if d:IsA("Frame") and nameMatchesUlt(d.Name) and d.AbsoluteSize.X > 0 then
+                for _, c in ipairs(d:GetDescendants()) do
+                    if c:IsA("Frame") and c.AbsoluteSize.X > 0 then
+                        local cn = c.Name:lower()
+                        if (cn:find("fill") or cn:find("bar") or cn:find("progress"))
+                           and c.AbsoluteSize.X / d.AbsoluteSize.X >= 0.95 then
+                            return true
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return false
 end
 
 -- ── GUI root ───────────────────────────────────────────────────────────────
@@ -1035,22 +1091,30 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end
     end
 
-    -- Auto Ult
+    -- Auto Ult: press V only on the moment the ult bar becomes full
     if S.AutoUlt then
         ultClock = ultClock + dt
-        if ultClock >= 2 then
+        if ultClock >= 0.3 then
             ultClock = 0
-            task.spawn(function()
-                pcall(function()
-                    local vim = game:GetService("VirtualInputManager")
-                    vim:SendKeyEvent(true,  Enum.KeyCode.V, false, game)
-                    task.wait(0.1)
-                    vim:SendKeyEvent(false, Enum.KeyCode.V, false, game)
+            local full = false
+            pcall(function() full = ultIsFull() end)
+            if full and not ultWasFull then
+                ultWasFull = true
+                task.spawn(function()
+                    pcall(function()
+                        local vim = game:GetService("VirtualInputManager")
+                        vim:SendKeyEvent(true,  Enum.KeyCode.V, false, game)
+                        task.wait(0.1)
+                        vim:SendKeyEvent(false, Enum.KeyCode.V, false, game)
+                    end)
                 end)
-            end)
+            elseif not full then
+                ultWasFull = false
+            end
         end
     else
-        ultClock = 0
+        ultClock   = 0
+        ultWasFull = false
     end
 
     -- Auto Farm: TP behind target, extend hitboxes, swing M1
@@ -1251,4 +1315,4 @@ end))
 setTab("Combat")
 refreshTheme()
 
-print("[Money/Free Hub] v3.4 | Toggle: " .. S.ToggleKey.Name)
+print("[Money/Free Hub] v3.5 | Toggle: " .. S.ToggleKey.Name)
