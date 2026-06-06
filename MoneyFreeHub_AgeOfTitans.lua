@@ -1,4 +1,4 @@
--- Money/Free Hub | Age of Titans | v3.3
+-- Money/Free Hub | Age of Titans | v3.4
 
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
@@ -84,6 +84,7 @@ local S = {
     ESP              = false,
     InfZoom          = false,
     BypassCooldown   = false,
+    RemoteLogger     = false,
     Minimized        = false,
     ToggleKey        = Enum.KeyCode.RightShift,
 }
@@ -98,9 +99,8 @@ local ultClock        = 0
 local farmClock       = 0
 local cdClock         = 0
 local espClock        = 0
-local blockClock      = 0      -- inf-block re-assert timer
-local infBlockLast    = false
-local blockHoldEnd    = 0      -- tick() deadline: hold F until this time
+local blockClock      = 0      -- block re-assert timer
+local blockHoldEnd    = 0      -- tick() deadline: keep blocking until this time
 local blockHolding    = false  -- whether we currently have F held down
 local respawnClock    = 0
 local saveActive      = false
@@ -116,6 +116,9 @@ local flyBV           = nil    -- BodyVelocity used for Fly
 local flyBG           = nil    -- BodyGyro used to keep Fly stable (no spin)
 local flyStateLast    = false
 local noclipLast      = false
+local loggerInstalled = false
+local loggerActive    = false
+local loggerSeen      = {}
 
 -- Attack key names stored on enemy Player objects (player.Keybinds.Attack1 etc.)
 local AB_KEYS = {"Attack1","Attack2","Attack3","Attack4","Attack5","Lc1","Lc2","Lc3"}
@@ -188,6 +191,59 @@ local function stopFly()
     if h then pcall(function() h.PlatformStand = false end) end
     if flyBV then pcall(function() flyBV:Destroy() end); flyBV = nil end
     if flyBG then pcall(function() flyBG:Destroy() end); flyBG = nil end
+end
+
+-- Blocking is remote-driven in this game (you gave me the "BlockStop" remote).
+-- We fire the block-START remote AND hold F, so it works whether block is
+-- remote- or key-driven. Once the Remote Logger reveals the exact start remote,
+-- trim BLOCK_START down to that one name.
+local BLOCK_START = {"Block", "BlockStart", "StartBlock", "Blocking"}
+local function blockKey(down)
+    pcall(function()
+        local vim = game:GetService("VirtualInputManager")
+        vim:SendKeyEvent(down, Enum.KeyCode.F, false, game)
+    end)
+end
+local function blockEngage()
+    blockKey(true)
+    local r = re()
+    if r then for _, n in ipairs(BLOCK_START) do pcall(function() r:FireServer(n) end) end end
+end
+local function blockRelease()
+    blockKey(false)
+    local r = re(); if r then pcall(function() r:FireServer("BlockStop") end) end
+end
+
+-- Remote Logger: prints every RemoteEvent/Function the game fires so you can
+-- find the exact remote for block, cooldowns, etc. Needs an executor with
+-- hookmetamethod (Synapse / Script-Ware / Wave / Delta / etc.).
+local function ensureLoggerHook()
+    if loggerInstalled then return true end
+    if not (hookmetamethod and getnamecallmethod) then
+        warn("[Money/Free Hub] Remote Logger needs an executor with hookmetamethod.")
+        return false
+    end
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+        if loggerActive then
+            local ok, method = pcall(getnamecallmethod)
+            if ok and (method == "FireServer" or method == "InvokeServer") then
+                local args  = {...}
+                local parts = {}
+                for _, a in ipairs(args) do parts[#parts + 1] = tostring(a) end
+                local full = "?"; pcall(function() full = self:GetFullName() end)
+                local sig  = full .. "|" .. (parts[1] or "")
+                local now  = tick()
+                if not loggerSeen[sig] or now - loggerSeen[sig] > 2 then
+                    loggerSeen[sig] = now
+                    print(("[Hub][Remote] %s :%s(%s)"):format(full, method, table.concat(parts, ", ")))
+                end
+            end
+        end
+        return oldNamecall(self, ...)
+    end)
+    loggerInstalled = true
+    return true
 end
 
 -- ── GUI root ───────────────────────────────────────────────────────────────
@@ -613,15 +669,7 @@ end
 local function stopAutoBlock()
     for _, c in pairs(autoBlockConns) do pcall(function() c:Disconnect() end) end
     autoBlockConns = {}
-    -- Release F if we were holding it
-    if blockHolding then
-        blockHolding  = false
-        blockHoldEnd  = 0
-        pcall(function()
-            local vim = game:GetService("VirtualInputManager")
-            vim:SendKeyEvent(false, Enum.KeyCode.F, false, game)
-        end)
-    end
+    blockHoldEnd = 0   -- the block manager releases F on the next frame
 end
 
 -- ── Build tabs ─────────────────────────────────────────────────────────────
@@ -702,6 +750,22 @@ do
     local L, R = pages["Misc"].left, pages["Misc"].right
     local cd = makeGroup(L, "Cooldown")
     makeCheck(cd, "Bypass Cooldowns", "BypassCooldown")
+
+    local dbg = makeGroup(R, "Debug")
+    makeCheck(dbg, "Remote Logger", "RemoteLogger", function(on)
+        if on then
+            if ensureLoggerHook() then
+                loggerActive = true
+                print("[Money/Free Hub] Remote Logger ON. Press F (block), attack, use a cooldown -- copy the printed lines.")
+            else
+                S.RemoteLogger = false
+            end
+        else
+            loggerActive = false
+        end
+    end)
+    makeLabel(dbg, "Logs every remote the game fires", true)
+    makeLabel(dbg, "to the console (F9 / executor).", true)
 end
 
 -- TELEPORTS
@@ -951,48 +1015,23 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end)
     end
 
-    -- Inf Block: re-assert F hold every 0.2s; release + BlockStop when toggled off
-    if S.InfBlock then
-        infBlockLast = true
-        blockClock   = blockClock + dt
-        if blockClock >= 0.2 then
-            blockClock = 0
-            pcall(function()
-                local vim = game:GetService("VirtualInputManager")
-                vim:SendKeyEvent(true, Enum.KeyCode.F, false, game)
-            end)
-        end
-    elseif infBlockLast then
-        infBlockLast = false
-        blockClock   = 0
-        pcall(function()
-            local vim = game:GetService("VirtualInputManager")
-            vim:SendKeyEvent(false, Enum.KeyCode.F, false, game)
-            local r = re(); if r then r:FireServer("BlockStop") end
-        end)
-    end
-
-    -- Auto Block: hold F down while blockHoldEnd deadline is in the future
-    -- (blockHoldEnd is set by pressBlockFor() when a Keybinds attack fires)
-    if S.AutoBlock and not S.InfBlock then
-        local now = tick()
-        if now < blockHoldEnd then
+    -- Block manager: Inf Block (always) and Auto Block (while its 4.5s deadline
+    -- is live) both feed into this. Engages via remote + F, re-asserts every
+    -- 0.4s, releases + fires BlockStop when nothing wants to block.
+    do
+        local want = S.InfBlock or (S.AutoBlock and tick() < blockHoldEnd)
+        if want then
             if not blockHolding then
                 blockHolding = true
-                pcall(function()
-                    local vim = game:GetService("VirtualInputManager")
-                    vim:SendKeyEvent(true, Enum.KeyCode.F, false, game)
-                end)
+                blockClock   = 0
+                blockEngage()
+            else
+                blockClock = blockClock + dt
+                if blockClock >= 0.4 then blockClock = 0; blockEngage() end
             end
-        else
-            if blockHolding then
-                blockHolding = false
-                pcall(function()
-                    local vim = game:GetService("VirtualInputManager")
-                    vim:SendKeyEvent(false, Enum.KeyCode.F, false, game)
-                    local r = re(); if r then r:FireServer("BlockStop") end
-                end)
-            end
+        elseif blockHolding then
+            blockHolding = false
+            blockRelease()
         end
     end
 
@@ -1212,4 +1251,4 @@ end))
 setTab("Combat")
 refreshTheme()
 
-print("[Money/Free Hub] v3.3 | Toggle: " .. S.ToggleKey.Name)
+print("[Money/Free Hub] v3.4 | Toggle: " .. S.ToggleKey.Name)
