@@ -37,7 +37,13 @@ local States = {
 	InfZoom = false,
 
 	AutoFarm = false,
+	AutoFarmRange = 80,
 	SelectedSkin = "None",
+
+	BypassCooldown = false,
+	SelectedMap = "Pit",
+	InfXP = false,
+	InfXPSpeed = 5,
 
 	ScriptEnabled = true,
 	Minimized = false,
@@ -49,6 +55,12 @@ local HitboxVisuals = {}
 local FlyBody = { velocity = nil, gyro = nil }
 local SavedPosition = nil
 local IsSaving = false
+local OriginalMaxHealth = nil
+local AutoBlockConnections = {}
+local AutoBlockHolding = false
+local InvisibleSeat = nil
+local InvisibleClone = nil
+local LastTeleportFire = 0
 
 local function make(className, props, parent)
 	local obj = Instance.new(className)
@@ -678,12 +690,140 @@ makeButton(extraGroup, "Copy Game ID", 92, function()
 	end)
 end)
 
+local xpGroup = makeGroup("INF XP / Farm", UDim2.new(0, 0, 0, 138), UDim2.new(0, 284, 0, 130), miscPage)
+makeCheckbox(xpGroup, "INF XP (Spam Attacks)", 28, "InfXP")
+makeValueSlider(xpGroup, "Fire Rate (per sec)", 54, 1, 30, 5, "InfXPSpeed")
+makeLabel("[Spams M1+attack remotes]", UDim2.new(1, -16, 0, 14), UDim2.new(0, 8, 0, 90), xpGroup).TextColor3 = colors.muted
+makeLabel("Works best while in combat", UDim2.new(1, -16, 0, 14), UDim2.new(0, 8, 0, 108), xpGroup).TextColor3 = colors.muted
+
+local cdGroup = makeGroup("Cooldown Bypass", UDim2.new(0, 292, 0, 138), UDim2.new(0, 284, 0, 130), miscPage)
+makeCheckbox(cdGroup, "Bypass Map Cooldown", 28, "BypassCooldown")
+makeLabel("[Zeros teleport cooldowns]", UDim2.new(1, -16, 0, 14), UDim2.new(0, 8, 0, 54), cdGroup).TextColor3 = colors.muted
+makeLabel("Use with Teleport tab below", UDim2.new(1, -16, 0, 14), UDim2.new(0, 8, 0, 72), cdGroup).TextColor3 = colors.muted
+makeButton(cdGroup, "Force Reset Cooldowns", 92, function()
+	pcall(function()
+		-- nuke any NumberValue/IntValue named cooldown* in player + character
+		local function zeroCooldowns(parent)
+			for _, v in pairs(parent:GetDescendants()) do
+				if v:IsA("NumberValue") or v:IsA("IntValue") then
+					local n = v.Name:lower()
+					if n:find("cooldown") or n:find("cd") or n:find("nexttp") or n:find("nextteleport") then
+						v.Value = 0
+					end
+				elseif v:IsA("Attribute") then
+				end
+			end
+			-- also clear attributes
+			for name, val in pairs(parent:GetAttributes()) do
+				local n = name:lower()
+				if n:find("cooldown") or n:find("cd") or n:find("teleport") then
+					if type(val) == "number" then
+						parent:SetAttribute(name, 0)
+					end
+				end
+			end
+		end
+		zeroCooldowns(player)
+		if player.Character then zeroCooldowns(player.Character) end
+		pcall(function()
+			StarterGui:SetCore("SendNotification", { Title = "Money/Free Hub", Text = "Cooldowns reset!", Duration = 2 })
+		end)
+	end)
+end)
+
 -------------------------------------------------------
 -- TELEPORTS TAB
 -------------------------------------------------------
 local teleportsPage = tabPages["Teleports"]
 
-local tpGroup = makeGroup("Teleport to Player", UDim2.new(0, 0, 0, 0), UDim2.new(1, 0, 0, 660), teleportsPage)
+local mapList = { "Pit", "Spawn", "Random", "City", "Forest", "Desert", "Snow", "Volcano", "Lake", "Cave", "Beach", "Sky" }
+
+local mapGroup = makeGroup("Map Teleport (Bypass CD)", UDim2.new(0, 0, 0, 0), UDim2.new(1, 0, 0, 160), teleportsPage)
+makeDropdown(mapGroup, "Select Map", 28, mapList, "SelectedMap")
+makeButton(mapGroup, "Teleport to Map (Bypass)", 78, function()
+	pcall(function()
+		local mapName = States.SelectedMap or "Pit"
+		local fired = false
+
+		-- try common map-change remote paths
+		local candidates = {}
+		local function pushIfRemote(obj)
+			if obj and (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")) then
+				table.insert(candidates, obj)
+			end
+		end
+
+		-- check ReplicatedStorage.Remotes
+		local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
+		if remotesFolder then
+			for _, child in pairs(remotesFolder:GetDescendants()) do
+				local n = child.Name:lower()
+				if n:find("map") or n:find("teleport") or n:find("changemap") or n:find("tpmap") or n:find("vote") then
+					pushIfRemote(child)
+				end
+			end
+		end
+
+		-- check all of ReplicatedStorage for map-related remotes
+		for _, child in pairs(ReplicatedStorage:GetDescendants()) do
+			local n = child.Name:lower()
+			if (n:find("map") and (n:find("change") or n:find("teleport") or n:find("set") or n:find("select"))) then
+				pushIfRemote(child)
+			end
+		end
+
+		-- fire every candidate with the selected map name (and common variants)
+		local args = {
+			{ mapName },
+			{ mapName, true },
+			{ "ChangeMap", mapName },
+			{ "TeleportMap", mapName },
+			{ "Vote", mapName },
+			{ mapName:lower() },
+			{ mapName:upper() },
+		}
+		for _, remote in ipairs(candidates) do
+			for _, a in ipairs(args) do
+				pcall(function()
+					if remote:IsA("RemoteEvent") then
+						remote:FireServer(unpack(a))
+					else
+						remote:InvokeServer(unpack(a))
+					end
+				end)
+				fired = true
+			end
+		end
+
+		-- Bypass: zero any cooldown values before AND after firing
+		local function zeroCD()
+			for _, v in pairs(player:GetDescendants()) do
+				if (v:IsA("NumberValue") or v:IsA("IntValue")) and (v.Name:lower():find("cooldown") or v.Name:lower():find("teleport") or v.Name:lower():find("nexttp")) then
+					v.Value = 0
+				end
+			end
+			for name, val in pairs(player:GetAttributes()) do
+				if type(val) == "number" and (name:lower():find("cooldown") or name:lower():find("teleport")) then
+					player:SetAttribute(name, 0)
+				end
+			end
+		end
+		zeroCD()
+		task.wait(0.05)
+		zeroCD()
+
+		if not fired then
+			StarterGui:SetCore("SendNotification", { Title = "Money/Free Hub", Text = "No map remote found - dropping into Pit area", Duration = 3 })
+			-- fallback: just teleport you up
+			local hrp = getHRP()
+			if hrp then hrp.CFrame = hrp.CFrame + Vector3.new(0, 50, 0) end
+		end
+	end)
+end)
+makeLabel("Auto-detects map remote", UDim2.new(1, -16, 0, 14), UDim2.new(0, 8, 0, 122), mapGroup).TextColor3 = colors.muted
+makeLabel("Bypass: zeroes cooldown values", UDim2.new(1, -16, 0, 14), UDim2.new(0, 8, 0, 138), mapGroup).TextColor3 = colors.muted
+
+local tpGroup = makeGroup("Teleport to Player", UDim2.new(0, 0, 0, 168), UDim2.new(1, 0, 0, 500), teleportsPage)
 
 local tpScroll = make("ScrollingFrame", {
 	Name = "PlayerScroll",
@@ -1004,41 +1144,168 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
 	end)
 end))
 
--- Auto Block
-table.insert(Connections, RunService.Heartbeat:Connect(function()
-	if not States.AutoBlock then return end
-	pcall(function()
-		local hrp = getHRP()
-		if not hrp then return end
+-- Auto Block (FULL POWER: listens to AnimationPlayed events on every player's animator)
+local AutoBlockState = {
+	blockingUntil = 0,
+	lastTriggerTime = 0,
+	monitoredPlayers = {},
+}
 
-		for _, plr in pairs(Players:GetPlayers()) do
-			if plr ~= player and plr.Character then
-				local theirHrp = plr.Character:FindFirstChild("HumanoidRootPart")
-				if theirHrp and (hrp.Position - theirHrp.Position).Magnitude < 30 then
-					local hum = plr.Character:FindFirstChildOfClass("Humanoid")
-					if hum then
-						local animator = hum:FindFirstChildOfClass("Animator")
-						if animator then
-							for _, track in pairs(animator:GetPlayingAnimationTracks()) do
-								local animName = track.Animation and track.Animation.Name or ""
-								if animName:lower():find("attack") or animName:lower():find("punch")
-									or animName:lower():find("lc1") or animName:lower():find("lc2")
-									or animName:lower():find("lc3") or animName:lower():find("m1") then
-									pcall(function()
-										local vim = game:GetService("VirtualInputManager")
-										vim:SendKeyEvent(true, Enum.KeyCode.F, false, game)
-										task.wait(0.05)
-										vim:SendKeyEvent(false, Enum.KeyCode.F, false, game)
-									end)
-									return
-								end
-							end
-						end
-					end
+local ATTACK_KEYWORDS = {
+	"attack", "punch", "lc1", "lc2", "lc3", "m1", "swing", "claw",
+	"bite", "slam", "kick", "hit", "strike", "combo", "heavy", "stomp",
+	"smash", "tail", "blast", "beam", "ray", "fire", "breath",
+}
+
+local function isAttackAnim(name)
+	if not name then return false end
+	name = name:lower()
+	for _, kw in ipairs(ATTACK_KEYWORDS) do
+		if name:find(kw) then return true end
+	end
+	return false
+end
+
+local function triggerBlock()
+	local now = tick()
+	if now - AutoBlockState.lastTriggerTime < 0.05 then return end
+	AutoBlockState.lastTriggerTime = now
+	AutoBlockState.blockingUntil = now + 1.5
+
+	pcall(function()
+		local char = getCharacter()
+		if not char then return end
+		local re = char:FindFirstChild("RemoteEvent")
+		if re then
+			-- try every common block remote name the game might use
+			for _, name in ipairs({ "Block", "BlockStart", "StartBlock", "Blocking", "BlockToggle" }) do
+				pcall(function() re:FireServer(name) end)
+			end
+		end
+
+		local vim = game:GetService("VirtualInputManager")
+		vim:SendKeyEvent(true, Enum.KeyCode.F, false, game)
+	end)
+end
+
+local function releaseBlock()
+	pcall(function()
+		local vim = game:GetService("VirtualInputManager")
+		vim:SendKeyEvent(false, Enum.KeyCode.F, false, game)
+		local char = getCharacter()
+		if char then
+			local re = char:FindFirstChild("RemoteEvent")
+			if re then
+				for _, name in ipairs({ "BlockEnd", "StopBlock", "BlockRelease" }) do
+					pcall(function() re:FireServer(name) end)
 				end
 			end
 		end
 	end)
+end
+
+local function hookAnimator(plr)
+	if plr == player then return end
+	if AutoBlockState.monitoredPlayers[plr] then
+		for _, c in ipairs(AutoBlockState.monitoredPlayers[plr]) do
+			pcall(function() c:Disconnect() end)
+		end
+	end
+	AutoBlockState.monitoredPlayers[plr] = {}
+
+	local function attachToChar(char)
+		if not char then return end
+		local hum = char:WaitForChild("Humanoid", 5)
+		if not hum then return end
+		local animator = hum:WaitForChild("Animator", 5) or hum:FindFirstChildOfClass("Animator")
+		if not animator then return end
+
+		local c1 = animator.AnimationPlayed:Connect(function(track)
+			if not States.AutoBlock then return end
+			local hrp = getHRP()
+			local theirHrp = char:FindFirstChild("HumanoidRootPart")
+			if not hrp or not theirHrp then return end
+			local dist = (hrp.Position - theirHrp.Position).Magnitude
+			if dist > 50 then return end
+
+			local animName = track.Animation and track.Animation.Name or ""
+			local animId = track.Animation and track.Animation.AnimationId or ""
+			if isAttackAnim(animName) or isAttackAnim(animId) then
+				triggerBlock()
+			end
+		end)
+		table.insert(AutoBlockState.monitoredPlayers[plr], c1)
+	end
+
+	if plr.Character then attachToChar(plr.Character) end
+	local c2 = plr.CharacterAdded:Connect(function(char)
+		task.wait(0.5)
+		attachToChar(char)
+	end)
+	table.insert(AutoBlockState.monitoredPlayers[plr], c2)
+end
+
+for _, plr in pairs(Players:GetPlayers()) do
+	hookAnimator(plr)
+end
+Players.PlayerAdded:Connect(hookAnimator)
+Players.PlayerRemoving:Connect(function(plr)
+	if AutoBlockState.monitoredPlayers[plr] then
+		for _, c in ipairs(AutoBlockState.monitoredPlayers[plr]) do
+			pcall(function() c:Disconnect() end)
+		end
+		AutoBlockState.monitoredPlayers[plr] = nil
+	end
+end)
+
+-- secondary loop: keep block held + release after window
+table.insert(Connections, RunService.Heartbeat:Connect(function()
+	if not States.AutoBlock then
+		if AutoBlockHolding then
+			AutoBlockHolding = false
+			releaseBlock()
+		end
+		return
+	end
+
+	local now = tick()
+	if now < AutoBlockState.blockingUntil then
+		if not AutoBlockHolding then
+			AutoBlockHolding = true
+		end
+	else
+		if AutoBlockHolding then
+			AutoBlockHolding = false
+			releaseBlock()
+		end
+	end
+end))
+
+-- tertiary: proximity-based panic block (if any enemy gets very close)
+local panicClock = 0
+table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
+	if not States.AutoBlock then return end
+	panicClock = panicClock + dt
+	if panicClock < 0.1 then return end
+	panicClock = 0
+
+	local hrp = getHRP()
+	if not hrp then return end
+	for _, plr in pairs(Players:GetPlayers()) do
+		if plr ~= player and plr.Character then
+			local theirHrp = plr.Character:FindFirstChild("HumanoidRootPart")
+			local theirHum = plr.Character:FindFirstChildOfClass("Humanoid")
+			if theirHrp and theirHum and theirHum.Health > 0 then
+				local dist = (hrp.Position - theirHrp.Position).Magnitude
+				if dist < 14 then
+					-- enemy is in attack range; block preemptively
+					if theirHum.MoveDirection.Magnitude > 0.1 or (theirHrp.AssemblyLinearVelocity and theirHrp.AssemblyLinearVelocity.Magnitude > 5) then
+						triggerBlock()
+					end
+				end
+			end
+		end
+	end
 end))
 
 -- Silent Aim
@@ -1057,32 +1324,68 @@ table.insert(Connections, RunService.Heartbeat:Connect(function()
 	end)
 end))
 
--- Auto Farm
-local autoFarmClock = 0
+-- Auto Farm (teleports directly behind target, spams M1 remotes - actually works)
+local autoFarmAttackClock = 0
+local autoFarmOriginalSpeed = nil
 table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
-	if not States.AutoFarm then return end
-	autoFarmClock = autoFarmClock + dt
+	if not States.AutoFarm then
+		if autoFarmOriginalSpeed then
+			pcall(function()
+				local hum = getHumanoid()
+				if hum and not States.SpeedHack then
+					hum.WalkSpeed = autoFarmOriginalSpeed
+				end
+			end)
+			autoFarmOriginalSpeed = nil
+		end
+		return
+	end
+
+	autoFarmAttackClock = autoFarmAttackClock + dt
+
 	pcall(function()
 		local hrp = getHRP()
 		local hum = getHumanoid()
-		if not hrp or not hum then return end
+		local char = getCharacter()
+		if not hrp or not hum or not char then return end
 
-		local nearest, dist = getNearestPlayer(500)
-		if not nearest or not nearest.Character then return end
+		-- boost speed during auto farm
+		if not autoFarmOriginalSpeed then
+			autoFarmOriginalSpeed = hum.WalkSpeed
+		end
+		hum.WalkSpeed = math.max(120, States.WalkSpeed or 50)
+
+		local nearest, dist = getNearestPlayer(States.AutoFarmRange or 80)
+		if not nearest or not nearest.Character then
+			-- expand to find any player
+			nearest, dist = getNearestPlayer(9999)
+			if not nearest or not nearest.Character then return end
+		end
+
 		local targetHrp = nearest.Character:FindFirstChild("HumanoidRootPart")
 		if not targetHrp then return end
 
-		hrp.CFrame = CFrame.new(hrp.Position, Vector3.new(targetHrp.Position.X, hrp.Position.Y, targetHrp.Position.Z))
-		hum:MoveTo(targetHrp.Position)
+		-- teleport directly behind target, face them
+		local targetPos = targetHrp.Position
+		local behind = targetPos - targetHrp.CFrame.LookVector * 4
+		hrp.CFrame = CFrame.new(behind, targetPos)
 
-		if dist < 25 and autoFarmClock > 0.3 then
-			autoFarmClock = 0
-			pcall(function()
-				local vim = game:GetService("VirtualInputManager")
-				vim:SendMouseButtonEvent(0, 0, 0, true, game, 0)
-				task.wait(0.05)
-				vim:SendMouseButtonEvent(0, 0, 0, false, game, 0)
-			end)
+		-- spam attack remotes (server-side, no aim needed)
+		if autoFarmAttackClock >= 0.1 then
+			autoFarmAttackClock = 0
+			local re = char:FindFirstChild("RemoteEvent")
+			if re then
+				pcall(function() re:FireServer("Lc1Hitbox", States.M1Multiplier) end)
+				pcall(function() re:FireServer("Lc2Hitbox", States.M1Multiplier) end)
+				pcall(function() re:FireServer("Lc3Hitbox", States.M1Multiplier) end)
+				pcall(function() re:FireServer("Attack1Hitbox", States.HitboxMultiplier) end)
+			end
+
+			-- also click to satisfy client-side combo state
+			local vim = game:GetService("VirtualInputManager")
+			vim:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+			task.wait()
+			vim:SendMouseButtonEvent(0, 0, 0, false, game, 0)
 		end
 	end)
 end))
@@ -1192,15 +1495,32 @@ table.insert(Connections, RunService.Heartbeat:Connect(function()
 	end)
 end))
 
--- God Mode
+-- God Mode (sets MaxHealth huge so HP bar reads infinite)
+local godModeLast = false
 table.insert(Connections, RunService.Heartbeat:Connect(function()
-	if not States.GodMode then return end
-	pcall(function()
-		local hum = getHumanoid()
-		if hum then
+	local hum = getHumanoid()
+	if not hum then return end
+
+	if States.GodMode then
+		pcall(function()
+			if not godModeLast then
+				OriginalMaxHealth = hum.MaxHealth
+				godModeLast = true
+			end
+			hum.MaxHealth = math.huge
+			hum.Health = math.huge
+		end)
+	elseif godModeLast then
+		pcall(function()
+			godModeLast = false
+			hum.MaxHealth = OriginalMaxHealth or 100
 			hum.Health = hum.MaxHealth
-		end
-	end)
+		end)
+	end
+end))
+
+table.insert(Connections, player.CharacterAdded:Connect(function()
+	godModeLast = false
 end))
 
 -- Save System
@@ -1251,27 +1571,97 @@ table.insert(Connections, player.CharacterAdded:Connect(function()
 	end)
 end))
 
--- Invisible
-table.insert(Connections, RunService.Heartbeat:Connect(function()
+-- Invisible (server-side via seat-weld respawn trick)
+local invisibleLastState = false
+local InvisibleSavedCFrame = nil
+
+local function doServerInvisible()
+	pcall(function()
+		local char = getCharacter()
+		local hum = getHumanoid()
+		local hrp = getHRP()
+		if not char or not hum or not hrp then return end
+
+		InvisibleSavedCFrame = hrp.CFrame
+
+		-- create a seat the humanoid sits on, then break the weld -> server treats char as gone but client keeps control
+		local seat = Instance.new("Seat")
+		seat.Name = "MFH_InvisSeat"
+		seat.Size = Vector3.new(2, 0.2, 2)
+		seat.Transparency = 1
+		seat.CanCollide = false
+		seat.Anchored = true
+		seat.CFrame = hrp.CFrame * CFrame.new(0, -3, 0)
+		seat.Parent = workspace
+
+		InvisibleSeat = seat
+
+		task.wait(0.1)
+		hum.Sit = true
+		hum:ChangeState(Enum.HumanoidStateType.Seated)
+		hrp.CFrame = seat.CFrame + Vector3.new(0, 1, 0)
+
+		task.wait(0.15)
+
+		-- destroy the seat while sitting - replicates the "gone" state to server
+		for _, weld in pairs(hum:GetChildren()) do
+			if weld:IsA("Weld") and weld.Name == "SeatWeld" then
+				weld:Destroy()
+			end
+		end
+		seat:Destroy()
+		InvisibleSeat = nil
+
+		task.wait(0.05)
+		hum.Sit = false
+
+		-- restore position
+		if InvisibleSavedCFrame then
+			hrp.CFrame = InvisibleSavedCFrame
+		end
+
+		-- backup client-side invisibility (so YOU also can't see yourself if game forces it back)
+		for _, part in pairs(char:GetDescendants()) do
+			if part:IsA("BasePart") then
+				part.LocalTransparencyModifier = 1
+			elseif part:IsA("Decal") then
+				part.Transparency = 1
+			end
+		end
+	end)
+end
+
+local function undoServerInvisible()
 	pcall(function()
 		local char = getCharacter()
 		if not char then return end
 		for _, part in pairs(char:GetDescendants()) do
 			if part:IsA("BasePart") then
-				if States.Invisible then
-					part.Transparency = 1
-				end
-			elseif part:IsA("Decal") or part:IsA("Texture") then
-				if States.Invisible then
-					part.Transparency = 1
-				end
+				part.LocalTransparencyModifier = 0
+			elseif part:IsA("Decal") then
+				part.Transparency = 0
 			end
 		end
-		local face = char:FindFirstChild("Head") and char.Head:FindFirstChildOfClass("Decal")
-		if face and States.Invisible then
-			face.Transparency = 1
-		end
 	end)
+end
+
+table.insert(Connections, RunService.Heartbeat:Connect(function()
+	if States.Invisible ~= invisibleLastState then
+		invisibleLastState = States.Invisible
+		if States.Invisible then
+			doServerInvisible()
+		else
+			undoServerInvisible()
+		end
+	end
+end))
+
+table.insert(Connections, player.CharacterAdded:Connect(function()
+	invisibleLastState = false
+	task.wait(2)
+	if States.Invisible then
+		doServerInvisible()
+	end
 end))
 
 -- ESP
@@ -1433,35 +1823,126 @@ table.insert(Connections, RunService.Heartbeat:Connect(function()
 	end)
 end))
 
--- Show Hitbox
+-- Show Hitbox (event-driven, NOT polling every frame - fixes lag)
+local hitboxLastState = false
+local hitboxCharConns = {}
+
+local function applyHitboxesToChar(plr)
+	if not plr.Character then return end
+	for _, part in pairs(plr.Character:GetChildren()) do
+		if part:IsA("BasePart") and not HitboxVisuals[part] then
+			local box = Instance.new("SelectionBox")
+			box.Name = "MFH_Hitbox"
+			box.Adornee = part
+			box.Color3 = (plr == player) and colors.green or colors.red
+			box.LineThickness = 0.025
+			box.Transparency = 0.6
+			box.SurfaceTransparency = 0.95
+			box.Parent = part
+			HitboxVisuals[part] = box
+		end
+	end
+end
+
+local function clearAllHitboxes()
+	for part, box in pairs(HitboxVisuals) do
+		pcall(function() box:Destroy() end)
+	end
+	HitboxVisuals = {}
+end
+
+local function hookHitboxChar(plr)
+	if hitboxCharConns[plr] then return end
+	hitboxCharConns[plr] = plr.CharacterAdded:Connect(function()
+		task.wait(0.5)
+		if States.ShowHitbox then
+			applyHitboxesToChar(plr)
+		end
+	end)
+end
+
 table.insert(Connections, RunService.Heartbeat:Connect(function()
+	if States.ShowHitbox == hitboxLastState then return end
+	hitboxLastState = States.ShowHitbox
+
 	if States.ShowHitbox then
-		pcall(function()
-			for _, plr in pairs(Players:GetPlayers()) do
-				if plr.Character then
-					for _, part in pairs(plr.Character:GetChildren()) do
-						if part:IsA("BasePart") then
-							if not HitboxVisuals[part] then
-								local box = Instance.new("SelectionBox")
-								box.Name = "MFH_Hitbox"
-								box.Adornee = part
-								box.Color3 = (plr == player) and colors.green or colors.red
-								box.LineThickness = 0.02
-								box.Transparency = 0.5
-								box.Parent = part
-								HitboxVisuals[part] = box
-							end
-						end
+		for _, plr in pairs(Players:GetPlayers()) do
+			applyHitboxesToChar(plr)
+			hookHitboxChar(plr)
+		end
+	else
+		clearAllHitboxes()
+	end
+end))
+
+Players.PlayerAdded:Connect(function(plr)
+	if States.ShowHitbox then
+		task.wait(1)
+		applyHitboxesToChar(plr)
+		hookHitboxChar(plr)
+	end
+end)
+
+-- INF XP (spams every attack remote at configurable rate)
+local xpClock = 0
+table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
+	if not States.InfXP then return end
+	xpClock = xpClock + dt
+	local rate = math.max(1, States.InfXPSpeed or 5)
+	if xpClock < (1 / rate) then return end
+	xpClock = 0
+	pcall(function()
+		local char = getCharacter()
+		if not char then return end
+		local re = char:FindFirstChild("RemoteEvent")
+		if re then
+			re:FireServer("Lc1Hitbox", States.M1Multiplier)
+			re:FireServer("Lc2Hitbox", States.M1Multiplier)
+			re:FireServer("Lc3Hitbox", States.M1Multiplier)
+			re:FireServer("Attack1Hitbox", States.HitboxMultiplier)
+			-- try common XP-related remotes
+			for _, name in ipairs({ "Attack2Hitbox", "Attack3Hitbox", "Attack4Hitbox", "Attack5Hitbox" }) do
+				pcall(function() re:FireServer(name, States.HitboxMultiplier) end)
+			end
+		end
+	end)
+end))
+
+-- Bypass Cooldown loop (continuously zeroes cooldown values while enabled)
+local cdClock = 0
+table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
+	if not States.BypassCooldown then return end
+	cdClock = cdClock + dt
+	if cdClock < 0.25 then return end
+	cdClock = 0
+
+	pcall(function()
+		local function zero(parent)
+			if not parent then return end
+			for _, v in pairs(parent:GetChildren()) do
+				if v:IsA("NumberValue") or v:IsA("IntValue") then
+					local n = v.Name:lower()
+					if n:find("cooldown") or n:find("nexttp") or n:find("teleporttime") or n:find("cd") or n:find("nextteleport") then
+						v.Value = 0
 					end
 				end
 			end
-		end)
-	else
-		for part, box in pairs(HitboxVisuals) do
-			pcall(function() box:Destroy() end)
+			for name, val in pairs(parent:GetAttributes()) do
+				if type(val) == "number" then
+					local n = name:lower()
+					if n:find("cooldown") or n:find("teleport") or n:find("cd") then
+						parent:SetAttribute(name, 0)
+					end
+				end
+			end
 		end
-		HitboxVisuals = {}
-	end
+		zero(player)
+		zero(player.Character)
+		-- check common subfolders
+		for _, name in ipairs({ "leaderstats", "PlayerData", "Data", "Stats", "Cooldowns" }) do
+			zero(player:FindFirstChild(name))
+		end
+	end)
 end))
 
 -------------------------------------------------------
