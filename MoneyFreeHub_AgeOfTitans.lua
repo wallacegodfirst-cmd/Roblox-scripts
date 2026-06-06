@@ -1,4 +1,4 @@
--- Money/Free Hub | Age of Titans | v3.0 (Sierra-style layout)
+-- Money/Free Hub | Age of Titans | v3.1 (real remotes wired up)
 
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
@@ -104,6 +104,12 @@ local ultClock        = 0
 local farmClock       = 0
 local cdClock         = 0
 local espClock        = 0
+local blockClock      = 0
+local infBlockLast    = false
+local respawnClock    = 0
+local saveActive      = false
+local saveClock       = 0
+local savePos         = Vector3.zero
 local espBoxes        = {}
 local showHitboxBoxes = {}
 local showHitboxLast  = false
@@ -120,9 +126,22 @@ end
 local function hrp()
     local c = chr(); return c and c:FindFirstChild("HumanoidRootPart")
 end
+-- The combat RemoteEvent lives INSIDE the character (LocalPlayer.Character.RemoteEvent).
+-- Fall back to ReplicatedStorage only if it isn't found there.
 local function re()
+    local c = chr()
+    if c then
+        local r = c:FindFirstChild("RemoteEvent")
+        if r and r:IsA("RemoteEvent") then return r end
+    end
     local rs = game:GetService("ReplicatedStorage")
     return rs:FindFirstChild("RemoteEvent") or rs:FindFirstChildWhichIsA("RemoteEvent")
+end
+-- ReplicatedStorage.Remotes.Died  ->  used for Instant Respawn bypass
+local function diedRemote()
+    local rs = game:GetService("ReplicatedStorage")
+    local rem = rs:FindFirstChild("Remotes")
+    return rem and rem:FindFirstChild("Died")
 end
 local function nearest(maxD)
     local best, dist = nil, maxD or math.huge
@@ -816,17 +835,20 @@ table.insert(Connections, UIS.InputBegan:Connect(function(i, gpe)
     if S.M1Expand then
         pcall(function()
             local r = re(); if not r then return end
-            r:FireServer("Attack1Hitbox", S.M1Multiplier)
-            r:FireServer("Attack2Hitbox", S.M1Multiplier)
+            -- The 3 basic M1 combo hits are Lc1Hitbox / Lc2Hitbox / Lc3Hitbox
+            for n = 1, 3 do r:FireServer("Lc"..n.."Hitbox", S.M1Multiplier) end
         end)
     end
     if S.SilentAim then
+        -- This game is hitbox-based (no aim vector), so "silent aim" means: when a
+        -- target is in range, blow every attack hitbox up so the swing always lands.
         pcall(function()
             local tgt = nearest(300); if not tgt then return end
             local ph  = tgt.Character and tgt.Character:FindFirstChild("HumanoidRootPart")
             if not ph then return end
             local r = re(); if not r then return end
-            r:FireServer("SilentAim", ph.Position)
+            for n = 1, 5 do r:FireServer("Attack"..n.."Hitbox", 30) end
+            for n = 1, 3 do r:FireServer("Lc"..n.."Hitbox",    30) end
         end)
     end
 end))
@@ -916,8 +938,26 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end)
     end
 
+    -- Inf Block: hold F down so the guard never drops. Re-assert the key every
+    -- 0.2s (covers respawns / focus loss). When toggled off, release F once.
     if S.InfBlock then
-        pcall(function() local r = re(); if r then r:FireServer("InfBlock") end end)
+        infBlockLast = true
+        blockClock = blockClock + dt
+        if blockClock >= 0.2 then
+            blockClock = 0
+            pcall(function()
+                local vim = game:GetService("VirtualInputManager")
+                vim:SendKeyEvent(true, Enum.KeyCode.F, false, game)
+            end)
+        end
+    elseif infBlockLast then
+        infBlockLast = false
+        blockClock   = 0
+        pcall(function()
+            local vim = game:GetService("VirtualInputManager")
+            vim:SendKeyEvent(false, Enum.KeyCode.F, false, game)
+            local r = re(); if r then r:FireServer("BlockStop") end
+        end)
     end
 
     if S.AutoUlt then
@@ -939,16 +979,30 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
 
     if S.AutoFarm then
         farmClock = farmClock + dt
-        if farmClock >= 0.4 then
+        if farmClock >= 0.35 then
             farmClock = 0
             pcall(function()
                 local tgt = nearest(S.AutoFarmRange); if not tgt then return end
                 local mh = hrp(); if not mh then return end
                 local ph = tgt.Character and tgt.Character:FindFirstChild("HumanoidRootPart")
                 if not ph then return end
-                mh.CFrame = ph.CFrame + Vector3.new(3, 0, 0)
-                local r = re(); if not r then return end
-                r:FireServer("Attack1Hitbox", S.HitboxMultiplier)
+                -- TP just behind the target so our swing connects
+                mh.CFrame = ph.CFrame + (ph.CFrame.LookVector * -3)
+                local r = re()
+                if r then
+                    -- Extend every basic-hit hitbox, then actually swing with M1
+                    for n = 1, 3 do r:FireServer("Lc"..n.."Hitbox", S.HitboxMultiplier) end
+                    for n = 1, 5 do r:FireServer("Attack"..n.."Hitbox", S.HitboxMultiplier) end
+                end
+                task.spawn(function()
+                    pcall(function()
+                        local vim = game:GetService("VirtualInputManager")
+                        local vp  = workspace.CurrentCamera.ViewportSize
+                        local cx, cy = vp.X / 2, vp.Y / 2
+                        vim:SendMouseButtonEvent(cx, cy, 0, true,  game, 0)
+                        vim:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+                    end)
+                end)
             end)
         end
     end
@@ -984,15 +1038,37 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
     if S.InstantRespawn then
         local h = hum()
         if h and h.Health <= 0 then
-            pcall(function() player:LoadCharacter() end)
+            respawnClock = respawnClock + dt
+            if respawnClock >= 0.5 then
+                respawnClock = 0
+                -- Bypass the "no respawn" screen via ReplicatedStorage.Remotes.Died
+                pcall(function()
+                    local d = diedRemote()
+                    if d then d:FireServer("Real", 3.8333332538604736) end
+                end)
+            end
+        else
+            respawnClock = 0
         end
     end
 
     if S.SaveSystem then
-        local h = hum()
-        if h and h.MaxHealth > 0 then
-            if (h.Health / h.MaxHealth * 100) <= S.SaveThreshold then
-                pcall(function() local r = re(); if r then r:FireServer("Heal") end end)
+        local h, mh = hum(), hrp()
+        if h and mh and h.MaxHealth > 0 then
+            if saveActive then
+                saveClock = saveClock + dt
+                -- Hold up in the sky out of melee range, then drop back down
+                mh.CFrame = CFrame.new(savePos + Vector3.new(0, 500, 0))
+                mh.AssemblyLinearVelocity = Vector3.zero
+                if saveClock >= 4 or (h.Health / h.MaxHealth * 100) > S.SaveThreshold + 20 then
+                    saveActive = false
+                    saveClock  = 0
+                    mh.CFrame  = CFrame.new(savePos + Vector3.new(0, 8, 0))
+                end
+            elseif (h.Health / h.MaxHealth * 100) <= S.SaveThreshold then
+                savePos    = mh.Position
+                saveActive = true
+                saveClock  = 0
             end
         end
     end
@@ -1118,4 +1194,4 @@ end))
 setTab("Combat")
 refreshTheme()
 
-print("[Money/Free Hub] v3.0 | Toggle: " .. S.ToggleKey.Name)
+print("[Money/Free Hub] v3.1 | Toggle: " .. S.ToggleKey.Name)
