@@ -888,7 +888,7 @@ local function doInvisible(state)
             end
         else
             for pt, t in pairs(invisOrigTrans) do
-                pcall(function() if pt and pt.Parent then pt.Transparency = t end)
+                pcall(function() if pt and pt.Parent then pt.Transparency = t end end)
             end
             invisOrigTrans = {}
         end
@@ -977,11 +977,13 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         ultClock = ultClock + dt
         if ultClock >= 2 then
             ultClock = 0
-            pcall(function()
-                local vim = game:GetService("VirtualInputManager")
-                vim:SendKeyEvent(true,  Enum.KeyCode.V, false, game)
-                task.wait(0.1)
-                vim:SendKeyEvent(false, Enum.KeyCode.V, false, game)
+            task.spawn(function()
+                pcall(function()
+                    local vim = game:GetService("VirtualInputManager")
+                    vim:SendKeyEvent(true,  Enum.KeyCode.V, false, game)
+                    task.wait(0.1)
+                    vim:SendKeyEvent(false, Enum.KeyCode.V, false, game)
+                end)
             end)
         end
     else
@@ -1124,11 +1126,13 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
             if p2 ~= player and p2.Character then
                 local ph = p2.Character:FindFirstChild("HumanoidRootPart")
                 if ph and (ph.Position - mh.Position).Magnitude < 14 then
-                    pcall(function()
-                        local vim = game:GetService("VirtualInputManager")
-                        vim:SendKeyEvent(true,  Enum.KeyCode.F, false, game)
-                        task.wait(0.03)
-                        vim:SendKeyEvent(false, Enum.KeyCode.F, false, game)
+                    task.spawn(function()
+                        pcall(function()
+                            local vim = game:GetService("VirtualInputManager")
+                            vim:SendKeyEvent(true,  Enum.KeyCode.F, false, game)
+                            task.wait(0.03)
+                            vim:SendKeyEvent(false, Enum.KeyCode.F, false, game)
+                        end)
                     end)
                 end
             end
