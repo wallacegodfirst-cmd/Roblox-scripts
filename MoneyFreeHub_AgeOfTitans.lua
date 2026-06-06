@@ -1,4 +1,4 @@
--- Money/Free Hub | Age of Titans | v4.1
+-- Money/Free Hub | Age of Titans | v4.2
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -44,7 +44,7 @@ local S = {
     AutoSprint     = false,
     NoStun         = false,
     GodMode        = false,
-    InfBar         = false,
+
     SaveSystem     = false, SaveThreshold  = 30,
     InstantRespawn = false,
     Invisible      = false,
@@ -70,7 +70,7 @@ local invisOrigTrans, invisStateLast       = {}, false
 local ultClock,  ultWasFull               = 0, false
 local farmClock, kauraClk, cdClock        = 0, 0, 0
 local autoPlayClock                        = 0
-local infBarClock, noStunClock, noclipClock = 0, 0, 0
+local noStunClock, noclipClock = 0, 0
 local espClock, fbClock, hnClock           = 0, 0, 0
 local respawnClock                         = 0
 local saveActive, saveClock, savePos       = false, 0, Vector3.zero
@@ -230,25 +230,6 @@ local function ultIsFull()
     return false
 end
 
--- ── Inf Bar ───────────────────────────────────────────────────────────────────
-local HP_KEYS = {"hp","health","stamina","energy","life","shield","vitality","bar"}
-local function nameMatchesHP(n)
-    n=tostring(n):lower()
-    for _,k in ipairs(HP_KEYS) do if n:find(k) then return true end end
-    return false
-end
-local function forceBarFull()
-    local h=hum(); if h then pcall(function() h.Health=h.MaxHealth end) end
-    local c=chr(); if not c then return end
-    pcall(function()
-        for attr,v in pairs(c:GetAttributes()) do
-            if type(v)=="number" and nameMatchesHP(attr) then
-                local mx=c:GetAttribute("Max"..attr) or c:GetAttribute(attr.."Max")
-                if type(mx)=="number" and mx>0 then c:SetAttribute(attr,mx) end
-            end
-        end
-    end)
-end
 
 -- ══════════════════════════════════════════════════════════════════════════════
 -- GUI  (original top-tab, two-column card layout)
@@ -280,7 +261,7 @@ corner(main,8)
 local titleBar = make("Frame",{Size=UDim2.new(1,0,0,TITLE_H),BackgroundColor3=T.title,BorderSizePixel=0},main)
 make("Frame",{Size=UDim2.new(1,0,0,2),Position=UDim2.new(0,0,1,-2),BackgroundColor3=T.accent,BorderSizePixel=0},titleBar)
 make("TextLabel",{
-    Text="MONEY/FREE HUB  |  AGE OF TITANS  |  v4.1",
+    Text="MONEY/FREE HUB  |  AGE OF TITANS  |  v4.2",
     TextSize=11, TextColor3=T.text, Font=Enum.Font.GothamBold,
     BackgroundTransparency=1, Position=UDim2.new(0,10,0,0), Size=UDim2.new(1,-60,1,0),
     TextXAlignment=Enum.TextXAlignment.Left,
@@ -561,7 +542,6 @@ do
     makeCheck(g1,"No Stun","NoStun")
     local g2 = makeGroup(R,"Survival")
     makeCheck(g2,"God Mode","GodMode")
-    makeCheck(g2,"Infinite Bar (HP)","InfBar")
     makeCheck(g2,"Save System","SaveSystem")
     makeSlider(g2,"HP Threshold","SaveThreshold",1,99,"%")
     makeCheck(g2,"Instant Respawn","InstantRespawn")
@@ -758,12 +738,6 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
     end
     if S.GodMode then pcall(function() local h=hum();if h then h.Health=math.huge end end) end
 
-    -- Inf Bar (throttled 0.3s)
-    if S.InfBar then
-        infBarClock=infBarClock+dt
-        if infBarClock>=0.3 then infBarClock=0;forceBarFull() end
-    end
-
     -- No Stun (throttled 0.15s)
     if S.NoStun then
         noStunClock=noStunClock+dt
@@ -915,25 +889,37 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         ultClock=0; ultWasFull=false
     end
 
-    -- Kill Aura
+    -- Kill Aura (auto-click triggers game's own attack + M1 expand hitboxes)
     if S.KillAura then
         kauraClk=kauraClk+dt
-        if kauraClk>=0.15 then
+        if kauraClk>=0.18 then
             kauraClk=0
             pcall(function()
                 local tgt=nearestTargetRoot(S.KillAuraRange); if not tgt then return end
                 local mh=hrp(); if not mh then return end
+                -- Snap to melee range
                 local diff=tgt.Position-mh.Position
-                -- Always snap close so attacks land
                 local snap=tgt.Position-(diff.Magnitude>0.1 and diff.Unit or Vector3.new(0,0,1))*5+Vector3.new(0,2,0)
                 local c=chr()
                 if c and c.PrimaryPart then c:SetPrimaryPartCFrame(CFrame.new(snap))
                 else mh.CFrame=CFrame.new(snap) end
-                local r=re(); if not r then return end
-                for n=1,5 do
-                    pcall(function() r:FireServer("Attack"..n,ATTACK_VALS[n] or 4.4666666984558105) end)
-                    pcall(function() r:FireServer("Attack"..n.."Hitbox",S.HitboxSize) end)
-                end
+                -- Auto-click at viewport center to trigger game's own attack + animation.
+                -- Briefly disable hub interaction so the click passes through to the game world.
+                task.spawn(function()
+                    pcall(function()
+                        local vim=game:GetService("VirtualInputManager")
+                        local vp=workspace.CurrentCamera.ViewportSize
+                        main.Active=false
+                        vim:SendMouseButtonEvent(vp.X/2,vp.Y/2,0,true,game,0)
+                        task.wait(0.06)
+                        vim:SendMouseButtonEvent(vp.X/2,vp.Y/2,0,false,game,0)
+                        main.Active=true
+                    end)
+                end)
+                -- Spam M1 expand hitboxes (Lc) so attacks register even if distance is tight
+                local hitSz=math.max(S.M1Size,S.HitboxSize)
+                for n=1,3 do spamHitbox("Lc"..n.."Hitbox",hitSz,4,0.05) end
+                for n=1,5 do spamHitbox("Attack"..n.."Hitbox",hitSz,4,0.05) end
             end)
         end
     end
@@ -1183,4 +1169,4 @@ end))
 
 -- ── Init ──────────────────────────────────────────────────────────────────────
 setTab("Combat")
-print("[Money/Free Hub] v4.1 | Toggle: "..S.ToggleKey.Name)
+print("[Money/Free Hub] v4.2 | Toggle: "..S.ToggleKey.Name)
