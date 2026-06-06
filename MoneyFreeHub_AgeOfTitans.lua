@@ -1,4 +1,4 @@
--- Money/Free Hub | Age of Titans | v3.2
+-- Money/Free Hub | Age of Titans | v3.3
 
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
@@ -84,7 +84,6 @@ local S = {
     ESP              = false,
     InfZoom          = false,
     BypassCooldown   = false,
-    SelectedMap      = "Pit",
     Minimized        = false,
     ToggleKey        = Enum.KeyCode.RightShift,
 }
@@ -110,10 +109,13 @@ local savePos         = Vector3.zero
 local espBoxes        = {}
 local showHitboxBoxes = {}
 local showHitboxLast  = false
-local noclipConn      = nil
 local autoBlockConns  = {}
 local origZoom        = nil
 local Connections     = {}
+local flyBV           = nil    -- BodyVelocity used for Fly
+local flyBG           = nil    -- BodyGyro used to keep Fly stable (no spin)
+local flyStateLast    = false
+local noclipLast      = false
 
 -- Attack key names stored on enemy Player objects (player.Keybinds.Attack1 etc.)
 local AB_KEYS = {"Attack1","Attack2","Attack3","Attack4","Attack5","Lc1","Lc2","Lc3"}
@@ -159,6 +161,33 @@ end
 
 local function pressBlockFor(t)
     blockHoldEnd = math.max(blockHoldEnd, tick() + t)
+end
+
+-- Fly uses BodyVelocity (movement, no gravity) + BodyGyro (locks orientation so
+-- the character can't tumble/spin). PlatformStand stops the Humanoid balancing.
+local function startFly()
+    local mh, h = hrp(), hum()
+    if not mh then return end
+    if h then pcall(function() h.PlatformStand = true end) end
+    if flyBV then pcall(function() flyBV:Destroy() end) end
+    if flyBG then pcall(function() flyBG:Destroy() end) end
+    flyBV          = Instance.new("BodyVelocity")
+    flyBV.MaxForce = Vector3.new(1, 1, 1) * 1e6
+    flyBV.Velocity = Vector3.zero
+    flyBV.Parent   = mh
+    flyBG          = Instance.new("BodyGyro")
+    flyBG.MaxTorque = Vector3.new(1, 1, 1) * 1e6
+    flyBG.P        = 9000
+    flyBG.D        = 800
+    flyBG.CFrame   = mh.CFrame
+    flyBG.Parent   = mh
+end
+
+local function stopFly()
+    local h = hum()
+    if h then pcall(function() h.PlatformStand = false end) end
+    if flyBV then pcall(function() flyBV:Destroy() end); flyBV = nil end
+    if flyBG then pcall(function() flyBG:Destroy() end); flyBG = nil end
 end
 
 -- ── GUI root ───────────────────────────────────────────────────────────────
@@ -639,24 +668,7 @@ do
     local mv = makeGroup(L, "Movement")
     makeCheck(mv, "Fly",        "Fly")
     makeSlider(mv, "Fly Speed", "FlySpeed", 10, 300)
-    makeCheck(mv, "Noclip", "Noclip", function(on)
-        if noclipConn then noclipConn:Disconnect(); noclipConn = nil end
-        if on then
-            noclipConn = RunService.Stepped:Connect(function()
-                local c = chr(); if not c then return end
-                for _, pt in pairs(c:GetDescendants()) do
-                    if pt:IsA("BasePart") then pt.CanCollide = false end
-                end
-            end)
-        else
-            pcall(function()
-                local c = chr(); if not c then return end
-                for _, pt in pairs(c:GetDescendants()) do
-                    if pt:IsA("BasePart") then pt.CanCollide = true end
-                end
-            end)
-        end
-    end)
+    makeCheck(mv, "Noclip", "Noclip")
     makeCheck(mv, "Speed Hack",  "SpeedHack")
     makeSlider(mv, "Walk Speed", "WalkSpeed", 16, 250)
     makeCheck(mv, "Auto Sprint", "AutoSprint")
@@ -694,19 +706,9 @@ end
 
 -- TELEPORTS
 do
-    local L, R = pages["Teleports"].left, pages["Teleports"].right
-    local MAPS = {"Pit","Village","Abandoned City","Mountain","Final Valley","Desert"}
+    local L = pages["Teleports"].left
 
-    local mp = makeGroup(L, "Map Teleport")
-    makeDD(mp, "Map", MAPS, "SelectedMap")
-    makeBtn(mp, "Teleport", 22, function()
-        pcall(function()
-            local r = re(); if not r then return end
-            r:FireServer("MapTeleport", S.SelectedMap)
-        end)
-    end)
-
-    local pt = makeGroup(R, "Player Teleport")
+    local pt = makeGroup(L, "Player Teleport")
     local list = make("ScrollingFrame", {
         BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 150),
         ScrollBarThickness = 2, ScrollBarImageColor3 = T.accent,
@@ -758,8 +760,9 @@ do
     makeBtn(sc, "Disconnect All", 22, function()
         for _, c in pairs(Connections)     do pcall(function() c:Disconnect() end) end
         for _, c in pairs(autoBlockConns)  do pcall(function() c:Disconnect() end) end
-        if noclipConn then pcall(function() noclipConn:Disconnect() end) end
-        Connections, autoBlockConns, noclipConn = {}, {}, nil
+        stopFly()
+        Connections, autoBlockConns = {}, {}
+        S.Fly, S.Noclip = false, false
     end)
     makeBtn(sc, "Close Hub", 22, function() gui:Destroy() end)
 
@@ -894,25 +897,50 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         doInvisible(S.Invisible)
     end
 
-    -- Fly
+    -- Fly (BodyVelocity + BodyGyro — stable, no spin)
+    if S.Fly ~= flyStateLast then
+        flyStateLast = S.Fly
+        if S.Fly then startFly() else stopFly() end
+    end
     if S.Fly then
         pcall(function()
-            local mh = hrp(); local h = hum()
-            if not mh or not h then return end
-            h:ChangeState(Enum.HumanoidStateType.Physics)
-            mh.AssemblyLinearVelocity = Vector3.zero
+            local mh = hrp(); if not mh then return end
+            -- Re-create the movers if we respawned (old ones died with old HRP)
+            if not (flyBV and flyBV.Parent == mh) then startFly() end
             local cf  = workspace.CurrentCamera.CFrame
             local dir = Vector3.zero
             if UIS:IsKeyDown(Enum.KeyCode.W)           then dir = dir + cf.LookVector  end
             if UIS:IsKeyDown(Enum.KeyCode.S)           then dir = dir - cf.LookVector  end
             if UIS:IsKeyDown(Enum.KeyCode.A)           then dir = dir - cf.RightVector end
             if UIS:IsKeyDown(Enum.KeyCode.D)           then dir = dir + cf.RightVector end
-            if UIS:IsKeyDown(Enum.KeyCode.Space)       then dir = dir + Vector3.new(0,1,0) end
-            if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then dir = dir - Vector3.new(0,1,0) end
-            if dir.Magnitude > 0 then
-                mh.CFrame = mh.CFrame + dir.Unit * S.FlySpeed * dt
+            if UIS:IsKeyDown(Enum.KeyCode.Space)       then dir = dir + Vector3.new(0, 1, 0) end
+            if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then dir = dir - Vector3.new(0, 1, 0) end
+            flyBV.Velocity = (dir.Magnitude > 0) and (dir.Unit * S.FlySpeed) or Vector3.zero
+            -- Keep the body upright, facing where the camera looks (yaw only)
+            local flat = Vector3.new(cf.LookVector.X, 0, cf.LookVector.Z)
+            if flat.Magnitude > 0.05 then
+                flyBG.CFrame = CFrame.lookAt(mh.Position, mh.Position + flat)
             end
         end)
+    end
+
+    -- Noclip (flag-driven; runs every frame so it survives respawns)
+    if S.Noclip then
+        noclipLast = true
+        local c = chr()
+        if c then
+            for _, pt in pairs(c:GetDescendants()) do
+                if pt:IsA("BasePart") and pt.CanCollide then pt.CanCollide = false end
+            end
+        end
+    elseif noclipLast then
+        noclipLast = false
+        local c = chr()
+        if c then
+            for _, pt in pairs(c:GetDescendants()) do
+                if pt:IsA("BasePart") and pt.Name ~= "HumanoidRootPart" then pt.CanCollide = true end
+            end
+        end
     end
 
     -- Auto Sprint
@@ -1184,4 +1212,4 @@ end))
 setTab("Combat")
 refreshTheme()
 
-print("[Money/Free Hub] v3.2 | Toggle: " .. S.ToggleKey.Name)
+print("[Money/Free Hub] v3.3 | Toggle: " .. S.ToggleKey.Name)
