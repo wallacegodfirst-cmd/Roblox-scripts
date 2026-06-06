@@ -315,43 +315,57 @@ end
 
 -- ── Widget builders ────────────────────────────────────────────────────────
 local function makeGroup(page, title)
+    -- Outer card: a vertical UIListLayout drives its height so AutomaticSize
+    -- resolves reliably (the previous absolute-positioned version collapsed to
+    -- ~0px, which the page's ScrollingFrame then clipped -> blank tabs).
     local frame = make("Frame", {
         BackgroundColor3    = T.panel,
         BorderSizePixel     = 0,
         AutomaticSize       = Enum.AutomaticSize.Y,
         Size                = UDim2.new(1, 0, 0, 0),
+        ClipsDescendants    = false,
     }, page)
     make("UICorner", {CornerRadius = UDim.new(0, 5)}, frame)
     stroke(frame, T.border)
+    make("UIListLayout", {
+        FillDirection = Enum.FillDirection.Vertical,
+        SortOrder     = Enum.SortOrder.LayoutOrder,
+        Padding       = UDim.new(0, 0),
+    }, frame)
 
+    -- full-width accent line at the very top
     local al = make("Frame", {
         Size             = UDim2.new(1, 0, 0, 2),
         BackgroundColor3 = T.accent,
         BorderSizePixel  = 0,
+        LayoutOrder      = 0,
     }, frame)
     table.insert(accentFrames, al)
 
+    -- header
     local header = make("TextLabel", {
         Text           = title,
         TextSize       = 12,
         TextColor3     = T.accent,
         Font           = CurFont,
         BackgroundTransparency = 1,
-        Position       = UDim2.new(0, 8, 0, 2),
-        Size           = UDim2.new(1, -8, 0, 22),
+        Size           = UDim2.new(1, 0, 0, 24),
         TextXAlignment = Enum.TextXAlignment.Left,
+        LayoutOrder    = 1,
     }, frame)
+    make("UIPadding", {PaddingLeft = UDim.new(0, 10)}, header)
     table.insert(allTextObjs, {header, "accent"})
 
+    -- body that holds the rows
     local inner = make("Frame", {
         BackgroundTransparency = 1,
         BorderSizePixel        = 0,
-        Position               = UDim2.new(0, 0, 0, 24),
         AutomaticSize          = Enum.AutomaticSize.Y,
         Size                   = UDim2.new(1, 0, 0, 0),
+        LayoutOrder            = 2,
     }, frame)
-    make("UIListLayout", {FillDirection = Enum.FillDirection.Vertical, Padding = UDim.new(0, 2)}, inner)
-    make("UIPadding", {PaddingLeft=UDim.new(0,8), PaddingRight=UDim.new(0,8), PaddingBottom=UDim.new(0,8)}, inner)
+    make("UIListLayout", {FillDirection = Enum.FillDirection.Vertical, Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder}, inner)
+    make("UIPadding", {PaddingLeft=UDim.new(0,10), PaddingRight=UDim.new(0,10), PaddingBottom=UDim.new(0,8), PaddingTop=UDim.new(0,2)}, inner)
     return inner
 end
 
