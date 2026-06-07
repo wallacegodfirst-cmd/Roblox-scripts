@@ -1,4 +1,4 @@
--- Titan Hub | Age of Titans | v4.9
+-- Titan Hub | Age of Titans | v4.10
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -279,7 +279,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title       = "Titan Hub",
-    SubTitle    = "Age of Titans  •  v4.9",
+    SubTitle    = "Age of Titans  •  v4.10",
     TabWidth    = 160,
     Size        = UDim2.fromOffset(600, 480),
     Acrylic     = true,
@@ -480,16 +480,14 @@ table.insert(Connections, UIS.InputBegan:Connect(function(i, gpe)
     if i.UserInputType~=Enum.UserInputType.MouseButton1 then return end
     if S.ExtendHitbox then for n=1,5 do spamHitbox("Attack"..n.."Hitbox",S.HitboxSize,4,0.05) end end
     if S.M1Expand then
-        -- Expand the M1 hitbox AND fire the actual Lc (M1) attack so far targets take damage
-        local r=re()
-        -- Pad the size so an enemy at the edge of the expand ball still lands inside the server hitbox
+        -- Pre-expand the hitbox BEFORE the natural M1 swing registers server-side
+        -- Do NOT fire Lc remotes directly — they are Launch/Leap, not M1 attacks
         local hitSz=math.max(S.M1Size,12)+4
+        local r=re()
         if r then
-            -- Set the enlarged hitbox first, then trigger the M1 swing remotes
             for n=1,3 do pcall(function() r:FireServer("Lc"..n.."Hitbox",hitSz) end) end
-            for n=1,3 do pcall(function() r:FireServer("Lc"..n,ATTACK_VALS[n] or 4.4666666984558105) end) end
         end
-        -- Keep the hitbox enlarged across the whole swing window so the hit frame uses it
+        -- Keep the hitbox enlarged across the full swing window
         for n=1,3 do spamHitbox("Lc"..n.."Hitbox",hitSz,6,0.03) end
     end
     if S.SilentAim then
@@ -888,4 +886,4 @@ end))
 
 -- ── Init ──────────────────────────────────────────────────────────────────────
 Window:SelectTab(1)
-print("[Titan Hub] v4.9 loaded | Toggle: RightShift")
+print("[Titan Hub] v4.10 loaded | Toggle: RightShift")
