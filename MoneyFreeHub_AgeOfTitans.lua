@@ -1,4 +1,4 @@
--- Money/Free Hub | Age of Titans | v4.2
+-- Money/Free Hub | Age of Titans | v4.3
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -261,7 +261,7 @@ corner(main,8)
 local titleBar = make("Frame",{Size=UDim2.new(1,0,0,TITLE_H),BackgroundColor3=T.title,BorderSizePixel=0},main)
 make("Frame",{Size=UDim2.new(1,0,0,2),Position=UDim2.new(0,0,1,-2),BackgroundColor3=T.accent,BorderSizePixel=0},titleBar)
 make("TextLabel",{
-    Text="MONEY/FREE HUB  |  AGE OF TITANS  |  v4.2",
+    Text="MONEY/FREE HUB  |  AGE OF TITANS  |  v4.3",
     TextSize=11, TextColor3=T.text, Font=Enum.Font.GothamBold,
     BackgroundTransparency=1, Position=UDim2.new(0,10,0,0), Size=UDim2.new(1,-60,1,0),
     TextXAlignment=Enum.TextXAlignment.Left,
@@ -778,10 +778,10 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
             local rgt = Vector3.new(cam.RightVector.X, 0, cam.RightVector.Z)
             if rgt.Magnitude > 0.01 then rgt = rgt.Unit end
             local dir=Vector3.zero
-            if UIS:IsKeyDown(Enum.KeyCode.W)           then dir=dir+fwd end
-            if UIS:IsKeyDown(Enum.KeyCode.S)           then dir=dir-fwd end
-            if UIS:IsKeyDown(Enum.KeyCode.A)           then dir=dir-rgt end
-            if UIS:IsKeyDown(Enum.KeyCode.D)           then dir=dir+rgt end
+            if UIS:IsKeyDown(Enum.KeyCode.W)           then dir=dir-fwd end
+            if UIS:IsKeyDown(Enum.KeyCode.S)           then dir=dir+fwd end
+            if UIS:IsKeyDown(Enum.KeyCode.A)           then dir=dir+rgt end
+            if UIS:IsKeyDown(Enum.KeyCode.D)           then dir=dir-rgt end
             if UIS:IsKeyDown(Enum.KeyCode.Space)       then dir=dir+Vector3.new(0,1,0) end
             if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then dir=dir-Vector3.new(0,1,0) end
             mh.AssemblyLinearVelocity=Vector3.zero; mh.AssemblyAngularVelocity=Vector3.zero
@@ -849,12 +849,8 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
                     end
                 end
             else
-                -- Re-send VIM key hold every 0.6s (not every frame — prevents toggle spam)
-                infBlockResendClk = infBlockResendClk + dt
-                if infBlockResendClk >= 0.6 then
-                    infBlockResendClk = 0
-                    vimKey(true, Enum.KeyCode.F)
-                end
+                -- Re-send VIM key every frame to keep block animation playing
+                vimKey(true, Enum.KeyCode.F)
             end
             -- Attribute override every frame (safe — not a toggle)
             setBlockAttribs(true)
@@ -903,17 +899,19 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
                 local c=chr()
                 if c and c.PrimaryPart then c:SetPrimaryPartCFrame(CFrame.new(snap))
                 else mh.CFrame=CFrame.new(snap) end
+                -- Show M1 expand sphere so the visual tracks during kill aura
+                ensureExpandVisual()
                 -- Auto-click at viewport center to trigger game's own attack + animation.
                 -- Briefly disable hub interaction so the click passes through to the game world.
                 task.spawn(function()
                     pcall(function()
                         local vim=game:GetService("VirtualInputManager")
                         local vp=workspace.CurrentCamera.ViewportSize
-                        main.Active=false
+                        gui.Enabled=false
                         vim:SendMouseButtonEvent(vp.X/2,vp.Y/2,0,true,game,0)
                         task.wait(0.06)
                         vim:SendMouseButtonEvent(vp.X/2,vp.Y/2,0,false,game,0)
-                        main.Active=true
+                        gui.Enabled=true
                     end)
                 end)
                 -- Spam M1 expand hitboxes (Lc) so attacks register even if distance is tight
@@ -1169,4 +1167,4 @@ end))
 
 -- ── Init ──────────────────────────────────────────────────────────────────────
 setTab("Combat")
-print("[Money/Free Hub] v4.2 | Toggle: "..S.ToggleKey.Name)
+print("[Money/Free Hub] v4.3 | Toggle: "..S.ToggleKey.Name)
