@@ -1,4 +1,4 @@
--- Titan Hub | Age of Titans | v4.8
+-- Titan Hub | Age of Titans | v4.9
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -279,7 +279,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title       = "Titan Hub",
-    SubTitle    = "Age of Titans  •  v4.8",
+    SubTitle    = "Age of Titans  •  v4.9",
     TabWidth    = 160,
     Size        = UDim2.fromOffset(600, 480),
     Acrylic     = true,
@@ -479,7 +479,19 @@ table.insert(Connections, UIS.InputBegan:Connect(function(i, gpe)
     end
     if i.UserInputType~=Enum.UserInputType.MouseButton1 then return end
     if S.ExtendHitbox then for n=1,5 do spamHitbox("Attack"..n.."Hitbox",S.HitboxSize,4,0.05) end end
-    if S.M1Expand     then for n=1,3 do spamHitbox("Lc"..n.."Hitbox",S.M1Size,4,0.05) end end
+    if S.M1Expand then
+        -- Expand the M1 hitbox AND fire the actual Lc (M1) attack so far targets take damage
+        local r=re()
+        -- Pad the size so an enemy at the edge of the expand ball still lands inside the server hitbox
+        local hitSz=math.max(S.M1Size,12)+4
+        if r then
+            -- Set the enlarged hitbox first, then trigger the M1 swing remotes
+            for n=1,3 do pcall(function() r:FireServer("Lc"..n.."Hitbox",hitSz) end) end
+            for n=1,3 do pcall(function() r:FireServer("Lc"..n,ATTACK_VALS[n] or 4.4666666984558105) end) end
+        end
+        -- Keep the hitbox enlarged across the whole swing window so the hit frame uses it
+        for n=1,3 do spamHitbox("Lc"..n.."Hitbox",hitSz,6,0.03) end
+    end
     if S.SilentAim then
         pcall(function()
             local tgt=nearest(300); if not tgt then return end
@@ -876,4 +888,4 @@ end))
 
 -- ── Init ──────────────────────────────────────────────────────────────────────
 Window:SelectTab(1)
-print("[Titan Hub] v4.8 loaded | Toggle: RightShift")
+print("[Titan Hub] v4.9 loaded | Toggle: RightShift")
