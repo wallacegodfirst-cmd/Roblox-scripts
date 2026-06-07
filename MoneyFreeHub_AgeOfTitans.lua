@@ -1,4 +1,4 @@
--- Money/Free Hub | Age of Titans | v4.4
+-- Money/Free Hub | Age of Titans | v4.5
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -151,7 +151,7 @@ local function startFly()
 end
 local function stopFly() end
 
--- ── Block (Inf Block — VIM once + IsKeyDown hook for animation) ───────────────
+-- ── Block (Inf Block) ─────────────────────────────────────────────────────────
 local function vimKey(down, key)
     pcall(function() game:GetService("VirtualInputManager"):SendKeyEvent(down,key,false,game) end)
 end
@@ -169,44 +169,35 @@ local function setBlockAttribs(state)
     end)
 end
 
--- Hook IsKeyDown so game polling sees F held while InfBlock is active.
--- This is what actually drives the block animation (VIM events do not update IsKeyDown).
-do
-    pcall(function()
-        if not (hookmetamethod and getnamecallmethod) then return end
-        local oldNamecall
-        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-            local ok, method = pcall(getnamecallmethod)
-            if ok and method=="IsKeyDown" and S.InfBlock then
-                local arg = (...)
-                if arg==Enum.KeyCode.F then return true end
-            end
-            return oldNamecall(self, ...)
-        end)
-    end)
-end
-
--- Find and play a block animation track directly (best-effort)
+-- Find and play a block animation track directly so blocking is visible.
 local blockAnimTrack=nil
-local function startBlockAnim()
-    pcall(function()
-        local h=hum(); if not h then return end
-        local animator=h:FindFirstChildOfClass("Animator"); if not animator then return end
-        local c=chr(); if not c then return end
-        local found
-        local function scan(parent)
+local function findBlockAnimId()
+    local hit
+    local function scan(parent)
+        if not parent then return end
+        local ok=pcall(function()
             for _,d in ipairs(parent:GetDescendants()) do
                 if d:IsA("Animation") then
                     local n=d.Name:lower()
                     if n:find("block") or n:find("guard") or n:find("defend") or n:find("parry") then
-                        found=d; return
+                        hit=d.AnimationId; return
                     end
                 end
             end
-        end
-        scan(c); if not found then scan(player) end
-        if not found then return end
-        blockAnimTrack=animator:LoadAnimation(found)
+        end)
+    end
+    scan(chr()); if not hit then scan(player) end
+    if not hit then scan(moveset()) end
+    if not hit then scan(game:GetService("ReplicatedStorage")) end
+    return hit
+end
+local function startBlockAnim()
+    pcall(function()
+        local h=hum(); if not h then return end
+        local animator=h:FindFirstChildOfClass("Animator"); if not animator then return end
+        local id=findBlockAnimId(); if not id then return end
+        local anim=Instance.new("Animation"); anim.AnimationId=id
+        blockAnimTrack=animator:LoadAnimation(anim)
         blockAnimTrack.Looped=true
         blockAnimTrack.Priority=Enum.AnimationPriority.Action
         blockAnimTrack:Play()
@@ -308,7 +299,7 @@ corner(main,8)
 local titleBar = make("Frame",{Size=UDim2.new(1,0,0,TITLE_H),BackgroundColor3=T.title,BorderSizePixel=0},main)
 make("Frame",{Size=UDim2.new(1,0,0,2),Position=UDim2.new(0,0,1,-2),BackgroundColor3=T.accent,BorderSizePixel=0},titleBar)
 make("TextLabel",{
-    Text="MONEY/FREE HUB  |  AGE OF TITANS  |  v4.4",
+    Text="MONEY/FREE HUB  |  AGE OF TITANS  |  v4.5",
     TextSize=11, TextColor3=T.text, Font=Enum.Font.GothamBold,
     BackgroundTransparency=1, Position=UDim2.new(0,10,0,0), Size=UDim2.new(1,-60,1,0),
     TextXAlignment=Enum.TextXAlignment.Left,
@@ -812,33 +803,32 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
     -- Invisible
     if S.Invisible~=invisStateLast then invisStateLast=S.Invisible;doInvisible(S.Invisible) end
 
-    -- Fly
-    if S.Fly~=flyStateLast then flyStateLast=S.Fly; if S.Fly then startFly() else stopFly() end end
+    -- Fly (camera-relative; fly toward where you look)
+    if S.Fly~=flyStateLast then
+        flyStateLast=S.Fly
+        if S.Fly then startFly()
+        else stopFly(); local h=hum(); if h then pcall(function() h.PlatformStand=false end) end end
+    end
     if S.Fly then
         pcall(function()
             local c=chr(); if not c then return end
             local mh=hrp(); if not mh then return end
-            -- Use camera yaw to derive horizontal forward/right (standard Roblox fly convention)
-            local cam=workspace.CurrentCamera
-            local camCF=cam.CFrame
-            -- Build a yaw-only CFrame from the camera so vertical look doesn't tilt fly
-            local lv=camCF.LookVector
-            local yaw=math.atan2(-lv.X,-lv.Z)
-            local yawCF=CFrame.fromEulerAnglesYXZ(0,yaw,0)
-            local fwd=yawCF.LookVector
-            local rgt=yawCF.RightVector
+            -- Stop the humanoid from fighting our movement
+            local h=hum(); if h then h.PlatformStand=true end
+            local cam=workspace.CurrentCamera.CFrame
+            local look=cam.LookVector
+            local right=cam.RightVector
             local dir=Vector3.zero
-            if UIS:IsKeyDown(Enum.KeyCode.W)           then dir=dir-fwd end
-            if UIS:IsKeyDown(Enum.KeyCode.S)           then dir=dir+fwd end
-            if UIS:IsKeyDown(Enum.KeyCode.A)           then dir=dir+rgt end
-            if UIS:IsKeyDown(Enum.KeyCode.D)           then dir=dir-rgt end
+            if UIS:IsKeyDown(Enum.KeyCode.W)           then dir=dir-look end
+            if UIS:IsKeyDown(Enum.KeyCode.S)           then dir=dir+look end
+            if UIS:IsKeyDown(Enum.KeyCode.A)           then dir=dir+right end
+            if UIS:IsKeyDown(Enum.KeyCode.D)           then dir=dir-right end
             if UIS:IsKeyDown(Enum.KeyCode.Space)       then dir=dir+Vector3.new(0,1,0) end
             if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then dir=dir-Vector3.new(0,1,0) end
             mh.AssemblyLinearVelocity=Vector3.zero; mh.AssemblyAngularVelocity=Vector3.zero
             if dir.Magnitude>0 then
                 local move=dir.Unit*S.FlySpeed*dt
-                if c.PrimaryPart then c:SetPrimaryPartCFrame(c.PrimaryPart.CFrame+move)
-                else mh.CFrame=mh.CFrame+move end
+                c:PivotTo(c:GetPivot()+move)
             end
         end)
     end
@@ -885,22 +875,29 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
     end
 
     -- Inf Block manager
-    -- VIM F down ONCE on enable, IsKeyDown hook keeps polling true,
-    -- block animation played directly, attributes held every frame.
+    -- On enable: press F once + start anim + fire block remotes.
+    -- Held: attributes every frame, re-fire block remotes every 0.5s, keep anim playing.
     do
+        local function fireBlockRemotes()
+            local r=re(); if not r then return end
+            for _,name in ipairs({"Block","BlockStart","StartBlock","Guard","GuardStart"}) do
+                pcall(function() r:FireServer(name) end)
+            end
+        end
         if S.InfBlock then
             if not infBlockActive then
                 infBlockActive = true
                 infBlockResendClk = 0
                 vimKey(true, Enum.KeyCode.F)
                 startBlockAnim()
-                local r=re()
-                if r then
-                    for _,name in ipairs({"Block","BlockStart","StartBlock","Guard","GuardStart"}) do
-                        pcall(function() r:FireServer(name) end)
-                    end
-                end
+                fireBlockRemotes()
             else
+                infBlockResendClk = infBlockResendClk + dt
+                if infBlockResendClk >= 0.5 then
+                    infBlockResendClk = 0
+                    fireBlockRemotes()
+                end
+                -- Keep the block animation alive
                 if blockAnimTrack and not blockAnimTrack.IsPlaying then
                     pcall(function() blockAnimTrack:Play() end)
                 elseif not blockAnimTrack then
@@ -1221,4 +1218,4 @@ end))
 
 -- ── Init ──────────────────────────────────────────────────────────────────────
 setTab("Combat")
-print("[Money/Free Hub] v4.4 | Toggle: "..S.ToggleKey.Name)
+print("[Money/Free Hub] v4.5 | Toggle: "..S.ToggleKey.Name)
