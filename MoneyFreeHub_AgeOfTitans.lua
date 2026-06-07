@@ -1,31 +1,29 @@
--- Money/Free Hub | Age of Titans | v4.5
+-- Money/Free Hub | Age of Titans | v4.6
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local TweenService     = game:GetService("TweenService")
 local Lighting         = game:GetService("Lighting")
 local TeleportService  = game:GetService("TeleportService")
 
 local player = Players.LocalPlayer
 local UIS    = UserInputService
 
--- Theme (original v3.7/v3.8 style)
 local T = {
-    bg     = Color3.fromRGB(17,  18,  22),
-    card   = Color3.fromRGB(23,  24,  29),
-    tab    = Color3.fromRGB(22,  23,  28),
-    tabsel = Color3.fromRGB(30,  32,  40),
-    title  = Color3.fromRGB(14,  15,  18),
-    border = Color3.fromRGB(38,  40,  50),
+    bg     = Color3.fromRGB(13,  14,  18),
+    card   = Color3.fromRGB(20,  21,  27),
+    side   = Color3.fromRGB(16,  17,  22),
+    title  = Color3.fromRGB(10,  11,  14),
+    border = Color3.fromRGB(32,  34,  44),
     accent = Color3.fromRGB(64,  110, 200),
     text   = Color3.fromRGB(215, 218, 225),
-    dim    = Color3.fromRGB(120, 125, 140),
-    fill   = Color3.fromRGB(40,  43,  52),
+    dim    = Color3.fromRGB(100, 106, 128),
+    fill   = Color3.fromRGB(34,  36,  48),
     check  = Color3.fromRGB(255, 255, 255),
+    sep    = Color3.fromRGB(26,  28,  36),
+    hot    = Color3.fromRGB(24,  26,  34),
 }
 
--- State
 local S = {
     KillAura       = false, KillAuraRange  = 40,
     SilentAim      = false,
@@ -33,18 +31,15 @@ local S = {
     ShowHitbox     = false,
     M1Expand       = false, M1Size         = 8,
     ShowExpand     = false,
-    InfBlock       = false,
     AutoUlt        = false,
     AutoFarm       = false, AutoFarmRange  = 80,
     AutoPlay       = false, AutoPlayRange  = 100,
     BypassCooldown = false,
-    Fly            = false, FlySpeed       = 80,
     Noclip         = false,
     SpeedHack      = false, WalkSpeed      = 50,
     AutoSprint     = false,
     NoStun         = false,
     GodMode        = false,
-
     SaveSystem     = false, SaveThreshold  = 30,
     InstantRespawn = false,
     Invisible      = false,
@@ -63,26 +58,23 @@ local ATTACK_VALS = {
     4.4666666984558105, 4.4666666984558105,
 }
 
--- Internal timers / flags
-local speedOriginal, speedStateLast        = nil, false
-local godOrigMax,    godStateLast          = nil, false
-local invisOrigTrans, invisStateLast       = {}, false
-local ultClock,  ultWasFull               = 0, false
-local farmClock, kauraClk, cdClock        = 0, 0, 0
-local autoPlayClock                        = 0
-local noStunClock, noclipClock = 0, 0
-local espClock, fbClock, hnClock           = 0, 0, 0
-local respawnClock                         = 0
-local saveActive, saveClock, savePos       = false, 0, Vector3.zero
-local espBoxes, showHitboxBoxes            = {}, {}
-local showHitboxLast                       = false
-local origZoom                             = nil
-local Connections                          = {}
-local flyStateLast, noclipLast             = false, false
-local spinAngle                            = 0
-local expandPart, expandBox                = nil, nil
-local infBlockActive    = false
-local infBlockResendClk = 0
+local speedOriginal, speedStateLast  = nil, false
+local godOrigMax,    godStateLast    = nil, false
+local invisOrigTrans, invisStateLast = {}, false
+local ultClock,  ultWasFull         = 0, false
+local farmClock, kauraClk, cdClock  = 0, 0, 0
+local autoPlayClock                  = 0
+local noStunClock, noclipClock       = 0, 0
+local espClock, fbClock, hnClock     = 0, 0, 0
+local respawnClock                   = 0
+local saveActive, saveClock, savePos = false, 0, Vector3.zero
+local espBoxes, showHitboxBoxes      = {}, {}
+local showHitboxLast                 = false
+local origZoom                       = nil
+local Connections                    = {}
+local noclipLast                     = false
+local spinAngle                      = 0
+local expandPart, expandBox          = nil, nil
 
 -- ── Helpers ────────────────────────────────────────────────────────────────────
 local function chr() return player.Character end
@@ -92,7 +84,7 @@ local function hrp()
     return c:FindFirstChild("HumanoidRootPart") or c.PrimaryPart or c:FindFirstChildWhichIsA("BasePart")
 end
 local function re()
-    local c = chr()
+    local c=chr()
     if c then local r=c:FindFirstChild("RemoteEvent"); if r and r:IsA("RemoteEvent") then return r end end
     local rs=game:GetService("ReplicatedStorage")
     return rs:FindFirstChild("RemoteEvent") or rs:FindFirstChildWhichIsA("RemoteEvent")
@@ -113,7 +105,7 @@ local function diedRemote()
 end
 local function nearest(maxD)
     local best, dist = nil, maxD or math.huge
-    local mh = hrp(); if not mh then return nil end
+    local mh=hrp(); if not mh then return nil end
     for _,p in pairs(Players:GetPlayers()) do
         if p~=player and p.Character then
             local ph=p.Character:FindFirstChild("HumanoidRootPart") or p.Character.PrimaryPart
@@ -124,7 +116,7 @@ local function nearest(maxD)
 end
 local function nearestTargetRoot(maxD)
     local best, dist = nil, maxD or math.huge
-    local mh = hrp(); if not mh then return nil end
+    local mh=hrp(); if not mh then return nil end
     for _,p in pairs(Players:GetPlayers()) do
         if p~=player and p.Character then
             local ph=p.Character:FindFirstChild("HumanoidRootPart") or p.Character.PrimaryPart
@@ -141,70 +133,6 @@ local function nearestTargetRoot(maxD)
         end
     end
     return best
-end
--- ── Fly ───────────────────────────────────────────────────────────────────────
-local function startFly()
-    pcall(function()
-        local mh=hrp()
-        if mh then mh.AssemblyLinearVelocity=Vector3.zero; mh.AssemblyAngularVelocity=Vector3.zero end
-    end)
-end
-local function stopFly() end
-
--- ── Block (Inf Block) ─────────────────────────────────────────────────────────
-local function vimKey(down, key)
-    pcall(function() game:GetService("VirtualInputManager"):SendKeyEvent(down,key,false,game) end)
-end
-local function blockStop()
-    local r=re(); if r then pcall(function() r:FireServer("BlockStop") end) end
-end
-local function setBlockAttribs(state)
-    pcall(function()
-        local c=chr(); if not c then return end
-        for _,a in ipairs({"Blocking","Block","IsBlocking","Guard","Guarding","Parry","Defending"}) do
-            if c:GetAttribute(a)~=nil then c:SetAttribute(a,state) end
-            local bv=c:FindFirstChild(a)
-            if bv and bv:IsA("BoolValue") then bv.Value=state end
-        end
-    end)
-end
-
--- Find and play a block animation track directly so blocking is visible.
-local blockAnimTrack=nil
-local function findBlockAnimId()
-    local hit
-    local function scan(parent)
-        if not parent then return end
-        local ok=pcall(function()
-            for _,d in ipairs(parent:GetDescendants()) do
-                if d:IsA("Animation") then
-                    local n=d.Name:lower()
-                    if n:find("block") or n:find("guard") or n:find("defend") or n:find("parry") then
-                        hit=d.AnimationId; return
-                    end
-                end
-            end
-        end)
-    end
-    scan(chr()); if not hit then scan(player) end
-    if not hit then scan(moveset()) end
-    if not hit then scan(game:GetService("ReplicatedStorage")) end
-    return hit
-end
-local function startBlockAnim()
-    pcall(function()
-        local h=hum(); if not h then return end
-        local animator=h:FindFirstChildOfClass("Animator"); if not animator then return end
-        local id=findBlockAnimId(); if not id then return end
-        local anim=Instance.new("Animation"); anim.AnimationId=id
-        blockAnimTrack=animator:LoadAnimation(anim)
-        blockAnimTrack.Looped=true
-        blockAnimTrack.Priority=Enum.AnimationPriority.Action
-        blockAnimTrack:Play()
-    end)
-end
-local function stopBlockAnim()
-    if blockAnimTrack then pcall(function() blockAnimTrack:Stop() end); blockAnimTrack=nil end
 end
 
 -- ── Hitbox spam ───────────────────────────────────────────────────────────────
@@ -268,9 +196,8 @@ local function ultIsFull()
     return false
 end
 
-
 -- ══════════════════════════════════════════════════════════════════════════════
--- GUI  (original top-tab, two-column card layout)
+-- GUI  (left-sidebar layout — distinctly different shape from v4.x)
 -- ══════════════════════════════════════════════════════════════════════════════
 local gui = Instance.new("ScreenGui")
 gui.Name, gui.ResetOnSpawn = "MoneyFreeHub", false
@@ -286,62 +213,122 @@ local function make(cls, props, parent)
 end
 local function corner(p, r) return make("UICorner",{CornerRadius=UDim.new(0,r or 6)},p) end
 
-local WIN_W, WIN_H = 560, 430
-local TITLE_H, TAB_H = 26, 30
+local WIN_W   = 510
+local WIN_H   = 410
+local TITLE_H = 30
+local SIDE_W  = 62
 
+-- Outer shell — large corner radius gives a distinct "card" silhouette
 local main = make("Frame",{
-    Size=UDim2.new(0,WIN_W,0,WIN_H), Position=UDim2.new(0.5,-WIN_W/2,0.5,-WIN_H/2),
-    BackgroundColor3=T.bg, BorderSizePixel=0, Active=true, ClipsDescendants=true,
+    Size=UDim2.new(0,WIN_W,0,WIN_H),
+    Position=UDim2.new(0.5,-WIN_W/2,0.5,-WIN_H/2),
+    BackgroundColor3=T.bg, BorderSizePixel=0,
+    Active=true, ClipsDescendants=true,
 },gui)
-corner(main,8)
+corner(main,16)
+
+-- Top accent strip
+make("Frame",{
+    Size=UDim2.new(1,0,0,3), BackgroundColor3=T.accent, BorderSizePixel=0,
+},main)
 
 -- Title bar
-local titleBar = make("Frame",{Size=UDim2.new(1,0,0,TITLE_H),BackgroundColor3=T.title,BorderSizePixel=0},main)
-make("Frame",{Size=UDim2.new(1,0,0,2),Position=UDim2.new(0,0,1,-2),BackgroundColor3=T.accent,BorderSizePixel=0},titleBar)
+local titleBar = make("Frame",{
+    Size=UDim2.new(1,0,0,TITLE_H), BackgroundColor3=T.title, BorderSizePixel=0,
+},main)
+-- Logo dot
+make("Frame",{
+    Size=UDim2.new(0,6,0,6), Position=UDim2.new(0,SIDE_W+10,0.5,-3),
+    BackgroundColor3=T.accent, BorderSizePixel=0,
+},titleBar)
+corner(titleBar:FindFirstChildOfClass("Frame") and titleBar:FindFirstChildOfClass("Frame") or titleBar,3)
 make("TextLabel",{
-    Text="MONEY/FREE HUB  |  AGE OF TITANS  |  v4.5",
-    TextSize=11, TextColor3=T.text, Font=Enum.Font.GothamBold,
-    BackgroundTransparency=1, Position=UDim2.new(0,10,0,0), Size=UDim2.new(1,-60,1,0),
+    Text="MONEY / FREE HUB  ·  AGE OF TITANS",
+    TextSize=10, TextColor3=T.dim, Font=Enum.Font.GothamMedium,
+    BackgroundTransparency=1,
+    Position=UDim2.new(0,SIDE_W+24,0,0), Size=UDim2.new(1,-(SIDE_W+80),1,0),
     TextXAlignment=Enum.TextXAlignment.Left,
 },titleBar)
-local minBtn   = make("TextButton",{Text="—",TextSize=12,TextColor3=T.dim,Font=Enum.Font.GothamBold,
-    BackgroundTransparency=1,Position=UDim2.new(1,-50,0,0),Size=UDim2.new(0,25,1,0)},titleBar)
-local closeBtn = make("TextButton",{Text="✕",TextSize=12,TextColor3=T.dim,Font=Enum.Font.GothamBold,
-    BackgroundTransparency=1,Position=UDim2.new(1,-26,0,0),Size=UDim2.new(0,26,1,0)},titleBar)
+local verLbl = make("TextLabel",{
+    Text="v4.6",
+    TextSize=9, TextColor3=T.dim, Font=Enum.Font.Gotham,
+    BackgroundTransparency=1,
+    Position=UDim2.new(1,-90,0,0), Size=UDim2.new(0,40,1,0),
+    TextXAlignment=Enum.TextXAlignment.Right,
+},titleBar)
+local minBtn = make("TextButton",{
+    Text="—", TextSize=12, TextColor3=T.dim, Font=Enum.Font.GothamBold,
+    BackgroundTransparency=1,
+    Position=UDim2.new(1,-50,0,0), Size=UDim2.new(0,24,1,0),
+},titleBar)
+local closeBtn = make("TextButton",{
+    Text="x", TextSize=11, TextColor3=T.dim, Font=Enum.Font.GothamBold,
+    BackgroundTransparency=1,
+    Position=UDim2.new(1,-26,0,0), Size=UDim2.new(0,24,1,0),
+},titleBar)
 
--- Tab bar
-local tabBar = make("Frame",{
-    Size=UDim2.new(1,0,0,TAB_H), Position=UDim2.new(0,0,0,TITLE_H),
-    BackgroundColor3=T.tab, BorderSizePixel=0,
-},main)
-make("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,1,-1),BackgroundColor3=T.border,BorderSizePixel=0},tabBar)
-
-local TAB_NAMES = {"Combat","Player","Visuals","Misc","Teleports","Settings"}
-local tabBtns   = {}
-local TAB_W     = math.floor(WIN_W / #TAB_NAMES)
-for i,name in ipairs(TAB_NAMES) do
-    tabBtns[name] = make("TextButton",{
-        Text=name, TextSize=11, TextColor3=T.dim, Font=Enum.Font.GothamMedium,
-        BackgroundColor3=T.tab, BackgroundTransparency=0,
-        Size=UDim2.new(0,TAB_W,1,0), Position=UDim2.new(0,(i-1)*TAB_W,0,0),
-        AutoButtonColor=false, BorderSizePixel=0,
-    },tabBar)
-end
-
--- Page area
-local pageArea = make("Frame",{
-    Size=UDim2.new(1,0,1,-(TITLE_H+TAB_H)), Position=UDim2.new(0,0,0,TITLE_H+TAB_H),
+-- Body (below title)
+local bodyH = WIN_H - TITLE_H
+local body = make("Frame",{
+    Size=UDim2.new(1,0,0,bodyH), Position=UDim2.new(0,0,0,TITLE_H),
     BackgroundTransparency=1, BorderSizePixel=0,
 },main)
 
+-- Left sidebar
+local sidebar = make("Frame",{
+    Size=UDim2.new(0,SIDE_W,1,0),
+    BackgroundColor3=T.side, BorderSizePixel=0,
+},body)
+
+-- Separator line between sidebar and content
+make("Frame",{
+    Size=UDim2.new(0,1,1,0), Position=UDim2.new(0,SIDE_W,0,0),
+    BackgroundColor3=T.sep, BorderSizePixel=0,
+},body)
+
+-- Page/content area
+local pageArea = make("Frame",{
+    Size=UDim2.new(1,-(SIDE_W+1),1,0), Position=UDim2.new(0,SIDE_W+1,0,0),
+    BackgroundTransparency=1, BorderSizePixel=0,
+},body)
+
+-- ── Tab system ────────────────────────────────────────────────────────────────
+local TAB_NAMES = {"Combat","Player","Visuals","Misc","Teleports","Settings"}
+local tabBtns   = {}
+local tabInds   = {}   -- left accent indicator per tab
 local pageFrames = {}
 local pages      = {}
 
+local TAB_H_EACH = math.floor(bodyH / #TAB_NAMES)
+
+for i,name in ipairs(TAB_NAMES) do
+    local yPos = (i-1)*TAB_H_EACH
+    local btn = make("TextButton",{
+        Text=name, TextSize=9, TextColor3=T.dim, Font=Enum.Font.GothamMedium,
+        BackgroundColor3=T.side, BackgroundTransparency=0,
+        Size=UDim2.new(1,0,0,TAB_H_EACH), Position=UDim2.new(0,0,0,yPos),
+        AutoButtonColor=false, BorderSizePixel=0, TextWrapped=true,
+    },sidebar)
+    -- Left accent indicator (hidden by default)
+    local ind = make("Frame",{
+        Size=UDim2.new(0,3,0.55,0), Position=UDim2.new(0,0,0.225,0),
+        BackgroundColor3=T.accent, BorderSizePixel=0, Visible=false,
+    },btn)
+    corner(ind,2)
+    tabBtns[name] = btn
+    tabInds[name] = ind
+end
+
+-- Page setup (two-column scrolling layout)
 local function makePage()
-    local f = make("Frame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,BorderSizePixel=0,Visible=false},pageArea)
+    local f = make("Frame",{
+        Size=UDim2.new(1,0,1,0), BackgroundTransparency=1,
+        BorderSizePixel=0, Visible=false,
+    },pageArea)
     local function makeCol(xPos)
         local sf = make("ScrollingFrame",{
-            Size=UDim2.new(0.5,-6,1,-4), Position=UDim2.new(xPos, xPos==0 and 4 or 2, 0,4),
+            Size=UDim2.new(0.5,-6,1,-4),
+            Position=UDim2.new(xPos, xPos==0 and 4 or 2, 0,4),
             BackgroundTransparency=1, BorderSizePixel=0,
             ScrollBarThickness=3, ScrollBarImageColor3=T.accent,
             CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y,
@@ -356,14 +343,15 @@ end
 for _,name in ipairs(TAB_NAMES) do
     local f,l,r = makePage()
     pageFrames[name] = f
-    pages[name]      = {l=l, r=r}
+    pages[name] = {l=l, r=r}
 end
 
 local function setTab(name)
     for n,btn in pairs(tabBtns) do
         local on = (n==name)
-        btn.TextColor3       = on and T.accent or T.dim
-        btn.BackgroundColor3 = on and T.tabsel or T.tab
+        btn.TextColor3       = on and T.text or T.dim
+        btn.BackgroundColor3 = on and T.hot   or T.side
+        tabInds[n].Visible   = on
         pageFrames[n].Visible = on
     end
 end
@@ -371,18 +359,25 @@ for _,name in ipairs(TAB_NAMES) do
     tabBtns[name].MouseButton1Click:Connect(function() setTab(name) end)
 end
 
--- ── Widget builders ──────────────────────────────────────────────────────────
+-- ── Widget builders ───────────────────────────────────────────────────────────
 local function makeGroup(col, title)
-    local card = make("Frame",{BackgroundColor3=T.card,BorderSizePixel=0,
-        Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y},col)
-    corner(card,6)
-    local strip = make("Frame",{Size=UDim2.new(1,0,0,2),BackgroundColor3=T.accent,BorderSizePixel=0},card)
-    corner(strip,6)
-    make("TextLabel",{Text=title,TextSize=11,TextColor3=T.dim,Font=Enum.Font.GothamBold,
-        BackgroundTransparency=1,Size=UDim2.new(1,0,0,20),Position=UDim2.new(0,8,0,2),
-        TextXAlignment=Enum.TextXAlignment.Left},card)
-    local inner = make("Frame",{BackgroundTransparency=1,BorderSizePixel=0,
-        Position=UDim2.new(0,0,0,22),Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y},card)
+    local card = make("Frame",{
+        BackgroundColor3=T.card, BorderSizePixel=0,
+        Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
+    },col)
+    corner(card,7)
+    -- Top accent strip on card
+    make("Frame",{Size=UDim2.new(1,0,0,2),BackgroundColor3=T.accent,BorderSizePixel=0},card)
+    make("TextLabel",{
+        Text=title, TextSize=10, TextColor3=T.dim, Font=Enum.Font.GothamBold,
+        BackgroundTransparency=1, Size=UDim2.new(1,0,0,20), Position=UDim2.new(0,8,0,2),
+        TextXAlignment=Enum.TextXAlignment.Left,
+    },card)
+    local inner = make("Frame",{
+        BackgroundTransparency=1, BorderSizePixel=0,
+        Position=UDim2.new(0,0,0,22), Size=UDim2.new(1,0,0,0),
+        AutomaticSize=Enum.AutomaticSize.Y,
+    },card)
     make("UIListLayout",{FillDirection=Enum.FillDirection.Vertical,Padding=UDim.new(0,0),SortOrder=Enum.SortOrder.LayoutOrder},inner)
     make("UIPadding",{PaddingBottom=UDim.new(0,6),PaddingLeft=UDim.new(0,6),PaddingRight=UDim.new(0,6)},inner)
     return inner
@@ -390,20 +385,26 @@ end
 
 local function makeCheck(parent, label, key, cb)
     local row = make("Frame",{BackgroundTransparency=1,BorderSizePixel=0,Size=UDim2.new(1,0,0,22)},parent)
-    local box = make("Frame",{Size=UDim2.new(0,13,0,13),Position=UDim2.new(0,4,0.5,-6.5),
-        BackgroundColor3=S[key] and T.accent or T.fill,BorderSizePixel=0},row)
-    corner(box,3)
-    local fill = make("Frame",{Size=UDim2.new(0.7,0,0.7,0),Position=UDim2.new(0.15,0,0.15,0),
-        BackgroundColor3=T.check,BorderSizePixel=0,Visible=S[key]},box)
-    corner(fill,2)
-    make("TextLabel",{Text=label,TextSize=12,TextColor3=T.text,Font=Enum.Font.GothamMedium,
-        BackgroundTransparency=1,Position=UDim2.new(0,22,0,0),Size=UDim2.new(1,-26,1,0),
-        TextXAlignment=Enum.TextXAlignment.Left},row)
+    local box = make("Frame",{
+        Size=UDim2.new(0,13,0,13), Position=UDim2.new(0,4,0.5,-6.5),
+        BackgroundColor3=S[key] and T.accent or T.fill, BorderSizePixel=0,
+    },row)
+    corner(box,4)
+    local tick = make("Frame",{
+        Size=UDim2.new(0.65,0,0.65,0), Position=UDim2.new(0.175,0,0.175,0),
+        BackgroundColor3=T.check, BorderSizePixel=0, Visible=S[key],
+    },box)
+    corner(tick,2)
+    make("TextLabel",{
+        Text=label, TextSize=11, TextColor3=T.text, Font=Enum.Font.GothamMedium,
+        BackgroundTransparency=1, Position=UDim2.new(0,22,0,0), Size=UDim2.new(1,-26,1,0),
+        TextXAlignment=Enum.TextXAlignment.Left,
+    },row)
     local btn = make("TextButton",{Text="",BackgroundTransparency=1,Size=UDim2.new(1,0,1,0),ZIndex=3},row)
     btn.MouseButton1Click:Connect(function()
         S[key]=not S[key]
-        box.BackgroundColor3=S[key] and T.accent or T.fill
-        fill.Visible=S[key]
+        box.BackgroundColor3 = S[key] and T.accent or T.fill
+        tick.Visible = S[key]
         if cb then cb(S[key]) end
     end)
     return row
@@ -412,20 +413,28 @@ end
 local function makeSlider(parent, label, key, minV, maxV, suffix)
     suffix = suffix or ""
     local row = make("Frame",{BackgroundTransparency=1,BorderSizePixel=0,Size=UDim2.new(1,0,0,34)},parent)
-    make("TextLabel",{Text=label,TextSize=11,TextColor3=T.dim,Font=Enum.Font.GothamMedium,
-        BackgroundTransparency=1,Size=UDim2.new(0.65,0,0,16),Position=UDim2.new(0,4,0,0),
-        TextXAlignment=Enum.TextXAlignment.Left},row)
-    local valLbl = make("TextLabel",{Text=tostring(S[key])..suffix,TextSize=11,TextColor3=T.accent,Font=Enum.Font.GothamBold,
-        BackgroundTransparency=1,Size=UDim2.new(0.35,-4,0,16),Position=UDim2.new(0.65,0,0,0),
-        TextXAlignment=Enum.TextXAlignment.Right},row)
-    local track = make("Frame",{BackgroundColor3=T.fill,BorderSizePixel=0,
-        Size=UDim2.new(1,-8,0,5),Position=UDim2.new(0,4,0,20)},row)
+    make("TextLabel",{
+        Text=label, TextSize=10, TextColor3=T.dim, Font=Enum.Font.GothamMedium,
+        BackgroundTransparency=1, Size=UDim2.new(0.65,0,0,16), Position=UDim2.new(0,4,0,0),
+        TextXAlignment=Enum.TextXAlignment.Left,
+    },row)
+    local valLbl = make("TextLabel",{
+        Text=tostring(S[key])..suffix, TextSize=10, TextColor3=T.accent, Font=Enum.Font.GothamBold,
+        BackgroundTransparency=1, Size=UDim2.new(0.35,-4,0,16), Position=UDim2.new(0.65,0,0,0),
+        TextXAlignment=Enum.TextXAlignment.Right,
+    },row)
+    local track = make("Frame",{
+        BackgroundColor3=T.fill, BorderSizePixel=0,
+        Size=UDim2.new(1,-8,0,4), Position=UDim2.new(0,4,0,21),
+    },row)
     corner(track,2)
-    local pct  = math.clamp((S[key]-minV)/(maxV-minV),0,1)
+    local pct   = math.clamp((S[key]-minV)/(maxV-minV),0,1)
     local fill2 = make("Frame",{BackgroundColor3=T.accent,Size=UDim2.new(pct,0,1,0),BorderSizePixel=0},track)
     corner(fill2,2)
-    local knob = make("Frame",{Size=UDim2.new(0,10,0,10),Position=UDim2.new(pct,-5,0.5,-5),
-        BackgroundColor3=Color3.fromRGB(230,232,240),BorderSizePixel=0,ZIndex=2},track)
+    local knob = make("Frame",{
+        Size=UDim2.new(0,10,0,10), Position=UDim2.new(pct,-5,0.5,-5),
+        BackgroundColor3=Color3.fromRGB(210,215,235), BorderSizePixel=0, ZIndex=2,
+    },track)
     corner(knob,5)
     local dragging=false
     local function set(px)
@@ -445,9 +454,12 @@ end
 
 local function makeBtn(parent, label, h, cb)
     h = h or 24
-    local btn = make("TextButton",{Text=label,TextSize=11,TextColor3=T.text,Font=Enum.Font.GothamMedium,
-        BackgroundColor3=T.fill,Size=UDim2.new(1,0,0,h),AutoButtonColor=false,BorderSizePixel=0},parent)
-    corner(btn,4)
+    local btn = make("TextButton",{
+        Text=label, TextSize=10, TextColor3=T.text, Font=Enum.Font.GothamMedium,
+        BackgroundColor3=T.fill, Size=UDim2.new(1,0,0,h),
+        AutoButtonColor=false, BorderSizePixel=0,
+    },parent)
+    corner(btn,5)
     btn.MouseEnter:Connect(function() btn.BackgroundColor3=T.accent end)
     btn.MouseLeave:Connect(function() btn.BackgroundColor3=T.fill end)
     if cb then btn.MouseButton1Click:Connect(cb) end
@@ -455,11 +467,11 @@ local function makeBtn(parent, label, h, cb)
 end
 
 local function makeLabel(parent, text, dim)
-    local lbl = make("TextLabel",{Text=text,TextSize=10,
-        TextColor3=dim and T.dim or T.text,Font=Enum.Font.Gotham,
-        BackgroundTransparency=1,Size=UDim2.new(1,0,0,14),
-        TextXAlignment=Enum.TextXAlignment.Left},parent)
-    return lbl
+    return make("TextLabel",{
+        Text=text, TextSize=9, TextColor3=dim and T.dim or T.text, Font=Enum.Font.Gotham,
+        BackgroundTransparency=1, Size=UDim2.new(1,0,0,13),
+        TextXAlignment=Enum.TextXAlignment.Left,
+    },parent)
 end
 
 -- ── Expand visual ─────────────────────────────────────────────────────────────
@@ -544,21 +556,18 @@ do
     local g1  = makeGroup(L,"Attack")
     makeCheck(g1,"Kill Aura","KillAura")
     makeSlider(g1,"Aura Range","KillAuraRange",10,150)
+    makeLabel(g1,"Attacks from your position, no teleport",true)
     makeCheck(g1,"Silent Aim","SilentAim")
     makeCheck(g1,"Extend Hitbox","ExtendHitbox")
     makeSlider(g1,"Hitbox Size","HitboxSize",1,60)
     makeCheck(g1,"Show Hitbox","ShowHitbox",function(on)
-        if not on then
-            for _,b in pairs(showHitboxBoxes) do pcall(function() b:Destroy() end) end
-            showHitboxBoxes={}
-        end
+        if not on then for _,b in pairs(showHitboxBoxes) do pcall(function() b:Destroy() end) end; showHitboxBoxes={} end
     end)
     makeCheck(g1,"M1 Expand","M1Expand")
     makeSlider(g1,"M1 Size","M1Size",1,40)
     makeCheck(g1,"Show Expand","ShowExpand",function(on) if not on then destroyExpandVisual() end end)
     makeCheck(g1,"Bypass Cooldown","BypassCooldown")
-    local g2 = makeGroup(R,"Defense / Auto")
-    makeCheck(g2,"Infinite Block","InfBlock")
+    local g2 = makeGroup(R,"Auto")
     makeCheck(g2,"Auto Ultimate","AutoUlt")
     makeCheck(g2,"Auto Play","AutoPlay")
     makeSlider(g2,"Auto Play Range","AutoPlayRange",20,300)
@@ -570,9 +579,6 @@ end
 do
     local L,R = pages["Player"].l, pages["Player"].r
     local g1  = makeGroup(L,"Movement")
-    makeCheck(g1,"Fly","Fly")
-    makeSlider(g1,"Fly Speed","FlySpeed",10,300)
-    makeLabel(g1,"W/A/S/D · Space=Up · Ctrl=Down",true)
     makeCheck(g1,"Noclip","Noclip")
     makeCheck(g1,"Speed Hack","SpeedHack")
     makeSlider(g1,"Walk Speed","WalkSpeed",16,250)
@@ -619,9 +625,11 @@ end
 do
     local L = pages["Teleports"].l
     local g1 = makeGroup(L,"Teleport To Player")
-    local list = make("ScrollingFrame",{BackgroundTransparency=1,BorderSizePixel=0,
-        Size=UDim2.new(1,0,0,160),ScrollBarThickness=3,ScrollBarImageColor3=T.accent,
-        CanvasSize=UDim2.new(0,0,0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y},g1)
+    local list = make("ScrollingFrame",{
+        BackgroundTransparency=1, BorderSizePixel=0,
+        Size=UDim2.new(1,0,0,160), ScrollBarThickness=3, ScrollBarImageColor3=T.accent,
+        CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y,
+    },g1)
     make("UIListLayout",{FillDirection=Enum.FillDirection.Vertical,Padding=UDim.new(0,3)},list)
     local function rebuild()
         for _,c in pairs(list:GetChildren()) do if not c:IsA("UIListLayout") then c:Destroy() end end
@@ -629,13 +637,9 @@ do
             if p2~=player then
                 makeBtn(list,p2.Name,22,function()
                     pcall(function()
+                        local c=chr(); if not c then return end
                         local ph=p2.Character and (p2.Character:FindFirstChild("HumanoidRootPart") or p2.Character.PrimaryPart)
-                        local mh=hrp()
-                        if ph and mh then
-                            local c=chr()
-                            if c and c.PrimaryPart then c:SetPrimaryPartCFrame(ph.CFrame+Vector3.new(3,0,0))
-                            else mh.CFrame=ph.CFrame+Vector3.new(3,0,0) end
-                        end
+                        if ph then c:PivotTo(ph.CFrame+Vector3.new(3,0,0)) end
                     end)
                 end)
             end
@@ -662,11 +666,7 @@ do
     local g2 = makeGroup(L,"Script")
     makeBtn(g2,"Disconnect All",22,function()
         for _,c in pairs(Connections) do pcall(function() c:Disconnect() end) end
-        stopFly(); destroyExpandVisual()
-        Connections={};S.Fly,S.Noclip=false,false
-        if infBlockActive then
-            infBlockActive=false; vimKey(false,Enum.KeyCode.F); stopBlockAnim(); blockStop()
-        end
+        destroyExpandVisual(); Connections={}; S.Noclip=false
     end)
     makeBtn(g2,"Close Hub",22,function() destroyExpandVisual();gui:Destroy() end)
     local g3 = makeGroup(R,"Accent Color")
@@ -680,7 +680,7 @@ do
         VerticalAlignment=Enum.VerticalAlignment.Center},cr)
     for _,col in ipairs(ACCENT_PRESETS) do
         local sw=make("TextButton",{Text="",BackgroundColor3=col,Size=UDim2.new(0,18,0,18),AutoButtonColor=false},cr)
-        corner(sw,4)
+        corner(sw,5)
         sw.MouseButton1Click:Connect(function() T.accent=col end)
     end
 end
@@ -752,7 +752,7 @@ local function doInvisible(state)
 end
 
 -- ══════════════════════════════════════════════════════════════════════════════
--- MAIN LOOP  (heavy ops throttled to fix lag)
+-- MAIN LOOP
 -- ══════════════════════════════════════════════════════════════════════════════
 table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
 
@@ -776,7 +776,7 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
     end
     if S.GodMode then pcall(function() local h=hum();if h then h.Health=math.huge end end) end
 
-    -- No Stun (throttled 0.15s)
+    -- No Stun
     if S.NoStun then
         noStunClock=noStunClock+dt
         if noStunClock>=0.15 then
@@ -803,37 +803,7 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
     -- Invisible
     if S.Invisible~=invisStateLast then invisStateLast=S.Invisible;doInvisible(S.Invisible) end
 
-    -- Fly (camera-relative; fly toward where you look)
-    if S.Fly~=flyStateLast then
-        flyStateLast=S.Fly
-        if S.Fly then startFly()
-        else stopFly(); local h=hum(); if h then pcall(function() h.PlatformStand=false end) end end
-    end
-    if S.Fly then
-        pcall(function()
-            local c=chr(); if not c then return end
-            local mh=hrp(); if not mh then return end
-            -- Stop the humanoid from fighting our movement
-            local h=hum(); if h then h.PlatformStand=true end
-            local cam=workspace.CurrentCamera.CFrame
-            local look=cam.LookVector
-            local right=cam.RightVector
-            local dir=Vector3.zero
-            if UIS:IsKeyDown(Enum.KeyCode.W)           then dir=dir-look end
-            if UIS:IsKeyDown(Enum.KeyCode.S)           then dir=dir+look end
-            if UIS:IsKeyDown(Enum.KeyCode.A)           then dir=dir+right end
-            if UIS:IsKeyDown(Enum.KeyCode.D)           then dir=dir-right end
-            if UIS:IsKeyDown(Enum.KeyCode.Space)       then dir=dir+Vector3.new(0,1,0) end
-            if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then dir=dir-Vector3.new(0,1,0) end
-            mh.AssemblyLinearVelocity=Vector3.zero; mh.AssemblyAngularVelocity=Vector3.zero
-            if dir.Magnitude>0 then
-                local move=dir.Unit*S.FlySpeed*dt
-                c:PivotTo(c:GetPivot()+move)
-            end
-        end)
-    end
-
-    -- Noclip (throttled 0.2s)
+    -- Noclip
     if S.Noclip then
         noclipLast=true; noclipClock=noclipClock+dt
         if noclipClock>=0.2 then
@@ -874,47 +844,6 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end)
     end
 
-    -- Inf Block manager
-    -- On enable: press F once + start anim + fire block remotes.
-    -- Held: attributes every frame, re-fire block remotes every 0.5s, keep anim playing.
-    do
-        local function fireBlockRemotes()
-            local r=re(); if not r then return end
-            for _,name in ipairs({"Block","BlockStart","StartBlock","Guard","GuardStart"}) do
-                pcall(function() r:FireServer(name) end)
-            end
-        end
-        if S.InfBlock then
-            if not infBlockActive then
-                infBlockActive = true
-                infBlockResendClk = 0
-                vimKey(true, Enum.KeyCode.F)
-                startBlockAnim()
-                fireBlockRemotes()
-            else
-                infBlockResendClk = infBlockResendClk + dt
-                if infBlockResendClk >= 0.5 then
-                    infBlockResendClk = 0
-                    fireBlockRemotes()
-                end
-                -- Keep the block animation alive
-                if blockAnimTrack and not blockAnimTrack.IsPlaying then
-                    pcall(function() blockAnimTrack:Play() end)
-                elseif not blockAnimTrack then
-                    startBlockAnim()
-                end
-            end
-            setBlockAttribs(true)
-        elseif infBlockActive then
-            infBlockActive = false
-            infBlockResendClk = 0
-            vimKey(false, Enum.KeyCode.F)
-            stopBlockAnim()
-            setBlockAttribs(false)
-            blockStop()
-        end
-    end
-
     -- Auto Ult
     if S.AutoUlt then
         ultClock=ultClock+dt
@@ -932,11 +861,9 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
                 end)
             elseif not full then ultWasFull=false end
         end
-    else
-        ultClock=0; ultWasFull=false
-    end
+    else ultClock=0; ultWasFull=false end
 
-    -- Kill Aura (auto-click triggers game's own attack + M1 expand hitboxes)
+    -- Kill Aura: no teleport, no mouse click, pure remote spam from current position
     if S.KillAura then
         kauraClk=kauraClk+dt
         if kauraClk>=0.18 then
@@ -944,31 +871,21 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
             pcall(function()
                 local tgt=nearestTargetRoot(S.KillAuraRange); if not tgt then return end
                 local mh=hrp(); if not mh then return end
-                -- Snap to melee range
-                local diff=tgt.Position-mh.Position
-                local snap=tgt.Position-(diff.Magnitude>0.1 and diff.Unit or Vector3.new(0,0,1))*5+Vector3.new(0,2,0)
-                local c=chr()
-                if c and c.PrimaryPart then c:SetPrimaryPartCFrame(CFrame.new(snap))
-                else mh.CFrame=CFrame.new(snap) end
-                -- Show M1 expand sphere so the visual tracks during kill aura
+                if (tgt.Position-mh.Position).Magnitude > S.KillAuraRange then return end
                 ensureExpandVisual()
-                -- Auto-click at viewport center to trigger game's own attack + animation.
-                -- Briefly disable hub interaction so the click passes through to the game world.
-                task.spawn(function()
-                    pcall(function()
-                        local vim=game:GetService("VirtualInputManager")
-                        local vp=workspace.CurrentCamera.ViewportSize
-                        gui.Enabled=false
-                        vim:SendMouseButtonEvent(vp.X/2,vp.Y/2,0,true,game,0)
-                        task.wait(0.06)
-                        vim:SendMouseButtonEvent(vp.X/2,vp.Y/2,0,false,game,0)
-                        gui.Enabled=true
-                    end)
-                end)
-                -- Spam M1 expand hitboxes (Lc) so attacks register even if distance is tight
                 local hitSz=math.max(S.M1Size,S.HitboxSize)
-                for n=1,3 do spamHitbox("Lc"..n.."Hitbox",hitSz,4,0.05) end
-                for n=1,5 do spamHitbox("Attack"..n.."Hitbox",hitSz,4,0.05) end
+                local r=re()
+                if r then
+                    for n=1,5 do
+                        pcall(function() r:FireServer("Attack"..n, ATTACK_VALS[n] or 4.4666666984558105) end)
+                        pcall(function() r:FireServer("Attack"..n.."Hitbox", hitSz) end)
+                    end
+                    for n=1,3 do
+                        pcall(function() r:FireServer("Lc"..n.."Hitbox", hitSz) end)
+                    end
+                end
+                for n=1,3 do spamHitbox("Lc"..n.."Hitbox",hitSz,3,0.05) end
+                for n=1,5 do spamHitbox("Attack"..n.."Hitbox",hitSz,3,0.05) end
             end)
         end
     end
@@ -983,9 +900,7 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
                 local mh=hrp(); if not mh then return end
                 local ph=tgt.Character and (tgt.Character:FindFirstChild("HumanoidRootPart") or tgt.Character.PrimaryPart)
                 if not ph then return end
-                local c=chr()
-                if c and c.PrimaryPart then c:SetPrimaryPartCFrame(ph.CFrame+ph.CFrame.LookVector*-3)
-                else mh.CFrame=ph.CFrame+ph.CFrame.LookVector*-3 end
+                local c=chr(); if c then c:PivotTo(ph.CFrame+ph.CFrame.LookVector*-3) end
                 local r=re(); if not r then return end
                 for n=1,5 do
                     pcall(function() r:FireServer("Attack"..n,ATTACK_VALS[n] or 4.4666666984558105) end)
@@ -1025,8 +940,7 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
                         local c=chr()
                         local dir=(tgt.Position-mh.Position).Unit
                         local step=math.min(dist-10,20)
-                        if c and c.PrimaryPart then c:SetPrimaryPartCFrame(c.PrimaryPart.CFrame+dir*step)
-                        else mh.CFrame=mh.CFrame+dir*step end
+                        if c then c:PivotTo(c:GetPivot()+dir*step) end
                     end
                 else
                     local r=re(); if not r then return end
@@ -1166,9 +1080,11 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
                         local bill=Instance.new("BillboardGui")
                         bill.Size=UDim2.new(0,80,0,28);bill.AlwaysOnTop=true
                         bill.StudsOffset=Vector3.new(0,3,0);bill.Adornee=root;bill.Parent=gui
-                        make("TextLabel",{Text=p2.Name,TextSize=13,TextColor3=T.accent,Font=Enum.Font.GothamMedium,
-                            BackgroundTransparency=1,Size=UDim2.new(1,0,1,0),
-                            TextStrokeTransparency=0,TextStrokeColor3=Color3.new(0,0,0)},bill)
+                        make("TextLabel",{
+                            Text=p2.Name, TextSize=13, TextColor3=T.accent, Font=Enum.Font.GothamMedium,
+                            BackgroundTransparency=1, Size=UDim2.new(1,0,1,0),
+                            TextStrokeTransparency=0, TextStrokeColor3=Color3.new(0,0,0),
+                        },bill)
                         espBoxes[p2.Name]={bill=bill}
                     end
                 end
@@ -1180,7 +1096,6 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
             espBoxes={}
         end
     end
-
 end))
 
 -- ── Drag ──────────────────────────────────────────────────────────────────────
@@ -1204,8 +1119,7 @@ end
 -- ── Minimize / Close ──────────────────────────────────────────────────────────
 minBtn.MouseButton1Click:Connect(function()
     S.Minimized=not S.Minimized
-    tabBar.Visible=not S.Minimized
-    pageArea.Visible=not S.Minimized
+    body.Visible=not S.Minimized
     main.Size=S.Minimized and UDim2.new(0,WIN_W,0,TITLE_H) or UDim2.new(0,WIN_W,0,WIN_H)
 end)
 closeBtn.MouseButton1Click:Connect(function() destroyExpandVisual();gui:Destroy() end)
@@ -1218,4 +1132,4 @@ end))
 
 -- ── Init ──────────────────────────────────────────────────────────────────────
 setTab("Combat")
-print("[Money/Free Hub] v4.5 | Toggle: "..S.ToggleKey.Name)
+print("[Money/Free Hub] v4.6 | Toggle: "..S.ToggleKey.Name)
