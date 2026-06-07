@@ -1,4 +1,4 @@
--- Titan Hub | Age of Titans | v4.7
+-- Titan Hub | Age of Titans | v4.8
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -20,7 +20,6 @@ local S = {
     AutoUlt        = false,
     AutoFarm       = false, AutoFarmRange  = 80,
     AutoPlay       = false, AutoPlayRange  = 100,
-    BypassCooldown = false,
     Noclip         = false,
     SpeedHack      = false, WalkSpeed      = 50,
     AutoSprint     = false,
@@ -280,7 +279,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title       = "Titan Hub",
-    SubTitle    = "Age of Titans  •  v4.7",
+    SubTitle    = "Age of Titans  •  v4.8",
     TabWidth    = 160,
     Size        = UDim2.fromOffset(600, 480),
     Acrylic     = true,
@@ -328,10 +327,6 @@ do
         Callback = function(v) S.M1Size = v end })
     t:AddToggle("ShowExpand", { Title = "Show Expand Visual", Default = false,
         Callback = function(v) S.ShowExpand = v; if not v then destroyExpandVisual() end end })
-
-    t:AddParagraph({ Title = "Cooldown", Content = "" })
-    t:AddToggle("BypassCooldown", { Title = "Bypass Cooldown", Default = false,
-        Callback = function(v) S.BypassCooldown = v end })
 
     t:AddParagraph({ Title = "Auto", Content = "" })
     t:AddToggle("AutoUlt", { Title = "Auto Ultimate", Default = false,
@@ -472,8 +467,7 @@ table.insert(Connections, UIS.InputBegan:Connect(function(i, gpe)
     if i.UserInputType==Enum.UserInputType.Keyboard then
         local n=ATTACK_KEYS[i.KeyCode]
         if n then
-            if S.ExtendHitbox   then spamHitbox("Attack"..n.."Hitbox",S.HitboxSize,6,0.05) end
-            if S.BypassCooldown then fireAttack(n) end
+            if S.ExtendHitbox then spamHitbox("Attack"..n.."Hitbox",S.HitboxSize,6,0.05) end
         end
         if i.KeyCode==Enum.KeyCode.T and S.ClickTP then
             pcall(function()
@@ -609,10 +603,10 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end)
     end
 
-    -- Auto Ult
+    -- Auto Ult (standalone: presses V whenever ult bar fills, regardless of other features)
     if S.AutoUlt then
         ultClock=ultClock+dt
-        if ultClock>=0.3 then
+        if ultClock>=0.15 then
             ultClock=0
             local full=false; pcall(function() full=ultIsFull() end)
             if full and not ultWasFull then
@@ -622,25 +616,63 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
                         local vim=game:GetService("VirtualInputManager")
                         vim:SendKeyEvent(true,Enum.KeyCode.V,false,game); task.wait(0.08)
                         vim:SendKeyEvent(false,Enum.KeyCode.V,false,game)
+                        task.wait(0.1)
+                        -- Re-fire in case the first press was eaten
+                        if S.AutoUlt then
+                            vim:SendKeyEvent(true,Enum.KeyCode.V,false,game); task.wait(0.08)
+                            vim:SendKeyEvent(false,Enum.KeyCode.V,false,game)
+                        end
+                    end)
+                end)
+                -- Also fire the ult remote directly if it exists
+                task.spawn(function()
+                    pcall(function()
+                        local r=re()
+                        if r then
+                            for _,name in ipairs({"Ult","Ultimate","Special","Ult1"}) do
+                                pcall(function() r:FireServer(name) end)
+                            end
+                        end
                     end)
                 end)
             elseif not full then ultWasFull=false end
         end
     else ultClock=0; ultWasFull=false end
 
-    -- Kill Aura: no teleport, fires remotes from current position
+    -- Kill Aura: high-rate multi-target PvP — fires every ~60ms, full burst per target
     if S.KillAura then
         kauraClk=kauraClk+dt
-        if kauraClk>=0.18 then
+        if kauraClk>=0.06 then
             kauraClk=0
             pcall(function()
-                local tgt=nearestTargetRoot(S.KillAuraRange); if not tgt then return end
                 local mh=hrp(); if not mh then return end
-                if (tgt.Position-mh.Position).Magnitude > S.KillAuraRange then return end
+                local r=re(); if not r then return end
+                local range=S.KillAuraRange
+                local hitSz=math.max(S.M1Size,S.HitboxSize,range*0.5)
                 ensureExpandVisual()
-                local hitSz=math.max(S.M1Size,S.HitboxSize)
-                local r=re()
-                if r then
+                -- Collect ALL targets in range (players + NPC models) and hit them all this tick
+                local targets={}
+                for _,p2 in pairs(Players:GetPlayers()) do
+                    if p2~=player and p2.Character then
+                        local ph=p2.Character:FindFirstChild("HumanoidRootPart") or p2.Character.PrimaryPart
+                        local h2=p2.Character:FindFirstChildOfClass("Humanoid")
+                        if ph and h2 and h2.Health>0 and (ph.Position-mh.Position).Magnitude<=range then
+                            targets[#targets+1]=ph
+                        end
+                    end
+                end
+                for _,obj in pairs(workspace:GetChildren()) do
+                    if obj~=player.Character and obj:IsA("Model") then
+                        local h2=obj:FindFirstChildOfClass("Humanoid")
+                        local root=obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
+                        if h2 and root and h2.Health>0 and (root.Position-mh.Position).Magnitude<=range then
+                            targets[#targets+1]=root
+                        end
+                    end
+                end
+                if #targets==0 then return end
+                -- Hit each target with a full attack burst (Attack1-5 + hitboxes + Lc1-3)
+                for _=1,#targets do
                     for n=1,5 do
                         pcall(function() r:FireServer("Attack"..n, ATTACK_VALS[n] or 4.4666666984558105) end)
                         pcall(function() r:FireServer("Attack"..n.."Hitbox", hitSz) end)
@@ -649,8 +681,9 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
                         pcall(function() r:FireServer("Lc"..n.."Hitbox", hitSz) end)
                     end
                 end
-                for n=1,3 do spamHitbox("Lc"..n.."Hitbox",hitSz,3,0.05) end
-                for n=1,5 do spamHitbox("Attack"..n.."Hitbox",hitSz,3,0.05) end
+                -- Background spam for the next ~150ms to keep hits landing between ticks
+                for n=1,5 do spamHitbox("Attack"..n.."Hitbox",hitSz,4,0.03) end
+                for n=1,3 do spamHitbox("Lc"..n.."Hitbox",hitSz,4,0.03) end
             end)
         end
     end
@@ -733,54 +766,6 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
                 end
             end)
         end
-    end
-
-    -- Bypass Cooldown (fixed: every frame, scan ALL descendants for every cooldown-type instance/attribute)
-    if S.BypassCooldown then
-        pcall(function()
-            local ms=moveset(); if not ms then return end
-            for n=1,5 do
-                local atk=ms:FindFirstChild("Attack"..n)
-                if atk then
-                    -- Zero cooldown attributes directly on the attack node
-                    pcall(function()
-                        for attr,v in pairs(atk:GetAttributes()) do
-                            if type(v)=="number" then
-                                local al=attr:lower()
-                                if al:find("cool") or al:find("timer") or al=="cd" or (al:find("time") and not al:find("stamp")) or al:find("remaining") or al:find("wait") then
-                                    atk:SetAttribute(attr, 0)
-                                end
-                            end
-                        end
-                    end)
-                    -- Deep scan all descendants
-                    for _,desc in ipairs(atk:GetDescendants()) do
-                        local ln=desc.Name:lower()
-                        local isCd=ln:find("cool") or ln:find("timer") or ln=="cd" or ln:find("wait") or ln:find("remaining")
-                        if isCd then
-                            if desc:IsA("NumberValue") or desc:IsA("IntValue") then
-                                pcall(function() desc.Value=0 end)
-                            elseif desc:IsA("GuiObject") then
-                                pcall(function() desc.Size=UDim2.new(0,0,0,0); desc.Visible=false end)
-                            elseif desc:IsA("TextLabel") or desc:IsA("TextButton") then
-                                pcall(function() desc.Text="" end)
-                            end
-                        end
-                        -- Also zero any numeric cooldown attributes on each descendant
-                        pcall(function()
-                            for attr,v in pairs(desc:GetAttributes()) do
-                                if type(v)=="number" then
-                                    local al=attr:lower()
-                                    if al:find("cool") or al:find("timer") or al=="cd" or al:find("remaining") then
-                                        desc:SetAttribute(attr, 0)
-                                    end
-                                end
-                            end
-                        end)
-                    end
-                end
-            end
-        end)
     end
 
     -- Hide Names
@@ -891,4 +876,4 @@ end))
 
 -- ── Init ──────────────────────────────────────────────────────────────────────
 Window:SelectTab(1)
-print("[Titan Hub] v4.7 loaded | Toggle: RightShift")
+print("[Titan Hub] v4.8 loaded | Toggle: RightShift")
