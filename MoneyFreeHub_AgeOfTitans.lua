@@ -1,4 +1,4 @@
--- Titan Hub | Age of Titans | v4.11
+-- Titan Hub | Age of Titans | v4.12
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -279,7 +279,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title       = "Titan Hub",
-    SubTitle    = "Age of Titans  •  v4.11",
+    SubTitle    = "Age of Titans  •  v4.12",
     TabWidth    = 160,
     Size        = UDim2.fromOffset(600, 480),
     Acrylic     = true,
@@ -480,15 +480,20 @@ table.insert(Connections, UIS.InputBegan:Connect(function(i, gpe)
     if i.UserInputType~=Enum.UserInputType.MouseButton1 then return end
     if S.ExtendHitbox then for n=1,5 do spamHitbox("Attack"..n.."Hitbox",S.HitboxSize,4,0.05) end end
     if S.M1Expand then
-        -- Pre-expand the hitbox BEFORE the natural M1 swing registers server-side
-        -- Do NOT fire Lc remotes directly — they are Launch/Leap, not M1 attacks
-        local hitSz=math.max(S.M1Size,12)+4
+        -- M1 expand = on click, fire the real attack + hitbox remotes at the chosen size
+        -- (same proven path as Kill Aura). No Lc attack remotes — those are Launch and cause floating.
+        local hitSz=math.max(S.M1Size,12)
         local r=re()
         if r then
-            for n=1,3 do pcall(function() r:FireServer("Lc"..n.."Hitbox",hitSz) end) end
+            for n=1,5 do
+                pcall(function() r:FireServer("Attack"..n, ATTACK_VALS[n] or 4.4666666984558105) end)
+                pcall(function() r:FireServer("Attack"..n.."Hitbox", hitSz) end)
+            end
+            for n=1,3 do pcall(function() r:FireServer("Lc"..n.."Hitbox", hitSz) end) end
         end
-        -- Keep the hitbox enlarged across the full swing window
-        for n=1,3 do spamHitbox("Lc"..n.."Hitbox",hitSz,6,0.03) end
+        -- Keep firing across the swing window so the hit frame uses the big hitbox
+        for n=1,5 do spamHitbox("Attack"..n.."Hitbox",hitSz,5,0.03) end
+        for n=1,3 do spamHitbox("Lc"..n.."Hitbox",hitSz,5,0.03) end
     end
     if S.SilentAim then
         pcall(function()
@@ -886,4 +891,4 @@ end))
 
 -- ── Init ──────────────────────────────────────────────────────────────────────
 Window:SelectTab(1)
-print("[Titan Hub] v4.11 loaded | Toggle: RightShift")
+print("[Titan Hub] v4.12 loaded | Toggle: RightShift")
