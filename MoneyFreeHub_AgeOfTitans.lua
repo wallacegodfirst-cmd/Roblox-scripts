@@ -1,4 +1,4 @@
--- Titan Hub | Age of Titans | v4.12
+-- Titan Hub | Age of Titans | v4.13
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -43,7 +43,6 @@ local ATTACK_VALS = {
 
 -- ── Loop vars ─────────────────────────────────────────────────────────────────
 local speedOriginal, speedStateLast  = nil, false
-local godOrigMax                     = nil
 local invisOrigTrans, invisStateLast = {}, false
 local ultClock,  ultWasFull          = 0, false
 local farmClock, kauraClk           = 0, 0
@@ -279,7 +278,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title       = "Titan Hub",
-    SubTitle    = "Age of Titans  •  v4.12",
+    SubTitle    = "Age of Titans  •  v4.13",
     TabWidth    = 160,
     Size        = UDim2.fromOffset(600, 480),
     Acrylic     = true,
@@ -359,18 +358,7 @@ do
 
     t:AddParagraph({ Title = "Survival", Content = "" })
     t:AddToggle("GodMode", { Title = "God Mode", Default = false,
-        Callback = function(v)
-            S.GodMode = v
-            if v then
-                pcall(function() local h=hum(); if h then godOrigMax=h.MaxHealth end end)
-            else
-                pcall(function()
-                    local h=hum()
-                    if h and godOrigMax then h.MaxHealth=godOrigMax; h.Health=godOrigMax end
-                    godOrigMax=nil
-                end)
-            end
-        end })
+        Callback = function(v) S.GodMode = v end })
     t:AddToggle("NoStun", { Title = "No Stun", Default = false,
         Callback = function(v) S.NoStun = v end })
     t:AddToggle("SaveSystem", { Title = "Save System", Default = false,
@@ -529,21 +517,18 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
     end
     if S.SpeedHack then pcall(function() local h=hum();if h then h.WalkSpeed=S.WalkSpeed end end) end
 
-    -- God Mode (fixed: every frame, MaxHealth=huge, Health=MaxHealth, override character HP attributes)
+    -- God Mode: just refill Health to the server's real MaxHealth every frame (never touch MaxHealth)
     if S.GodMode then
         pcall(function()
             local h=hum()
-            if h then
-                if h.MaxHealth < 1e15 then h.MaxHealth=math.huge end
-                h.Health=h.MaxHealth
-            end
+            if h and h.MaxHealth > 0 then h.Health = h.MaxHealth end
             local c=chr()
             if c then
                 for _,attr in ipairs({"HP","Health","CurrentHealth","CurrentHP"}) do
                     local v=c:GetAttribute(attr)
                     if type(v)=="number" then
-                        local mx=c:GetAttribute("Max"..attr) or c:GetAttribute(attr.."Max") or v
-                        if type(mx)=="number" then c:SetAttribute(attr,mx) end
+                        local mx=c:GetAttribute("Max"..attr) or c:GetAttribute(attr.."Max")
+                        if type(mx)=="number" and mx>0 then c:SetAttribute(attr,mx) end
                     end
                 end
             end
@@ -891,4 +876,4 @@ end))
 
 -- ── Init ──────────────────────────────────────────────────────────────────────
 Window:SelectTab(1)
-print("[Titan Hub] v4.12 loaded | Toggle: RightShift")
+print("[Titan Hub] v4.13 loaded | Toggle: RightShift")
