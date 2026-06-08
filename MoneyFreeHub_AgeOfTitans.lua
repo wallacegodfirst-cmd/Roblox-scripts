@@ -1,4 +1,4 @@
--- Titan Hub | Age of Titans | v4.10
+-- Titan Hub | Age of Titans | v4.11
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -279,7 +279,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title       = "Titan Hub",
-    SubTitle    = "Age of Titans  •  v4.10",
+    SubTitle    = "Age of Titans  •  v4.11",
     TabWidth    = 160,
     Size        = UDim2.fromOffset(600, 480),
     Acrylic     = true,
@@ -303,7 +303,7 @@ do
     t:AddParagraph({ Title = "Kill Aura", Content = "Attacks nearby targets from your position — no teleport" })
     t:AddToggle("KillAura", { Title = "Kill Aura", Default = false,
         Callback = function(v) S.KillAura = v end })
-    t:AddSlider("KillAuraRange", { Title = "Aura Range", Default = 40, Min = 10, Max = 150, Rounding = 0,
+    t:AddSlider("KillAuraRange", { Title = "Aura Range", Default = 40, Min = 10, Max = 10000, Rounding = 0,
         Callback = function(v) S.KillAuraRange = v end })
 
     t:AddParagraph({ Title = "Hitbox", Content = "" })
@@ -323,7 +323,7 @@ do
         end })
     t:AddToggle("M1Expand", { Title = "M1 Expand", Default = false,
         Callback = function(v) S.M1Expand = v end })
-    t:AddSlider("M1Size", { Title = "M1 Expand Size", Default = 8, Min = 1, Max = 40, Rounding = 0,
+    t:AddSlider("M1Size", { Title = "M1 Expand Size", Default = 8, Min = 1, Max = 10000, Rounding = 0,
         Callback = function(v) S.M1Size = v end })
     t:AddToggle("ShowExpand", { Title = "Show Expand Visual", Default = false,
         Callback = function(v) S.ShowExpand = v; if not v then destroyExpandVisual() end end })
@@ -886,4 +886,4 @@ end))
 
 -- ── Init ──────────────────────────────────────────────────────────────────────
 Window:SelectTab(1)
-print("[Titan Hub] v4.10 loaded | Toggle: RightShift")
+print("[Titan Hub] v4.11 loaded | Toggle: RightShift")
