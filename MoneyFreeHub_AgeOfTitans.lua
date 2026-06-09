@@ -1,4 +1,4 @@
--- Titan Hub | Age of Titans | v4.13
+-- Titan Hub | Age of Titans | v4.14
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -48,6 +48,7 @@ local ultClock,  ultWasFull          = 0, false
 local farmClock, kauraClk           = 0, 0
 local autoPlayClock                  = 0
 local noStunClock, noclipClock       = 0, 0
+local godRebuildClock, invisClock    = 0, 0
 local espClock, fbClock, hnClock     = 0, 0, 0
 local respawnClock                   = 0
 local saveActive, saveClock, savePos = false, 0, Vector3.zero
@@ -250,23 +251,153 @@ local function resetCharacter()
         if h then h.Health=0 else local c=chr();if c then c:BreakJoints() end end
     end)
 end
+-- ── Invisible (client-side; re-applies every frame to fight game resets) ────────
+-- NOTE: In FilteringEnabled games other players render you from server data, so a
+-- local transparency change can't be hidden from them by the client. This makes the
+-- local effect as complete and persistent as a client script can.
 local function doInvisible(state)
     pcall(function()
         local c=chr(); if not c then return end
         if state then
             for _,pt in pairs(c:GetDescendants()) do
-                if pt:IsA("BasePart") or pt:IsA("Decal") then
-                    if not invisOrigTrans[pt] then invisOrigTrans[pt]=pt.Transparency end
-                    pt.Transparency=1
+                if pt:IsA("BasePart") then
+                    if invisOrigTrans[pt]==nil then invisOrigTrans[pt]=pt.Transparency end
+                    if pt.Transparency<1 then pt.Transparency=1 end
+                elseif pt:IsA("Decal") or pt:IsA("Texture") then
+                    if invisOrigTrans[pt]==nil then invisOrigTrans[pt]=pt.Transparency end
+                    if pt.Transparency<1 then pt.Transparency=1 end
+                elseif pt:IsA("ParticleEmitter") or pt:IsA("Trail") or pt:IsA("Beam")
+                    or pt:IsA("Smoke") or pt:IsA("Fire") or pt:IsA("Sparkles") then
+                    pt.Enabled=false
                 end
             end
         else
             for pt,t in pairs(invisOrigTrans) do
-                pcall(function() if pt and pt.Parent then pt.Transparency=t end end)
+                pcall(function()
+                    if pt and pt.Parent and (pt:IsA("BasePart") or pt:IsA("Decal") or pt:IsA("Texture")) then
+                        pt.Transparency=t
+                    end
+                end)
             end
             invisOrigTrans={}
         end
     end)
+end
+
+-- ── God Mode engine: lock EVERY client-accessible health source ────────────────
+-- Covers: Humanoid.Health, NumberValue/IntValue HP objects, and numeric HP
+-- attributes — each with an instant-revert change-signal hook plus a max-seen
+-- tracker so it restores to the true max even if enabled mid-fight.
+local HP_NAMES = {"health","hp","hitpoint","currenthp","currenthealth","life","heart","vitality","durability"}
+local function isHpName(n)
+    n=tostring(n):lower()
+    for _,k in ipairs(HP_NAMES) do if n:find(k) then return true end end
+    return false
+end
+local godConns      = {}
+local godMaxSeen    = setmetatable({}, {__mode="k"})   -- weak: dead objects GC out
+local godWatched    = setmetatable({}, {__mode="k"})
+local godWatchedAttr = {}
+
+local function clearGodConns()
+    for _,c in ipairs(godConns) do pcall(function() c:Disconnect() end) end
+    godConns={}
+end
+local function recMax(key, val)
+    if type(val)~="number" then return godMaxSeen[key] end
+    if not godMaxSeen[key] or val>godMaxSeen[key] then godMaxSeen[key]=val end
+    return godMaxSeen[key]
+end
+local function findMaxCap(container, baseName)
+    if not container then return nil end
+    for _,form in ipairs({"Max"..tostring(baseName), tostring(baseName).."Max", "MaxHealth","MaxHP","MaxHp"}) do
+        local a=container:GetAttribute(form)
+        if type(a)=="number" and a>0 then return a end
+    end
+    for _,obj in ipairs(container:GetChildren()) do
+        if (obj:IsA("NumberValue") or obj:IsA("IntValue")) then
+            local on=obj.Name:lower()
+            if on:find("max") and (on:find("health") or on:find("hp")) then return obj.Value end
+        end
+    end
+    return nil
+end
+local function lockValueObj(obj)
+    if godWatched[obj] then return end
+    godWatched[obj]=true
+    local cap=findMaxCap(obj.Parent, obj.Name)
+    recMax(obj, math.max(obj.Value, cap or obj.Value))
+    local mx=godMaxSeen[obj]
+    if mx and obj.Value<mx then pcall(function() obj.Value=mx end) end
+    local c=obj.Changed:Connect(function()
+        if not S.GodMode then return end
+        local m=recMax(obj,obj.Value)
+        if m and obj.Value<m then pcall(function() obj.Value=m end) end
+    end)
+    table.insert(godConns,c)
+end
+local function lockAttribute(container, attr)
+    local key="attr:"..tostring(container)..":"..attr
+    if godWatchedAttr[key] then return end
+    godWatchedAttr[key]=true
+    local cap=findMaxCap(container, attr)
+    recMax(key, math.max(container:GetAttribute(attr) or 0, cap or container:GetAttribute(attr) or 0))
+    local m0=godMaxSeen[key]
+    if m0 and (container:GetAttribute(attr) or 0)<m0 then pcall(function() container:SetAttribute(attr,m0) end) end
+    local c=container:GetAttributeChangedSignal(attr):Connect(function()
+        if not S.GodMode then return end
+        local v=container:GetAttribute(attr); if type(v)~="number" then return end
+        local m=recMax(key,v)
+        if m and v<m then pcall(function() container:SetAttribute(attr,m) end) end
+    end)
+    table.insert(godConns,c)
+end
+local function lockHumanoid()
+    local h=hum(); if not h then return end
+    pcall(function() h.BreakJointsOnDeath=false end)
+    pcall(function() h.RequiresNeck=false end)
+    if h.MaxHealth>0 then pcall(function() h.Health=h.MaxHealth end) end
+    local c=h:GetPropertyChangedSignal("Health"):Connect(function()
+        if not S.GodMode then return end
+        if h.MaxHealth>0 and h.Health<h.MaxHealth then pcall(function() h.Health=h.MaxHealth end) end
+    end)
+    table.insert(godConns,c)
+    local c2=h.HealthChanged:Connect(function(hp)
+        if not S.GodMode then return end
+        if h.MaxHealth>0 and hp<h.MaxHealth then pcall(function() h.Health=h.MaxHealth end) end
+    end)
+    table.insert(godConns,c2)
+end
+local function scanGodTargets()
+    local containers={chr(), player, player:FindFirstChild("leaderstats")}
+    for _,container in ipairs(containers) do
+        if container then
+            for _,obj in ipairs(container:GetDescendants()) do
+                if (obj:IsA("NumberValue") or obj:IsA("IntValue"))
+                   and isHpName(obj.Name) and not tostring(obj.Name):lower():find("max") then
+                    lockValueObj(obj)
+                end
+            end
+            local ok,attrs=pcall(function() return container:GetAttributes() end)
+            if ok and attrs then
+                for attr,v in pairs(attrs) do
+                    if type(v)=="number" and isHpName(attr) and not tostring(attr):lower():find("max") then
+                        lockAttribute(container,attr)
+                    end
+                end
+            end
+        end
+    end
+end
+local function enableGodMode()
+    clearGodConns()
+    godWatched     = setmetatable({}, {__mode="k"})
+    godWatchedAttr = {}
+    lockHumanoid()
+    scanGodTargets()
+end
+local function disableGodMode()
+    clearGodConns()
 end
 
 -- ══════════════════════════════════════════════════════════════════════════════
@@ -278,7 +409,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title       = "Titan Hub",
-    SubTitle    = "Age of Titans  •  v4.13",
+    SubTitle    = "Age of Titans  •  v4.14",
     TabWidth    = 160,
     Size        = UDim2.fromOffset(600, 480),
     Acrylic     = true,
@@ -358,7 +489,7 @@ do
 
     t:AddParagraph({ Title = "Survival", Content = "" })
     t:AddToggle("GodMode", { Title = "God Mode", Default = false,
-        Callback = function(v) S.GodMode = v end })
+        Callback = function(v) S.GodMode = v; if v then enableGodMode() else disableGodMode() end end })
     t:AddToggle("NoStun", { Title = "No Stun", Default = false,
         Callback = function(v) S.NoStun = v end })
     t:AddToggle("SaveSystem", { Title = "Save System", Default = false,
@@ -496,6 +627,13 @@ table.insert(Connections, UIS.JumpRequest:Connect(function()
     if S.InfJump then local h=hum(); if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end end
 end))
 
+-- Re-apply God Mode / Invisible after a respawn (new character = new HP sources & parts)
+table.insert(Connections, player.CharacterAdded:Connect(function()
+    task.wait(0.4)
+    if S.GodMode  then pcall(enableGodMode) end
+    if S.Invisible then pcall(function() doInvisible(true) end) end
+end))
+
 pcall(function()
     player.Idled:Connect(function()
         if not S.AntiAFK then return end
@@ -517,22 +655,34 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
     end
     if S.SpeedHack then pcall(function() local h=hum();if h then h.WalkSpeed=S.WalkSpeed end end) end
 
-    -- God Mode: just refill Health to the server's real MaxHealth every frame (never touch MaxHealth)
+    -- God Mode: per-frame brute force on Humanoid + HP attributes; rebuild hooks every 1s
+    -- (change-signal hooks set in enableGodMode handle instant reversion of value objects)
     if S.GodMode then
         pcall(function()
             local h=hum()
-            if h and h.MaxHealth > 0 then h.Health = h.MaxHealth end
+            if h and h.MaxHealth>0 then
+                if h.Health<h.MaxHealth then h.Health=h.MaxHealth end
+                h.BreakJointsOnDeath=false
+            end
             local c=chr()
             if c then
-                for _,attr in ipairs({"HP","Health","CurrentHealth","CurrentHP"}) do
-                    local v=c:GetAttribute(attr)
-                    if type(v)=="number" then
-                        local mx=c:GetAttribute("Max"..attr) or c:GetAttribute(attr.."Max")
-                        if type(mx)=="number" and mx>0 then c:SetAttribute(attr,mx) end
+                for attr,v in pairs(c:GetAttributes()) do
+                    if type(v)=="number" and isHpName(attr) and not tostring(attr):lower():find("max") then
+                        local key="attr:"..tostring(c)..":"..attr
+                        local m=recMax(key,v)
+                        if m and v<m then c:SetAttribute(attr,m) end
                     end
                 end
             end
         end)
+        godRebuildClock=godRebuildClock+dt
+        if godRebuildClock>=1 then godRebuildClock=0; enableGodMode() end
+    end
+
+    -- Invisible: re-apply periodically so the game can't reset it visually (local-only)
+    if S.Invisible then
+        invisClock=invisClock+dt
+        if invisClock>=0.25 then invisClock=0; doInvisible(true) end
     end
 
     -- No Stun
@@ -876,4 +1026,4 @@ end))
 
 -- ── Init ──────────────────────────────────────────────────────────────────────
 Window:SelectTab(1)
-print("[Titan Hub] v4.13 loaded | Toggle: RightShift")
+print("[Titan Hub] v4.14 loaded | Toggle: RightShift")
