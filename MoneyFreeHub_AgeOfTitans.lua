@@ -1,4 +1,4 @@
--- Titan Hub | Age of Titans | v4.14
+-- Titan Hub | Age of Titans | v4.15
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -28,6 +28,7 @@ local S = {
     SaveSystem     = false, SaveThreshold  = 30,
     InstantRespawn = false,
     Invisible      = false,
+    DesyncInvis    = false, DesyncDepth = 2000,
     ESP            = false, InfZoom        = false,
     Fullbright     = false,
     AntiAFK        = false,
@@ -400,6 +401,60 @@ local function disableGodMode()
     clearGodConns()
 end
 
+-- ── Desync Invisible (void-clone) ──────────────────────────────────────────────
+-- Real body sinks into the void (others stop seeing you at the surface); a local-only
+-- clone stays where you were so you can still see yourself and pan the camera.
+-- While active the server thinks you're in the void, so combat won't register here —
+-- toggle off to fight. Deep void can cause fall/void-death in some games.
+local desyncClone, desyncConn = nil, nil
+local desyncAnchor            = nil
+
+local function stopDesync()
+    if desyncConn  then pcall(function() desyncConn:Disconnect() end);  desyncConn=nil  end
+    if desyncClone then pcall(function() desyncClone:Destroy()   end);  desyncClone=nil end
+    pcall(function()
+        local c=chr(); local h=hum()
+        if workspace.CurrentCamera and h then workspace.CurrentCamera.CameraSubject=h end
+        if c and desyncAnchor then c:PivotTo(desyncAnchor) end
+    end)
+    desyncAnchor=nil
+end
+
+local function startDesync()
+    stopDesync()
+    local c=chr(); local mh=hrp(); if not c or not mh then return end
+    desyncAnchor=c:GetPivot()
+    -- Local-only visual clone at the surface (created client-side => not replicated)
+    pcall(function()
+        local clone=c:Clone()
+        for _,d in ipairs(clone:GetDescendants()) do
+            if d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ModuleScript") then d:Destroy() end
+        end
+        for _,d in ipairs(clone:GetDescendants()) do
+            if d:IsA("BasePart") then d.Anchored=true; d.CanCollide=false; d.CanQuery=false; d.CanTouch=false end
+        end
+        local ch=clone:FindFirstChildOfClass("Humanoid")
+        if ch then ch.DisplayDistanceType=Enum.HumanoidDisplayDistanceType.None end
+        clone.Name=c.Name.."_Local"
+        clone:PivotTo(desyncAnchor)
+        clone.Parent=workspace
+        desyncClone=clone
+        if ch and workspace.CurrentCamera then workspace.CurrentCamera.CameraSubject=ch end
+    end)
+    -- Continuously park the REAL body in the void so others can't see you at the surface
+    desyncConn=RunService.Heartbeat:Connect(function()
+        if not S.DesyncInvis then return end
+        pcall(function()
+            local m=hrp()
+            if m and desyncAnchor then
+                m.AssemblyLinearVelocity=Vector3.zero
+                m.AssemblyAngularVelocity=Vector3.zero
+                m.CFrame=CFrame.new(desyncAnchor.Position-Vector3.new(0,S.DesyncDepth,0))
+            end
+        end)
+    end)
+end
+
 -- ══════════════════════════════════════════════════════════════════════════════
 -- GUI — Fluent library
 -- ══════════════════════════════════════════════════════════════════════════════
@@ -409,7 +464,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title       = "Titan Hub",
-    SubTitle    = "Age of Titans  •  v4.14",
+    SubTitle    = "Age of Titans  •  v4.15",
     TabWidth    = 160,
     Size        = UDim2.fromOffset(600, 480),
     Acrylic     = true,
@@ -500,6 +555,10 @@ do
         Callback = function(v) S.InstantRespawn = v end })
     t:AddToggle("Invisible", { Title = "Invisible", Default = false,
         Callback = function(v) S.Invisible = v; doInvisible(v) end })
+    t:AddToggle("DesyncInvis", { Title = "Desync Invisible (void-clone)", Default = false,
+        Callback = function(v) S.DesyncInvis = v; if v then startDesync() else stopDesync() end end })
+    t:AddSlider("DesyncDepth", { Title = "Desync Void Depth", Default = 2000, Min = 300, Max = 50000, Rounding = 0,
+        Callback = function(v) S.DesyncDepth = v end })
     t:AddToggle("AntiFling", { Title = "Anti-Fling", Default = false,
         Callback = function(v) S.AntiFling = v end })
 end
@@ -541,7 +600,8 @@ do
     t:AddButton({ Title = "Server Hop",      Callback = serverHop       })
     t:AddButton({ Title = "Disconnect All",  Callback = function()
         for _,c in pairs(Connections) do pcall(function() c:Disconnect() end) end
-        destroyExpandVisual(); Connections={}; S.Noclip=false
+        destroyExpandVisual(); stopDesync(); disableGodMode()
+        Connections={}; S.Noclip=false; S.DesyncInvis=false; S.GodMode=false
     end })
 end
 
@@ -630,8 +690,9 @@ end))
 -- Re-apply God Mode / Invisible after a respawn (new character = new HP sources & parts)
 table.insert(Connections, player.CharacterAdded:Connect(function()
     task.wait(0.4)
-    if S.GodMode  then pcall(enableGodMode) end
-    if S.Invisible then pcall(function() doInvisible(true) end) end
+    if S.GodMode    then pcall(enableGodMode) end
+    if S.Invisible  then pcall(function() doInvisible(true) end) end
+    if S.DesyncInvis then pcall(startDesync) end
 end))
 
 pcall(function()
@@ -1026,4 +1087,4 @@ end))
 
 -- ── Init ──────────────────────────────────────────────────────────────────────
 Window:SelectTab(1)
-print("[Titan Hub] v4.14 loaded | Toggle: RightShift")
+print("[Titan Hub] v4.15 loaded | Toggle: RightShift")
