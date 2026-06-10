@@ -1,4 +1,4 @@
--- Titan Hub | Age of Titans | v4.15
+-- Titan Hub | Age of Titans | v4.16
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -259,17 +259,22 @@ end
 local function doInvisible(state)
     pcall(function()
         local c=chr(); if not c then return end
+        -- Also cover the desync clone so it doesn't appear as a second copy of you
+        local targets = {c}
+        if desyncClone and desyncClone.Parent then table.insert(targets, desyncClone) end
         if state then
-            for _,pt in pairs(c:GetDescendants()) do
-                if pt:IsA("BasePart") then
-                    if invisOrigTrans[pt]==nil then invisOrigTrans[pt]=pt.Transparency end
-                    if pt.Transparency<1 then pt.Transparency=1 end
-                elseif pt:IsA("Decal") or pt:IsA("Texture") then
-                    if invisOrigTrans[pt]==nil then invisOrigTrans[pt]=pt.Transparency end
-                    if pt.Transparency<1 then pt.Transparency=1 end
-                elseif pt:IsA("ParticleEmitter") or pt:IsA("Trail") or pt:IsA("Beam")
-                    or pt:IsA("Smoke") or pt:IsA("Fire") or pt:IsA("Sparkles") then
-                    pt.Enabled=false
+            for _,tgt in ipairs(targets) do
+                for _,pt in pairs(tgt:GetDescendants()) do
+                    if pt:IsA("BasePart") then
+                        if invisOrigTrans[pt]==nil then invisOrigTrans[pt]=pt.Transparency end
+                        if pt.Transparency<1 then pt.Transparency=1 end
+                    elseif pt:IsA("Decal") or pt:IsA("Texture") then
+                        if invisOrigTrans[pt]==nil then invisOrigTrans[pt]=pt.Transparency end
+                        if pt.Transparency<1 then pt.Transparency=1 end
+                    elseif pt:IsA("ParticleEmitter") or pt:IsA("Trail") or pt:IsA("Beam")
+                        or pt:IsA("Smoke") or pt:IsA("Fire") or pt:IsA("Sparkles") then
+                        pt.Enabled=false
+                    end
                 end
             end
         else
@@ -355,17 +360,26 @@ local function lockAttribute(container, attr)
 end
 local function lockHumanoid()
     local h=hum(); if not h then return end
-    pcall(function() h.BreakJointsOnDeath=false end)
-    pcall(function() h.RequiresNeck=false end)
+    -- Do NOT set BreakJointsOnDeath/RequiresNeck — they cause a frozen dead-but-alive state
     if h.MaxHealth>0 then pcall(function() h.Health=h.MaxHealth end) end
     local c=h:GetPropertyChangedSignal("Health"):Connect(function()
         if not S.GodMode then return end
-        if h.MaxHealth>0 and h.Health<h.MaxHealth then pcall(function() h.Health=h.MaxHealth end) end
+        if h.MaxHealth>0 and h.Health<h.MaxHealth then
+            pcall(function() h.Health=h.MaxHealth end)
+        end
     end)
     table.insert(godConns,c)
     local c2=h.HealthChanged:Connect(function(hp)
         if not S.GodMode then return end
-        if h.MaxHealth>0 and hp<h.MaxHealth then pcall(function() h.Health=h.MaxHealth end) end
+        if h.MaxHealth>0 and hp<h.MaxHealth then
+            pcall(function() h.Health=h.MaxHealth end)
+        end
+        -- If the Humanoid slipped into Dead state, kick it back to GettingUp so we can move
+        pcall(function()
+            if h:GetState()==Enum.HumanoidStateType.Dead then
+                h:ChangeState(Enum.HumanoidStateType.GettingUp)
+            end
+        end)
     end)
     table.insert(godConns,c2)
 end
@@ -464,7 +478,7 @@ local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.
 
 local Window = Fluent:CreateWindow({
     Title       = "Titan Hub",
-    SubTitle    = "Age of Titans  •  v4.15",
+    SubTitle    = "Age of Titans  •  v4.16",
     TabWidth    = 160,
     Size        = UDim2.fromOffset(600, 480),
     Acrylic     = true,
@@ -496,7 +510,7 @@ do
         Callback = function(v) S.SilentAim = v end })
     t:AddToggle("ExtendHitbox", { Title = "Extend Hitbox", Default = false,
         Callback = function(v) S.ExtendHitbox = v end })
-    t:AddSlider("HitboxSize", { Title = "Hitbox Size", Default = 15, Min = 1, Max = 60, Rounding = 0,
+    t:AddSlider("HitboxSize", { Title = "Hitbox Size", Default = 30, Min = 1, Max = 500, Rounding = 0,
         Callback = function(v) S.HitboxSize = v end })
     t:AddToggle("ShowHitbox", { Title = "Show Hitbox", Default = false,
         Callback = function(v)
@@ -657,22 +671,37 @@ table.insert(Connections, UIS.InputBegan:Connect(function(i, gpe)
         return
     end
     if i.UserInputType~=Enum.UserInputType.MouseButton1 then return end
-    if S.ExtendHitbox then for n=1,5 do spamHitbox("Attack"..n.."Hitbox",S.HitboxSize,4,0.05) end end
+    if S.ExtendHitbox then for n=1,5 do spamHitbox("Attack"..n.."Hitbox",S.HitboxSize,10,0.02) end end
     if S.M1Expand then
-        -- M1 expand = on click, fire the real attack + hitbox remotes at the chosen size
-        -- (same proven path as Kill Aura). No Lc attack remotes — those are Launch and cause floating.
-        local hitSz=math.max(S.M1Size,12)
+        local hitSz=math.max(S.M1Size,50)
+        -- Instant triple burst on click
         local r=re()
         if r then
-            for n=1,5 do
-                pcall(function() r:FireServer("Attack"..n, ATTACK_VALS[n] or 4.4666666984558105) end)
-                pcall(function() r:FireServer("Attack"..n.."Hitbox", hitSz) end)
+            for _burst=1,3 do
+                for n=1,5 do
+                    pcall(function() r:FireServer("Attack"..n, ATTACK_VALS[n] or 4.4666666984558105) end)
+                    pcall(function() r:FireServer("Attack"..n.."Hitbox", hitSz) end)
+                end
+                for n=1,3 do pcall(function() r:FireServer("Lc"..n.."Hitbox", hitSz) end) end
             end
-            for n=1,3 do pcall(function() r:FireServer("Lc"..n.."Hitbox", hitSz) end) end
         end
-        -- Keep firing across the swing window so the hit frame uses the big hitbox
-        for n=1,5 do spamHitbox("Attack"..n.."Hitbox",hitSz,5,0.03) end
-        for n=1,3 do spamHitbox("Lc"..n.."Hitbox",hitSz,5,0.03) end
+        -- Rapid follow-up bursts across the full swing window (~300ms)
+        task.spawn(function()
+            for _=1,5 do
+                if not S.M1Expand then break end
+                local r2=re()
+                if r2 then
+                    for n=1,5 do
+                        pcall(function() r2:FireServer("Attack"..n, ATTACK_VALS[n] or 4.4666666984558105) end)
+                        pcall(function() r2:FireServer("Attack"..n.."Hitbox", hitSz) end)
+                    end
+                    for n=1,3 do pcall(function() r2:FireServer("Lc"..n.."Hitbox", hitSz) end) end
+                end
+                task.wait(0.04)
+            end
+        end)
+        for n=1,5 do spamHitbox("Attack"..n.."Hitbox",hitSz,8,0.02) end
+        for n=1,3 do spamHitbox("Lc"..n.."Hitbox",hitSz,8,0.02) end
     end
     if S.SilentAim then
         pcall(function()
@@ -716,14 +745,27 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
     end
     if S.SpeedHack then pcall(function() local h=hum();if h then h.WalkSpeed=S.WalkSpeed end end) end
 
-    -- God Mode: per-frame brute force on Humanoid + HP attributes; rebuild hooks every 1s
-    -- (change-signal hooks set in enableGodMode handle instant reversion of value objects)
+    -- God Mode: per-frame brute force; hooks handle instant reversion; rebuild hooks every 1s
     if S.GodMode then
         pcall(function()
             local h=hum()
-            if h and h.MaxHealth>0 then
-                if h.Health<h.MaxHealth then h.Health=h.MaxHealth end
-                h.BreakJointsOnDeath=false
+            if h then
+                if h.MaxHealth>0 and h.Health<h.MaxHealth then h.Health=h.MaxHealth end
+                -- If the Humanoid ended up Dead (server killed us), kick it back moveable locally
+                -- then fire an instant-respawn so the fresh character gets God Mode re-applied
+                pcall(function()
+                    if h:GetState()==Enum.HumanoidStateType.Dead then
+                        h:ChangeState(Enum.HumanoidStateType.GettingUp)
+                        task.delay(0.15, function()
+                            if S.GodMode then
+                                pcall(function()
+                                    local d=diedRemote()
+                                    if d then d:FireServer("Real",3.8333332538604736) end
+                                end)
+                            end
+                        end)
+                    end
+                end)
             end
             local c=chr()
             if c then
@@ -850,18 +892,17 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
         end
     else ultClock=0; ultWasFull=false end
 
-    -- Kill Aura: high-rate multi-target PvP — fires every ~60ms, full burst per target
+    -- Kill Aura: fires every ~30ms, triple burst per target, heavy background spam
     if S.KillAura then
         kauraClk=kauraClk+dt
-        if kauraClk>=0.06 then
+        if kauraClk>=0.03 then
             kauraClk=0
             pcall(function()
                 local mh=hrp(); if not mh then return end
                 local r=re(); if not r then return end
                 local range=S.KillAuraRange
-                local hitSz=math.max(S.M1Size,S.HitboxSize,range*0.5)
+                local hitSz=math.max(S.M1Size,S.HitboxSize,range*0.5,50)
                 ensureExpandVisual()
-                -- Collect ALL targets in range (players + NPC models) and hit them all this tick
                 local targets={}
                 for _,p2 in pairs(Players:GetPlayers()) do
                     if p2~=player and p2.Character then
@@ -882,19 +923,21 @@ table.insert(Connections, RunService.Heartbeat:Connect(function(dt)
                     end
                 end
                 if #targets==0 then return end
-                -- Hit each target with a full attack burst (Attack1-5 + hitboxes + Lc1-3)
+                -- Triple burst per target this tick
                 for _=1,#targets do
-                    for n=1,5 do
-                        pcall(function() r:FireServer("Attack"..n, ATTACK_VALS[n] or 4.4666666984558105) end)
-                        pcall(function() r:FireServer("Attack"..n.."Hitbox", hitSz) end)
-                    end
-                    for n=1,3 do
-                        pcall(function() r:FireServer("Lc"..n.."Hitbox", hitSz) end)
+                    for _burst=1,3 do
+                        for n=1,5 do
+                            pcall(function() r:FireServer("Attack"..n, ATTACK_VALS[n] or 4.4666666984558105) end)
+                            pcall(function() r:FireServer("Attack"..n.."Hitbox", hitSz) end)
+                        end
+                        for n=1,3 do
+                            pcall(function() r:FireServer("Lc"..n.."Hitbox", hitSz) end)
+                        end
                     end
                 end
-                -- Background spam for the next ~150ms to keep hits landing between ticks
-                for n=1,5 do spamHitbox("Attack"..n.."Hitbox",hitSz,4,0.03) end
-                for n=1,3 do spamHitbox("Lc"..n.."Hitbox",hitSz,4,0.03) end
+                -- Heavy background spam for the next ~300ms
+                for n=1,5 do spamHitbox("Attack"..n.."Hitbox",hitSz,8,0.02) end
+                for n=1,3 do spamHitbox("Lc"..n.."Hitbox",hitSz,8,0.02) end
             end)
         end
     end
@@ -1087,4 +1130,4 @@ end))
 
 -- ── Init ──────────────────────────────────────────────────────────────────────
 Window:SelectTab(1)
-print("[Titan Hub] v4.15 loaded | Toggle: RightShift")
+print("[Titan Hub] v4.16 loaded | Toggle: RightShift")
