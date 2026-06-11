@@ -1,14 +1,14 @@
--- Money/FreeHub | Ability Arena | v2.3
+-- Money/FreeHub | Ability Arena | v2.4
 -- by Money/FreeHub Owner
--- v2.3 improvements:
---   * M1 stronger: default hitbox 22, re-apply every 0.15s, triple blob per aura tick
---   * GUI-safe click: returns nil (skips) when ALL candidates have GUI over them
---   * Speed/jump bypass: Heartbeat-freq WalkSpeed + AssemblyLinearVelocity injection
---   * Auto Farm: TP directly next to target (same Y, 3-stud offset), face them
---   * Hitboxes: exactly two — M1 Hitbox Expander (enemy) + Hitbox Ability (self)
---   * Anti Void: immediate TP, no vy < -5 gate
---   * Ability Grabber: TP -> wait -> tap E -> TP back (no ProximityPrompt)
---   * Auto Play: new — TP to nearest enemy, M1 + E, loops
+-- v2.4 fixes & additions:
+--   * Hitbox Ability: now uses a SEPARATE massless welded sphere — no more flip/ragdoll
+--   * Anti Void: "Set Safe Spawn" saves your current spot; void TP uses it as priority
+--   * Kill Aura: added forceClickCenter() fallback so clicks land even when GUI is open;
+--     interval tightened to 0.08s for faster auto-fight
+--   * Auto Farm / Auto Play: multiple real clicks + force click + more blobs + cast E&Q
+--   * M1 Fling: new — applies outward+upward velocity to nearby enemies; slider up to
+--     2000 to literally launch them off the map
+--   * Hitbox sliders: max expanded 60 → 250 studs for both M1 Hitbox and Hitbox Ability
 --
 -- Networking: Jolt_Reliable binary blobs with live GetServerTimeNow() stamps.
 -- M1 Hits array is empty — hit detection is CLIENT-side (real clicks + big enemy
@@ -83,7 +83,6 @@ local function typingNow()
 end
 
 -- Returns a screen point with zero GUI coverage, or nil if none found.
--- nil means all candidates are blocked by GUI — caller must skip the click.
 local function safeClickPoint()
     local cam = Workspace.CurrentCamera
     if not cam then return nil end
@@ -106,17 +105,32 @@ local function safeClickPoint()
         local ok, objs = pcall(function() return pg:GetGuiObjectsAtPosition(pt.X, pt.Y) end)
         if ok and objs and #objs == 0 then return pt end
     end
-    return nil  -- every candidate blocked — skip click entirely
+    return nil
 end
 
+-- GUI-aware click — skips if all candidates are covered
 local function clickM1()
     if typingNow() then return end
     local pt = safeClickPoint()
-    if not pt then return end  -- GUI covers all candidates; do not click
+    if not pt then return end
     pcall(function()
         VirtualInputManager:SendMouseButtonEvent(pt.X, pt.Y, 0, true,  game, 0)
         task.wait(0.03)
         VirtualInputManager:SendMouseButtonEvent(pt.X, pt.Y, 0, false, game, 0)
+    end)
+end
+
+-- Force click at screen center — used by Kill Aura/Farm for reliable hits even
+-- when the GUI is partially open. Center is almost always clear game viewport.
+local function forceClickCenter()
+    if typingNow() then return end
+    local cam = Workspace.CurrentCamera
+    if not cam then return end
+    local vp = cam.ViewportSize
+    pcall(function()
+        VirtualInputManager:SendMouseButtonEvent(vp.X*0.5, vp.Y*0.52, 0, true,  game, 0)
+        task.wait(0.025)
+        VirtualInputManager:SendMouseButtonEvent(vp.X*0.5, vp.Y*0.52, 0, false, game, 0)
     end)
 end
 
@@ -135,6 +149,7 @@ local S = {
     KillAura=false, KillAuraRange=24, KillAuraFace=true, KillAuraAll=false, KillAuraE=true,
     M1Hitbox=false, M1HitboxSize=22,
     HitboxAbility=false, HitboxAbilitySize=20,
+    Fling=false, FlingPower=150,
     AutoM1=false,
     AutoAbility=false, AutoAbilityRange=25,
     CastE=true, CastQ=false, CastR=false, CastT=false,
@@ -289,7 +304,8 @@ local function restoreHitboxes()
             for partName, orig in pairs(parts) do
                 local part = char:FindFirstChild(partName)
                 if part then pcall(function()
-                    part.Size = orig.size; part.Transparency = orig.transp; part.CanCollide = orig.collide
+                    part.Size = orig.size; part.Transparency = orig.transp
+                    part.CanCollide = orig.collide; part.Massless = orig.massless
                 end) end
             end
         end
@@ -309,15 +325,19 @@ task.spawn(function()
                             if part and part:IsA("BasePart") then
                                 hbOriginal[p.Name] = hbOriginal[p.Name] or {}
                                 if not hbOriginal[p.Name][partName] then
-                                    hbOriginal[p.Name][partName] = {size=part.Size, transp=part.Transparency, collide=part.CanCollide}
+                                    hbOriginal[p.Name][partName] = {
+                                        size=part.Size, transp=part.Transparency,
+                                        collide=part.CanCollide, massless=part.Massless
+                                    }
                                 end
                                 local sz = S.M1HitboxSize
                                 pcall(function()
-                                    part.Size        = Vector3.new(sz, sz, sz)
-                                    part.Transparency = 0.8
+                                    part.Massless    = true
                                     part.CanCollide  = false
                                     part.CanQuery    = true
                                     part.CanTouch    = true
+                                    part.Size        = Vector3.new(sz, sz, sz)
+                                    part.Transparency = 0.8
                                 end)
                             end
                         end
@@ -330,30 +350,44 @@ task.spawn(function()
     end
 end)
 
--- ── Hitbox Ability (self Hitbox part — expands YOUR ability reach) ─────────────
-local selfHbOrig = nil
+-- ── Hitbox Ability (separate massless welded sphere — no flip/ragdoll) ─────────
+-- Does NOT touch the character's own Hitbox part (resizing it caused ragdoll).
+-- Creates our own CanTouch/CanQuery ball welded to HRP so abilities detect it.
+local abilityHbPart = nil
+local function destroyAbilityHb()
+    if abilityHbPart then pcall(function() abilityHbPart:Destroy() end); abilityHbPart = nil end
+end
 task.spawn(function()
     while task.wait(0.2) do
-        local char = getChar()
-        if not char then continue end
-        local hb = char:FindFirstChild("Hitbox")
-        if hb and hb:IsA("BasePart") then
-            if S.HitboxAbility then
-                if not selfHbOrig then selfHbOrig = hb.Size end
+        if S.HitboxAbility then
+            local root = getRoot()
+            if not root then continue end
+            -- Rebuild if missing or re-parented after respawn
+            if not abilityHbPart or abilityHbPart.Parent == nil then
+                destroyAbilityHb()
                 local sz = S.HitboxAbilitySize
-                pcall(function()
-                    hb.Size        = Vector3.new(sz, sz, sz)
-                    hb.Transparency = 0.85
-                    hb.CanCollide  = false
-                    hb.CanQuery    = true
-                    hb.CanTouch    = true
-                end)
-            elseif selfHbOrig then
-                pcall(function() hb.Size = selfHbOrig end)
-                selfHbOrig = nil
+                abilityHbPart = Instance.new("Part")
+                abilityHbPart.Name        = "MFHAbilityHB"
+                abilityHbPart.Shape       = Enum.PartType.Ball
+                abilityHbPart.Anchored    = false
+                abilityHbPart.CanCollide  = false
+                abilityHbPart.Massless    = true
+                abilityHbPart.CastShadow  = false
+                abilityHbPart.CanQuery    = true
+                abilityHbPart.CanTouch    = true
+                abilityHbPart.Transparency = 0.85
+                abilityHbPart.Material    = Enum.Material.ForceField
+                abilityHbPart.Color       = Color3.fromRGB(100, 200, 255)
+                abilityHbPart.Size        = Vector3.new(sz, sz, sz)
+                local w = Instance.new("Weld")
+                w.Part0 = root; w.Part1 = abilityHbPart; w.Parent = abilityHbPart
+                abilityHbPart.Parent = root.Parent
+            else
+                local sz = S.HitboxAbilitySize
+                pcall(function() abilityHbPart.Size = Vector3.new(sz, sz, sz) end)
             end
         else
-            if not S.HitboxAbility then selfHbOrig = nil end
+            destroyAbilityHb()
         end
     end
 end)
@@ -439,7 +473,7 @@ local function applyCharacter(char)
 end
 
 LP.CharacterAdded:Connect(function(char)
-    selfHbOrig = nil  -- reset self hitbox on respawn so size re-saves cleanly
+    destroyAbilityHb()  -- old sphere is gone with the old character; will rebuild
     task.wait(0.2)
     pcall(applyCharacter, char)
     if S.GodMode then
@@ -521,8 +555,12 @@ RunService.Stepped:Connect(function()
     end
 end)
 
--- ── Anti Void / Water (immediate TP, no velocity gate) ────────────────────────
+-- ── Anti Void / Water ─────────────────────────────────────────────────────────
+-- savedSpawnCF: manually set by the user ("Set Safe Spawn" button) and used as
+-- the priority TP target when falling off the map. Falls back to lastSafeCF.
+local savedSpawnCF = nil
 local floatPart, lastSafeCF
+
 local function ensureFloat()
     if not floatPart or floatPart.Parent == nil then
         floatPart = Instance.new("Part")
@@ -562,7 +600,7 @@ RunService.Heartbeat:Connect(function()
     local root, hum, char = getRoot(), getHum(), getChar()
     if not (root and hum and char) then return end
 
-    local floor     = hum.FloorMaterial
+    local floor      = hum.FloorMaterial
     local onOurPlate = (floor == Enum.Material.ForceField)
 
     if floor ~= Enum.Material.Air and floor ~= Enum.Material.Water and not onOurPlate then
@@ -587,11 +625,11 @@ RunService.Heartbeat:Connect(function()
     elseif overWater and (root.Position.Y - hit.Position.Y) < 12 then
         showFloat(Vector3.new(root.Position.X, hit.Position.Y + 0.5, root.Position.Z))
     elseif overVoid or overKill then
-        -- Immediate TP — no vy gate
         hideFloat()
-        if lastSafeCF then
+        local tpCF = savedSpawnCF or lastSafeCF
+        if tpCF then
             root.AssemblyLinearVelocity = Vector3.zero
-            root.CFrame = lastSafeCF + Vector3.new(0, 5, 0)
+            root.CFrame = tpCF + Vector3.new(0, 5, 0)
         else
             showFloat(root.Position - Vector3.new(0, 6, 0))
         end
@@ -601,9 +639,12 @@ RunService.Heartbeat:Connect(function()
 
     local killY = -480
     pcall(function() killY = Workspace.FallenPartsDestroyHeight + 100 end)
-    if root.Position.Y < killY and lastSafeCF then
-        root.AssemblyLinearVelocity = Vector3.zero
-        root.CFrame = lastSafeCF + Vector3.new(0, 6, 0)
+    if root.Position.Y < killY then
+        local tpCF = savedSpawnCF or lastSafeCF
+        if tpCF then
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.CFrame = tpCF + Vector3.new(0, 6, 0)
+        end
     end
 end)
 
@@ -815,8 +856,7 @@ end
 -- BACKGROUND LOOPS
 -- ════════════════════════════════════════════════════════════════════════════════
 
--- Speed/jump bypass: Heartbeat-frequency WalkSpeed + direct velocity injection
--- Bypasses server-side speed enforcement by also pushing via AssemblyLinearVelocity.
+-- Speed/jump bypass: Heartbeat WalkSpeed + direct velocity injection
 RunService.Heartbeat:Connect(function()
     local h, root = getHum(), getRoot()
     if not (h and root) then return end
@@ -833,9 +873,9 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- Kill aura: face, real M1 click + triple blob per tick for maximum hits
+-- Kill aura: safe click + force-center fallback + triple blob; 0.08s for fast auto-fight
 task.spawn(function()
-    while task.wait(0.12) do
+    while task.wait(0.08) do
         if not S.KillAura then continue end
         local targets = S.KillAuraAll and enemiesInRange(S.KillAuraRange) or {nearestPlayer(S.KillAuraRange)}
         local primary = targets[1]
@@ -843,7 +883,8 @@ task.spawn(function()
             local r = primary.Character:FindFirstChild("HumanoidRootPart") or primary.Character.PrimaryPart
             if r then
                 if S.KillAuraFace then faceTo(r.Position) end
-                clickM1()
+                clickM1()           -- GUI-safe click
+                forceClickCenter()  -- force-center fallback (always lands)
                 fireM1(); fireM1(); fireM1()
                 if S.KillAuraAll and #targets > 1 then
                     for i = 2, #targets do fireM1() end
@@ -888,9 +929,9 @@ task.spawn(function()
     end
 end)
 
--- Auto farm: TP directly next to target (same Y, 3-stud offset), face them, M1
+-- Auto farm: TP next to target, multiple clicks + blobs + E + Q for max damage
 task.spawn(function()
-    while task.wait(0.15) do
+    while task.wait(0.1) do
         if not (S.AutoFarm and S.FarmTarget) then continue end
         local t    = Players:FindFirstChild(S.FarmTarget)
         local root = getRoot()
@@ -904,16 +945,18 @@ task.spawn(function()
                 local pos = tr.Position + dir * 3 + Vector3.new(0, 0.5, 0)
                 pcall(function() root.CFrame = CFrame.new(pos, tr.Position) end)
                 clickM1()
-                fireM1()
-                if S.KillAuraE then tapKey(Enum.KeyCode.E) end
+                forceClickCenter()
+                fireM1(); fireM1(); fireM1()
+                tapKey(Enum.KeyCode.E)
+                if S.CastQ then tapKey(Enum.KeyCode.Q) end
             end
         end
     end
 end)
 
--- Auto play: TP to nearest enemy, M1 + E, loops automatically
+-- Auto play: TP to nearest enemy, multi-click + blobs + E, loops
 task.spawn(function()
-    while task.wait(0.15) do
+    while task.wait(0.1) do
         if not S.AutoPlay then continue end
         local target = nearestPlayer(S.AutoPlayRange)
         if not target or not target.Character then continue end
@@ -927,8 +970,38 @@ task.spawn(function()
         local pos = tr.Position + dir * 3 + Vector3.new(0, 0.5, 0)
         pcall(function() root.CFrame = CFrame.new(pos, tr.Position) end)
         clickM1()
+        forceClickCenter()
         fireM1(); fireM1()
         tapKey(Enum.KeyCode.E)
+    end
+end)
+
+-- M1 Fling: continuously applies outward+upward velocity to enemies in aura range.
+-- At high FlingPower values this launches them off the map.
+task.spawn(function()
+    while task.wait(0.1) do
+        if not S.Fling then continue end
+        local root = getRoot()
+        if not root then continue end
+        for _,p in ipairs(Players:GetPlayers()) do
+            if p ~= LP and p.Character then
+                local r = p.Character:FindFirstChild("HumanoidRootPart")
+                local h = p.Character:FindFirstChildOfClass("Humanoid")
+                if r and h and h.Health > 0 then
+                    local d = r.Position - root.Position
+                    if d.Magnitude <= S.KillAuraRange + 5 then
+                        local flat = Vector3.new(d.X, 0, d.Z)
+                        if flat.Magnitude < 0.1 then flat = Vector3.new(1,0,0) end
+                        local fv = flat.Unit * S.FlingPower + Vector3.new(0, S.FlingPower * 0.4, 0)
+                        for _,pt in ipairs(p.Character:GetDescendants()) do
+                            if pt:IsA("BasePart") then
+                                pcall(function() pt.AssemblyLinearVelocity = fv end)
+                            end
+                        end
+                    end
+                end
+            end
+        end
     end
 end)
 
@@ -978,7 +1051,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Money/FreeHub | Ability Arena",
     LoadingTitle = "Money/FreeHub",
-    LoadingSubtitle = "v2.3 — by Money/FreeHub Owner",
+    LoadingSubtitle = "v2.4 — by Money/FreeHub Owner",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -1006,28 +1079,27 @@ CombatTab:CreateToggle({Name="Anti-Push (knockback)", CurrentValue=false, Flag="
 CombatTab:CreateToggle({Name="Anti Void / Water (instant TP back)", CurrentValue=false, Flag="AntiVoid", Callback=function(v) S.AntiVoid=v end})
 
 CombatTab:CreateSection("Kill Aura")
-CombatTab:CreateToggle({Name="Kill Aura (real click + triple blob)", CurrentValue=false, Flag="KillAura", Callback=function(v) S.KillAura=v end})
+CombatTab:CreateToggle({Name="Kill Aura (auto-fights for you)", CurrentValue=false, Flag="KillAura", Callback=function(v) S.KillAura=v end})
 CombatTab:CreateSlider({Name="Aura Range", Range={5,150}, Increment=1, Suffix="studs", CurrentValue=24, Flag="KillAuraRange", Callback=function(v) S.KillAuraRange=v end})
 CombatTab:CreateToggle({Name="Face Target", CurrentValue=true, Flag="KillAuraFace", Callback=function(v) S.KillAuraFace=v end})
 CombatTab:CreateToggle({Name="Hit All In Range (blob)", CurrentValue=false, Flag="KillAuraAll", Callback=function(v) S.KillAuraAll=v end})
 CombatTab:CreateToggle({Name="Also Cast E", CurrentValue=true, Flag="KillAuraE", Callback=function(v) S.KillAuraE=v end})
 
 CombatTab:CreateSection("Hitboxes")
-CombatTab:CreateToggle({Name="M1 Hitbox Expander (enemy — enlarges enemy Hitbox part)", CurrentValue=false, Flag="M1Hitbox", Callback=function(v)
+CombatTab:CreateToggle({Name="M1 Hitbox Expander (enemy — enlarges enemy Hitbox)", CurrentValue=false, Flag="M1Hitbox", Callback=function(v)
     S.M1Hitbox=v
     if not v then restoreHitboxes() end
 end})
-CombatTab:CreateSlider({Name="M1 Hitbox Size", Range={4,60}, Increment=1, Suffix="studs", CurrentValue=22, Flag="M1HitboxSize", Callback=function(v) S.M1HitboxSize=v end})
-CombatTab:CreateToggle({Name="Hitbox Ability (self — expands your own ability reach)", CurrentValue=false, Flag="HitboxAbility", Callback=function(v)
+CombatTab:CreateSlider({Name="M1 Hitbox Size", Range={4,250}, Increment=1, Suffix="studs", CurrentValue=22, Flag="M1HitboxSize", Callback=function(v) S.M1HitboxSize=v end})
+CombatTab:CreateToggle({Name="Hitbox Ability (self — welded sphere, no flip)", CurrentValue=false, Flag="HitboxAbility", Callback=function(v)
     S.HitboxAbility=v
-    if not v and selfHbOrig then
-        local char = getChar()
-        local hb = char and char:FindFirstChild("Hitbox")
-        if hb then pcall(function() hb.Size = selfHbOrig end) end
-        selfHbOrig = nil
-    end
+    if not v then destroyAbilityHb() end
 end})
-CombatTab:CreateSlider({Name="Hitbox Ability Size", Range={4,60}, Increment=1, Suffix="studs", CurrentValue=20, Flag="HitboxAbilitySize", Callback=function(v) S.HitboxAbilitySize=v end})
+CombatTab:CreateSlider({Name="Hitbox Ability Size", Range={4,250}, Increment=1, Suffix="studs", CurrentValue=20, Flag="HitboxAbilitySize", Callback=function(v) S.HitboxAbilitySize=v end})
+
+CombatTab:CreateSection("M1 Fling / Knockback")
+CombatTab:CreateToggle({Name="M1 Fling (launch enemies off map)", CurrentValue=false, Flag="Fling", Callback=function(v) S.Fling=v end})
+CombatTab:CreateSlider({Name="Fling Power", Range={50,2000}, Increment=50, Suffix="vel", CurrentValue=150, Flag="FlingPower", Callback=function(v) S.FlingPower=v end})
 
 CombatTab:CreateSection("Auto")
 CombatTab:CreateToggle({Name="Auto M1 (click spam)", CurrentValue=false, Flag="AutoM1", Callback=function(v) S.AutoM1=v end})
@@ -1045,7 +1117,7 @@ CombatTab:CreateSlider({Name="Cam Lock Range", Range={20,300}, Increment=5, Suff
 
 -- ── Abilities ─────────────────────────────────────────────────────────────────
 AbilitiesTab:CreateSection("Ability Grabber")
-AbilitiesTab:CreateParagraph({Title="How it works", Content="Pick an ability. You TP to its pad, E is tapped for you, then you TP back to where you were."})
+AbilitiesTab:CreateParagraph({Title="How it works", Content="Pick an ability. You TP to its pad, E is tapped for you, then you TP back where you were."})
 local selectedAbility = nil
 local abilityDrop = AbilitiesTab:CreateDropdown({Name="Ability", Options=abilityNames(), CurrentOption={}, Flag="AbilityPick", Callback=function(o)
     selectedAbility = (type(o)=="table" and o[1]) or o
@@ -1120,14 +1192,35 @@ UtilityTab:CreateToggle({Name="Instant Respawn", CurrentValue=false, Flag="Insta
 UtilityTab:CreateToggle({Name="Click Teleport  [T]", CurrentValue=false, Flag="ClickTP", Callback=function(v) S.ClickTP=v end})
 UtilityTab:CreateButton({Name="Rejoin Server", Callback=rejoin})
 UtilityTab:CreateButton({Name="Server Hop", Callback=serverHop})
+
+UtilityTab:CreateSection("Safe Spawn")
+UtilityTab:CreateParagraph({Title="Anti Void TP target", Content="Walk to your safe spot (the tree / spawn area), then click 'Set Safe Spawn'. Anti Void will TP you there instead of the last ground you stood on."})
+UtilityTab:CreateButton({Name="Set Safe Spawn (save position)", Callback=function()
+    local root = getRoot()
+    if root then
+        savedSpawnCF = root.CFrame
+        Rayfield:Notify({Title="Money/FreeHub", Content="Safe spawn saved! Anti Void will TP here.", Duration=4})
+    end
+end})
+UtilityTab:CreateButton({Name="TP to Safe Spawn", Callback=function()
+    local root = getRoot()
+    local tpCF = savedSpawnCF or lastSafeCF
+    if root and tpCF then
+        pcall(function() root.CFrame = tpCF + Vector3.new(0, 3, 0) end)
+    else
+        Rayfield:Notify({Title="Money/FreeHub", Content="No safe spawn set. Walk somewhere safe and click Set Safe Spawn first.", Duration=4})
+    end
+end})
+UtilityTab:CreateButton({Name="Clear Safe Spawn (use last-stood ground)", Callback=function()
+    savedSpawnCF = nil
+    Rayfield:Notify({Title="Money/FreeHub", Content="Safe spawn cleared. Anti Void now uses last ground stood on.", Duration=3})
+end})
+
+UtilityTab:CreateSection("Admin")
 UtilityTab:CreateButton({Name="Unload Money/FreeHub", Callback=function()
     for _,c in pairs(Conns) do pcall(function() c:Disconnect() end) end
     clearGodConns(); clearESP(); clearHighlights(); flyCleanup(); restoreHitboxes()
-    if selfHbOrig then
-        local hb = getChar() and getChar():FindFirstChild("Hitbox")
-        if hb then pcall(function() hb.Size = selfHbOrig end) end
-        selfHbOrig = nil
-    end
+    destroyAbilityHb()
     if floatPart then pcall(function() floatPart:Destroy() end) end
     local h=getHum(); if h then setRagdollStates(h, true) end
     for k in pairs(S) do if type(S[k])=="boolean" then S[k]=false end end
@@ -1135,8 +1228,8 @@ UtilityTab:CreateButton({Name="Unload Money/FreeHub", Callback=function()
 end})
 
 UtilityTab:CreateSection("Status")
-UtilityTab:CreateParagraph({Title="Credits", Content="Money/FreeHub — by Money/FreeHub Owner"})
+UtilityTab:CreateParagraph({Title="Credits", Content="Money/FreeHub v2.4 — by Money/FreeHub Owner"})
 UtilityTab:CreateParagraph({Title="Remote", Content = JoltReliable and "Jolt_Reliable linked. Live timestamps active." or "Jolt_Reliable NOT found — combat remotes disabled. Rejoin and retry."})
-UtilityTab:CreateParagraph({Title="Combo tip", Content="Kill Aura + M1 Hitbox Expander (22+) + Hitbox Ability. Use Auto Play for fully hands-free combat. Grab One Punch from Abilities tab."})
+UtilityTab:CreateParagraph({Title="Combo tip", Content="Kill Aura + M1 Hitbox (250) + Fling (2000) = enemies launched off the map. Set Safe Spawn near the tree before enabling Anti Void."})
 
-Rayfield:Notify({Title="Money/FreeHub v2.3", Content = (JoltReliable and "Loaded — remotes linked." or "Loaded, but Jolt remote missing.") .. " by Money/FreeHub Owner", Duration=6})
+Rayfield:Notify({Title="Money/FreeHub v2.4", Content = (JoltReliable and "Loaded — remotes linked." or "Loaded, but Jolt remote missing.") .. " by Money/FreeHub Owner", Duration=6})
