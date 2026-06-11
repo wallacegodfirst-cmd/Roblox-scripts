@@ -1,4 +1,5 @@
--- Cozy Hub | Ability Arena | v2.3
+-- Money/FreeHub | Ability Arena | v2.3
+-- by Money/FreeHub Owner
 -- v2.3 improvements:
 --   * M1 stronger: default hitbox 22, re-apply every 0.15s, triple blob per aura tick
 --   * GUI-safe click: returns nil (skips) when ALL candidates have GUI over them
@@ -380,7 +381,7 @@ local function grabAbility(name)
     if grabbing or not name or name == "" then return end
     local f = findElementFolder()
     if not f then
-        Rayfield:Notify({Title="Cozy Hub", Content="ElementSelection not found — are you in the lobby?", Duration=4})
+        Rayfield:Notify({Title="Money/FreeHub", Content="ElementSelection not found — are you in the lobby?", Duration=4})
         return
     end
     local pad = f:FindFirstChild(name); if not pad then return end
@@ -525,7 +526,7 @@ local floatPart, lastSafeCF
 local function ensureFloat()
     if not floatPart or floatPart.Parent == nil then
         floatPart = Instance.new("Part")
-        floatPart.Name        = "CozyFloat"
+        floatPart.Name        = "MFHFloat"
         floatPart.Size        = Vector3.new(16, 1, 16)
         floatPart.Anchored    = true
         floatPart.CanCollide  = true
@@ -751,7 +752,7 @@ RunService.RenderStepped:Connect(function(dt)
         for _,p in ipairs(Players:GetPlayers()) do
             if p ~= LP and p.Character and p.Character:FindFirstChild("Head") and not espPool[p.Name] then
                 local bill = Instance.new("BillboardGui")
-                bill.Name="CozyESP"; bill.Adornee=p.Character.Head; bill.Size=UDim2.new(0,200,0,40)
+                bill.Name="MFHESP"; bill.Adornee=p.Character.Head; bill.Size=UDim2.new(0,200,0,40)
                 bill.StudsOffset=Vector3.new(0,2.5,0); bill.AlwaysOnTop=true
                 local lbl = Instance.new("TextLabel"); lbl.Parent=bill
                 lbl.Size=UDim2.new(1,0,1,0); lbl.BackgroundTransparency=1
@@ -975,10 +976,10 @@ end
 -- GUI (Rayfield)
 -- ════════════════════════════════════════════════════════════════════════════════
 local Window = Rayfield:CreateWindow({
-    Name = "Cozy Hub | Ability Arena",
-    LoadingTitle = "Cozy Hub",
-    LoadingSubtitle = "v2.3 — stronger M1 + auto play + instant void TP",
-    ConfigurationSaving = { Enabled = true, FolderName = "CozyHub", FileName = "AbilityArena" },
+    Name = "Money/FreeHub | Ability Arena",
+    LoadingTitle = "Money/FreeHub",
+    LoadingSubtitle = "v2.3 — by Money/FreeHub Owner",
+    ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
 })
@@ -1101,7 +1102,7 @@ FarmTab:CreateSlider({Name="Auto Play Search Range", Range={10,300}, Increment=5
 FarmTab:CreateSection("Auto Farm")
 FarmTab:CreateToggle({Name="Auto Farm Target", CurrentValue=false, Flag="AutoFarm", Callback=function(v)
     if v and not S.FarmTarget then
-        Rayfield:Notify({Title="Cozy Hub", Content="Pick a target first.", Duration=3})
+        Rayfield:Notify({Title="Money/FreeHub", Content="Pick a target first.", Duration=3})
         v=false
     end
     S.AutoFarm=v
@@ -1119,7 +1120,7 @@ UtilityTab:CreateToggle({Name="Instant Respawn", CurrentValue=false, Flag="Insta
 UtilityTab:CreateToggle({Name="Click Teleport  [T]", CurrentValue=false, Flag="ClickTP", Callback=function(v) S.ClickTP=v end})
 UtilityTab:CreateButton({Name="Rejoin Server", Callback=rejoin})
 UtilityTab:CreateButton({Name="Server Hop", Callback=serverHop})
-UtilityTab:CreateButton({Name="Unload Cozy Hub", Callback=function()
+UtilityTab:CreateButton({Name="Unload Money/FreeHub", Callback=function()
     for _,c in pairs(Conns) do pcall(function() c:Disconnect() end) end
     clearGodConns(); clearESP(); clearHighlights(); flyCleanup(); restoreHitboxes()
     if selfHbOrig then
@@ -1134,7 +1135,8 @@ UtilityTab:CreateButton({Name="Unload Cozy Hub", Callback=function()
 end})
 
 UtilityTab:CreateSection("Status")
+UtilityTab:CreateParagraph({Title="Credits", Content="Money/FreeHub — by Money/FreeHub Owner"})
 UtilityTab:CreateParagraph({Title="Remote", Content = JoltReliable and "Jolt_Reliable linked. Live timestamps active." or "Jolt_Reliable NOT found — combat remotes disabled. Rejoin and retry."})
 UtilityTab:CreateParagraph({Title="Combo tip", Content="Kill Aura + M1 Hitbox Expander (22+) + Hitbox Ability. Use Auto Play for fully hands-free combat. Grab One Punch from Abilities tab."})
 
-Rayfield:Notify({Title="Cozy Hub v2.3", Content = JoltReliable and "Loaded — remotes linked." or "Loaded, but Jolt remote missing.", Duration=6})
+Rayfield:Notify({Title="Money/FreeHub v2.3", Content = (JoltReliable and "Loaded — remotes linked." or "Loaded, but Jolt remote missing.") .. " by Money/FreeHub Owner", Duration=6})
