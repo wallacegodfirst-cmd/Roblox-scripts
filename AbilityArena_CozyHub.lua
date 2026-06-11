@@ -1,13 +1,16 @@
--- Money/FreeHub | Ability Arena | v2.5
+-- Money/FreeHub | Ability Arena | v2.6
 -- by Money/FreeHub Owner
--- v2.5 changes:
---   * REMOVED God Mode (per request) and Jump Power / Jump Mod (kept Infinite Jump)
---   * M1 Hitbox Expander reworked: runs every frame (Heartbeat) so the game can't
---     shrink it back; box is welded-in-place huge so ANY click while the enemy is
---     within (size/2) studs lands — hit him at A even after he moved to B
---   * Fling reworked: Heartbeat-frequency, sets BOTH linear + angular velocity on
---     every enemy part AND the legacy .Velocity, repeated each frame so it sticks
---   * Default M1 Hitbox size raised to 60; Fling default 800
+-- v2.6 fixes:
+--   * ONE-SHOT DEATH FIX: the Hitbox Ability sphere was CanQuery/CanTouch — it made
+--     YOU a giant target (everything hit you through it). Now it's a ghost ring
+--     (visual only); enemy expanded hitboxes also CanTouch=false for safety
+--   * GUI CLICK FIX: removed forceClickCenter() — it clicked screen center even when
+--     Rayfield was there. ALL auto-clicks are GUI-safe again (skip if covered)
+--   * M1 Hitbox visuals: glowing red ForceField box, easier to see your range
+--   * Fling reworked AGAIN: classic spin-touch method (spin your own character at
+--     extreme angular velocity glued to the target) — this actually replicates,
+--     unlike setting velocity on enemy parts which their client just overwrites
+--   * Anti-Fling no longer cancels your own Fling spin
 --
 -- Networking: Jolt_Reliable binary blobs with live GetServerTimeNow() stamps.
 -- M1 Hits array is empty — hit detection is CLIENT-side (real clicks + big enemy
@@ -119,19 +122,6 @@ local function clickM1()
     end)
 end
 
--- Force click at screen center — reliable hits even when the GUI is partially open.
-local function forceClickCenter()
-    if typingNow() then return end
-    local cam = Workspace.CurrentCamera
-    if not cam then return end
-    local vp = cam.ViewportSize
-    pcall(function()
-        VirtualInputManager:SendMouseButtonEvent(vp.X*0.5, vp.Y*0.52, 0, true,  game, 0)
-        task.wait(0.025)
-        VirtualInputManager:SendMouseButtonEvent(vp.X*0.5, vp.Y*0.52, 0, false, game, 0)
-    end)
-end
-
 local function tapKey(kc)
     if typingNow() then return end
     pcall(function()
@@ -234,6 +224,8 @@ local function restoreHitboxes()
                 if part then pcall(function()
                     part.Size = orig.size; part.Transparency = orig.transp
                     part.CanCollide = orig.collide; part.Massless = orig.massless
+                    part.CanTouch = orig.touch; part.Color = orig.color
+                    part.Material = orig.material
                 end) end
             end
         end
@@ -258,16 +250,23 @@ RunService.Heartbeat:Connect(function()
                         if not hbOriginal[p.Name][partName] then
                             hbOriginal[p.Name][partName] = {
                                 size=part.Size, transp=part.Transparency,
-                                collide=part.CanCollide, massless=part.Massless
+                                collide=part.CanCollide, massless=part.Massless,
+                                touch=part.CanTouch, color=part.Color,
+                                material=part.Material
                             }
                         end
                         pcall(function()
                             part.Massless    = true
                             part.CanCollide  = false
                             part.CanQuery    = true
-                            part.CanTouch    = true
+                            -- CanTouch OFF: touch-based damage can read these
+                            -- expanded boxes against YOU too; query-only keeps
+                            -- your M1 raycast hits working without that risk
+                            part.CanTouch    = false
                             if part.Size.X ~= sz then part.Size = Vector3.new(sz, sz, sz) end
-                            part.Transparency = 0.8
+                            part.Transparency = 0.7
+                            part.Color       = Color3.fromRGB(255, 70, 70)
+                            part.Material    = Enum.Material.ForceField
                         end)
                     end
                 end
@@ -276,7 +275,12 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- ── Hitbox Ability (separate massless welded sphere — no flip/ragdoll) ─────────
+-- ── Hitbox Ability (GHOST range ring — you canNOT be hit through it) ───────────
+-- v2.5's sphere had CanQuery/CanTouch on, so the game treated it as part of YOUR
+-- body — that's what caused the one-shot deaths. Now it's pure visual (no query,
+-- no touch, no collide); your real hurtbox stays normal size. The actual ability
+-- reach comes from the enemy hitbox expansion (M1 Hitbox Expander), which ability
+-- hit-checks read the same way M1 does.
 local abilityHbPart = nil
 local function destroyAbilityHb()
     if abilityHbPart then pcall(function() abilityHbPart:Destroy() end); abilityHbPart = nil end
@@ -296,9 +300,9 @@ task.spawn(function()
                 abilityHbPart.CanCollide  = false
                 abilityHbPart.Massless    = true
                 abilityHbPart.CastShadow  = false
-                abilityHbPart.CanQuery    = true
-                abilityHbPart.CanTouch    = true
-                abilityHbPart.Transparency = 0.85
+                abilityHbPart.CanQuery    = false   -- ghost: game can't target you through it
+                abilityHbPart.CanTouch    = false   -- ghost: no touch damage through it
+                abilityHbPart.Transparency = 0.8
                 abilityHbPart.Material    = Enum.Material.ForceField
                 abilityHbPart.Color       = Color3.fromRGB(100, 200, 255)
                 abilityHbPart.Size        = Vector3.new(sz, sz, sz)
@@ -447,7 +451,8 @@ RunService.Stepped:Connect(function()
     if not (S.AntiPush or S.AntiFling) then return end
     local char, root, hum = getChar(), getRoot(), getHum()
     if not (char and root) then return end
-    if S.AntiFling then
+    -- skip while our own Fling spin is running so we don't cancel ourselves
+    if S.AntiFling and not S.Fling then
         for _,pt in ipairs(char:GetDescendants()) do
             if pt:IsA("BasePart") then
                 if pt.AssemblyAngularVelocity.Magnitude > 20 then
@@ -793,7 +798,6 @@ task.spawn(function()
             if r then
                 if S.KillAuraFace then faceTo(r.Position) end
                 clickM1()
-                forceClickCenter()
                 fireM1(); fireM1(); fireM1()
                 if S.KillAuraAll and #targets > 1 then
                     for i = 2, #targets do fireM1() end
@@ -854,7 +858,6 @@ task.spawn(function()
                 local pos = tr.Position + dir * 3 + Vector3.new(0, 0.5, 0)
                 pcall(function() root.CFrame = CFrame.new(pos, tr.Position) end)
                 clickM1()
-                forceClickCenter()
                 fireM1(); fireM1(); fireM1()
                 tapKey(Enum.KeyCode.E)
                 if S.CastQ then tapKey(Enum.KeyCode.Q) end
@@ -879,42 +882,41 @@ task.spawn(function()
         local pos = tr.Position + dir * 3 + Vector3.new(0, 0.5, 0)
         pcall(function() root.CFrame = CFrame.new(pos, tr.Position) end)
         clickM1()
-        forceClickCenter()
         fireM1(); fireM1()
         tapKey(Enum.KeyCode.E)
     end
 end)
 
--- Fling: every frame, slam outward+upward velocity onto every enemy part in range.
--- Setting both linear AND angular velocity each frame fights the brief moments the
--- server gives us ownership, so high Fling Power actually launches them off the map.
+-- Fling: classic SPIN-TOUCH method. Setting velocity on enemy parts doesn't stick
+-- (their client owns their character and overwrites it next frame). What DOES
+-- replicate is physics contact: we spin OUR character at extreme angular velocity
+-- while glued to the target — the collision impulse transfers into them through
+-- the physics solver and launches them for real.
+local flingSpinning = false
 RunService.Heartbeat:Connect(function()
-    if not S.Fling then return end
     local root = getRoot()
-    if not root then return end
-    local power = S.FlingPower
-    for _,p in ipairs(Players:GetPlayers()) do
-        if p ~= LP and p.Character then
-            local r = p.Character:FindFirstChild("HumanoidRootPart")
-            local h = p.Character:FindFirstChildOfClass("Humanoid")
-            if r and h and h.Health > 0 then
-                local d = r.Position - root.Position
-                if d.Magnitude <= S.KillAuraRange + 8 then
-                    local flat = Vector3.new(d.X, 0, d.Z)
-                    if flat.Magnitude < 0.1 then flat = Vector3.new(1,0,0) end
-                    local fv = flat.Unit * power + Vector3.new(0, power * 0.6, 0)
-                    for _,pt in ipairs(p.Character:GetDescendants()) do
-                        if pt:IsA("BasePart") then
-                            pcall(function()
-                                pt.AssemblyLinearVelocity  = fv
-                                pt.AssemblyAngularVelocity = Vector3.new(power, power, power)
-                                pt.Velocity = fv
-                            end)
-                        end
-                    end
-                end
-            end
+    if not S.Fling then
+        if flingSpinning then
+            flingSpinning = false
+            if root then pcall(function() root.AssemblyAngularVelocity = Vector3.zero end) end
         end
+        return
+    end
+    if not root then return end
+    local target = nearestPlayer(S.KillAuraRange + 8)
+    local tr = target and target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+    if tr then
+        flingSpinning = true
+        local power = S.FlingPower
+        pcall(function()
+            -- glue to the target and spin hard; contact does the launching
+            root.CFrame = CFrame.new(tr.Position + Vector3.new(0, 0.5, 0))
+            root.AssemblyAngularVelocity = Vector3.new(0, power * 30, 0)
+            root.AssemblyLinearVelocity  = Vector3.zero
+        end)
+    elseif flingSpinning then
+        flingSpinning = false
+        pcall(function() root.AssemblyAngularVelocity = Vector3.zero end)
     end
 end)
 
@@ -964,7 +966,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Money/FreeHub | Ability Arena",
     LoadingTitle = "Money/FreeHub",
-    LoadingSubtitle = "v2.5 — by Money/FreeHub Owner",
+    LoadingSubtitle = "v2.6 — by Money/FreeHub Owner",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -1000,14 +1002,20 @@ CombatTab:CreateToggle({Name="M1 Hitbox Expander (hit anywhere in range)", Curre
     if not v then restoreHitboxes() end
 end})
 CombatTab:CreateSlider({Name="M1 Hitbox Size", Range={4,250}, Increment=1, Suffix="studs", CurrentValue=60, Flag="M1HitboxSize", Callback=function(v) S.M1HitboxSize=v end})
-CombatTab:CreateToggle({Name="Hitbox Ability (self — welded sphere, no flip)", CurrentValue=false, Flag="HitboxAbility", Callback=function(v)
+CombatTab:CreateToggle({Name="Hitbox Ability (range ring — ghost, can't be hit through it)", CurrentValue=false, Flag="HitboxAbility", Callback=function(v)
     S.HitboxAbility=v
     if not v then destroyAbilityHb() end
 end})
 CombatTab:CreateSlider({Name="Hitbox Ability Size", Range={4,250}, Increment=1, Suffix="studs", CurrentValue=20, Flag="HitboxAbilitySize", Callback=function(v) S.HitboxAbilitySize=v end})
 
 CombatTab:CreateSection("M1 Fling / Knockback")
-CombatTab:CreateToggle({Name="M1 Fling (launch enemies off map)", CurrentValue=false, Flag="Fling", Callback=function(v) S.Fling=v end})
+CombatTab:CreateToggle({Name="Fling (spin-touch — WARNING: TPs you onto target)", CurrentValue=false, Flag="Fling", Callback=function(v)
+    S.Fling=v
+    if not v then
+        local r=getRoot()
+        if r then pcall(function() r.AssemblyAngularVelocity = Vector3.zero end) end
+    end
+end})
 CombatTab:CreateSlider({Name="Fling Power", Range={100,3000}, Increment=50, Suffix="vel", CurrentValue=800, Flag="FlingPower", Callback=function(v) S.FlingPower=v end})
 
 CombatTab:CreateSection("Auto")
@@ -1132,8 +1140,8 @@ UtilityTab:CreateButton({Name="Unload Money/FreeHub", Callback=function()
 end})
 
 UtilityTab:CreateSection("Status")
-UtilityTab:CreateParagraph({Title="Credits", Content="Money/FreeHub v2.5 — by Money/FreeHub Owner"})
+UtilityTab:CreateParagraph({Title="Credits", Content="Money/FreeHub v2.6 — by Money/FreeHub Owner"})
 UtilityTab:CreateParagraph({Title="Remote", Content = JoltReliable and "Jolt_Reliable linked. Live timestamps active." or "Jolt_Reliable NOT found — combat remotes disabled. Rejoin and retry."})
 UtilityTab:CreateParagraph({Title="Combo tip", Content="Kill Aura + M1 Hitbox (crank size to cover your range) + Fling. Set Safe Spawn near the tree before enabling Anti Void."})
 
-Rayfield:Notify({Title="Money/FreeHub v2.5", Content = (JoltReliable and "Loaded — remotes linked." or "Loaded, but Jolt remote missing.") .. " by Money/FreeHub Owner", Duration=6})
+Rayfield:Notify({Title="Money/FreeHub v2.6", Content = (JoltReliable and "Loaded — remotes linked." or "Loaded, but Jolt remote missing.") .. " by Money/FreeHub Owner", Duration=6})
