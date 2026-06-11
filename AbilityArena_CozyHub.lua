@@ -1,16 +1,18 @@
--- Cozy Hub | Ability Arena | v2.0
--- Full rewrite: live-timestamp Jolt payloads, hardened features, respawn-proof.
+-- Cozy Hub | Ability Arena | v2.1
+-- v2.1: Anti Void/Water float plate, hard anti-ragdoll/push/fling rework,
+--        Kill Aura now lands M1s (real clicks + enemy hitbox expander).
 --
--- Research notes (why this version works where the old one drifted):
+-- Research notes:
 --   * The game networks through the "Jolt" library (typed successor to Warp).
 --     All combat goes through ReplicatedStorage.Files.Shared.Components.Jolt.
 --     Utils.Remotes.Jolt_Reliable as a pre-serialized binary blob.
---   * The M1 and Dash blobs each embed a "Timestamp" field: an 8-byte little-
---     endian double equal to workspace:GetServerTimeNow() at capture time.
---     The old script hardcoded those bytes, so the timestamp went stale and the
---     server began ignoring the packets. v2 rebuilds the blob with a FRESH
---     timestamp on every fire (see buildM1 / buildSkillString).
---   * Everything else is client-side and rebinds itself after respawn.
+--   * The M1 and Dash blobs embed a "Timestamp": an 8-byte little-endian double
+--     equal to workspace:GetServerTimeNow(). We splice a FRESH stamp every fire.
+--   * The M1 blob's "Hits" array is EMPTY (\16\0\0 = 0 entries). Hit detection
+--     is CLIENT-side: the game's own M1 code fills Hits with what it detected.
+--     A blob with empty Hits is a whiff. So Kill Aura sends REAL mouse clicks
+--     (the game's code then detects + reports hits itself) and we expand enemy
+--     HumanoidRootParts locally so those clicks connect from far away.
 
 local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
 
@@ -45,14 +47,10 @@ pcall(function()
 end)
 
 -- ── Serialized payloads with LIVE timestamps ───────────────────────────────────
--- M1 blob layout (47 bytes): [1..21 header+"Timestamp" tag][22..29 double][30..47 Index/Hits]
--- We splice a fresh 8-byte double into the timestamp slot every fire.
 local M1_Prefix = string.char(5,85,115,101,77,49,65,16,3,9,84,105,109,101,115,116,97,109,112,2,199)
 local M1_Suffix = string.char(3,5,73,110,100,101,120,17,32,3,4,72,105,116,115,16,0,0)
 
 local function nowStamp()
-    -- 8-byte little-endian double == workspace:GetServerTimeNow(), exactly how the
-    -- game serialized it. pcall guards executors that sandbox the call.
     local t = 0
     pcall(function() t = Workspace:GetServerTimeNow() end)
     if t == 0 then pcall(function() t = os.clock() end) end
@@ -63,7 +61,6 @@ local function buildM1()
     return M1_Prefix .. nowStamp() .. M1_Suffix
 end
 
--- Skill blob (Dash / E / Q / R / T moves) — rebuilt field-by-field with a live stamp.
 local function buildSkillString(skill, direction)
     direction = direction or "Forward"
     return "\10StartSkillB\003" .. string.char(#skill) .. skill
@@ -81,11 +78,25 @@ local function fireSkill(skill, direction)
 end
 local function fireDash(direction) fireSkill("Dash", direction) end
 
+-- Real M1: synthesized mouse click so the GAME's own client code runs its hit
+-- detection and reports the targets (the path the server actually trusts).
+-- Click lands at 78% screen height so the Rayfield window can't eat it.
+local function clickM1()
+    pcall(function()
+        local cam = Workspace.CurrentCamera
+        local x, y = cam.ViewportSize.X/2, cam.ViewportSize.Y*0.78
+        VirtualInputManager:SendMouseButtonEvent(x, y, 0, true,  game, 0)
+        task.wait(0.03)
+        VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
+    end)
+end
+
 -- ── Settings ────────────────────────────────────────────────────────────────────
 local S = {
     -- Combat
-    GodMode=false, AntiRagdoll=false, AntiPush=false,
+    GodMode=false, AntiRagdoll=false, AntiPush=false, AntiVoid=false,
     KillAura=false, KillAuraRange=24, KillAuraFace=true, KillAuraAll=false, KillAuraE=true,
+    M1Hitbox=false, M1HitboxSize=14,
     AutoM1=false,
     AutoAbility=false, AutoAbilityRange=25,
     CastE=true, CastQ=false, CastR=false, CastT=false,
@@ -109,7 +120,7 @@ local S = {
     AntiAFK=false, InstantRespawn=false, ClickTP=false,
 }
 
--- ── Connection manager (per-character hooks rebind cleanly) ─────────────────────
+-- ── Connection manager ───────────────────────────────────────────────────────────
 local Conns = {}
 local function bind(name, conn)
     if Conns[name] then pcall(function() Conns[name]:Disconnect() end) end
@@ -152,7 +163,7 @@ local function playerNames()
     return n
 end
 local function faceTo(pos)
-    local root = getRoot(); if root then root.CFrame = CFrame.new(root.Position, pos) end
+    local root = getRoot(); if root then root.CFrame = CFrame.new(root.Position, Vector3.new(pos.X, root.Position.Y, pos.Z)) end
 end
 local function tapKey(kc)
     pcall(function()
@@ -161,20 +172,72 @@ local function tapKey(kc)
     end)
 end
 
--- ── Per-character rebind (god mode / anti-ragdoll hooks, speed, jump) ────────────
+-- ── M1 Hitbox Expander (client-side enemy HRP enlargement) ──────────────────────
+-- Hit detection is client-side, so locally enlarging enemy HumanoidRootParts makes
+-- the game's own M1 hit-scan connect from far away — and the server accepts the
+-- reported hits. Size changes are local-only; originals restored on disable.
+local hbOriginal = {}   -- [playerName] = {size=Vector3, transp=number, collide=bool}
+local function restoreHitboxes()
+    for name,orig in pairs(hbOriginal) do
+        local p = Players:FindFirstChild(name)
+        local r = p and p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+        if r then pcall(function()
+            r.Size = orig.size; r.Transparency = orig.transp; r.CanCollide = orig.collide
+        end) end
+    end
+    hbOriginal = {}
+end
+task.spawn(function()
+    while task.wait(0.25) do
+        if S.M1Hitbox then
+            for _,p in ipairs(Players:GetPlayers()) do
+                if p ~= LP and p.Character then
+                    local r = p.Character:FindFirstChild("HumanoidRootPart")
+                    local h = p.Character:FindFirstChildOfClass("Humanoid")
+                    if r and h and h.Health > 0 then
+                        if not hbOriginal[p.Name] then
+                            hbOriginal[p.Name] = {size=r.Size, transp=r.Transparency, collide=r.CanCollide}
+                        end
+                        local sz = S.M1HitboxSize
+                        pcall(function()
+                            if r.Size.X ~= sz then r.Size = Vector3.new(sz, sz, sz) end
+                            r.Transparency = 0.7
+                            r.CanCollide = false
+                            r.CanQuery = true
+                            r.CanTouch = true
+                        end)
+                    end
+                end
+            end
+        elseif next(hbOriginal) then
+            restoreHitboxes()
+        end
+    end
+end)
+
+-- ── Per-character rebind ─────────────────────────────────────────────────────────
+local BAD_STATES = {
+    Enum.HumanoidStateType.Ragdoll,
+    Enum.HumanoidStateType.FallingDown,
+    Enum.HumanoidStateType.Physics,
+    Enum.HumanoidStateType.PlatformStanding,
+}
+local function setRagdollStates(hum, enabled)
+    for _,st in ipairs(BAD_STATES) do
+        pcall(function() hum:SetStateEnabled(st, enabled) end)
+    end
+end
+
 local function applyCharacter(char)
     local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 5)
     if not hum then return end
 
-    -- Instant health restore (client-side; server stays authoritative but this
-    -- pegs the local humanoid so client-read checks and ragdoll triggers see full HP)
     bind("godHealth", hum.HealthChanged:Connect(function()
         if S.GodMode and hum.Health < hum.MaxHealth then
             pcall(function() hum.Health = hum.MaxHealth end)
         end
     end))
 
-    -- Anti-ragdoll: bounce out of physics/knockdown states
     bind("antiRag", hum.StateChanged:Connect(function(_, new)
         if not (S.AntiRagdoll or S.GodMode) then return end
         if new == Enum.HumanoidStateType.Physics
@@ -185,13 +248,13 @@ local function applyCharacter(char)
         end
     end))
 
-    -- Instant respawn on death
     bind("respawn", hum.Died:Connect(function()
         if S.InstantRespawn then
             task.delay(0.2, function() pcall(function() LP:LoadCharacter() end) end)
         end
     end))
 
+    if S.AntiRagdoll then setRagdollStates(hum, false) end
     if S.SpeedHack then pcall(function() hum.WalkSpeed = S.Speed end) end
     if S.JumpMod   then pcall(function() hum.JumpPower = S.JumpPower; hum.UseJumpPower = true end) end
 end
@@ -199,7 +262,166 @@ end
 LP.CharacterAdded:Connect(function(char) task.wait(0.2); pcall(applyCharacter, char) end)
 if LP.Character then pcall(applyCharacter, LP.Character) end
 
--- ── Global input hooks (bound once) ─────────────────────────────────────────────
+-- ── Anti-Ragdoll: hard mode ──────────────────────────────────────────────────────
+-- Layer 1: ragdoll-ish humanoid states fully DISABLED (re-applied every 0.5s
+--          because games re-enable them when they ragdoll you).
+-- Layer 2: per-frame PlatformStand/Sit clear + bad-state bounce.
+-- Layer 3: ragdoll constraints destroyed, Motor6Ds re-enabled, stun flags cleared.
+local STUN_ATTRS = {"Ragdoll","Ragdolled","Stunned","Stun","Knocked","Knockback","KO","Downed"}
+local ragClock = 0
+RunService.Heartbeat:Connect(function(dt)
+    if not S.AntiRagdoll then return end
+    local hum, char = getHum(), getChar()
+    if not (hum and char) then return end
+    pcall(function()
+        hum.PlatformStand = false
+        hum.Sit = false
+        local st = hum:GetState()
+        if st == Enum.HumanoidStateType.Physics or st == Enum.HumanoidStateType.Ragdoll
+        or st == Enum.HumanoidStateType.FallingDown or st == Enum.HumanoidStateType.PlatformStanding then
+            hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end
+    end)
+    ragClock += dt
+    if ragClock >= 0.5 then
+        ragClock = 0
+        setRagdollStates(hum, false)
+        for _,attr in ipairs(STUN_ATTRS) do
+            pcall(function()
+                if char:GetAttribute(attr) == true then char:SetAttribute(attr, false) end
+            end)
+        end
+        for _,d in ipairs(char:GetDescendants()) do
+            if d:IsA("BallSocketConstraint") then
+                pcall(function() d:Destroy() end)
+            elseif d:IsA("Motor6D") then
+                pcall(function() if d.Enabled == false then d.Enabled = true end end)
+            elseif d:IsA("BoolValue") then
+                local n = d.Name:lower()
+                if (n:find("ragdoll") or n:find("stun") or n:find("knock") or n:find("down")) and d.Value then
+                    pcall(function() d.Value = false end)
+                end
+            end
+        end
+    end
+end)
+
+-- ── Anti-Push / Anti-Fling: pre-physics velocity clamps ──────────────────────────
+-- Runs on Stepped (BEFORE physics integrates) and covers every body part, because
+-- ragdoll flings split the character into separate assemblies per limb.
+RunService.Stepped:Connect(function()
+    if S.Fly then return end   -- fly drives its own high velocities
+    if not (S.AntiPush or S.AntiFling) then return end
+    local char, root, hum = getChar(), getRoot(), getHum()
+    if not (char and root) then return end
+    if S.AntiFling then
+        for _,pt in ipairs(char:GetDescendants()) do
+            if pt:IsA("BasePart") then
+                if pt.AssemblyAngularVelocity.Magnitude > 20 then
+                    pt.AssemblyAngularVelocity = Vector3.zero
+                end
+                if pt.AssemblyLinearVelocity.Magnitude > 130 then
+                    pt.AssemblyLinearVelocity = Vector3.zero
+                end
+            end
+        end
+    end
+    if S.AntiPush then
+        local v = root.AssemblyLinearVelocity
+        local cap = ((hum and hum.WalkSpeed) or 16) * 2.5 + 25
+        local hv = Vector3.new(v.X, 0, v.Z)
+        if hv.Magnitude > cap then
+            root.AssemblyLinearVelocity = Vector3.new(0, math.clamp(v.Y, -90, 60), 0)
+        end
+    end
+end)
+
+-- ── Anti Void / Water: float plate ───────────────────────────────────────────────
+-- A local anchored ForceField plate that catches you: over water it sits at the
+-- surface so you stand ON the water; over the void it rides under your feet like
+-- a flying carpet. Plus an emergency snap-back if you're already below the map.
+local floatPart, lastSafeCF
+local function ensureFloat()
+    if not floatPart or floatPart.Parent == nil then
+        floatPart = Instance.new("Part")
+        floatPart.Name = "CozyFloat"
+        floatPart.Size = Vector3.new(16, 1, 16)
+        floatPart.Anchored = true
+        floatPart.CanCollide = true
+        floatPart.CanQuery = false
+        floatPart.Material = Enum.Material.ForceField
+        floatPart.Color = Color3.fromRGB(120, 170, 255)
+        floatPart.Transparency = 0.6
+        floatPart.Parent = Workspace
+    end
+    return floatPart
+end
+local function showFloat(pos)
+    local plat = ensureFloat()
+    plat.CanCollide = true
+    plat.Transparency = 0.6
+    plat.Position = pos
+end
+local function hideFloat()
+    if floatPart then floatPart.CanCollide = false; floatPart.Transparency = 1 end
+end
+
+RunService.Heartbeat:Connect(function()
+    if not S.AntiVoid then
+        if floatPart then pcall(function() floatPart:Destroy() end); floatPart = nil end
+        return
+    end
+    local root, hum, char = getRoot(), getHum(), getChar()
+    if not (root and hum and char) then return end
+
+    local floor = hum.FloorMaterial
+    local onOurPlate = (floor == Enum.Material.ForceField)
+
+    -- Remember the last real ground we stood on
+    if floor ~= Enum.Material.Air and floor ~= Enum.Material.Water and not onOurPlate then
+        lastSafeCF = root.CFrame
+    end
+
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = {char, floatPart}
+    local hit = Workspace:Raycast(root.Position, Vector3.new(0, -2000, 0), params)
+
+    local swimming  = hum:GetState() == Enum.HumanoidStateType.Swimming or floor == Enum.Material.Water
+    local overWater = hit ~= nil and hit.Instance ~= nil and hit.Instance:IsA("Terrain") and hit.Material == Enum.Material.Water
+    local overVoid  = (hit == nil)
+    local vy        = root.AssemblyLinearVelocity.Y
+
+    if swimming then
+        -- Pop out of the water onto a plate at the surface
+        showFloat(Vector3.new(root.Position.X, root.Position.Y - 3.5, root.Position.Z))
+        root.CFrame = root.CFrame + Vector3.new(0, 4, 0)
+        root.AssemblyLinearVelocity = Vector3.zero
+        pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+    elseif overWater and (root.Position.Y - hit.Position.Y) < 12 then
+        -- Near the water surface: plate AT the surface so we land/stand on it
+        showFloat(Vector3.new(root.Position.X, hit.Position.Y + 0.5, root.Position.Z))
+    elseif overVoid and (vy < -5 or onOurPlate) then
+        -- Nothing below at all: carpet plate under our feet
+        local y = onOurPlate and floatPart.Position.Y or (root.Position.Y - 6)
+        showFloat(Vector3.new(root.Position.X, y, root.Position.Z))
+        if vy < -120 then
+            root.AssemblyLinearVelocity = Vector3.new(0, -40, 0)
+        end
+    else
+        hideFloat()
+    end
+
+    -- Emergency: already below the kill plane -> snap back to last safe ground
+    local killY = -480
+    pcall(function() killY = Workspace.FallenPartsDestroyHeight + 100 end)
+    if root.Position.Y < killY and lastSafeCF then
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.CFrame = lastSafeCF + Vector3.new(0, 6, 0)
+    end
+end)
+
+-- ── Global input hooks ───────────────────────────────────────────────────────────
 UserInputService.JumpRequest:Connect(function()
     if S.InfiniteJump then local h=getHum(); if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end end
 end)
@@ -222,7 +444,7 @@ pcall(function()
     end)
 end)
 
--- ── Fly (BodyVelocity, auto-recreates after respawn) ─────────────────────────────
+-- ── Fly ──────────────────────────────────────────────────────────────────────────
 local flyBV, flyBG
 local flyKeys = {W=false,A=false,S=false,D=false,Up=false,Down=false}
 local function flyCleanup()
@@ -277,7 +499,7 @@ RunService.Stepped:Connect(function()
     end
 end)
 
--- ── Camera lock / aim assist ─────────────────────────────────────────────────────
+-- ── Camera lock ──────────────────────────────────────────────────────────────────
 RunService.RenderStepped:Connect(function()
     if not S.CamLock then return end
     local tgt = nearestPlayer(S.CamLockRange); if not tgt or not tgt.Character then return end
@@ -330,7 +552,7 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- ── ESP + tracers (BillboardGui pool, refreshed on a timer) ─────────────────────
+-- ── ESP + tracers ────────────────────────────────────────────────────────────────
 local espPool = {}
 local function clearESP()
     for _,d in pairs(espPool) do
@@ -344,7 +566,6 @@ local espTimer = 0
 RunService.RenderStepped:Connect(function(dt)
     if not S.ESP and not S.Tracers then if next(espPool) then clearESP() end return end
     espTimer += dt
-    -- (Re)build label pool every 0.4s; update positions every frame for tracers.
     if espTimer >= 0.4 then
         espTimer = 0
         for name,d in pairs(espPool) do
@@ -374,7 +595,6 @@ RunService.RenderStepped:Connect(function(dt)
             end
         end
     end
-    -- Per-frame update
     local cam = Workspace.CurrentCamera
     for name,d in pairs(espPool) do
         local p = Players:FindFirstChild(name)
@@ -385,7 +605,7 @@ RunService.RenderStepped:Connect(function(dt)
         d.bill.Enabled = S.ESP and head ~= nil
         if S.ESP and head and hum then
             local myRoot = getRoot()
-            local dist = myRoot and math.floor((root.Position-myRoot.Position).Magnitude) or 0
+            local dist = (myRoot and root) and math.floor((root.Position-myRoot.Position).Magnitude) or 0
             local hp = math.floor(hum.Health)
             d.lbl.Text = string.format("%s | %d HP | %dm", name, hp, dist)
             d.lbl.TextColor3 = S.ESPColor
@@ -422,25 +642,13 @@ end
 -- BACKGROUND LOOPS
 -- ════════════════════════════════════════════════════════════════════════════════
 
--- God mode hard peg (backup for the HealthChanged hook)
+-- God mode hard peg
 task.spawn(function()
     while task.wait(0.1) do
         if S.GodMode then
             local h = getHum()
             if h and h.MaxHealth > 0 and h.Health < h.MaxHealth then pcall(function() h.Health = h.MaxHealth end) end
         end
-    end
-end)
-
--- Anti-push / anti-fling (modern AssemblyLinearVelocity)
-RunService.Heartbeat:Connect(function()
-    local root = getRoot(); if not root then return end
-    if S.AntiPush and root.AssemblyLinearVelocity.Magnitude > 80 then
-        root.AssemblyLinearVelocity = Vector3.zero
-    end
-    if S.AntiFling then
-        root.AssemblyAngularVelocity = Vector3.zero
-        if root.AssemblyLinearVelocity.Magnitude > 150 then root.AssemblyLinearVelocity = Vector3.zero end
     end
 end)
 
@@ -453,30 +661,29 @@ task.spawn(function()
     end
 end)
 
--- Kill aura
+-- Kill aura: face target, REAL M1 click (game's own hit detection fills Hits),
+-- raw blob as backup, optional E. Combine with M1 Hitbox Expander for range.
 task.spawn(function()
-    while task.wait(0.08) do
+    while task.wait(0.12) do
         if not S.KillAura then continue end
         local targets = S.KillAuraAll and enemiesInRange(S.KillAuraRange) or {nearestPlayer(S.KillAuraRange)}
-        local fired = false
-        for _,p in ipairs(targets) do
-            if p and p.Character then
-                local r = p.Character:FindFirstChild("HumanoidRootPart") or p.Character.PrimaryPart
-                if r then
-                    if S.KillAuraFace then faceTo(r.Position) end
-                    fireM1()
-                    fired = true
-                end
+        local primary = targets[1]
+        if primary and primary.Character then
+            local r = primary.Character:FindFirstChild("HumanoidRootPart") or primary.Character.PrimaryPart
+            if r then
+                if S.KillAuraFace then faceTo(r.Position) end
+                clickM1()                       -- the path that actually lands damage
+                for _ = 1, #targets do fireM1() end   -- blob backup per target
+                if S.KillAuraE then tapKey(Enum.KeyCode.E) end
             end
         end
-        if fired and S.KillAuraE then tapKey(Enum.KeyCode.E) end
     end
 end)
 
--- Auto M1 (pure spam, no targeting)
+-- Auto M1 (click + blob spam, no targeting)
 task.spawn(function()
-    while task.wait(0.06) do
-        if S.AutoM1 then fireM1() end
+    while task.wait(0.12) do
+        if S.AutoM1 then clickM1(); fireM1() end
     end
 end)
 
@@ -492,7 +699,7 @@ task.spawn(function()
     end
 end)
 
--- Auto dash (toward / around nearest)
+-- Auto dash (around nearest)
 task.spawn(function()
     while task.wait(0.4) do
         if not S.AutoDash then continue end
@@ -507,7 +714,7 @@ task.spawn(function()
     end
 end)
 
--- Auto farm (stick to one target and spam)
+-- Auto farm (stick to one target, click + blob + E)
 task.spawn(function()
     while task.wait(0.15) do
         if not (S.AutoFarm and S.FarmTarget) then continue end
@@ -518,6 +725,7 @@ task.spawn(function()
             if tr then
                 local pos = S.FarmUnder and (tr.Position + Vector3.new(0,-7,0)) or (tr.Position - tr.CFrame.LookVector*3)
                 root.CFrame = CFrame.new(pos, tr.Position)
+                clickM1()
                 fireM1()
                 if S.KillAuraE then tapKey(Enum.KeyCode.E) end
             end
@@ -571,7 +779,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Cozy Hub | Ability Arena",
     LoadingTitle = "Cozy Hub",
-    LoadingSubtitle = "v2.0 — Jolt live-timestamp build",
+    LoadingSubtitle = "v2.1 — clicks that land",
     ConfigurationSaving = { Enabled = true, FolderName = "CozyHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -586,18 +794,28 @@ local UtilityTab  = Window:CreateTab("Utility",  4483362458)
 -- Combat
 CombatTab:CreateSection("Survival")
 CombatTab:CreateToggle({Name="God Mode (client peg)", CurrentValue=false, Flag="GodMode", Callback=function(v) S.GodMode=v end})
-CombatTab:CreateToggle({Name="Anti-Ragdoll", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v) S.AntiRagdoll=v end})
+CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
+    S.AntiRagdoll=v
+    local h=getHum()
+    if h then setRagdollStates(h, not v) end
+end})
 CombatTab:CreateToggle({Name="Anti-Push (knockback)", CurrentValue=false, Flag="AntiPush", Callback=function(v) S.AntiPush=v end})
+CombatTab:CreateToggle({Name="Anti Void / Water (float)", CurrentValue=false, Flag="AntiVoid", Callback=function(v) S.AntiVoid=v end})
 
 CombatTab:CreateSection("Kill Aura")
-CombatTab:CreateToggle({Name="Kill Aura", CurrentValue=false, Flag="KillAura", Callback=function(v) S.KillAura=v end})
+CombatTab:CreateToggle({Name="Kill Aura (real M1 clicks)", CurrentValue=false, Flag="KillAura", Callback=function(v) S.KillAura=v end})
 CombatTab:CreateSlider({Name="Aura Range", Range={5,150}, Increment=1, Suffix="studs", CurrentValue=24, Flag="KillAuraRange", Callback=function(v) S.KillAuraRange=v end})
+CombatTab:CreateToggle({Name="M1 Hitbox Expander", CurrentValue=false, Flag="M1Hitbox", Callback=function(v)
+    S.M1Hitbox=v
+    if not v then restoreHitboxes() end
+end})
+CombatTab:CreateSlider({Name="M1 Hitbox Size", Range={4,40}, Increment=1, Suffix="studs", CurrentValue=14, Flag="M1HitboxSize", Callback=function(v) S.M1HitboxSize=v end})
 CombatTab:CreateToggle({Name="Face Target", CurrentValue=true, Flag="KillAuraFace", Callback=function(v) S.KillAuraFace=v end})
-CombatTab:CreateToggle({Name="Hit All In Range", CurrentValue=false, Flag="KillAuraAll", Callback=function(v) S.KillAuraAll=v end})
+CombatTab:CreateToggle({Name="Hit All In Range (blob)", CurrentValue=false, Flag="KillAuraAll", Callback=function(v) S.KillAuraAll=v end})
 CombatTab:CreateToggle({Name="Also Cast E", CurrentValue=true, Flag="KillAuraE", Callback=function(v) S.KillAuraE=v end})
 
 CombatTab:CreateSection("Auto")
-CombatTab:CreateToggle({Name="Auto M1 (spam)", CurrentValue=false, Flag="AutoM1", Callback=function(v) S.AutoM1=v end})
+CombatTab:CreateToggle({Name="Auto M1 (click spam)", CurrentValue=false, Flag="AutoM1", Callback=function(v) S.AutoM1=v end})
 CombatTab:CreateToggle({Name="Auto Ability", CurrentValue=false, Flag="AutoAbility", Callback=function(v) S.AutoAbility=v end})
 CombatTab:CreateSlider({Name="Auto Ability Range", Range={5,80}, Increment=1, Suffix="studs", CurrentValue=25, Flag="AutoAbilityRange", Callback=function(v) S.AutoAbilityRange=v end})
 CombatTab:CreateToggle({Name="Cast E", CurrentValue=true, Flag="CastE", Callback=function(v) S.CastE=v end})
@@ -666,13 +884,16 @@ UtilityTab:CreateButton({Name="Rejoin Server", Callback=rejoin})
 UtilityTab:CreateButton({Name="Server Hop", Callback=serverHop})
 UtilityTab:CreateButton({Name="Unload Cozy Hub", Callback=function()
     for _,c in pairs(Conns) do pcall(function() c:Disconnect() end) end
-    clearESP(); clearHighlights(); flyCleanup()
+    clearESP(); clearHighlights(); flyCleanup(); restoreHitboxes()
     if reachPart then pcall(function() reachPart:Destroy() end) end
+    if floatPart then pcall(function() floatPart:Destroy() end) end
+    local h=getHum(); if h then setRagdollStates(h, true) end
     for k in pairs(S) do if type(S[k])=="boolean" then S[k]=false end end
     pcall(function() Rayfield:Destroy() end)
 end})
 
 UtilityTab:CreateSection("Status")
 UtilityTab:CreateParagraph({Title="Remote", Content = JoltReliable and "Jolt_Reliable linked. Live timestamps active." or "Jolt_Reliable NOT found — combat remotes disabled. Rejoin and retry."})
+UtilityTab:CreateParagraph({Title="Kill Aura tip", Content="Turn on Kill Aura + M1 Hitbox Expander together. Clicks do the damage; the expander makes them land from range."})
 
-Rayfield:Notify({Title="Cozy Hub loaded", Content = JoltReliable and "Ability Arena v2.0 — remotes linked." or "Loaded, but Jolt remote missing.", Duration=6})
+Rayfield:Notify({Title="Cozy Hub v2.1", Content = JoltReliable and "Loaded — remotes linked." or "Loaded, but Jolt remote missing.", Duration=6})
