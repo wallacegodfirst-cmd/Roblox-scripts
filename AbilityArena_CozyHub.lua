@@ -1,18 +1,24 @@
--- Cozy Hub | Ability Arena | v2.1
--- v2.1: Anti Void/Water float plate, hard anti-ragdoll/push/fling rework,
---        Kill Aura now lands M1s (real clicks + enemy hitbox expander).
+-- Cozy Hub | Ability Arena | v2.2
+-- v2.2 (from Studio screenshots of the real game):
+--   * Characters carry a dedicated "Hitbox" part -> M1 Hitbox Expander now grows
+--     THAT part (plus HRP as backup). This is the part the game's melee checks.
+--   * Ability pads live in workspace ElementSelection (Beam, Brawler, Cursed,
+--     Fire, Heavenly, Ice, Lightning, Ninja, One Punch, Phychic, Retro Fighter,
+--     Rock) -> new Ability Grabber: TP to pad -> press/fire E prompt -> TP back.
+--   * workspace.KillBricks is what kills you off-map -> Anti Void now TELEPORTS
+--     YOU BACK to the last safe ground instead of floating you below the map.
+--   * God Mode reworked: multi-source lock (Humanoid + HP value objects +
+--     attributes) with instant-revert hooks, plus return-where-you-died.
+--   * Auto clicks are now self-safe: never click while you're typing, and only
+--     click at points with NO GUI under them.
 --
--- Research notes:
---   * The game networks through the "Jolt" library (typed successor to Warp).
---     All combat goes through ReplicatedStorage.Files.Shared.Components.Jolt.
---     Utils.Remotes.Jolt_Reliable as a pre-serialized binary blob.
---   * The M1 and Dash blobs embed a "Timestamp": an 8-byte little-endian double
---     equal to workspace:GetServerTimeNow(). We splice a FRESH stamp every fire.
---   * The M1 blob's "Hits" array is EMPTY (\16\0\0 = 0 entries). Hit detection
---     is CLIENT-side: the game's own M1 code fills Hits with what it detected.
---     A blob with empty Hits is a whiff. So Kill Aura sends REAL mouse clicks
---     (the game's code then detects + reports hits itself) and we expand enemy
---     HumanoidRootParts locally so those clicks connect from far away.
+-- Networking notes:
+--   * Combat goes through ReplicatedStorage.Files.Shared.Components.Jolt.Utils.
+--     Remotes.Jolt_Reliable ("Jolt" library) as pre-serialized binary blobs.
+--   * Blobs embed a Timestamp (8-byte LE double = workspace:GetServerTimeNow());
+--     we splice a FRESH stamp every fire.
+--   * The M1 blob's "Hits" array is EMPTY -> hit detection is CLIENT-side, so
+--     real M1 clicks + enlarged enemy Hitbox parts are what land damage.
 
 local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
 
@@ -29,7 +35,7 @@ local HttpService           = game:GetService("HttpService")
 
 local LP = Players.LocalPlayer
 
--- ── Live character getters (never trust a stale upvalue across respawns) ────────
+-- ── Live character getters ───────────────────────────────────────────────────────
 local function getChar() return LP.Character end
 local function getHum()  local c=LP.Character; return c and c:FindFirstChildOfClass("Humanoid") end
 local function getRoot()
@@ -78,16 +84,46 @@ local function fireSkill(skill, direction)
 end
 local function fireDash(direction) fireSkill("Dash", direction) end
 
--- Real M1: synthesized mouse click so the GAME's own client code runs its hit
--- detection and reports the targets (the path the server actually trusts).
--- Click lands at 78% screen height so the Rayfield window can't eat it.
+-- ── Self-safe synthetic input ─────────────────────────────────────────────────────
+-- Never act while you're typing, and only click where there is NO GUI under the
+-- point, so auto-clicks can't press your own buttons/menus.
+local function typingNow()
+    local ok, box = pcall(function() return UserInputService:GetFocusedTextBox() end)
+    return ok and box ~= nil
+end
+local function safeClickPoint()
+    local cam = Workspace.CurrentCamera
+    local vp = cam.ViewportSize
+    local candidates = {
+        Vector2.new(vp.X*0.50, vp.Y*0.62),
+        Vector2.new(vp.X*0.35, vp.Y*0.55),
+        Vector2.new(vp.X*0.65, vp.Y*0.55),
+        Vector2.new(vp.X*0.50, vp.Y*0.40),
+        Vector2.new(vp.X*0.25, vp.Y*0.70),
+    }
+    local pg = LP:FindFirstChildOfClass("PlayerGui")
+    if pg then
+        for _,pt in ipairs(candidates) do
+            local ok, objs = pcall(function() return pg:GetGuiObjectsAtPosition(pt.X, pt.Y) end)
+            if ok and objs and #objs == 0 then return pt end
+        end
+    end
+    return candidates[1]
+end
 local function clickM1()
+    if typingNow() then return end
     pcall(function()
-        local cam = Workspace.CurrentCamera
-        local x, y = cam.ViewportSize.X/2, cam.ViewportSize.Y*0.78
-        VirtualInputManager:SendMouseButtonEvent(x, y, 0, true,  game, 0)
+        local pt = safeClickPoint()
+        VirtualInputManager:SendMouseButtonEvent(pt.X, pt.Y, 0, true,  game, 0)
         task.wait(0.03)
-        VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
+        VirtualInputManager:SendMouseButtonEvent(pt.X, pt.Y, 0, false, game, 0)
+    end)
+end
+local function tapKey(kc)
+    if typingNow() then return end
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(true, kc, false, game); task.wait(0.03)
+        VirtualInputManager:SendKeyEvent(false, kc, false, game)
     end)
 end
 
@@ -165,25 +201,104 @@ end
 local function faceTo(pos)
     local root = getRoot(); if root then root.CFrame = CFrame.new(root.Position, Vector3.new(pos.X, root.Position.Y, pos.Z)) end
 end
-local function tapKey(kc)
-    pcall(function()
-        VirtualInputManager:SendKeyEvent(true, kc, false, game); task.wait(0.03)
-        VirtualInputManager:SendKeyEvent(false, kc, false, game)
-    end)
-end
 
--- ── M1 Hitbox Expander (client-side enemy HRP enlargement) ──────────────────────
--- Hit detection is client-side, so locally enlarging enemy HumanoidRootParts makes
--- the game's own M1 hit-scan connect from far away — and the server accepts the
--- reported hits. Size changes are local-only; originals restored on disable.
-local hbOriginal = {}   -- [playerName] = {size=Vector3, transp=number, collide=bool}
+-- ── God Mode engine ───────────────────────────────────────────────────────────────
+-- Locks every client-visible HP source: Humanoid.Health (hook + peg), any
+-- NumberValue/IntValue named like health in the character or player (the char
+-- carries a "Health" object), and numeric HP attributes. Tracks the highest
+-- value ever seen and instantly reverts drops. If the server kills you anyway,
+-- you respawn and get teleported back to where you died.
+local HP_KEYS = {"health","hp","hitpoint","life"}
+local function isHpName(n)
+    n = tostring(n):lower()
+    if n:find("max") then return false end
+    for _,k in ipairs(HP_KEYS) do if n:find(k) then return true end end
+    return false
+end
+local godConns, godMaxSeen = {}, {}
+local godLastCF = nil
+local function clearGodConns()
+    for _,c in ipairs(godConns) do pcall(function() c:Disconnect() end) end
+    godConns = {}
+end
+local function lockHpValue(obj)
+    local key = obj:GetFullName()
+    godMaxSeen[key] = math.max(obj.Value, godMaxSeen[key] or 0)
+    if obj.Value < godMaxSeen[key] then pcall(function() obj.Value = godMaxSeen[key] end) end
+    table.insert(godConns, obj.Changed:Connect(function()
+        if not S.GodMode then return end
+        godMaxSeen[key] = math.max(obj.Value, godMaxSeen[key] or 0)
+        if obj.Value < godMaxSeen[key] then pcall(function() obj.Value = godMaxSeen[key] end) end
+    end))
+end
+local function buildGodHooks()
+    clearGodConns()
+    local char, hum = getChar(), getHum()
+    if hum then
+        if hum.MaxHealth > 0 then pcall(function() hum.Health = hum.MaxHealth end) end
+        table.insert(godConns, hum.HealthChanged:Connect(function()
+            if S.GodMode and hum.MaxHealth > 0 and hum.Health < hum.MaxHealth then
+                pcall(function() hum.Health = hum.MaxHealth end)
+            end
+        end))
+    end
+    for _,container in ipairs({char, LP}) do
+        if container then
+            for _,d in ipairs(container:GetDescendants()) do
+                if (d:IsA("NumberValue") or d:IsA("IntValue")) and isHpName(d.Name) then
+                    lockHpValue(d)
+                end
+            end
+            pcall(function()
+                for attr,v in pairs(container:GetAttributes()) do
+                    if type(v) == "number" and isHpName(attr) then
+                        local key = tostring(container) .. ":" .. attr
+                        godMaxSeen[key] = math.max(v, godMaxSeen[key] or 0)
+                        table.insert(godConns, container:GetAttributeChangedSignal(attr):Connect(function()
+                            if not S.GodMode then return end
+                            local nv = container:GetAttribute(attr)
+                            if type(nv) ~= "number" then return end
+                            godMaxSeen[key] = math.max(nv, godMaxSeen[key] or 0)
+                            if nv < godMaxSeen[key] then pcall(function() container:SetAttribute(attr, godMaxSeen[key]) end) end
+                        end))
+                    end
+                end
+            end)
+        end
+    end
+end
+local godClock = 0
+RunService.Heartbeat:Connect(function(dt)
+    if not S.GodMode then return end
+    local hum, root = getHum(), getRoot()
+    if hum then
+        if root and hum.Health > 0 then godLastCF = root.CFrame end
+        if hum.MaxHealth > 0 and hum.Health < hum.MaxHealth then
+            pcall(function() hum.Health = hum.MaxHealth end)
+        end
+    end
+    godClock += dt
+    if godClock >= 1 then godClock = 0; buildGodHooks() end
+end)
+
+-- ── M1 Hitbox Expander ────────────────────────────────────────────────────────────
+-- The character carries a dedicated "Hitbox" part — that is what the game's
+-- melee hit-scan checks. We enlarge the ENEMY's Hitbox part (HRP too as backup)
+-- locally; the client-side hit detection then connects from far away. Your own
+-- parts are never touched. Originals restored on disable/unload.
+local hbOriginal = {}   -- [playerName] = { [partName] = {size=, transp=, collide=} }
 local function restoreHitboxes()
-    for name,orig in pairs(hbOriginal) do
+    for name, parts in pairs(hbOriginal) do
         local p = Players:FindFirstChild(name)
-        local r = p and p.Character and p.Character:FindFirstChild("HumanoidRootPart")
-        if r then pcall(function()
-            r.Size = orig.size; r.Transparency = orig.transp; r.CanCollide = orig.collide
-        end) end
+        local char = p and p.Character
+        if char then
+            for partName, orig in pairs(parts) do
+                local part = char:FindFirstChild(partName)
+                if part then pcall(function()
+                    part.Size = orig.size; part.Transparency = orig.transp; part.CanCollide = orig.collide
+                end) end
+            end
+        end
     end
     hbOriginal = {}
 end
@@ -192,20 +307,26 @@ task.spawn(function()
         if S.M1Hitbox then
             for _,p in ipairs(Players:GetPlayers()) do
                 if p ~= LP and p.Character then
-                    local r = p.Character:FindFirstChild("HumanoidRootPart")
-                    local h = p.Character:FindFirstChildOfClass("Humanoid")
-                    if r and h and h.Health > 0 then
-                        if not hbOriginal[p.Name] then
-                            hbOriginal[p.Name] = {size=r.Size, transp=r.Transparency, collide=r.CanCollide}
+                    local char = p.Character
+                    local h = char:FindFirstChildOfClass("Humanoid")
+                    if h and h.Health > 0 then
+                        for _,partName in ipairs({"Hitbox", "HumanoidRootPart"}) do
+                            local part = char:FindFirstChild(partName)
+                            if part and part:IsA("BasePart") then
+                                hbOriginal[p.Name] = hbOriginal[p.Name] or {}
+                                if not hbOriginal[p.Name][partName] then
+                                    hbOriginal[p.Name][partName] = {size=part.Size, transp=part.Transparency, collide=part.CanCollide}
+                                end
+                                local sz = S.M1HitboxSize
+                                pcall(function()
+                                    if part.Size.X ~= sz then part.Size = Vector3.new(sz, sz, sz) end
+                                    part.Transparency = 0.8
+                                    part.CanCollide = false
+                                    part.CanQuery = true
+                                    part.CanTouch = true
+                                end)
+                            end
                         end
-                        local sz = S.M1HitboxSize
-                        pcall(function()
-                            if r.Size.X ~= sz then r.Size = Vector3.new(sz, sz, sz) end
-                            r.Transparency = 0.7
-                            r.CanCollide = false
-                            r.CanQuery = true
-                            r.CanTouch = true
-                        end)
                     end
                 end
             end
@@ -214,6 +335,67 @@ task.spawn(function()
         end
     end
 end)
+
+-- ── Ability Grabber ──────────────────────────────────────────────────────────────
+-- Ability pads are parts under ElementSelection (Beam, Brawler, ..., One Punch).
+-- Sequence: save position -> TP onto the pad -> fire its prompt / press E ->
+-- TP straight back. Pick an ability from the dropdown and it runs automatically.
+local elementFolder
+local function findElementFolder()
+    if elementFolder and elementFolder.Parent then return elementFolder end
+    elementFolder = Workspace:FindFirstChild("ElementSelection", true)
+    return elementFolder
+end
+local function abilityNames()
+    local out = {}
+    local f = findElementFolder()
+    if f then
+        for _,c in ipairs(f:GetChildren()) do
+            if c:IsA("BasePart") or c:IsA("Model") then out[#out+1] = c.Name end
+        end
+        table.sort(out)
+    end
+    return out
+end
+local grabbing = false
+local function grabAbility(name)
+    if grabbing or not name or name == "" then return end
+    local f = findElementFolder()
+    if not f then
+        Rayfield:Notify({Title="Cozy Hub", Content="ElementSelection not found (are you in the lobby map?)", Duration=4})
+        return
+    end
+    local pad = f:FindFirstChild(name); if not pad then return end
+    local root = getRoot(); if not root then return end
+    grabbing = true
+    task.spawn(function()
+        local backCF = root.CFrame
+        local padPos = pad:IsA("BasePart") and pad.Position or pad:GetPivot().Position
+        pcall(function() root.CFrame = CFrame.new(padPos + Vector3.new(0, 4, 0)) end)
+        task.wait(0.3)
+        -- Fire any ProximityPrompt on the pad directly; E tap as backup
+        pcall(function()
+            for _,d in ipairs(pad:GetDescendants()) do
+                if d:IsA("ProximityPrompt") then
+                    if fireproximityprompt then
+                        pcall(function() fireproximityprompt(d) end)
+                    else
+                        pcall(function()
+                            d:InputHoldBegin()
+                            task.wait((d.HoldDuration or 0) + 0.1)
+                            d:InputHoldEnd()
+                        end)
+                    end
+                end
+            end
+        end)
+        tapKey(Enum.KeyCode.E)
+        task.wait(0.5)
+        local root2 = getRoot()
+        if root2 then pcall(function() root2.CFrame = backCF end) end
+        grabbing = false
+    end)
+end
 
 -- ── Per-character rebind ─────────────────────────────────────────────────────────
 local BAD_STATES = {
@@ -231,12 +413,6 @@ end
 local function applyCharacter(char)
     local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 5)
     if not hum then return end
-
-    bind("godHealth", hum.HealthChanged:Connect(function()
-        if S.GodMode and hum.Health < hum.MaxHealth then
-            pcall(function() hum.Health = hum.MaxHealth end)
-        end
-    end))
 
     bind("antiRag", hum.StateChanged:Connect(function(_, new)
         if not (S.AntiRagdoll or S.GodMode) then return end
@@ -259,14 +435,22 @@ local function applyCharacter(char)
     if S.JumpMod   then pcall(function() hum.JumpPower = S.JumpPower; hum.UseJumpPower = true end) end
 end
 
-LP.CharacterAdded:Connect(function(char) task.wait(0.2); pcall(applyCharacter, char) end)
+LP.CharacterAdded:Connect(function(char)
+    task.wait(0.2)
+    pcall(applyCharacter, char)
+    if S.GodMode then
+        task.wait(0.3)
+        pcall(buildGodHooks)
+        -- Return to where we died
+        if godLastCF then
+            local r = getRoot()
+            if r then pcall(function() r.CFrame = godLastCF + Vector3.new(0, 3, 0) end) end
+        end
+    end
+end)
 if LP.Character then pcall(applyCharacter, LP.Character) end
 
 -- ── Anti-Ragdoll: hard mode ──────────────────────────────────────────────────────
--- Layer 1: ragdoll-ish humanoid states fully DISABLED (re-applied every 0.5s
---          because games re-enable them when they ragdoll you).
--- Layer 2: per-frame PlatformStand/Sit clear + bad-state bounce.
--- Layer 3: ragdoll constraints destroyed, Motor6Ds re-enabled, stun flags cleared.
 local STUN_ATTRS = {"Ragdoll","Ragdolled","Stunned","Stun","Knocked","Knockback","KO","Downed"}
 local ragClock = 0
 RunService.Heartbeat:Connect(function(dt)
@@ -307,10 +491,8 @@ RunService.Heartbeat:Connect(function(dt)
 end)
 
 -- ── Anti-Push / Anti-Fling: pre-physics velocity clamps ──────────────────────────
--- Runs on Stepped (BEFORE physics integrates) and covers every body part, because
--- ragdoll flings split the character into separate assemblies per limb.
 RunService.Stepped:Connect(function()
-    if S.Fly then return end   -- fly drives its own high velocities
+    if S.Fly then return end
     if not (S.AntiPush or S.AntiFling) then return end
     local char, root, hum = getChar(), getRoot(), getHum()
     if not (char and root) then return end
@@ -336,10 +518,9 @@ RunService.Stepped:Connect(function()
     end
 end)
 
--- ── Anti Void / Water: float plate ───────────────────────────────────────────────
--- A local anchored ForceField plate that catches you: over water it sits at the
--- surface so you stand ON the water; over the void it rides under your feet like
--- a flying carpet. Plus an emergency snap-back if you're already below the map.
+-- ── Anti Void / Water ─────────────────────────────────────────────────────────────
+-- Falling off the map (void below, or only KillBricks below) -> TELEPORT BACK to
+-- the last real ground you stood on. Water still gets the stand-on-surface plate.
 local floatPart, lastSafeCF
 local function ensureFloat()
     if not floatPart or floatPart.Parent == nil then
@@ -364,6 +545,12 @@ local function showFloat(pos)
 end
 local function hideFloat()
     if floatPart then floatPart.CanCollide = false; floatPart.Transparency = 1 end
+end
+local function isKillPart(inst)
+    if not inst then return false end
+    local kb = Workspace:FindFirstChild("KillBricks")
+    if kb and inst:IsDescendantOf(kb) then return true end
+    return tostring(inst.Name):lower():find("kill") ~= nil
 end
 
 RunService.Heartbeat:Connect(function()
@@ -390,6 +577,7 @@ RunService.Heartbeat:Connect(function()
     local swimming  = hum:GetState() == Enum.HumanoidStateType.Swimming or floor == Enum.Material.Water
     local overWater = hit ~= nil and hit.Instance ~= nil and hit.Instance:IsA("Terrain") and hit.Material == Enum.Material.Water
     local overVoid  = (hit == nil)
+    local overKill  = hit ~= nil and isKillPart(hit.Instance)
     local vy        = root.AssemblyLinearVelocity.Y
 
     if swimming then
@@ -399,20 +587,23 @@ RunService.Heartbeat:Connect(function()
         root.AssemblyLinearVelocity = Vector3.zero
         pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
     elseif overWater and (root.Position.Y - hit.Position.Y) < 12 then
-        -- Near the water surface: plate AT the surface so we land/stand on it
+        -- Near the water surface: plate AT the surface so we stand on the water
         showFloat(Vector3.new(root.Position.X, hit.Position.Y + 0.5, root.Position.Z))
-    elseif overVoid and (vy < -5 or onOurPlate) then
-        -- Nothing below at all: carpet plate under our feet
-        local y = onOurPlate and floatPart.Position.Y or (root.Position.Y - 6)
-        showFloat(Vector3.new(root.Position.X, y, root.Position.Z))
-        if vy < -120 then
-            root.AssemblyLinearVelocity = Vector3.new(0, -40, 0)
+    elseif (overVoid or overKill) and vy < -5 then
+        -- Falling off the map: teleport straight back to safe ground
+        hideFloat()
+        if lastSafeCF then
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.CFrame = lastSafeCF + Vector3.new(0, 5, 0)
+        else
+            -- Never stood on ground yet: catch on a plate as fallback
+            showFloat(root.Position - Vector3.new(0, 6, 0))
         end
     else
         hideFloat()
     end
 
-    -- Emergency: already below the kill plane -> snap back to last safe ground
+    -- Emergency: already below the kill plane -> snap back
     local killY = -480
     pcall(function() killY = Workspace.FallenPartsDestroyHeight + 100 end)
     if root.Position.Y < killY and lastSafeCF then
@@ -642,16 +833,6 @@ end
 -- BACKGROUND LOOPS
 -- ════════════════════════════════════════════════════════════════════════════════
 
--- God mode hard peg
-task.spawn(function()
-    while task.wait(0.1) do
-        if S.GodMode then
-            local h = getHum()
-            if h and h.MaxHealth > 0 and h.Health < h.MaxHealth then pcall(function() h.Health = h.MaxHealth end) end
-        end
-    end
-end)
-
 -- Speed / jump enforcement
 task.spawn(function()
     while task.wait(0.3) do
@@ -672,8 +853,8 @@ task.spawn(function()
             local r = primary.Character:FindFirstChild("HumanoidRootPart") or primary.Character.PrimaryPart
             if r then
                 if S.KillAuraFace then faceTo(r.Position) end
-                clickM1()                       -- the path that actually lands damage
-                for _ = 1, #targets do fireM1() end   -- blob backup per target
+                clickM1()
+                for _ = 1, #targets do fireM1() end
                 if S.KillAuraE then tapKey(Enum.KeyCode.E) end
             end
         end
@@ -779,33 +960,37 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Cozy Hub | Ability Arena",
     LoadingTitle = "Cozy Hub",
-    LoadingSubtitle = "v2.1 — clicks that land",
+    LoadingSubtitle = "v2.2 — Hitbox part + ability grabber",
     ConfigurationSaving = { Enabled = true, FolderName = "CozyHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
 })
 
-local CombatTab   = Window:CreateTab("Combat",   4483362458)
-local MovementTab = Window:CreateTab("Movement", 4483362458)
-local VisualsTab  = Window:CreateTab("Visuals",  4483362458)
-local FarmTab     = Window:CreateTab("Farm",     4483362458)
-local UtilityTab  = Window:CreateTab("Utility",  4483362458)
+local CombatTab    = Window:CreateTab("Combat",    4483362458)
+local AbilitiesTab = Window:CreateTab("Abilities", 4483362458)
+local MovementTab  = Window:CreateTab("Movement",  4483362458)
+local VisualsTab   = Window:CreateTab("Visuals",   4483362458)
+local FarmTab      = Window:CreateTab("Farm",      4483362458)
+local UtilityTab   = Window:CreateTab("Utility",   4483362458)
 
 -- Combat
 CombatTab:CreateSection("Survival")
-CombatTab:CreateToggle({Name="God Mode (client peg)", CurrentValue=false, Flag="GodMode", Callback=function(v) S.GodMode=v end})
+CombatTab:CreateToggle({Name="God Mode (locks + return on death)", CurrentValue=false, Flag="GodMode", Callback=function(v)
+    S.GodMode=v
+    if v then buildGodHooks() else clearGodConns() end
+end})
 CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
     S.AntiRagdoll=v
     local h=getHum()
     if h then setRagdollStates(h, not v) end
 end})
 CombatTab:CreateToggle({Name="Anti-Push (knockback)", CurrentValue=false, Flag="AntiPush", Callback=function(v) S.AntiPush=v end})
-CombatTab:CreateToggle({Name="Anti Void / Water (float)", CurrentValue=false, Flag="AntiVoid", Callback=function(v) S.AntiVoid=v end})
+CombatTab:CreateToggle({Name="Anti Void / Water (TP back)", CurrentValue=false, Flag="AntiVoid", Callback=function(v) S.AntiVoid=v end})
 
 CombatTab:CreateSection("Kill Aura")
 CombatTab:CreateToggle({Name="Kill Aura (real M1 clicks)", CurrentValue=false, Flag="KillAura", Callback=function(v) S.KillAura=v end})
 CombatTab:CreateSlider({Name="Aura Range", Range={5,150}, Increment=1, Suffix="studs", CurrentValue=24, Flag="KillAuraRange", Callback=function(v) S.KillAuraRange=v end})
-CombatTab:CreateToggle({Name="M1 Hitbox Expander", CurrentValue=false, Flag="M1Hitbox", Callback=function(v)
+CombatTab:CreateToggle({Name="M1 Hitbox Expander (Hitbox part)", CurrentValue=false, Flag="M1Hitbox", Callback=function(v)
     S.M1Hitbox=v
     if not v then restoreHitboxes() end
 end})
@@ -829,6 +1014,20 @@ CombatTab:CreateToggle({Name="Reach (self hitbox)", CurrentValue=false, Flag="Re
 CombatTab:CreateSlider({Name="Reach Size", Range={1,10}, Increment=0.5, Suffix="x", CurrentValue=1.5, Flag="ReachSize", Callback=function(v) S.ReachSize=v end})
 CombatTab:CreateToggle({Name="Camera Lock (nearest)", CurrentValue=false, Flag="CamLock", Callback=function(v) S.CamLock=v end})
 CombatTab:CreateSlider({Name="Cam Lock Range", Range={20,300}, Increment=5, Suffix="studs", CurrentValue=120, Flag="CamLockRange", Callback=function(v) S.CamLockRange=v end})
+
+-- Abilities
+AbilitiesTab:CreateSection("Ability Grabber")
+AbilitiesTab:CreateParagraph({Title="How it works", Content="Pick an ability below. You teleport to its pad, it presses E / fires the prompt for you, then you teleport right back where you were."})
+local selectedAbility = nil
+local abilityDrop = AbilitiesTab:CreateDropdown({Name="Ability", Options=abilityNames(), CurrentOption={}, Flag="AbilityPick", Callback=function(o)
+    selectedAbility = (type(o)=="table" and o[1]) or o
+    grabAbility(selectedAbility)
+end})
+AbilitiesTab:CreateButton({Name="Get Ability Again", Callback=function() grabAbility(selectedAbility) end})
+AbilitiesTab:CreateButton({Name="Refresh Ability List", Callback=function()
+    elementFolder = nil
+    pcall(function() abilityDrop:Refresh(abilityNames()) end)
+end})
 
 -- Movement
 MovementTab:CreateToggle({Name="Fly (WASD + Space/Ctrl)", CurrentValue=false, Flag="Fly", Callback=function(v) S.Fly=v end})
@@ -884,7 +1083,7 @@ UtilityTab:CreateButton({Name="Rejoin Server", Callback=rejoin})
 UtilityTab:CreateButton({Name="Server Hop", Callback=serverHop})
 UtilityTab:CreateButton({Name="Unload Cozy Hub", Callback=function()
     for _,c in pairs(Conns) do pcall(function() c:Disconnect() end) end
-    clearESP(); clearHighlights(); flyCleanup(); restoreHitboxes()
+    clearGodConns(); clearESP(); clearHighlights(); flyCleanup(); restoreHitboxes()
     if reachPart then pcall(function() reachPart:Destroy() end) end
     if floatPart then pcall(function() floatPart:Destroy() end) end
     local h=getHum(); if h then setRagdollStates(h, true) end
@@ -894,6 +1093,6 @@ end})
 
 UtilityTab:CreateSection("Status")
 UtilityTab:CreateParagraph({Title="Remote", Content = JoltReliable and "Jolt_Reliable linked. Live timestamps active." or "Jolt_Reliable NOT found — combat remotes disabled. Rejoin and retry."})
-UtilityTab:CreateParagraph({Title="Kill Aura tip", Content="Turn on Kill Aura + M1 Hitbox Expander together. Clicks do the damage; the expander makes them land from range."})
+UtilityTab:CreateParagraph({Title="Combo tip", Content="Kill Aura + M1 Hitbox Expander together. Grab One Punch from the Abilities tab for big M1 damage."})
 
-Rayfield:Notify({Title="Cozy Hub v2.1", Content = JoltReliable and "Loaded — remotes linked." or "Loaded, but Jolt remote missing.", Duration=6})
+Rayfield:Notify({Title="Cozy Hub v2.2", Content = JoltReliable and "Loaded — remotes linked." or "Loaded, but Jolt remote missing.", Duration=6})
