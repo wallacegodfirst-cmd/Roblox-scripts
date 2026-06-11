@@ -1,24 +1,8 @@
--- Money/FreeHub | Ability Arena | v2.6
+-- Money/FreeHub | Ability Arena | v2.7
 -- by Money/FreeHub Owner
--- v2.6 fixes:
---   * ONE-SHOT DEATH FIX: the Hitbox Ability sphere was CanQuery/CanTouch — it made
---     YOU a giant target (everything hit you through it). Now it's a ghost ring
---     (visual only); enemy expanded hitboxes also CanTouch=false for safety
---   * GUI CLICK FIX: removed forceClickCenter() — it clicked screen center even when
---     Rayfield was there. ALL auto-clicks are GUI-safe again (skip if covered)
---   * M1 Hitbox visuals: glowing red ForceField box, easier to see your range
---   * Fling reworked AGAIN: classic spin-touch method (spin your own character at
---     extreme angular velocity glued to the target) — this actually replicates,
---     unlike setting velocity on enemy parts which their client just overwrites
---   * Anti-Fling no longer cancels your own Fling spin
---
--- Networking: Jolt_Reliable binary blobs with live GetServerTimeNow() stamps.
--- M1 Hits array is empty — hit detection is CLIENT-side (real clicks + big enemy
--- Hitbox parts = actual damage).
 
 local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
 
--- ── Services ───────────────────────────────────────────────────────────────────
 local Players             = game:GetService("Players")
 local RS                  = game:GetService("ReplicatedStorage")
 local Workspace           = game:GetService("Workspace")
@@ -31,7 +15,6 @@ local HttpService         = game:GetService("HttpService")
 
 local LP = Players.LocalPlayer
 
--- ── Live character getters ─────────────────────────────────────────────────────
 local function getChar() return LP.Character end
 local function getHum()  local c=LP.Character; return c and c:FindFirstChildOfClass("Humanoid") end
 local function getRoot()
@@ -39,7 +22,6 @@ local function getRoot()
     return c:FindFirstChild("HumanoidRootPart") or c.PrimaryPart or c:FindFirstChildWhichIsA("BasePart")
 end
 
--- ── Jolt remote ────────────────────────────────────────────────────────────────
 local JoltReliable
 pcall(function()
     JoltReliable = RS:WaitForChild("Files",10)
@@ -48,7 +30,6 @@ pcall(function()
         :WaitForChild("Remotes"):WaitForChild("Jolt_Reliable")
 end)
 
--- ── Serialized payloads with live timestamps ───────────────────────────────────
 local M1_Prefix = string.char(5,85,115,101,77,49,65,16,3,9,84,105,109,101,115,116,97,109,112,2,199)
 local M1_Suffix = string.char(3,5,73,110,100,101,120,17,32,3,4,72,105,116,115,16,0,0)
 
@@ -78,13 +59,11 @@ local function fireSkill(skill, direction)
 end
 local function fireDash(direction) fireSkill("Dash", direction) end
 
--- ── Self-safe synthetic input ──────────────────────────────────────────────────
 local function typingNow()
     local ok, box = pcall(function() return UserInputService:GetFocusedTextBox() end)
     return ok and box ~= nil
 end
 
--- Returns a screen point with zero GUI coverage, or nil if none found.
 local function safeClickPoint()
     local cam = Workspace.CurrentCamera
     if not cam then return nil end
@@ -110,16 +89,38 @@ local function safeClickPoint()
     return nil
 end
 
--- GUI-aware click — skips if all candidates are covered
-local function clickM1()
-    if typingNow() then return end
-    local pt = safeClickPoint()
+local function doClick(pt)
     if not pt then return end
     pcall(function()
         VirtualInputManager:SendMouseButtonEvent(pt.X, pt.Y, 0, true,  game, 0)
         task.wait(0.03)
         VirtualInputManager:SendMouseButtonEvent(pt.X, pt.Y, 0, false, game, 0)
     end)
+end
+
+local function clickM1()
+    if typingNow() then return end
+    doClick(safeClickPoint())
+end
+
+-- Clicks at target's actual screen position; falls back to safe point if GUI-covered
+local function clickAtTarget(target)
+    if typingNow() then return end
+    local char = target and target.Character
+    local tr   = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
+    if not tr then doClick(safeClickPoint()); return end
+    local cam = Workspace.CurrentCamera
+    if not cam then return end
+    local sp, onScreen = cam:WorldToViewportPoint(tr.Position)
+    local pt = onScreen and Vector2.new(sp.X, sp.Y) or nil
+    if pt then
+        local pg = LP:FindFirstChildOfClass("PlayerGui")
+        if pg then
+            local ok, objs = pcall(function() return pg:GetGuiObjectsAtPosition(pt.X, pt.Y) end)
+            if ok and objs and #objs > 0 then pt = nil end
+        end
+    end
+    doClick(pt or safeClickPoint())
 end
 
 local function tapKey(kc)
@@ -130,12 +131,10 @@ local function tapKey(kc)
     end)
 end
 
--- ── Settings ────────────────────────────────────────────────────────────────────
 local S = {
-    -- Combat
     AntiRagdoll=false, AntiPush=false, AntiVoid=false,
     KillAura=false, KillAuraRange=24, KillAuraFace=true, KillAuraAll=false, KillAuraE=true,
-    M1Hitbox=false, M1HitboxSize=60,
+    M1Hitbox=false, M1HitboxSize=100,
     HitboxAbility=false, HitboxAbilitySize=20,
     Fling=false, FlingPower=800,
     AutoM1=false,
@@ -143,31 +142,25 @@ local S = {
     CastE=true, CastQ=false, CastR=false, CastT=false,
     AutoDash=false,
     CamLock=false, CamLockRange=120,
-    -- Movement
     Fly=false, FlySpeed=60,
     Noclip=false,
     SpeedHack=false, Speed=16,
     InfiniteJump=false,
     SpinBot=false, AntiFling=false,
-    -- Visuals
     ESP=false, ESPColor=true, Tracers=false,
     EnemyHighlight=false, HighlightColor="Bright blue",
     FullBright=false,
-    -- Farm
     AutoFarm=false, FarmTarget=nil,
     AutoPlay=false, AutoPlayRange=100,
-    -- Utility
     AntiAFK=false, InstantRespawn=false, ClickTP=false,
 }
 
--- ── Connection manager ────────────────────────────────────────────────────────
 local Conns = {}
 local function bind(name, conn)
     if Conns[name] then pcall(function() Conns[name]:Disconnect() end) end
     Conns[name] = conn
 end
 
--- ── Helpers ───────────────────────────────────────────────────────────────────
 local function enemiesInRange(range)
     local out, root = {}, getRoot()
     if not root then return out end
@@ -207,12 +200,7 @@ local function faceTo(pos)
     if root then root.CFrame = CFrame.new(root.Position, Vector3.new(pos.X, root.Position.Y, pos.Z)) end
 end
 
--- ── M1 Hitbox Expander (enemy Hitbox parts) ───────────────────────────────────
--- Runs EVERY FRAME so the game can't shrink the box back between ticks. The
--- enemy's "Hitbox" part (and HRP as backup) is grown to S.M1HitboxSize and kept
--- CanQuery/CanTouch. Because the box is centered on the enemy and is huge, any
--- M1 click that passes through it lands — so you can be at point A and still hit
--- him after he slid to point B, as long as you're within ~size/2 studs.
+-- M1 Hitbox Expander
 local hbOriginal = {}
 local function restoreHitboxes()
     for name, parts in pairs(hbOriginal) do
@@ -259,13 +247,10 @@ RunService.Heartbeat:Connect(function()
                             part.Massless    = true
                             part.CanCollide  = false
                             part.CanQuery    = true
-                            -- CanTouch OFF: touch-based damage can read these
-                            -- expanded boxes against YOU too; query-only keeps
-                            -- your M1 raycast hits working without that risk
                             part.CanTouch    = false
                             if part.Size.X ~= sz then part.Size = Vector3.new(sz, sz, sz) end
-                            part.Transparency = 0.7
-                            part.Color       = Color3.fromRGB(255, 70, 70)
+                            part.Transparency = 0.6
+                            part.Color       = Color3.fromRGB(255, 50, 50)
                             part.Material    = Enum.Material.ForceField
                         end)
                     end
@@ -275,13 +260,9 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- ── Hitbox Ability (GHOST range ring — you canNOT be hit through it) ───────────
--- v2.5's sphere had CanQuery/CanTouch on, so the game treated it as part of YOUR
--- body — that's what caused the one-shot deaths. Now it's pure visual (no query,
--- no touch, no collide); your real hurtbox stays normal size. The actual ability
--- reach comes from the enemy hitbox expansion (M1 Hitbox Expander), which ability
--- hit-checks read the same way M1 does.
+-- Hitbox Ability (ghost visual sphere; CanQuery/CanTouch off so you can't be hit through it)
 local abilityHbPart = nil
+local abilityHbBurst = false
 local function destroyAbilityHb()
     if abilityHbPart then pcall(function() abilityHbPart:Destroy() end); abilityHbPart = nil end
 end
@@ -294,24 +275,26 @@ task.spawn(function()
                 destroyAbilityHb()
                 local sz = S.HitboxAbilitySize
                 abilityHbPart = Instance.new("Part")
-                abilityHbPart.Name        = "MFHAbilityHB"
-                abilityHbPart.Shape       = Enum.PartType.Ball
-                abilityHbPart.Anchored    = false
-                abilityHbPart.CanCollide  = false
-                abilityHbPart.Massless    = true
-                abilityHbPart.CastShadow  = false
-                abilityHbPart.CanQuery    = false   -- ghost: game can't target you through it
-                abilityHbPart.CanTouch    = false   -- ghost: no touch damage through it
+                abilityHbPart.Name         = "MFHAbilityHB"
+                abilityHbPart.Shape        = Enum.PartType.Ball
+                abilityHbPart.Anchored     = false
+                abilityHbPart.CanCollide   = false
+                abilityHbPart.Massless     = true
+                abilityHbPart.CastShadow   = false
+                abilityHbPart.CanQuery     = false
+                abilityHbPart.CanTouch     = false
                 abilityHbPart.Transparency = 0.8
-                abilityHbPart.Material    = Enum.Material.ForceField
-                abilityHbPart.Color       = Color3.fromRGB(100, 200, 255)
-                abilityHbPart.Size        = Vector3.new(sz, sz, sz)
+                abilityHbPart.Material     = Enum.Material.ForceField
+                abilityHbPart.Color        = Color3.fromRGB(100, 200, 255)
+                abilityHbPart.Size         = Vector3.new(sz, sz, sz)
                 local w = Instance.new("Weld")
                 w.Part0 = root; w.Part1 = abilityHbPart; w.Parent = abilityHbPart
                 abilityHbPart.Parent = root.Parent
             else
-                local sz = S.HitboxAbilitySize
-                pcall(function() abilityHbPart.Size = Vector3.new(sz, sz, sz) end)
+                if not abilityHbBurst then
+                    local sz = S.HitboxAbilitySize
+                    pcall(function() abilityHbPart.Size = Vector3.new(sz, sz, sz) end)
+                end
             end
         else
             destroyAbilityHb()
@@ -319,7 +302,25 @@ task.spawn(function()
     end
 end)
 
--- ── Ability Grabber (TP -> E tap -> TP back) ───────────────────────────────────
+-- E-key burst: expand the Hitbox Ability sphere for 0.5s on every E press
+UserInputService.InputBegan:Connect(function(i)
+    if i.KeyCode ~= Enum.KeyCode.E then return end
+    if not S.HitboxAbility or abilityHbBurst then return end
+    task.spawn(function()
+        abilityHbBurst = true
+        local bsz = S.HitboxAbilitySize * 3
+        if abilityHbPart then
+            pcall(function() abilityHbPart.Size = Vector3.new(bsz, bsz, bsz) end)
+        end
+        task.wait(0.5)
+        abilityHbBurst = false
+        if abilityHbPart then
+            pcall(function() abilityHbPart.Size = Vector3.new(S.HitboxAbilitySize, S.HitboxAbilitySize, S.HitboxAbilitySize) end)
+        end
+    end)
+end)
+
+-- Ability Grabber (TP -> E tap -> TP back)
 local elementFolder
 local function findElementFolder()
     if elementFolder and elementFolder.Parent then return elementFolder end
@@ -361,7 +362,6 @@ local function grabAbility(name)
     end)
 end
 
--- ── Per-character rebind ──────────────────────────────────────────────────────
 local BAD_STATES = {
     Enum.HumanoidStateType.Ragdoll,
     Enum.HumanoidStateType.FallingDown,
@@ -399,13 +399,12 @@ local function applyCharacter(char)
 end
 
 LP.CharacterAdded:Connect(function(char)
-    destroyAbilityHb()  -- old sphere is gone with the old character; will rebuild
+    destroyAbilityHb()
     task.wait(0.2)
     pcall(applyCharacter, char)
 end)
 if LP.Character then pcall(applyCharacter, LP.Character) end
 
--- ── Anti-Ragdoll: hard mode ───────────────────────────────────────────────────
 local STUN_ATTRS = {"Ragdoll","Ragdolled","Stunned","Stun","Knocked","Knockback","KO","Downed"}
 local ragClock = 0
 RunService.Heartbeat:Connect(function(dt)
@@ -445,13 +444,11 @@ RunService.Heartbeat:Connect(function(dt)
     end
 end)
 
--- ── Anti-Push / Anti-Fling ────────────────────────────────────────────────────
 RunService.Stepped:Connect(function()
     if S.Fly then return end
     if not (S.AntiPush or S.AntiFling) then return end
     local char, root, hum = getChar(), getRoot(), getHum()
     if not (char and root) then return end
-    -- skip while our own Fling spin is running so we don't cancel ourselves
     if S.AntiFling and not S.Fling then
         for _,pt in ipairs(char:GetDescendants()) do
             if pt:IsA("BasePart") then
@@ -474,30 +471,29 @@ RunService.Stepped:Connect(function()
     end
 end)
 
--- ── Anti Void / Water ─────────────────────────────────────────────────────────
 local savedSpawnCF = nil
 local floatPart, lastSafeCF
 
 local function ensureFloat()
     if not floatPart or floatPart.Parent == nil then
         floatPart = Instance.new("Part")
-        floatPart.Name        = "MFHFloat"
-        floatPart.Size        = Vector3.new(16, 1, 16)
-        floatPart.Anchored    = true
-        floatPart.CanCollide  = true
-        floatPart.CanQuery    = false
-        floatPart.Material    = Enum.Material.ForceField
-        floatPart.Color       = Color3.fromRGB(120, 170, 255)
+        floatPart.Name         = "MFHFloat"
+        floatPart.Size         = Vector3.new(16, 1, 16)
+        floatPart.Anchored     = true
+        floatPart.CanCollide   = true
+        floatPart.CanQuery     = false
+        floatPart.Material     = Enum.Material.ForceField
+        floatPart.Color        = Color3.fromRGB(120, 170, 255)
         floatPart.Transparency = 0.6
-        floatPart.Parent      = Workspace
+        floatPart.Parent       = Workspace
     end
     return floatPart
 end
 local function showFloat(pos)
     local plat = ensureFloat()
-    plat.CanCollide  = true
+    plat.CanCollide   = true
     plat.Transparency = 0.6
-    plat.Position    = pos
+    plat.Position     = pos
 end
 local function hideFloat()
     if floatPart then floatPart.CanCollide = false; floatPart.Transparency = 1 end
@@ -565,7 +561,6 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- ── Global input hooks ────────────────────────────────────────────────────────
 UserInputService.JumpRequest:Connect(function()
     if S.InfiniteJump then
         local h = getHum()
@@ -591,7 +586,6 @@ pcall(function()
     end)
 end)
 
--- ── Fly ───────────────────────────────────────────────────────────────────────
 local flyBV, flyBG
 local flyKeys = {W=false,A=false,S=false,D=false,Up=false,Down=false}
 local function flyCleanup()
@@ -601,20 +595,20 @@ end
 UserInputService.InputBegan:Connect(function(i, gpe)
     if gpe then return end
     local k=i.KeyCode
-    if     k==Enum.KeyCode.W          then flyKeys.W=true
-    elseif k==Enum.KeyCode.A          then flyKeys.A=true
-    elseif k==Enum.KeyCode.S          then flyKeys.S=true
-    elseif k==Enum.KeyCode.D          then flyKeys.D=true
-    elseif k==Enum.KeyCode.Space      then flyKeys.Up=true
+    if     k==Enum.KeyCode.W           then flyKeys.W=true
+    elseif k==Enum.KeyCode.A           then flyKeys.A=true
+    elseif k==Enum.KeyCode.S           then flyKeys.S=true
+    elseif k==Enum.KeyCode.D           then flyKeys.D=true
+    elseif k==Enum.KeyCode.Space       then flyKeys.Up=true
     elseif k==Enum.KeyCode.LeftControl then flyKeys.Down=true end
 end)
 UserInputService.InputEnded:Connect(function(i)
     local k=i.KeyCode
-    if     k==Enum.KeyCode.W          then flyKeys.W=false
-    elseif k==Enum.KeyCode.A          then flyKeys.A=false
-    elseif k==Enum.KeyCode.S          then flyKeys.S=false
-    elseif k==Enum.KeyCode.D          then flyKeys.D=false
-    elseif k==Enum.KeyCode.Space      then flyKeys.Up=false
+    if     k==Enum.KeyCode.W           then flyKeys.W=false
+    elseif k==Enum.KeyCode.A           then flyKeys.A=false
+    elseif k==Enum.KeyCode.S           then flyKeys.S=false
+    elseif k==Enum.KeyCode.D           then flyKeys.D=false
+    elseif k==Enum.KeyCode.Space       then flyKeys.Up=false
     elseif k==Enum.KeyCode.LeftControl then flyKeys.Down=false end
 end)
 RunService.RenderStepped:Connect(function()
@@ -639,7 +633,6 @@ RunService.RenderStepped:Connect(function()
     flyBV.Velocity = (dir.Magnitude > 0 and dir.Unit * S.FlySpeed) or Vector3.zero
 end)
 
--- ── Noclip ────────────────────────────────────────────────────────────────────
 RunService.Stepped:Connect(function()
     if not S.Noclip then return end
     local c = getChar(); if not c then return end
@@ -648,7 +641,6 @@ RunService.Stepped:Connect(function()
     end
 end)
 
--- ── Camera lock ───────────────────────────────────────────────────────────────
 RunService.RenderStepped:Connect(function()
     if not S.CamLock then return end
     local tgt = nearestPlayer(S.CamLockRange); if not tgt or not tgt.Character then return end
@@ -658,7 +650,6 @@ RunService.RenderStepped:Connect(function()
     cam.CFrame = CFrame.new(cam.CFrame.Position, head.Position)
 end)
 
--- ── Enemy highlight ───────────────────────────────────────────────────────────
 local highlights = {}
 local function clearHighlights()
     for _,h in pairs(highlights) do pcall(function() h:Destroy() end) end
@@ -683,7 +674,6 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- ── ESP + tracers ─────────────────────────────────────────────────────────────
 local espPool = {}
 local function clearESP()
     for _,d in pairs(espPool) do
@@ -756,7 +746,6 @@ RunService.RenderStepped:Connect(function(dt)
     end
 end)
 
--- ── Full bright ───────────────────────────────────────────────────────────────
 local function setFullBright(on)
     pcall(function()
         if on then
@@ -769,11 +758,7 @@ local function setFullBright(on)
     end)
 end
 
--- ════════════════════════════════════════════════════════════════════════════════
--- BACKGROUND LOOPS
--- ════════════════════════════════════════════════════════════════════════════════
-
--- Speed bypass: Heartbeat WalkSpeed + direct velocity injection
+-- Speed bypass
 RunService.Heartbeat:Connect(function()
     local h, root = getHum(), getRoot()
     if not (h and root) then return end
@@ -787,7 +772,7 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- Kill aura: safe click + force-center fallback + triple blob; 0.08s for fast auto-fight
+-- Kill Aura: clicks at enemy screen position for accurate hit registration
 task.spawn(function()
     while task.wait(0.08) do
         if not S.KillAura then continue end
@@ -797,7 +782,7 @@ task.spawn(function()
             local r = primary.Character:FindFirstChild("HumanoidRootPart") or primary.Character.PrimaryPart
             if r then
                 if S.KillAuraFace then faceTo(r.Position) end
-                clickM1()
+                clickAtTarget(primary)
                 fireM1(); fireM1(); fireM1()
                 if S.KillAuraAll and #targets > 1 then
                     for i = 2, #targets do fireM1() end
@@ -815,7 +800,7 @@ task.spawn(function()
     end
 end)
 
--- Auto ability
+-- Auto Ability
 task.spawn(function()
     while task.wait(0.25) do
         if not S.AutoAbility then continue end
@@ -827,7 +812,7 @@ task.spawn(function()
     end
 end)
 
--- Auto dash
+-- Auto Dash
 task.spawn(function()
     while task.wait(0.4) do
         if not S.AutoDash then continue end
@@ -842,7 +827,7 @@ task.spawn(function()
     end
 end)
 
--- Auto farm: TP next to target, multiple clicks + blobs + E + Q for max damage
+-- Auto Farm: TPs under enemy feet so they can't hit back; uses all abilities
 task.spawn(function()
     while task.wait(0.1) do
         if not (S.AutoFarm and S.FarmTarget) then continue end
@@ -851,22 +836,21 @@ task.spawn(function()
         if t and t.Character and root then
             local tr = t.Character:FindFirstChild("HumanoidRootPart")
             if tr then
-                local dir = root.Position - tr.Position
-                dir = Vector3.new(dir.X, 0, dir.Z)
-                if dir.Magnitude < 0.1 then dir = tr.CFrame.RightVector end
-                dir = dir.Unit
-                local pos = tr.Position + dir * 3 + Vector3.new(0, 0.5, 0)
-                pcall(function() root.CFrame = CFrame.new(pos, tr.Position) end)
-                clickM1()
+                -- position under their feet — we can swing up, they swing over us
+                local pos = tr.Position - Vector3.new(0, 4, 0)
+                pcall(function() root.CFrame = CFrame.new(pos) end)
+                clickAtTarget(t)
                 fireM1(); fireM1(); fireM1()
                 tapKey(Enum.KeyCode.E)
+                tapKey(Enum.KeyCode.T)
+                tapKey(Enum.KeyCode.R)
                 if S.CastQ then tapKey(Enum.KeyCode.Q) end
             end
         end
     end
 end)
 
--- Auto play: TP to nearest enemy, multi-click + blobs + E, loops
+-- Auto Play: same under-feet TP strategy as Auto Farm
 task.spawn(function()
     while task.wait(0.1) do
         if not S.AutoPlay then continue end
@@ -875,23 +859,16 @@ task.spawn(function()
         local tr   = target.Character:FindFirstChild("HumanoidRootPart")
         local root = getRoot()
         if not (tr and root) then continue end
-        local dir = root.Position - tr.Position
-        dir = Vector3.new(dir.X, 0, dir.Z)
-        if dir.Magnitude < 0.1 then dir = tr.CFrame.RightVector end
-        dir = dir.Unit
-        local pos = tr.Position + dir * 3 + Vector3.new(0, 0.5, 0)
-        pcall(function() root.CFrame = CFrame.new(pos, tr.Position) end)
-        clickM1()
+        local pos = tr.Position - Vector3.new(0, 4, 0)
+        pcall(function() root.CFrame = CFrame.new(pos) end)
+        clickAtTarget(target)
         fireM1(); fireM1()
         tapKey(Enum.KeyCode.E)
+        tapKey(Enum.KeyCode.T)
     end
 end)
 
--- Fling: classic SPIN-TOUCH method. Setting velocity on enemy parts doesn't stick
--- (their client owns their character and overwrites it next frame). What DOES
--- replicate is physics contact: we spin OUR character at extreme angular velocity
--- while glued to the target — the collision impulse transfers into them through
--- the physics solver and launches them for real.
+-- Fling: spin-touch method
 local flingSpinning = false
 RunService.Heartbeat:Connect(function()
     local root = getRoot()
@@ -909,7 +886,6 @@ RunService.Heartbeat:Connect(function()
         flingSpinning = true
         local power = S.FlingPower
         pcall(function()
-            -- glue to the target and spin hard; contact does the launching
             root.CFrame = CFrame.new(tr.Position + Vector3.new(0, 0.5, 0))
             root.AssemblyAngularVelocity = Vector3.new(0, power * 30, 0)
             root.AssemblyLinearVelocity  = Vector3.zero
@@ -920,7 +896,7 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- Spin bot
+-- Spin Bot
 task.spawn(function()
     while task.wait() do
         if S.SpinBot then
@@ -934,9 +910,6 @@ task.spawn(function()
     end
 end)
 
--- ════════════════════════════════════════════════════════════════════════════════
--- SERVER HOP
--- ════════════════════════════════════════════════════════════════════════════════
 local function rejoin() pcall(function() TeleportService:Teleport(game.PlaceId, LP) end) end
 local function serverHop()
     task.spawn(function()
@@ -961,12 +934,12 @@ local function serverHop()
 end
 
 -- ════════════════════════════════════════════════════════════════════════════════
--- GUI (Rayfield)
+-- GUI
 -- ════════════════════════════════════════════════════════════════════════════════
 local Window = Rayfield:CreateWindow({
     Name = "Money/FreeHub | Ability Arena",
     LoadingTitle = "Money/FreeHub",
-    LoadingSubtitle = "v2.6 — by Money/FreeHub Owner",
+    LoadingSubtitle = "v2.7 — by Money/FreeHub Owner",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -979,7 +952,7 @@ local VisualsTab   = Window:CreateTab("Visuals",   4483362458)
 local FarmTab      = Window:CreateTab("Farm",      4483362458)
 local UtilityTab   = Window:CreateTab("Utility",   4483362458)
 
--- ── Combat ────────────────────────────────────────────────────────────────────
+-- Combat
 CombatTab:CreateSection("Survival")
 CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
     S.AntiRagdoll=v
@@ -993,22 +966,22 @@ CombatTab:CreateSection("Kill Aura")
 CombatTab:CreateToggle({Name="Kill Aura (auto-fights for you)", CurrentValue=false, Flag="KillAura", Callback=function(v) S.KillAura=v end})
 CombatTab:CreateSlider({Name="Aura Range", Range={5,150}, Increment=1, Suffix="studs", CurrentValue=24, Flag="KillAuraRange", Callback=function(v) S.KillAuraRange=v end})
 CombatTab:CreateToggle({Name="Face Target", CurrentValue=true, Flag="KillAuraFace", Callback=function(v) S.KillAuraFace=v end})
-CombatTab:CreateToggle({Name="Hit All In Range (blob)", CurrentValue=false, Flag="KillAuraAll", Callback=function(v) S.KillAuraAll=v end})
+CombatTab:CreateToggle({Name="Hit All In Range", CurrentValue=false, Flag="KillAuraAll", Callback=function(v) S.KillAuraAll=v end})
 CombatTab:CreateToggle({Name="Also Cast E", CurrentValue=true, Flag="KillAuraE", Callback=function(v) S.KillAuraE=v end})
 
 CombatTab:CreateSection("Hitboxes")
-CombatTab:CreateToggle({Name="M1 Hitbox Expander (hit anywhere in range)", CurrentValue=false, Flag="M1Hitbox", Callback=function(v)
+CombatTab:CreateToggle({Name="M1 Hitbox Expander (hit enemies from long range)", CurrentValue=false, Flag="M1Hitbox", Callback=function(v)
     S.M1Hitbox=v
     if not v then restoreHitboxes() end
 end})
-CombatTab:CreateSlider({Name="M1 Hitbox Size", Range={4,250}, Increment=1, Suffix="studs", CurrentValue=60, Flag="M1HitboxSize", Callback=function(v) S.M1HitboxSize=v end})
-CombatTab:CreateToggle({Name="Hitbox Ability (range ring — ghost, can't be hit through it)", CurrentValue=false, Flag="HitboxAbility", Callback=function(v)
+CombatTab:CreateSlider({Name="M1 Hitbox Size", Range={4,500}, Increment=1, Suffix="studs", CurrentValue=100, Flag="M1HitboxSize", Callback=function(v) S.M1HitboxSize=v end})
+CombatTab:CreateToggle({Name="Hitbox Ability (expand on E press)", CurrentValue=false, Flag="HitboxAbility", Callback=function(v)
     S.HitboxAbility=v
     if not v then destroyAbilityHb() end
 end})
-CombatTab:CreateSlider({Name="Hitbox Ability Size", Range={4,250}, Increment=1, Suffix="studs", CurrentValue=20, Flag="HitboxAbilitySize", Callback=function(v) S.HitboxAbilitySize=v end})
+CombatTab:CreateSlider({Name="Hitbox Ability Size", Range={4,500}, Increment=1, Suffix="studs", CurrentValue=20, Flag="HitboxAbilitySize", Callback=function(v) S.HitboxAbilitySize=v end})
 
-CombatTab:CreateSection("M1 Fling / Knockback")
+CombatTab:CreateSection("Fling")
 CombatTab:CreateToggle({Name="Fling (spin-touch — WARNING: TPs you onto target)", CurrentValue=false, Flag="Fling", Callback=function(v)
     S.Fling=v
     if not v then
@@ -1032,7 +1005,7 @@ CombatTab:CreateSection("Aim")
 CombatTab:CreateToggle({Name="Camera Lock (nearest)", CurrentValue=false, Flag="CamLock", Callback=function(v) S.CamLock=v end})
 CombatTab:CreateSlider({Name="Cam Lock Range", Range={20,300}, Increment=5, Suffix="studs", CurrentValue=120, Flag="CamLockRange", Callback=function(v) S.CamLockRange=v end})
 
--- ── Abilities ─────────────────────────────────────────────────────────────────
+-- Abilities
 AbilitiesTab:CreateSection("Ability Grabber")
 AbilitiesTab:CreateParagraph({Title="How it works", Content="Pick an ability. You TP to its pad, E is tapped for you, then you TP back where you were."})
 local selectedAbility = nil
@@ -1046,7 +1019,7 @@ AbilitiesTab:CreateButton({Name="Refresh Ability List", Callback=function()
     pcall(function() abilityDrop:Refresh(abilityNames()) end)
 end})
 
--- ── Movement ──────────────────────────────────────────────────────────────────
+-- Movement
 MovementTab:CreateToggle({Name="Fly (WASD + Space/Ctrl)", CurrentValue=false, Flag="Fly", Callback=function(v) S.Fly=v end})
 MovementTab:CreateSlider({Name="Fly Speed", Range={10,250}, Increment=5, Suffix="spd", CurrentValue=60, Flag="FlySpeed", Callback=function(v) S.FlySpeed=v end})
 MovementTab:CreateToggle({Name="Noclip", CurrentValue=false, Flag="Noclip", Callback=function(v)
@@ -1058,16 +1031,16 @@ MovementTab:CreateToggle({Name="Noclip", CurrentValue=false, Flag="Noclip", Call
         end end
     end
 end})
-MovementTab:CreateToggle({Name="Speed Hack (WalkSpeed + velocity inject)", CurrentValue=false, Flag="SpeedHack", Callback=function(v)
+MovementTab:CreateToggle({Name="Speed Hack", CurrentValue=false, Flag="SpeedHack", Callback=function(v)
     S.SpeedHack=v
     if not v then local h=getHum(); if h then pcall(function() h.WalkSpeed=16 end) end end
 end})
 MovementTab:CreateSlider({Name="Walk Speed", Range={16,300}, Increment=1, Suffix="spd", CurrentValue=16, Flag="Speed", Callback=function(v) S.Speed=v end})
 MovementTab:CreateToggle({Name="Infinite Jump", CurrentValue=false, Flag="InfiniteJump", Callback=function(v) S.InfiniteJump=v end})
-MovementTab:CreateToggle({Name="Spin Bot (fling)", CurrentValue=false, Flag="SpinBot", Callback=function(v) S.SpinBot=v end})
+MovementTab:CreateToggle({Name="Spin Bot", CurrentValue=false, Flag="SpinBot", Callback=function(v) S.SpinBot=v end})
 MovementTab:CreateToggle({Name="Anti-Fling", CurrentValue=false, Flag="AntiFling", Callback=function(v) S.AntiFling=v end})
 
--- ── Visuals ───────────────────────────────────────────────────────────────────
+-- Visuals
 VisualsTab:CreateToggle({Name="Player ESP", CurrentValue=false, Flag="ESP", Callback=function(v) S.ESP=v end})
 VisualsTab:CreateToggle({Name="Color By HP", CurrentValue=true, Flag="ESPColor", Callback=function(v) S.ESPColor=v end})
 VisualsTab:CreateToggle({Name="Tracers", CurrentValue=false, Flag="Tracers", Callback=function(v) S.Tracers=v end})
@@ -1078,7 +1051,7 @@ VisualsTab:CreateDropdown({Name="Highlight Color", Options={"Bright blue","Brigh
 end})
 VisualsTab:CreateToggle({Name="Full Bright", CurrentValue=false, Flag="FullBright", Callback=function(v) S.FullBright=v; setFullBright(v) end})
 
--- ── Farm ──────────────────────────────────────────────────────────────────────
+-- Farm
 FarmTab:CreateSection("Auto Play")
 FarmTab:CreateToggle({Name="Auto Play (fight nearest enemy automatically)", CurrentValue=false, Flag="AutoPlay", Callback=function(v) S.AutoPlay=v end})
 FarmTab:CreateSlider({Name="Auto Play Search Range", Range={10,300}, Increment=5, Suffix="studs", CurrentValue=100, Flag="AutoPlayRange", Callback=function(v) S.AutoPlayRange=v end})
@@ -1098,7 +1071,7 @@ FarmTab:CreateButton({Name="Refresh Player List", Callback=function()
     pcall(function() farmDrop:Refresh(playerNames()) end)
 end})
 
--- ── Utility ───────────────────────────────────────────────────────────────────
+-- Utility
 UtilityTab:CreateToggle({Name="Anti-AFK", CurrentValue=false, Flag="AntiAFK", Callback=function(v) S.AntiAFK=v end})
 UtilityTab:CreateToggle({Name="Instant Respawn", CurrentValue=false, Flag="InstantRespawn", Callback=function(v) S.InstantRespawn=v end})
 UtilityTab:CreateToggle({Name="Click Teleport  [T]", CurrentValue=false, Flag="ClickTP", Callback=function(v) S.ClickTP=v end})
@@ -1106,12 +1079,12 @@ UtilityTab:CreateButton({Name="Rejoin Server", Callback=rejoin})
 UtilityTab:CreateButton({Name="Server Hop", Callback=serverHop})
 
 UtilityTab:CreateSection("Safe Spawn")
-UtilityTab:CreateParagraph({Title="Anti Void TP target", Content="Walk to your safe spot (the tree / spawn area), then click 'Set Safe Spawn'. Anti Void will TP you there instead of the last ground you stood on."})
+UtilityTab:CreateParagraph({Title="Anti Void TP target", Content="Walk to your safe spot, then click Set Safe Spawn. Anti Void will TP you there."})
 UtilityTab:CreateButton({Name="Set Safe Spawn (save position)", Callback=function()
     local root = getRoot()
     if root then
         savedSpawnCF = root.CFrame
-        Rayfield:Notify({Title="Money/FreeHub", Content="Safe spawn saved! Anti Void will TP here.", Duration=4})
+        Rayfield:Notify({Title="Money/FreeHub", Content="Safe spawn saved!", Duration=4})
     end
 end})
 UtilityTab:CreateButton({Name="TP to Safe Spawn", Callback=function()
@@ -1120,12 +1093,12 @@ UtilityTab:CreateButton({Name="TP to Safe Spawn", Callback=function()
     if root and tpCF then
         pcall(function() root.CFrame = tpCF + Vector3.new(0, 3, 0) end)
     else
-        Rayfield:Notify({Title="Money/FreeHub", Content="No safe spawn set. Walk somewhere safe and click Set Safe Spawn first.", Duration=4})
+        Rayfield:Notify({Title="Money/FreeHub", Content="No safe spawn set yet.", Duration=4})
     end
 end})
-UtilityTab:CreateButton({Name="Clear Safe Spawn (use last-stood ground)", Callback=function()
+UtilityTab:CreateButton({Name="Clear Safe Spawn", Callback=function()
     savedSpawnCF = nil
-    Rayfield:Notify({Title="Money/FreeHub", Content="Safe spawn cleared. Anti Void now uses last ground stood on.", Duration=3})
+    Rayfield:Notify({Title="Money/FreeHub", Content="Safe spawn cleared.", Duration=3})
 end})
 
 UtilityTab:CreateSection("Admin")
@@ -1140,8 +1113,8 @@ UtilityTab:CreateButton({Name="Unload Money/FreeHub", Callback=function()
 end})
 
 UtilityTab:CreateSection("Status")
-UtilityTab:CreateParagraph({Title="Credits", Content="Money/FreeHub v2.6 — by Money/FreeHub Owner"})
-UtilityTab:CreateParagraph({Title="Remote", Content = JoltReliable and "Jolt_Reliable linked. Live timestamps active." or "Jolt_Reliable NOT found — combat remotes disabled. Rejoin and retry."})
-UtilityTab:CreateParagraph({Title="Combo tip", Content="Kill Aura + M1 Hitbox (crank size to cover your range) + Fling. Set Safe Spawn near the tree before enabling Anti Void."})
+UtilityTab:CreateParagraph({Title="Credits", Content="Money/FreeHub v2.7 — by Money/FreeHub Owner"})
+UtilityTab:CreateParagraph({Title="Status", Content = JoltReliable and "Combat remotes linked." or "Combat remotes NOT found — rejoin and retry."})
+UtilityTab:CreateParagraph({Title="Best combo", Content="Kill Aura + M1 Hitbox (size 100+) + Hitbox Ability (E bursts it 3x). Set Safe Spawn near tree before Anti Void."})
 
-Rayfield:Notify({Title="Money/FreeHub v2.6", Content = (JoltReliable and "Loaded — remotes linked." or "Loaded, but Jolt remote missing.") .. " by Money/FreeHub Owner", Duration=6})
+Rayfield:Notify({Title="Money/FreeHub v2.7", Content="Loaded — by Money/FreeHub Owner", Duration=6})
