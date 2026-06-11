@@ -125,16 +125,15 @@ end
 
 local function tapKey(kc)
     if typingNow() then return end
-    pcall(function()
-        VirtualInputManager:SendKeyEvent(true,  kc, false, game); task.wait(0.03)
-        VirtualInputManager:SendKeyEvent(false, kc, false, game)
-    end)
+    pcall(function() VirtualInputManager:SendKeyEvent(true,  kc, false, game) end)
+    task.wait(0.06)
+    pcall(function() VirtualInputManager:SendKeyEvent(false, kc, false, game) end)
 end
 
 local S = {
     AntiRagdoll=false, AntiPush=false, AntiVoid=false,
     KillAura=false, KillAuraRange=24, KillAuraFace=true, KillAuraAll=false, KillAuraE=true,
-    M1Hitbox=false, M1HitboxSize=100,
+    M1Hitbox=false, M1HitboxSize=35,
     HitboxAbility=false, HitboxAbilitySize=20,
     Fling=false, FlingPower=800,
     AutoM1=false,
@@ -153,6 +152,7 @@ local S = {
     AutoFarm=false, FarmTarget=nil,
     AutoPlay=false, AutoPlayRange=100,
     AntiAFK=false, InstantRespawn=false, ClickTP=false,
+    GrabDelay=3,
 }
 
 local Conns = {}
@@ -353,9 +353,10 @@ local function grabAbility(name)
         local backCF = root.CFrame
         local padPos = pad:IsA("BasePart") and pad.Position or pad:GetPivot().Position
         pcall(function() root.CFrame = CFrame.new(padPos + Vector3.new(0, 4, 0)) end)
-        task.wait(0.35)
+        task.wait(0.5)
         tapKey(Enum.KeyCode.E)
-        task.wait(0.3)
+        -- give time to actually pick the ability before TP-ing back
+        task.wait(S.GrabDelay)
         local root2 = getRoot()
         if root2 then pcall(function() root2.CFrame = backCF end) end
         grabbing = false
@@ -782,6 +783,7 @@ task.spawn(function()
             local r = primary.Character:FindFirstChild("HumanoidRootPart") or primary.Character.PrimaryPart
             if r then
                 if S.KillAuraFace then faceTo(r.Position) end
+                clickM1()
                 clickAtTarget(primary)
                 fireM1(); fireM1(); fireM1()
                 if S.KillAuraAll and #targets > 1 then
@@ -800,11 +802,15 @@ task.spawn(function()
     end
 end)
 
--- Auto Ability
+-- Auto Ability: fires the moment it's on (no target gate so it works mid-battle)
 task.spawn(function()
     while task.wait(0.25) do
         if not S.AutoAbility then continue end
-        if not nearestPlayer(S.AutoAbilityRange) then continue end
+        local enemy = nearestPlayer(S.AutoAbilityRange)
+        if enemy and enemy.Character then
+            local r = enemy.Character:FindFirstChild("HumanoidRootPart") or enemy.Character.PrimaryPart
+            if r then faceTo(r.Position) end
+        end
         if S.CastE then tapKey(Enum.KeyCode.E) end
         if S.CastQ then tapKey(Enum.KeyCode.Q) end
         if S.CastR then tapKey(Enum.KeyCode.R) end
@@ -812,18 +818,20 @@ task.spawn(function()
     end
 end)
 
--- Auto Dash
+-- Auto Dash: dashes toward/around nearest enemy, or forward if none
 task.spawn(function()
     while task.wait(0.4) do
         if not S.AutoDash then continue end
-        local p = nearestPlayer(35); local root = getRoot()
+        local p = nearestPlayer(80); local root = getRoot()
+        local dir = "Forward"
         if p and p.Character and root then
             local tr = p.Character:FindFirstChild("HumanoidRootPart")
             if tr then
                 local side = (tr.Position-root.Position).Unit:Cross(Vector3.yAxis)
-                fireDash(side.X >= 0 and "Right" or "Left")
+                dir = side.X >= 0 and "Right" or "Left"
             end
         end
+        fireDash(dir)
     end
 end)
 
@@ -974,12 +982,12 @@ CombatTab:CreateToggle({Name="M1 Hitbox Expander (hit enemies from long range)",
     S.M1Hitbox=v
     if not v then restoreHitboxes() end
 end})
-CombatTab:CreateSlider({Name="M1 Hitbox Size", Range={4,500}, Increment=1, Suffix="studs", CurrentValue=100, Flag="M1HitboxSize", Callback=function(v) S.M1HitboxSize=v end})
-CombatTab:CreateToggle({Name="Hitbox Ability (expand on E press)", CurrentValue=false, Flag="HitboxAbility", Callback=function(v)
+CombatTab:CreateSlider({Name="M1 Hitbox Size", Range={1,50}, Increment=1, Suffix="studs", CurrentValue=35, Flag="M1HitboxSize", Callback=function(v) S.M1HitboxSize=v end})
+CombatTab:CreateToggle({Name="Abilities Expand (expand ability hitbox on E press)", CurrentValue=false, Flag="HitboxAbility", Callback=function(v)
     S.HitboxAbility=v
     if not v then destroyAbilityHb() end
 end})
-CombatTab:CreateSlider({Name="Hitbox Ability Size", Range={4,500}, Increment=1, Suffix="studs", CurrentValue=20, Flag="HitboxAbilitySize", Callback=function(v) S.HitboxAbilitySize=v end})
+CombatTab:CreateSlider({Name="Abilities Expand Size", Range={1,50}, Increment=1, Suffix="studs", CurrentValue=20, Flag="HitboxAbilitySize", Callback=function(v) S.HitboxAbilitySize=v end})
 
 CombatTab:CreateSection("Fling")
 CombatTab:CreateToggle({Name="Fling (spin-touch — WARNING: TPs you onto target)", CurrentValue=false, Flag="Fling", Callback=function(v)
@@ -1007,7 +1015,8 @@ CombatTab:CreateSlider({Name="Cam Lock Range", Range={20,300}, Increment=5, Suff
 
 -- Abilities
 AbilitiesTab:CreateSection("Ability Grabber")
-AbilitiesTab:CreateParagraph({Title="How it works", Content="Pick an ability. You TP to its pad, E is tapped for you, then you TP back where you were."})
+AbilitiesTab:CreateParagraph({Title="How it works", Content="Pick an ability. You TP to its pad, E is tapped for you, then you TP back where you were. Raise Grab Delay if you need more time to pick before TP-ing back."})
+AbilitiesTab:CreateSlider({Name="Grab Delay (time before TP back)", Range={1,8}, Increment=1, Suffix="sec", CurrentValue=3, Flag="GrabDelay", Callback=function(v) S.GrabDelay=v end})
 local selectedAbility = nil
 local abilityDrop = AbilitiesTab:CreateDropdown({Name="Ability", Options=abilityNames(), CurrentOption={}, Flag="AbilityPick", Callback=function(o)
     selectedAbility = (type(o)=="table" and o[1]) or o
