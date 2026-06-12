@@ -1,4 +1,4 @@
--- Money/FreeHub | Ability Arena | v2.7.1
+-- Money/FreeHub | Ability Arena | v2.7.2
 -- by Money/FreeHub Owner
 
 local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
@@ -58,6 +58,15 @@ local function fireSkill(skill, direction)
     pcall(function() JoltReliable:FireServer(buildSkillString(skill, direction), {}) end)
 end
 local function fireDash(direction) fireSkill("Dash", direction) end
+
+-- One Shot: stacks a burst of M1 packets in a single tick so the target drops instantly
+local function oneShotM1()
+    if not JoltReliable then return end
+    local n = S.OneShotCount or 40
+    for _ = 1, n do
+        pcall(function() JoltReliable:FireServer(buildM1(), {}) end)
+    end
+end
 
 local function typingNow()
     local ok, box = pcall(function() return UserInputService:GetFocusedTextBox() end)
@@ -135,7 +144,7 @@ local S = {
     KillAura=false, KillAuraRange=24, KillAuraFace=true, KillAuraAll=false, KillAuraE=true,
     M1Hitbox=false, M1HitboxSize=35,
     HitboxAbility=false, HitboxAbilitySize=20,
-    Fling=false, FlingPower=800,
+    OneShot=true, OneShotCount=40,
     AutoM1=false,
     AutoAbility=false, AutoAbilityRange=25,
     CastE=true, CastQ=false, CastR=false, CastT=false,
@@ -450,7 +459,7 @@ RunService.Stepped:Connect(function()
     if not (S.AntiPush or S.AntiFling) then return end
     local char, root, hum = getChar(), getRoot(), getHum()
     if not (char and root) then return end
-    if S.AntiFling and not S.Fling then
+    if S.AntiFling and not S.Fly then
         for _,pt in ipairs(char:GetDescendants()) do
             if pt:IsA("BasePart") then
                 if pt.AssemblyAngularVelocity.Magnitude > 20 then
@@ -511,6 +520,7 @@ RunService.Heartbeat:Connect(function()
         if floatPart then pcall(function() floatPart:Destroy() end); floatPart = nil end
         return
     end
+    if S.Fly then hideFloat(); return end
     local root, hum, char = getRoot(), getHum(), getChar()
     if not (root and hum and char) then return end
 
@@ -773,7 +783,7 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- Kill Aura: clicks at enemy screen position for accurate hit registration
+-- Kill Aura: faces + clicks at enemy screen position, then bursts M1 to drop them
 task.spawn(function()
     while task.wait(0.08) do
         if not S.KillAura then continue end
@@ -783,11 +793,12 @@ task.spawn(function()
             local r = primary.Character:FindFirstChild("HumanoidRootPart") or primary.Character.PrimaryPart
             if r then
                 if S.KillAuraFace then faceTo(r.Position) end
-                clickM1()
                 clickAtTarget(primary)
-                fireM1(); fireM1(); fireM1()
-                if S.KillAuraAll and #targets > 1 then
-                    for i = 2, #targets do fireM1() end
+                if S.OneShot then oneShotM1() else fireM1(); fireM1(); fireM1() end
+                if S.KillAuraAll then
+                    for i = 2, #targets do
+                        if S.OneShot then oneShotM1() else fireM1() end
+                    end
                 end
                 if S.KillAuraE then tapKey(Enum.KeyCode.E) end
             end
@@ -798,7 +809,10 @@ end)
 -- Auto M1
 task.spawn(function()
     while task.wait(0.12) do
-        if S.AutoM1 then clickM1(); fireM1() end
+        if S.AutoM1 then
+            clickM1()
+            if S.OneShot then oneShotM1() else fireM1() end
+        end
     end
 end)
 
@@ -848,7 +862,7 @@ task.spawn(function()
                 local pos = tr.Position - Vector3.new(0, 4, 0)
                 pcall(function() root.CFrame = CFrame.new(pos) end)
                 clickAtTarget(t)
-                fireM1(); fireM1(); fireM1()
+                if S.OneShot then oneShotM1() else fireM1(); fireM1(); fireM1() end
                 tapKey(Enum.KeyCode.E)
                 tapKey(Enum.KeyCode.T)
                 tapKey(Enum.KeyCode.R)
@@ -870,37 +884,9 @@ task.spawn(function()
         local pos = tr.Position - Vector3.new(0, 4, 0)
         pcall(function() root.CFrame = CFrame.new(pos) end)
         clickAtTarget(target)
-        fireM1(); fireM1()
+        if S.OneShot then oneShotM1() else fireM1(); fireM1() end
         tapKey(Enum.KeyCode.E)
         tapKey(Enum.KeyCode.T)
-    end
-end)
-
--- Fling: spin-touch method
-local flingSpinning = false
-RunService.Heartbeat:Connect(function()
-    local root = getRoot()
-    if not S.Fling then
-        if flingSpinning then
-            flingSpinning = false
-            if root then pcall(function() root.AssemblyAngularVelocity = Vector3.zero end) end
-        end
-        return
-    end
-    if not root then return end
-    local target = nearestPlayer(S.KillAuraRange + 8)
-    local tr = target and target.Character and target.Character:FindFirstChild("HumanoidRootPart")
-    if tr then
-        flingSpinning = true
-        local power = S.FlingPower
-        pcall(function()
-            root.CFrame = CFrame.new(tr.Position + Vector3.new(0, 0.5, 0))
-            root.AssemblyAngularVelocity = Vector3.new(0, power * 30, 0)
-            root.AssemblyLinearVelocity  = Vector3.zero
-        end)
-    elseif flingSpinning then
-        flingSpinning = false
-        pcall(function() root.AssemblyAngularVelocity = Vector3.zero end)
     end
 end)
 
@@ -947,7 +933,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Money/FreeHub | Ability Arena",
     LoadingTitle = "Money/FreeHub",
-    LoadingSubtitle = "v2.7.1 — by Money/FreeHub Owner",
+    LoadingSubtitle = "v2.7.2 — by Money/FreeHub Owner",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -989,15 +975,9 @@ CombatTab:CreateToggle({Name="Abilities Expand (expand ability hitbox on E press
 end})
 CombatTab:CreateSlider({Name="Abilities Expand Size", Range={1,50}, Increment=1, Suffix="studs", CurrentValue=20, Flag="HitboxAbilitySize", Callback=function(v) S.HitboxAbilitySize=v end})
 
-CombatTab:CreateSection("Fling")
-CombatTab:CreateToggle({Name="Fling (spin-touch — WARNING: TPs you onto target)", CurrentValue=false, Flag="Fling", Callback=function(v)
-    S.Fling=v
-    if not v then
-        local r=getRoot()
-        if r then pcall(function() r.AssemblyAngularVelocity = Vector3.zero end) end
-    end
-end})
-CombatTab:CreateSlider({Name="Fling Power", Range={100,3000}, Increment=50, Suffix="vel", CurrentValue=800, Flag="FlingPower", Callback=function(v) S.FlingPower=v end})
+CombatTab:CreateSection("One Shot")
+CombatTab:CreateToggle({Name="One Shot M1 (instant kill on hit)", CurrentValue=true, Flag="OneShot", Callback=function(v) S.OneShot=v end})
+CombatTab:CreateSlider({Name="One Shot Power", Range={5,120}, Increment=5, Suffix="hits", CurrentValue=40, Flag="OneShotCount", Callback=function(v) S.OneShotCount=v end})
 
 CombatTab:CreateSection("Auto")
 CombatTab:CreateToggle({Name="Auto M1 (click spam)", CurrentValue=false, Flag="AutoM1", Callback=function(v) S.AutoM1=v end})
@@ -1122,8 +1102,8 @@ UtilityTab:CreateButton({Name="Unload Money/FreeHub", Callback=function()
 end})
 
 UtilityTab:CreateSection("Status")
-UtilityTab:CreateParagraph({Title="Credits", Content="Money/FreeHub v2.7.1 — by Money/FreeHub Owner"})
+UtilityTab:CreateParagraph({Title="Credits", Content="Money/FreeHub v2.7.2 — by Money/FreeHub Owner"})
 UtilityTab:CreateParagraph({Title="Status", Content = JoltReliable and "Combat remotes linked." or "Combat remotes NOT found — rejoin and retry."})
 UtilityTab:CreateParagraph({Title="Best combo", Content="Kill Aura + M1 Hitbox (size 30-45) + Abilities Expand (E bursts it 3x). Set Safe Spawn near tree before Anti Void."})
 
-Rayfield:Notify({Title="Money/FreeHub v2.7.1", Content="Loaded — by Money/FreeHub Owner", Duration=6})
+Rayfield:Notify({Title="Money/FreeHub v2.7.2", Content="Loaded — by Money/FreeHub Owner", Duration=6})
