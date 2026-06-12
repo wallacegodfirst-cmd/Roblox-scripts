@@ -1124,6 +1124,6 @@ end})
 UtilityTab:CreateSection("Status")
 UtilityTab:CreateParagraph({Title="Credits", Content="Money/FreeHub v2.7.1 — by Money/FreeHub Owner"})
 UtilityTab:CreateParagraph({Title="Status", Content = JoltReliable and "Combat remotes linked." or "Combat remotes NOT found — rejoin and retry."})
-UtilityTab:CreateParagraph({Title="Best combo", Content="Kill Aura + M1 Hitbox (size 100+) + Hitbox Ability (E bursts it 3x). Set Safe Spawn near tree before Anti Void."})
+UtilityTab:CreateParagraph({Title="Best combo", Content="Kill Aura + M1 Hitbox (size 30-45) + Abilities Expand (E bursts it 3x). Set Safe Spawn near tree before Anti Void."})
 
 Rayfield:Notify({Title="Money/FreeHub v2.7.1", Content="Loaded — by Money/FreeHub Owner", Duration=6})
