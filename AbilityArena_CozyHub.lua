@@ -1,4 +1,4 @@
--- Money/FreeHub | Ability Arena | v2.7.2
+-- Money/FreeHub | Ability Arena | v2.7.3
 -- by Money/FreeHub Owner
 
 local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
@@ -60,13 +60,35 @@ end
 local function fireDash(direction) fireSkill("Dash", direction) end
 
 -- One Shot: stacks a burst of M1 packets in a single tick so the target drops instantly
-local function oneShotM1()
+local function oneShotBurst()
     if not JoltReliable then return end
     local n = S.OneShotCount or 40
     for _ = 1, n do
         pcall(function() JoltReliable:FireServer(buildM1(), {}) end)
     end
+    -- also tap ability keys so their damage stacks inside the same burst
+    task.spawn(function()
+        pcall(function() VirtualInputManager:SendKeyEvent(true,  Enum.KeyCode.E, false, game) end)
+        task.wait(0.02)
+        pcall(function() VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game) end)
+    end)
+    task.spawn(function()
+        pcall(function() VirtualInputManager:SendKeyEvent(true,  Enum.KeyCode.Q, false, game) end)
+        task.wait(0.02)
+        pcall(function() VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Q, false, game) end)
+    end)
+    task.spawn(function()
+        pcall(function() VirtualInputManager:SendKeyEvent(true,  Enum.KeyCode.R, false, game) end)
+        task.wait(0.02)
+        pcall(function() VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game) end)
+    end)
+    task.spawn(function()
+        pcall(function() VirtualInputManager:SendKeyEvent(true,  Enum.KeyCode.T, false, game) end)
+        task.wait(0.02)
+        pcall(function() VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.T, false, game) end)
+    end)
 end
+local oneShotM1 = oneShotBurst
 
 local function typingNow()
     local ok, box = pcall(function() return UserInputService:GetFocusedTextBox() end)
@@ -597,12 +619,8 @@ pcall(function()
     end)
 end)
 
-local flyBV, flyBG
 local flyKeys = {W=false,A=false,S=false,D=false,Up=false,Down=false}
-local function flyCleanup()
-    if flyBV then pcall(function() flyBV:Destroy() end); flyBV=nil end
-    if flyBG then pcall(function() flyBG:Destroy() end); flyBG=nil end
-end
+local function flyCleanup() end
 UserInputService.InputBegan:Connect(function(i, gpe)
     if gpe then return end
     local k=i.KeyCode
@@ -622,26 +640,49 @@ UserInputService.InputEnded:Connect(function(i)
     elseif k==Enum.KeyCode.Space       then flyKeys.Up=false
     elseif k==Enum.KeyCode.LeftControl then flyKeys.Down=false end
 end)
-RunService.RenderStepped:Connect(function()
-    if not S.Fly then if flyBV then flyCleanup() end return end
+-- CFrame fly: sets root position directly each frame so the server can't pull you back
+RunService.RenderStepped:Connect(function(dt)
+    if not S.Fly then return end
     local root = getRoot(); if not root then return end
-    if not flyBV or flyBV.Parent ~= root then
-        flyCleanup()
-        flyBG = Instance.new("BodyGyro")
-        flyBG.MaxTorque=Vector3.new(9e9,9e9,9e9); flyBG.P=9e4; flyBG.CFrame=root.CFrame; flyBG.Parent=root
-        flyBV = Instance.new("BodyVelocity")
-        flyBV.MaxForce=Vector3.new(9e9,9e9,9e9); flyBV.Velocity=Vector3.zero; flyBV.Parent=root
+    local hum = getHum()
+    if hum then
+        pcall(function()
+            hum.PlatformStand = true
+            hum:ChangeState(Enum.HumanoidStateType.Physics)
+        end)
     end
     local cam = Workspace.CurrentCamera
-    flyBG.CFrame = cam.CFrame
     local dir = Vector3.zero
-    if flyKeys.W  then dir += cam.CFrame.LookVector end
-    if flyKeys.S  then dir -= cam.CFrame.LookVector end
-    if flyKeys.A  then dir -= cam.CFrame.RightVector end
-    if flyKeys.D  then dir += cam.CFrame.RightVector end
+    if flyKeys.W    then dir += cam.CFrame.LookVector end
+    if flyKeys.S    then dir -= cam.CFrame.LookVector end
+    if flyKeys.A    then dir -= cam.CFrame.RightVector end
+    if flyKeys.D    then dir += cam.CFrame.RightVector end
     if flyKeys.Up   then dir += Vector3.yAxis end
     if flyKeys.Down then dir -= Vector3.yAxis end
-    flyBV.Velocity = (dir.Magnitude > 0 and dir.Unit * S.FlySpeed) or Vector3.zero
+    pcall(function()
+        root.AssemblyLinearVelocity = Vector3.zero
+        if dir.Magnitude > 0 then
+            root.CFrame = root.CFrame + dir.Unit * S.FlySpeed * dt
+        end
+    end)
+end)
+-- restore character when fly turns off
+task.spawn(function()
+    local wasFlying = false
+    while task.wait(0.1) do
+        if S.Fly then
+            wasFlying = true
+        elseif wasFlying then
+            wasFlying = false
+            local hum = getHum()
+            if hum then
+                pcall(function()
+                    hum.PlatformStand = false
+                    hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+                end)
+            end
+        end
+    end
 end)
 
 RunService.Stepped:Connect(function()
@@ -787,17 +828,28 @@ end)
 task.spawn(function()
     while task.wait(0.08) do
         if not S.KillAura then continue end
+        -- force the M1 hitbox on while Kill Aura runs so swings actually land
+        S.M1Hitbox = true
+        if S.M1HitboxSize < 30 then S.M1HitboxSize = 35 end
         local targets = S.KillAuraAll and enemiesInRange(S.KillAuraRange) or {nearestPlayer(S.KillAuraRange)}
         local primary = targets[1]
         if primary and primary.Character then
             local r = primary.Character:FindFirstChild("HumanoidRootPart") or primary.Character.PrimaryPart
-            if r then
-                if S.KillAuraFace then faceTo(r.Position) end
+            local root = getRoot()
+            if r and root then
+                -- close the gap so the punch raycast actually catches them
+                local d = (r.Position - root.Position).Magnitude
+                if d > 8 then
+                    local behind = r.Position - (r.CFrame.LookVector * 3) + Vector3.new(0, 1, 0)
+                    pcall(function() root.CFrame = CFrame.new(behind, r.Position) end)
+                elseif S.KillAuraFace then
+                    faceTo(r.Position)
+                end
                 clickAtTarget(primary)
-                if S.OneShot then oneShotM1() else fireM1(); fireM1(); fireM1() end
+                if S.OneShot then oneShotBurst() else fireM1(); fireM1(); fireM1() end
                 if S.KillAuraAll then
                     for i = 2, #targets do
-                        if S.OneShot then oneShotM1() else fireM1() end
+                        if S.OneShot then oneShotBurst() else fireM1() end
                     end
                 end
                 if S.KillAuraE then tapKey(Enum.KeyCode.E) end
@@ -811,7 +863,7 @@ task.spawn(function()
     while task.wait(0.12) do
         if S.AutoM1 then
             clickM1()
-            if S.OneShot then oneShotM1() else fireM1() end
+            if S.OneShot then oneShotBurst() else fireM1() end
         end
     end
 end)
@@ -833,8 +885,9 @@ task.spawn(function()
 end)
 
 -- Auto Dash: dashes toward/around nearest enemy, or forward if none
+-- Auto Dash: spams every possible dash trigger so something always lands
 task.spawn(function()
-    while task.wait(0.4) do
+    while task.wait(0.25) do
         if not S.AutoDash then continue end
         local p = nearestPlayer(80); local root = getRoot()
         local dir = "Forward"
@@ -846,6 +899,11 @@ task.spawn(function()
             end
         end
         fireDash(dir)
+        fireSkill("Dash", "Forward")
+        fireSkill("Roll", dir)
+        task.spawn(function() tapKey(Enum.KeyCode.Q) end)
+        task.spawn(function() tapKey(Enum.KeyCode.LeftShift) end)
+        task.spawn(function() tapKey(Enum.KeyCode.F) end)
     end
 end)
 
@@ -862,7 +920,7 @@ task.spawn(function()
                 local pos = tr.Position - Vector3.new(0, 4, 0)
                 pcall(function() root.CFrame = CFrame.new(pos) end)
                 clickAtTarget(t)
-                if S.OneShot then oneShotM1() else fireM1(); fireM1(); fireM1() end
+                if S.OneShot then oneShotBurst() else fireM1(); fireM1(); fireM1() end
                 tapKey(Enum.KeyCode.E)
                 tapKey(Enum.KeyCode.T)
                 tapKey(Enum.KeyCode.R)
@@ -884,7 +942,7 @@ task.spawn(function()
         local pos = tr.Position - Vector3.new(0, 4, 0)
         pcall(function() root.CFrame = CFrame.new(pos) end)
         clickAtTarget(target)
-        if S.OneShot then oneShotM1() else fireM1(); fireM1() end
+        if S.OneShot then oneShotBurst() else fireM1(); fireM1() end
         tapKey(Enum.KeyCode.E)
         tapKey(Enum.KeyCode.T)
     end
@@ -933,7 +991,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Money/FreeHub | Ability Arena",
     LoadingTitle = "Money/FreeHub",
-    LoadingSubtitle = "v2.7.2 — by Money/FreeHub Owner",
+    LoadingSubtitle = "v2.7.3 — by Money/FreeHub Owner",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -1102,8 +1160,8 @@ UtilityTab:CreateButton({Name="Unload Money/FreeHub", Callback=function()
 end})
 
 UtilityTab:CreateSection("Status")
-UtilityTab:CreateParagraph({Title="Credits", Content="Money/FreeHub v2.7.2 — by Money/FreeHub Owner"})
+UtilityTab:CreateParagraph({Title="Credits", Content="Money/FreeHub v2.7.3 — by Money/FreeHub Owner"})
 UtilityTab:CreateParagraph({Title="Status", Content = JoltReliable and "Combat remotes linked." or "Combat remotes NOT found — rejoin and retry."})
 UtilityTab:CreateParagraph({Title="Best combo", Content="Kill Aura + M1 Hitbox (size 30-45) + Abilities Expand (E bursts it 3x). Set Safe Spawn near tree before Anti Void."})
 
-Rayfield:Notify({Title="Money/FreeHub v2.7.2", Content="Loaded — by Money/FreeHub Owner", Duration=6})
+Rayfield:Notify({Title="Money/FreeHub v2.7.3", Content="Loaded — by Money/FreeHub Owner", Duration=6})
