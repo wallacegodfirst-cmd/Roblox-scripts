@@ -1,4 +1,4 @@
--- Money/FreeHub | Ability Arena | v2.7
+-- Money/FreeHub | Ability Arena | v2.7.1
 -- by Money/FreeHub Owner
 
 local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
@@ -947,7 +947,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Money/FreeHub | Ability Arena",
     LoadingTitle = "Money/FreeHub",
-    LoadingSubtitle = "v2.7 — by Money/FreeHub Owner",
+    LoadingSubtitle = "v2.7.1 — by Money/FreeHub Owner",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -1122,8 +1122,8 @@ UtilityTab:CreateButton({Name="Unload Money/FreeHub", Callback=function()
 end})
 
 UtilityTab:CreateSection("Status")
-UtilityTab:CreateParagraph({Title="Credits", Content="Money/FreeHub v2.7 — by Money/FreeHub Owner"})
+UtilityTab:CreateParagraph({Title="Credits", Content="Money/FreeHub v2.7.1 — by Money/FreeHub Owner"})
 UtilityTab:CreateParagraph({Title="Status", Content = JoltReliable and "Combat remotes linked." or "Combat remotes NOT found — rejoin and retry."})
 UtilityTab:CreateParagraph({Title="Best combo", Content="Kill Aura + M1 Hitbox (size 100+) + Hitbox Ability (E bursts it 3x). Set Safe Spawn near tree before Anti Void."})
 
-Rayfield:Notify({Title="Money/FreeHub v2.7", Content="Loaded — by Money/FreeHub Owner", Duration=6})
+Rayfield:Notify({Title="Money/FreeHub v2.7.1", Content="Loaded — by Money/FreeHub Owner", Duration=6})
