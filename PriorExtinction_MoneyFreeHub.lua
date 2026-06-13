@@ -353,10 +353,20 @@ local function installHook()
 						end
 						-- INF Stam: DO NOT swallow the Sprint action (that STOPPED you sprinting = the "slow" bug). Let sprint
 						-- run normally; we just block the stamina DRAIN report below so it never drops while you sprint.
-						-- SWALLOW the client's stamina-drop report (SetProperty Stamina/Stam/Energy <number>) so the server
-						-- never learns it dropped = stays full = sprint forever, M2 forever, no drain.
+						-- REWRITE stamina SetProperty to max so the server always sees a full bar.
+						-- Previously this swallowed the call entirely, which also blocked our own
+						-- refill fires at line ~1615 → server never got told stam was full = no drain fix.
 						if CFG.InfStam and action=="SetProperty" and typeof(a[3])=="string" then local lp=a[3]:lower()
-								if lp:find("stam",1,true) or lp=="energy" or lp=="endurance" or lp:find("endur",1,true) then return end
+							if lp:find("stam",1,true) or lp=="energy" or lp=="endurance" or lp:find("endur",1,true) then
+								if typeof(a[4])=="number" then
+									-- track the highest seen value per property name (= the real max when bar is full)
+									__gg.MH_max = __gg.MH_max or {}
+									local pk = a[3]
+									if a[4] > 0 and (not __gg.MH_max[pk] or a[4] > __gg.MH_max[pk]) then __gg.MH_max[pk] = a[4] end
+									a[4] = __gg.MH_max[pk] or 100   -- rewrite the drop to the tracked max
+								end
+								return oldNC(self, table.unpack(a, 1, a.n))   -- fire with max value (not swallowed)
+							end
 						end
 						-- ANTI-INJURY (report-block): injuries replicate the same way stamina does — the CLIENT reports
 						-- them to the server. While your antis are on, we SWALLOW any report that would tell the server
@@ -1612,7 +1622,13 @@ task.spawn(function() while RUNNING do
 		local mx
 		pcall(function() local _,maxs=csStats(); if maxs then mx=maxs.Stamina or maxs.Stam or maxs.Energy end end)
 		mx = mx or (__gg.MH_max and (__gg.MH_max.Stamina or __gg.MH_max.Stam or __gg.MH_max.Energy)) or 100
-		pcall(function() replicaFire("SetProperty","Stamina", mx) end)
+		-- Fire every known stamina key so we hit whichever property name the server actually tracks.
+		-- The hook rewrites any incoming SetProperty-stam to tracked-max before firing through, so
+		-- these calls also get rewritten — meaning the server always hears "stamina = full" on each key.
+		for _,k in ipairs({"Stamina","Stam","Energy","Endurance"}) do
+			local v = (__gg.MH_max and __gg.MH_max[k]) or mx
+			pcall(function() replicaFire("SetProperty", k, v) end)
+		end
 		task.wait(0.35)
 	else task.wait(0.4) end
 end end)
@@ -2172,6 +2188,33 @@ local function gatherNodes(kind, range)
 			elseif child:IsA("BasePart") then scanned+=1; local d=dist(me.Position, child.Position); if d<=range then out[#out+1]={child, child, d} end end
 		end
 		if #out>=150 or scanned>=1500 then break end
+	end
+	-- FALLBACK: if the named-folder scan found nothing, walk workspace descendants for ProximityPrompts
+	-- whose ActionText/Name/parent-chain suggests the right resource kind. Handles non-standard folder
+	-- layouts without scanning the whole workspace on every successful pass (early-exit when #out>0).
+	if #out == 0 then
+		local kw = (kind=="fossil") and {"fossil","excavat","bone","dig"}
+		                             or {"gem","mineral","crystal","topaz","quartz","ruby","emerald","amethyst","harvest","collect"}
+		local function hasKW(s) if not s then return false end; s=s:lower(); for _,k in ipairs(kw) do if s:find(k,1,true) then return true end end; return false end
+		local sc2=0
+		for _,d in ipairs(WS:GetDescendants()) do
+			sc2+=1; if sc2>3000 or #out>=150 then break end
+			if d:IsA("ProximityPrompt") then
+				local hit=hasKW(d.ActionText) or hasKW(d.Name)
+				if not hit then
+					local p=d.Parent
+					for _=1,3 do if p then if hasKW(p.Name) then hit=true; break end; p=p.Parent end end
+				end
+				if hit then
+					local part=d.Parent
+					if part and part:IsA("BasePart") then
+						local holder=part.Parent or part
+						local dd=dist(me.Position,part.Position)
+						if dd<=range then out[#out+1]={holder,part,dd} end
+					end
+				end
+			end
+		end
 	end
 	table.sort(out,function(a,b) return a[3]<b[3] end)
 	return out
