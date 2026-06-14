@@ -43,7 +43,7 @@ end
 -- ═══ CONFIG ═══ (all features START OFF below so executing can never freeze you)
 local CFG = {
 	Aimbot=false, SilentAim=false, AimPart="Head", AimKey="C", AimSmooth=0.4, LockOn=false,
-	HitboxExpand=false, HitboxSize=35, HitboxVisible=false, HitboxColor={r=255,g=40,b=60}, HitboxColorName="Red", HitboxBone="All",
+	HitboxExpand=true, HitboxSize=35, HitboxVisible=true, HitboxColor={r=255,g=40,b=60}, HitboxColorName="Red", HitboxBone="All",
 	BoneProtect=false, ProtectBone="All",
 	TurnHack=false, TurnSpeed=30,
 	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=30, Noclip=false, Invis=false,
@@ -93,7 +93,7 @@ if not (tonumber(CFG.FarmReach) and CFG.FarmReach>=30 and CFG.FarmReach<=120) th
 -- lag (no scan/remote loop runs until YOU enable a feature). Your keybinds / sliders / colours / UI scale
 -- still persist — only the boolean feature toggles (incl. protections) are forced off here.
 for _,key in ipairs({
-	"Aimbot","SilentAim","LockOn","HitboxExpand","HitboxVisible","BoneProtect","TurnHack","Fly","SpeedHack","Noclip","InfJump",
+	"Aimbot","SilentAim","LockOn","BoneProtect","TurnHack","Fly","SpeedHack","Noclip","InfJump",
 	"InfFood","InfWater","InfStam","InfOxygen","SaveDino","AutoFarmPlayer","AutoFarmFossil","AutoFarmGem",
 	"ESPPlayers","ESPCorpses","FoodESP","FishESP","GemESP","FullBright","NightVision","NoDarkWater","WaterClear","NoClouds","AlwaysDamage","NoGrabLimit",
 	"Float","GodMode","InfLight","UnlockFOV","InfZoom","AntiDrown","WalkWater","AutoClean","AntiFracture","AntiBleed","AntiFall","Invis",
