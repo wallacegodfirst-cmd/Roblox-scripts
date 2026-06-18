@@ -13,9 +13,10 @@ local function getChar() return LP.Character end
 local function getHum()  local c=getChar(); return c and c:FindFirstChildOfClass("Humanoid") end
 local function getHRP()  local c=getChar(); return c and c:FindFirstChild("HumanoidRootPart") end
 
-local fireprompt = (typeof(fireproximityprompt)=="function") and fireproximityprompt or function() end
-local fireclick  = (typeof(fireclickdetector)=="function")  and fireclickdetector  or function() end
-local sethidden  = (typeof(sethiddenproperty)=="function") and sethiddenproperty or nil
+local fireprompt  = (typeof(fireproximityprompt)=="function") and fireproximityprompt or function() end
+local fireclick   = (typeof(fireclickdetector)=="function")  and fireclickdetector  or function() end
+local sethidden   = (typeof(sethiddenproperty)=="function") and sethiddenproperty or nil
+local firetouchif = (typeof(firetouchinterest)=="function") and firetouchinterest or nil
 
 -- ── NETWORK OWNERSHIP (FE physics) ───────────────────────────
 -- Maxing the local player's simulation radius makes the server grant us network
@@ -23,12 +24,17 @@ local sethidden  = (typeof(sethiddenproperty)=="function") and sethiddenproperty
 -- positions REPLICATE to the server and to every other player. This is what makes
 -- Float Weapons visible to everyone, not just on our own screen.
 local function claimOwnership()
+    -- Max SimulationRadius via sethiddenproperty (executor-specific hidden property)
     if sethidden then
         pcall(sethidden, LP, "SimulationRadius", math.huge)
         pcall(sethidden, LP, "MaximumSimulationRadius", math.huge)
     end
     pcall(function() LP.SimulationRadius = math.huge end)
     pcall(function() LP.MaximumSimulationRadius = math.huge end)
+    -- ReplicationFocus: tells the server to center physics replication around us,
+    -- which ensures our nearby part movements are sent to every other client.
+    local hrp = getHRP()
+    if hrp then pcall(function() WS.ReplicationFocus = hrp end) end
 end
 
 -- Out-of-map TP position (far outside map boundary, causes fall death)
@@ -577,56 +583,85 @@ local function doFloatWeapons(dt)
 end
 
 -- ── GUN KILL ─────────────────────────────────────────────────
--- While Float Weapons is spinning, radiates damage to every humanoid within
--- (floatRadius + gunKillRadius) studs. No teleport — pure proximity damage.
--- Players receive moderate repeated damage; zombies/NPCs are one-shot.
+-- While Float Weapons spins, hits everything in orbit range.
+--
+-- FE DAMAGE STRATEGY (TakeDamage does NOT replicate client→server in FE):
+--   • firetouchinterest(orbitPart, targetPart, 0) — simulates the orbiting weapon
+--     physically TOUCHING the target; if the game's weapon/damage scripts listen to
+--     Touched events they will fire on the server and deal real damage.
+--   • killOneZombie for NPCs — BreakJoints + disable scripts + zero health values.
+--   • Velocity fling for players — launches them with an outward impulse; fall/void
+--     damage is server-authoritative and always works.
+--   • FireServer on any damage RemoteEvent found in ReplicatedStorage (broad sweep).
 local function doGunKill()
     if not S.floatWeapons then return end
     local hrp = getHRP(); if not hrp then return end
-    local pos      = hrp.Position
+    local pos       = hrp.Position
     local killRange = S.floatRadius + S.gunKillRadius
 
-    -- Players in range
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr == LP then continue end
-        local char = plr.Character; if not char then continue end
-        local phrp = char:FindFirstChild("HumanoidRootPart"); if not phrp then continue end
-        if (pos - phrp.Position).Magnitude <= killRange then
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            if hum and hum.Health > 0 then
-                pcall(function() hum:TakeDamage(30) end)
-            end
-        end
+    -- snapshot the current orbiting parts so firetouchinterest has real parts to use
+    local orbitParts = {}
+    for p in pairs(floatParts) do
+        if p and p.Parent then orbitParts[#orbitParts+1] = p end
     end
 
-    -- Zombies folder
-    local zombieFolder = WS:FindFirstChild("Zombies")
-    if zombieFolder then
-        for _, zombie in ipairs(zombieFolder:GetChildren()) do
-            local zhrp = zombie:FindFirstChild("HumanoidRootPart")
-                or zombie:FindFirstChildWhichIsA("BasePart")
-            if not zhrp then continue end
-            if (pos - zhrp.Position).Magnitude <= killRange then
-                local hum = zombie:FindFirstChildOfClass("Humanoid")
-                if hum and hum.Health > 0 then
-                    pcall(function() hum:TakeDamage(hum.MaxHealth + 1e9) end)
-                    pcall(function() hum.Health = 0 end)
+    -- ── helper: simulate weapon touch on every BasePart of a target ──────────
+    local function touchTarget(targetModel)
+        if not firetouchif or #orbitParts == 0 then return end
+        for _, d in ipairs(targetModel:GetDescendants()) do
+            if d:IsA("BasePart") then
+                for _, op in ipairs(orbitParts) do
+                    pcall(function() firetouchif(op, d, 0) end)
                 end
             end
         end
     end
 
-    -- WS-level NPCs/Ghosts/other characters
-    for _, child in ipairs(WS:GetChildren()) do
-        if Players:GetPlayerFromCharacter(child) then continue end
-        if SYS[child.Name] then continue end
-        local hum = child:FindFirstChildOfClass("Humanoid")
-        if hum and hum.Health > 0 then
+    -- ── Players ───────────────────────────────────────────────────────────────
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr == LP then continue end
+        local char = plr.Character; if not char then continue end
+        local phrp = char:FindFirstChild("HumanoidRootPart"); if not phrp then continue end
+        if (pos - phrp.Position).Magnitude > killRange then continue end
+        local hum = char:FindFirstChildOfClass("Humanoid"); if not hum or hum.Health <= 0 then continue end
+        -- (1) firetouchinterest: game's Touched-based damage fires server-side
+        touchTarget(char)
+        -- (2) TakeDamage attempt (works in non-strict FE or if game allows it)
+        pcall(function() hum:TakeDamage(30) end)
+        -- (3) Velocity fling: outward impulse → fall / out-of-bounds kills server-side
+        pcall(function()
+            local dir = (phrp.Position - pos)
+            local unit = dir.Magnitude > 0 and dir.Unit or Vector3.new(0,1,0)
+            phrp.AssemblyLinearVelocity = unit * 90 + Vector3.new(0, 55, 0)
+        end)
+    end
+
+    -- ── NPCs / Zombies helper ────────────────────────────────────────────────
+    local function killNPCsIn(container)
+        for _, child in ipairs(container:GetChildren()) do
+            if Players:GetPlayerFromCharacter(child) then continue end
             local root = child:FindFirstChild("HumanoidRootPart")
                 or child:FindFirstChildWhichIsA("BasePart")
-            if root and (pos - root.Position).Magnitude <= killRange then
-                pcall(function() hum:TakeDamage(hum.MaxHealth + 1e9) end)
-                pcall(function() hum.Health = 0 end)
+            if not root then continue end
+            if (pos - root.Position).Magnitude > killRange then continue end
+            -- full kill: BreakJoints + disable scripts + zero health values
+            pcall(killOneZombie, child)
+            -- also simulate weapon touch in case game uses Touched for damage
+            touchTarget(child)
+        end
+    end
+
+    local zombieFolder = WS:FindFirstChild("Zombies")
+    if zombieFolder then killNPCsIn(zombieFolder) end
+    killNPCsIn(WS)   -- catches NPCs spawned outside the Zombies folder
+
+    -- ── Broad RemoteEvent sweep in ReplicatedStorage ─────────────────────────
+    local ok, rs = pcall(function() return game:GetService("ReplicatedStorage") end)
+    if ok and rs then
+        for _, child in ipairs(rs:GetDescendants()) do
+            local nm = child.Name:lower()
+            if child:IsA("RemoteEvent") and (nm:find("damage") or nm:find("hit") or nm:find("attack") or nm:find("kill")) then
+                pcall(function() child:FireServer() end)
             end
         end
     end
