@@ -639,15 +639,18 @@ local function killOneZombie(zombie)
         or (zHum and zHum.RootPart)
         or zombie:FindFirstChildWhichIsA("BasePart")
 
-    -- (A1) cheap local TakeDamage (only works in non-strict FE, but free to try)
+    -- (A1) local TakeDamage — only works in non-strict FE, but free to try
     if zHum then pcall(function() zHum:TakeDamage(zHum.MaxHealth + 1e9) end) end
 
-    -- (A2) fire damage remotes — the real, replicating kill path. A few arg shapes
-    --      because we don't know the handler's expected signature.
+    -- (A2) fire the zombie's own internal damage events with several arg shapes
     local function fireDmg(ev)
+        pcall(function() ev:FireServer() end)
         pcall(function() ev:FireServer(zHum) end)
         pcall(function() ev:FireServer(zHum, math.huge) end)
         pcall(function() ev:FireServer(zombie) end)
+        pcall(function() ev:FireServer(zRoot) end)
+        pcall(function() ev:FireServer(LP) end)
+        pcall(function() ev:FireServer(LP.Character) end)
     end
     for _, d in ipairs(zombie:GetDescendants()) do
         local nm = d.Name:lower()
@@ -655,32 +658,56 @@ local function killOneZombie(zombie)
             fireDmg(d)
         elseif d:IsA("BindableEvent") and (nm:find("damage") or nm:find("hit") or nm:find("kill") or nm:find("die")) then
             pcall(function() d:Fire(zHum, math.huge) end)
+            pcall(function() d:Fire() end)
         end
     end
+    -- fire cached ReplicatedStorage combat remotes
     for _, ev in ipairs(getCombatRemotes()) do fireDmg(ev) end
 
-    -- (B) firetouchinterest: make our character (and any equipped weapon Tool) "touch"
-    --     the zombie so the game's own touch-based combat fires on the SERVER.
-    if firetouchif and zRoot then
+    -- (B) firetouchinterest — BOTH directions because the game may listen on either end:
+    --   • firetouchif(zombiePart, charPart, 0) → fires zombiePart.Touched with charPart as toucher
+    --     (handles ZombieScripts that detect being hit by a character/weapon)
+    --   • firetouchif(charPart, zombiePart, 0) → fires charPart.Touched with zombiePart as toucher
+    --     (handles weapon scripts that deal damage when touching an enemy)
+    if firetouchif then
         local char = LP.Character
+        -- collect our character's parts: HRP + any equipped weapon parts
+        local charParts = {}
         if char then
-            local touchers = {}
-            local myRoot = char:FindFirstChild("HumanoidRootPart")
-            if myRoot then touchers[#touchers+1] = myRoot end
+            local myHRP = char:FindFirstChild("HumanoidRootPart")
+            if myHRP then charParts[#charParts+1] = myHRP end
             local tool = char:FindFirstChildOfClass("Tool")
             if tool then
                 for _, tp in ipairs(tool:GetDescendants()) do
-                    if tp:IsA("BasePart") then touchers[#touchers+1] = tp end
+                    if tp:IsA("BasePart") then charParts[#charParts+1] = tp end
                 end
             end
-            for _, tp in ipairs(touchers) do
-                pcall(function() firetouchif(tp, zRoot, 0) end)
-                pcall(function() firetouchif(tp, zRoot, 1) end)
+            -- also add other limb parts so touch-based damage covering "any body part" fires
+            for _, bp in ipairs(char:GetChildren()) do
+                if bp:IsA("BasePart") and bp.Name ~= "HumanoidRootPart" then
+                    charParts[#charParts+1] = bp
+                    if #charParts >= 6 then break end
+                end
+            end
+        end
+        -- collect zombie's BaseParts (cap at 4)
+        local zombieParts = {}
+        if zRoot then zombieParts[1] = zRoot end
+        for _, d in ipairs(zombie:GetDescendants()) do
+            if d:IsA("BasePart") and #zombieParts < 4 then
+                zombieParts[#zombieParts+1] = d
+            end
+        end
+        -- fire every combination, both directions
+        for _, cp in ipairs(charParts) do
+            for _, zp in ipairs(zombieParts) do
+                pcall(function() firetouchif(zp, cp, 0) end)  -- zombie detects us
+                pcall(function() firetouchif(cp, zp, 0) end)  -- we detect zombie
             end
         end
     end
 
-    -- zero any health Value/Attribute (only matters if the game reads them; harmless)
+    -- zero health values (harmless if FE; effective if game reads them)
     for _, d in ipairs(zombie:GetDescendants()) do
         local nm = d.Name:lower()
         if (d:IsA("NumberValue") or d:IsA("IntValue")) and nm:find("health") then
@@ -842,35 +869,86 @@ local function doAutoRevive()
 end
 
 -- ── AUTO GRAB ────────────────────────────────────────────────
--- For Tools: force into Backpack directly.
--- For non-Tools: fire prompt from current position with huge MaxActivationDistance
--- (do NOT move the item — server validates against the item's server-side position,
---  so moving it client-side breaks the server's range check).
+-- fireproximityprompt bypasses the CLIENT-side distance check, but the server
+-- still validates the player's actual CFrame before processing the pickup.
+-- Fix: briefly safeTP within 5 studs of each item so the server sees us close
+-- enough, fire the pickup, then hop back. For Tools we also try direct
+-- backpack parent as a cheap fast-path.
+local autoGrabRunning = false
+
 local function doAutoGrab()
-    local hrp = getHRP(); if not hrp then return end
-    for _, child in ipairs(WS:GetChildren()) do
-        if not isItem(child) then continue end
-        local root = itemRoot(child); if not root then continue end
-        if (hrp.Position-root.Position).Magnitude > S.grabRadius then continue end
-        if child:IsA("Tool") then
-            pcall(function() child.Parent=LP.Backpack end)
-        else
-            -- Fire prompts and clicks from distance; server accepts because MaxActivationDistance=1000
-            for _, d in ipairs(child:GetDescendants()) do
-                if d:IsA("ProximityPrompt") then
-                    pcall(function()
-                        d.Enabled=true; d.MaxActivationDistance=1000
-                        d.HoldDuration=0; d.RequiresLineOfSight=false
-                    end)
-                    pcall(fireprompt, d); pcall(fireprompt, d, 0)
+    if autoGrabRunning then return end
+    autoGrabRunning = true
+    local ok = pcall(function()
+        local hrp = getHRP(); if not hrp then return end
+        local myPos  = hrp.Position
+        local origCF = hrp.CFrame
+        local moved  = false
+
+        for _, child in ipairs(WS:GetChildren()) do
+            if not S.autoGrab then break end
+            if not isItem(child) then continue end
+            local root = itemRoot(child); if not root then continue end
+            local dist = (myPos - root.Position).Magnitude
+            if dist > S.grabRadius then continue end
+
+            -- fast-path for Tools
+            if child:IsA("Tool") then
+                pcall(function() child.Parent = LP.Backpack end)
+            end
+
+            -- hop close if we're more than 5 studs away so the server accepts the prompt
+            if dist > 5 then
+                local target = CFrame.new(root.Position + Vector3.new(0, 3, 0))
+                safeTP(target)
+                moved = true
+                task.wait(0.08)
+            end
+
+            -- fire all pickup interactions on the item and its descendants
+            local function tryInteract(obj)
+                for _, d in ipairs(obj:GetDescendants()) do
+                    if d:IsA("ProximityPrompt") then
+                        pcall(function() d.Enabled=true; d.MaxActivationDistance=9999; d.HoldDuration=0; d.RequiresLineOfSight=false end)
+                        pcall(fireprompt, d); pcall(fireprompt, d, 0)
+                    end
+                    if d:IsA("ClickDetector") then
+                        pcall(function() d.MaxActivationDistance=9999 end)
+                        pcall(fireclick, d)
+                    end
                 end
-                if d:IsA("ClickDetector") then
-                    pcall(function() d.MaxActivationDistance=1000 end)
-                    pcall(fireclick, d)
+                -- also check top-level directly on the root
+                local pp = obj:FindFirstChildOfClass("ProximityPrompt")
+                if pp then
+                    pcall(function() pp.Enabled=true; pp.MaxActivationDistance=9999; pp.HoldDuration=0 end)
+                    pcall(fireprompt, pp); pcall(fireprompt, pp, 0)
+                end
+                local cd = obj:FindFirstChildOfClass("ClickDetector")
+                if cd then
+                    pcall(function() cd.MaxActivationDistance=9999 end)
+                    pcall(fireclick, cd)
                 end
             end
+            tryInteract(child)
+
+            -- firetouchinterest as last resort
+            if firetouchif then
+                local h2 = getHRP()
+                if h2 then pcall(function() firetouchif(h2, root, 0) end) end
+            end
+
+            task.wait(0.06)
         end
-    end
+
+        -- hop back to where we were before grabbing
+        if moved then
+            local h2 = getHRP()
+            if h2 and (h2.Position - myPos).Magnitude > 3 then
+                safeTP(origCF)
+            end
+        end
+    end)
+    autoGrabRunning = false
 end
 
 -- ── AUTO ITEM (TP to each item → pick up → TP back) ─────────
@@ -954,6 +1032,7 @@ local function doAutoCarry()
 end
 
 local carryKillRunning = false
+local carryKillSavedCF = nil   -- module-level so toggle-off callback can TP back immediately
 
 local function doCarryKill()
     if carryKillRunning then return end
@@ -963,7 +1042,7 @@ local function doCarryKill()
     local hrp = getHRP()
     if not hrp then carryKillRunning=false; return end
 
-    -- Step 1: TP near target and carry them (Q) — safeTP avoids the kick
+    -- Step 1: TP near target and carry them (Q)
     if root then
         safeTP(CFrame.new(root.Position+Vector3.new(0,2,1.5)))
         task.wait(0.15)
@@ -976,18 +1055,23 @@ local function doCarryKill()
         end
     end
 
-    -- Step 2: Wait for carry to register server-side
+    -- Step 2: Wait for carry to register
     task.wait(0.7)
 
-    -- Step 3: Save position and hop out of the map (they come with us)
-    local savedCF = getHRP() and getHRP().CFrame
+    -- Step 3: Save pre-void position (module-level so toggle-off can use it)
+    carryKillSavedCF = getHRP() and getHRP().CFrame
     safeTP(CFrame.new(OUTOFMAP))
 
-    -- Step 4: Wait for target to die from fall / out-of-bounds
-    task.wait(3.5)
+    -- Step 4: Wait for target death, aborting early if the toggle is turned off
+    for _ = 1, 35 do
+        task.wait(0.1)
+        if not S.carryKill then break end   -- user turned it off mid-run → abort
+    end
 
-    -- Step 5: hop back
-    if savedCF then safeTP(savedCF) end
+    -- Step 5: TP back
+    local returnCF = carryKillSavedCF
+    carryKillSavedCF = nil
+    if returnCF then safeTP(returnCF) end
     task.wait(0.5)
     carryKillRunning = false
 end
@@ -1391,7 +1475,7 @@ LOOPS.stepped = RunService.Stepped:Connect(function(_, dt)
 
     if grabTimer >= 0.12 then
         grabTimer = 0
-        if S.autoGrab  then doAutoGrab() end
+        if S.autoGrab  then task.spawn(doAutoGrab) end
         if S.killAura  then doKillAura() end
         if S.autoAttack then
             local _, tHRP = findNearest(S.killAuraRadius*2)
@@ -1430,7 +1514,7 @@ LOOPS.stepped = RunService.Stepped:Connect(function(_, dt)
         if S.stayKingCircle  then doStayKingCircle() end
         if S.alwaysGetButton then doAlwaysGetButton() end
         if S.autoRevive or S.autoFarm then doAutoRevive() end
-        if S.autoFarm        then doAutoGrab() end
+        if S.autoFarm        then task.spawn(doAutoGrab) end
         if S.autoCarry       then doAutoCarry() end
         if S.carryKill       then doCarryKill() end
         -- Minefield Rescue: when Auto Farm is ON and we're inside the minefield,
@@ -1781,7 +1865,28 @@ TabAuto:CreateToggle({
 })
 TabAuto:CreateToggle({
     Name="Carry Kill (Outside Map)", CurrentValue=false, Flag="carryKill",
-    Callback=function(v) S.carryKill=v end,
+    Callback=function(v)
+        S.carryKill=v
+        if not v then
+            -- If we're currently at the void, TP back immediately
+            task.spawn(function()
+                local cf = carryKillSavedCF
+                if cf then
+                    carryKillSavedCF = nil
+                    safeTP(cf)
+                else
+                    -- Safety fallback: TP to ButtonZone if savedCF not set
+                    local mm = WS:FindFirstChild("Map") and WS.Map:FindFirstChild("MapModels")
+                    local bz = mm and mm:FindFirstChild("ButtonZone")
+                    if bz then
+                        local pos = bz:IsA("BasePart") and bz.Position
+                            or (bz:FindFirstChildWhichIsA("BasePart") and bz:FindFirstChildWhichIsA("BasePart").Position)
+                        if pos then safeTP(CFrame.new(pos + Vector3.new(0, 5, 0))) end
+                    end
+                end
+            end)
+        end
+    end,
 })
 TabAuto:CreateToggle({
     Name="Auto Farm (Revive + Grab)", CurrentValue=false, Flag="autoFarm",
@@ -1827,4 +1932,22 @@ TabInfo:CreateParagraph({
 task.wait(1)
 connectNoStun()
 if S.godMode then setupGodMode() end
+
+-- Zombie spawn watcher: kills each zombie the moment it appears in workspace.Zombies
+-- instead of only checking on a 0.2s poll. Works retroactively for zombies already
+-- present at script load (existing zombies are caught by doAutoKillZombies polling).
+task.spawn(function()
+    local t0 = tick()
+    local zf
+    while not zf and tick()-t0 < 60 do
+        zf = WS:FindFirstChild("Zombies")
+        if not zf then task.wait(1) end
+    end
+    if not zf then return end
+    zf.ChildAdded:Connect(function(zombie)
+        task.wait(0.25)   -- let the zombie's Humanoid and ZombieScript fully initialize
+        if S.autoKillZombies then pcall(killOneZombie, zombie) end
+    end)
+end)
+
 Rayfield:LoadConfiguration()
