@@ -19,6 +19,39 @@ local fireclick  = (typeof(fireclickdetector)=="function")  and fireclickdetecto
 -- Out-of-map TP position (far outside map boundary, causes fall death)
 local OUTOFMAP = Vector3.new(9999, 200, 9999)
 
+-- ── SAFE TELEPORT (anti-kick) ────────────────────────────────
+-- Many anti-cheats kick on a single large position jump per frame ("teleport"
+-- detection) or on high velocity ("fling" detection). safeTP moves in small
+-- hops (<= MAX_HOP studs) across consecutive frames so no single step looks
+-- suspicious, and zeroes velocity each hop so it never reads as a fling.
+local MAX_HOP = 90
+local function safeTP(targetCF)
+    local hrp = getHRP(); if not hrp then return end
+    local goal = targetCF.Position
+    local rot  = targetCF - targetCF.Position   -- rotation-only component
+    while true do
+        local h = getHRP(); if not h then return end
+        local cur  = h.Position
+        local diff = goal - cur
+        local dist = diff.Magnitude
+        if dist <= MAX_HOP then
+            pcall(function()
+                h.CFrame = CFrame.new(goal) * rot
+                h.AssemblyLinearVelocity  = Vector3.zero
+                h.AssemblyAngularVelocity = Vector3.zero
+            end)
+            return
+        end
+        local step = cur + diff.Unit * MAX_HOP
+        pcall(function()
+            h.CFrame = CFrame.new(step)
+            h.AssemblyLinearVelocity  = Vector3.zero
+            h.AssemblyAngularVelocity = Vector3.zero
+        end)
+        RunService.Heartbeat:Wait()
+    end
+end
+
 -- ── STATE ────────────────────────────────────────────────────
 local S = {
     playerESP      = false,
@@ -31,6 +64,7 @@ local S = {
     autoSprint     = false,
     invis          = false,
     antiPush       = false,
+    antiKick       = true,
 
     godMode        = false,
     infStam        = false,
@@ -310,18 +344,29 @@ local function doKillAura()
 end
 
 -- ── FLING ────────────────────────────────────────────────────
+-- WARNING: flinging sets another character's velocity, which is exactly what the
+-- game's "Fling detected" anti-cheat looks for. We keep the magnitude moderate and
+-- apply it as a short series of pushes rather than one massive spike, which is far
+-- less likely to trip detection than the old 3000-velocity slam.
 local function doFling()
     local _, targetHRP = findNearest(200)
-    if targetHRP then
+    if not targetHRP then return end
+    for _ = 1, 4 do
+        local h = getHRP()
+        local t = targetHRP
+        if not t or not t.Parent then break end
         pcall(function()
-            targetHRP.AssemblyLinearVelocity = Vector3.new(
-                math.random(-800,800), 3000, math.random(-800,800)
+            t.AssemblyLinearVelocity = Vector3.new(
+                math.random(-120,120), 180, math.random(-120,120)
             )
         end)
+        RunService.Heartbeat:Wait()
     end
 end
 
 -- ── AUTO KILL ZOMBIES ────────────────────────────────────────
+-- Avoids the old high-velocity launch (-9999) which read as a fling and got the
+-- player kicked. Uses health/state methods + anchoring the zombie in place instead.
 local function doAutoKillZombies()
     local zombieFolder = WS:FindFirstChild("Zombies"); if not zombieFolder then return end
     for _, zombie in ipairs(zombieFolder:GetChildren()) do
@@ -329,17 +374,12 @@ local function doAutoKillZombies()
         local zHum = zombie:FindFirstChildOfClass("Humanoid")
         local zHRP = zombie:FindFirstChild("HumanoidRootPart")
         if not zHum or not zHRP or zHum.Health<=0 then continue end
-        -- Launch zombie far out-of-bounds so the game's void/boundary kills it
-        pcall(function()
-            zHRP.CFrame = CFrame.new(9999, 3000, 9999)
-            zHRP.AssemblyLinearVelocity = Vector3.new(0, -9999, 0)
-        end)
-        -- Attempt every client-side kill method
+        -- Client-side kill methods (no velocity spike, no fling)
         pcall(function() zHum.Health = 0 end)
         pcall(function() zHum:TakeDamage(zHum.MaxHealth) end)
         pcall(function() zHum:ChangeState(Enum.HumanoidStateType.Dead) end)
         pcall(function() zombie:BreakJoints() end)
-        -- Anchor so it cannot walk back even if still alive
+        -- Anchor in place so it cannot chase even if the server keeps it alive
         pcall(function() zHRP.Anchored = true end)
     end
 end
@@ -365,7 +405,7 @@ local function doAutoRevive()
     local hrp = getHRP(); if not hrp then return end
     for _, d in ipairs(downed:GetChildren()) do
         local dRoot = d:FindFirstChildWhichIsA("BasePart"); if not dRoot then continue end
-        pcall(function() hrp.CFrame=CFrame.new(dRoot.Position+Vector3.new(0,2,2)) end)
+        safeTP(CFrame.new(dRoot.Position+Vector3.new(0,2,2)))
         task.wait(0.08)
         for _, pp in ipairs(d:GetDescendants()) do
             if pp:IsA("ProximityPrompt") then
@@ -437,7 +477,7 @@ local function doAutoItemCycle()
         if not S.autoItem or not item.Parent then continue end
         local root = itemRoot(item); if not root then continue end
         local hrp2 = getHRP(); if not hrp2 then break end
-        pcall(function() hrp2.CFrame=CFrame.new(root.Position+Vector3.new(0,3,0)) end)
+        safeTP(CFrame.new(root.Position+Vector3.new(0,3,0)))
         task.wait(0.35)
         if item:IsA("Tool") then pcall(function() item.Parent=LP.Backpack end) end
         for _, d in ipairs(item:GetDescendants()) do
@@ -490,7 +530,7 @@ local function doAutoCarry()
     local target, root = findCarryTarget(); if not target or not root then return end
     local hrp = getHRP(); if not hrp then return end
     -- TP very close (within 2 studs)
-    pcall(function() hrp.CFrame=CFrame.new(root.Position+Vector3.new(0,2,1.5)) end)
+    safeTP(CFrame.new(root.Position+Vector3.new(0,2,1.5)))
     task.wait(0.08)
     local pp = findCarryPrompt(target)
     if pp then
@@ -509,9 +549,9 @@ local function doCarryKill()
     local hrp = getHRP()
     if not hrp then carryKillRunning=false; return end
 
-    -- Step 1: TP near target and carry them (Q)
+    -- Step 1: TP near target and carry them (Q) — safeTP avoids the kick
     if root then
-        pcall(function() hrp.CFrame=CFrame.new(root.Position+Vector3.new(0,2,1.5)) end)
+        safeTP(CFrame.new(root.Position+Vector3.new(0,2,1.5)))
         task.wait(0.15)
     end
     if target then
@@ -525,17 +565,15 @@ local function doCarryKill()
     -- Step 2: Wait for carry to register server-side
     task.wait(0.7)
 
-    -- Step 3: Save position and TP outside the map (they come with us)
+    -- Step 3: Save position and hop out of the map (they come with us)
     local savedCF = getHRP() and getHRP().CFrame
-    pcall(function() local h=getHRP(); if h then h.CFrame=CFrame.new(OUTOFMAP) end end)
+    safeTP(CFrame.new(OUTOFMAP))
 
     -- Step 4: Wait for target to die from fall / out-of-bounds
     task.wait(3.5)
 
-    -- Step 5: TP back
-    if savedCF then
-        pcall(function() local h=getHRP(); if h then h.CFrame=savedCF end end)
-    end
+    -- Step 5: hop back
+    if savedCF then safeTP(savedCF) end
     task.wait(0.5)
     carryKillRunning = false
 end
@@ -566,7 +604,7 @@ local function doStayKingCircle()
     local hrp = getHRP(); if not hrp then return end
     local bpos = bz:IsA("BasePart") and bz.Position
         or (bz:FindFirstChildWhichIsA("BasePart") and bz:FindFirstChildWhichIsA("BasePart").Position)
-    if bpos then pcall(function() hrp.CFrame=CFrame.new(bpos+Vector3.new(0,3,0)) end) end
+    if bpos then safeTP(CFrame.new(bpos+Vector3.new(0,3,0))) end
 end
 
 -- ── ANTI CARRY ───────────────────────────────────────────────
@@ -737,6 +775,26 @@ LOOPS.heartbeat = RunService.Heartbeat:Connect(function()
         if hum and hum.WalkSpeed<exp then pcall(function() hum.WalkSpeed=exp end) end
     end
     if S.antiPush  then doAntiPush() end
+    -- Anti Kick: clamp our own velocity so a fling (by others, or a physics spike
+    -- after a teleport) never reaches the magnitude the anti-cheat kicks for.
+    if S.antiKick then
+        local hrp = getHRP()
+        if hrp then
+            pcall(function()
+                local v = hrp.AssemblyLinearVelocity
+                local ny = v.Y
+                if ny > 90 then ny = 90 end          -- cap upward launch (above a jump)
+                local horiz = Vector3.new(v.X, 0, v.Z)
+                local hcap = math.max(S.speed + 80, 160)
+                if horiz.Magnitude > hcap then
+                    local c = horiz.Unit * hcap
+                    hrp.AssemblyLinearVelocity = Vector3.new(c.X, ny, c.Z)
+                elseif ny ~= v.Y then
+                    hrp.AssemblyLinearVelocity = Vector3.new(v.X, ny, v.Z)
+                end
+            end)
+        end
+    end
     if S.noDark    then applyNoDark(true) end
     if S.hitboxExp then doHitboxExpander() end
     -- NoClip: keep all character parts non-collidable every frame
@@ -772,8 +830,7 @@ LOOPS.stepped = RunService.Stepped:Connect(function(_, dt)
         if S.autoAttack then
             local _, tHRP = findNearest(S.killAuraRadius*2)
             if tHRP then
-                local hrp = getHRP()
-                if hrp then pcall(function() hrp.CFrame=CFrame.new(tHRP.Position+Vector3.new(0,2,3)) end) end
+                if getHRP() then safeTP(CFrame.new(tHRP.Position+Vector3.new(0,2,3))) end
                 local tHum = tHRP.Parent and tHRP.Parent:FindFirstChildOfClass("Humanoid")
                 if tHum then pcall(function() tHum:TakeDamage(1e9) end) end
             end
@@ -962,6 +1019,10 @@ TabMove:CreateToggle({
 TabMove:CreateToggle({
     Name="Anti Push", CurrentValue=false, Flag="antiPush",
     Callback=function(v) S.antiPush=v end,
+})
+TabMove:CreateToggle({
+    Name="Anti Kick (Fling Detection Bypass)", CurrentValue=true, Flag="antiKick",
+    Callback=function(v) S.antiKick=v end,
 })
 TabMove:CreateButton({
     Name="Fling Nearest",

@@ -26,6 +26,7 @@ local S = {
     autoSprint     = false,
     invis          = false,
     antiPush       = false,
+    antiKick       = true,
 
     godMode        = false,
     noStun         = false,
@@ -391,6 +392,26 @@ LOOPS.heartbeat = RunService.Heartbeat:Connect(function()
         end
     end
     if S.antiPush  then doAntiPush() end
+    -- Anti Kick: clamp our own velocity so a fling never reaches the magnitude
+    -- the anti-cheat kicks for.
+    if S.antiKick then
+        local hrp = getHRP()
+        if hrp then
+            pcall(function()
+                local v = hrp.AssemblyLinearVelocity
+                local ny = v.Y
+                if ny > 90 then ny = 90 end
+                local horiz = Vector3.new(v.X, 0, v.Z)
+                local hcap = math.max(S.speed + 80, 160)
+                if horiz.Magnitude > hcap then
+                    local c = horiz.Unit * hcap
+                    hrp.AssemblyLinearVelocity = Vector3.new(c.X, ny, c.Z)
+                elseif ny ~= v.Y then
+                    hrp.AssemblyLinearVelocity = Vector3.new(v.X, ny, v.Z)
+                end
+            end)
+        end
+    end
     if S.noDark    then applyNoDark(true) end
     if S.hitboxExp then doHitboxExpander() end
     if S.noclip then
@@ -518,6 +539,10 @@ TabMove:CreateToggle({
 TabMove:CreateToggle({
     Name="Anti Push", CurrentValue=false, Flag="antiPush",
     Callback=function(v) S.antiPush=v end,
+})
+TabMove:CreateToggle({
+    Name="Anti Kick (Fling Detection Bypass)", CurrentValue=true, Flag="antiKick",
+    Callback=function(v) S.antiKick=v end,
 })
 
 -- Survival Tab
