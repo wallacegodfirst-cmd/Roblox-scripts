@@ -18,15 +18,16 @@ local fireclick   = (typeof(fireclickdetector)=="function")  and fireclickdetect
 local sethidden   = (typeof(sethiddenproperty)=="function") and sethiddenproperty or nil
 local firetouchif = (typeof(firetouchinterest)=="function") and firetouchinterest or nil
 
--- Out-of-map TP position (far outside map boundary, causes fall death)
-local OUTOFMAP = Vector3.new(9999, 200, 9999)
+-- Void position: straight down into the kill plane. Much closer than (9999,200,9999)
+-- which was ~14000 studs away and caused 940+ safeTP hops → Error 267.
+local OUTOFMAP = Vector3.new(0, -600, 0)
 
 -- ── SAFE TELEPORT (anti-kick) ────────────────────────────────
 -- Many anti-cheats kick on a single large position jump per frame ("teleport"
 -- detection) or on high velocity ("fling" detection). safeTP moves in small
 -- hops (<= MAX_HOP studs) across consecutive frames so no single step looks
 -- suspicious, and zeroes velocity each hop so it never reads as a fling.
-local MAX_HOP = 50   -- ≤50 studs/frame → ~3000 studs/s max, well below fling detection
+local MAX_HOP = 15   -- ≤15 studs/frame → ~900 studs/s; 50 was 3000 studs/s which tripped Error 267
 local function safeTP(targetCF)
     local hrp = getHRP(); if not hrp then return end
     local goal = targetCF.Position
@@ -301,6 +302,19 @@ end
 -- ── INF STAMINA ──────────────────────────────────────────────
 -- Search ALL descendants of PlayerGui AND character for stam/sprint scripts and frames.
 local function doInfStam()
+    local function maxVal(desc)
+        pcall(function() desc.Value = 1e6 end)
+    end
+    local function scanValues(root)
+        if not root then return end
+        for _, desc in ipairs(root:GetDescendants()) do
+            local nm = desc.Name:lower()
+            if (desc:IsA("NumberValue") or desc:IsA("IntValue")) and
+               (nm:find("stam") or nm:find("energy") or nm:find("sprint") or nm:find("run")) then
+                maxVal(desc)
+            end
+        end
+    end
     local pg = LP:FindFirstChild("PlayerGui")
     if pg then
         for _, desc in ipairs(pg:GetDescendants()) do
@@ -312,7 +326,7 @@ local function doInfStam()
                 pcall(function() desc.Size=UDim2.new(1,0,desc.Size.Y.Scale,0) end)
             end
             if (desc:IsA("NumberValue") or desc:IsA("IntValue")) and (nm:find("stam") or nm:find("energy")) then
-                pcall(function() desc.Value = desc.MaxValue or 100 end)
+                maxVal(desc)
             end
         end
     end
@@ -320,11 +334,27 @@ local function doInfStam()
     if char then
         for _, desc in ipairs(char:GetDescendants()) do
             local nm = desc.Name:lower()
-            if desc:IsA("LocalScript") and (nm:find("stam") or nm:find("sprint")) then
+            if desc:IsA("LocalScript") and (nm:find("stam") or nm:find("sprint") or nm:find("energy")) then
                 pcall(function() desc.Disabled=true end)
+            end
+            if (desc:IsA("NumberValue") or desc:IsA("IntValue")) and
+               (nm:find("stam") or nm:find("energy") or nm:find("sprint") or nm:find("run")) then
+                maxVal(desc)
+            end
+        end
+        -- Attributes (some games store stamina as a character attribute)
+        for k, v in pairs(char:GetAttributes()) do
+            local nm = k:lower()
+            if type(v) == "number" and (nm:find("stam") or nm:find("energy") or nm:find("sprint") or nm:find("run")) then
+                pcall(function() char:SetAttribute(k, 1e6) end)
             end
         end
     end
+    -- PlayerData / Values / Stats folders on the player
+    scanValues(LP:FindFirstChild("PlayerData"))
+    scanValues(LP:FindFirstChild("Values"))
+    scanValues(LP:FindFirstChild("Stats"))
+    scanValues(LP:FindFirstChild("leaderstats"))
 end
 
 -- ── NO STUN ──────────────────────────────────────────────────
@@ -549,9 +579,13 @@ local function doAutoKillZombies()
 end
 
 -- ── AUTO REVIVE ──────────────────────────────────────────────
+local autoReviveRunning = false
 local function doAutoRevive()
-    local downed = WS:FindFirstChild("DownedCharacters"); if not downed then return end
-    local hrp = getHRP(); if not hrp then return end
+    if autoReviveRunning then return end
+    autoReviveRunning = true
+    local downed = WS:FindFirstChild("DownedCharacters")
+    if not downed then autoReviveRunning=false; return end
+    local hrp = getHRP(); if not hrp then autoReviveRunning=false; return end
     for _, d in ipairs(downed:GetChildren()) do
         local dRoot = d:FindFirstChildWhichIsA("BasePart"); if not dRoot then continue end
         safeTP(CFrame.new(dRoot.Position+Vector3.new(0,2,2)))
@@ -574,6 +608,7 @@ local function doAutoRevive()
     end
     local hum = getHum()
     if hum and hum.Health<=0 then pcall(function() LP:LoadCharacter() end) end
+    autoReviveRunning = false
 end
 
 -- ── AUTO GRAB ────────────────────────────────────────────────
@@ -1077,6 +1112,13 @@ local function doHitboxExpander()
         pcall(function() sb.Parent = game:GetService("CoreGui") end)
         hitboxSB = sb
     end
+    -- Expand other players' HRPs client-side so they're easier to hit
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr == LP then continue end
+        local pchar = plr.Character; if not pchar then continue end
+        local phrp = pchar:FindFirstChild("HumanoidRootPart"); if not phrp then continue end
+        pcall(function() phrp.Size = Vector3.new(S.hitboxSize, S.hitboxSize, S.hitboxSize) end)
+    end
 end
 
 -- ── ESP TICK ─────────────────────────────────────────────────
@@ -1256,10 +1298,10 @@ LOOPS.stepped = RunService.Stepped:Connect(function(_, dt)
         if S.autoOpenDoors   then doAutoOpenDoors() end
         if S.antiCarry       then doAntiCarry() end
         if S.stayKingCircle  then doStayKingCircle() end
-        if S.autoRevive or S.autoFarm then doAutoRevive() end
+        if S.autoRevive or S.autoFarm then task.spawn(doAutoRevive) end
         if S.autoFarm        then task.spawn(doAutoGrab) end
-        if S.autoCarry       then doAutoCarry() end
-        if S.carryKill       then doCarryKill() end
+        if S.autoCarry       then task.spawn(doAutoCarry) end
+        if S.carryKill       then task.spawn(doCarryKill) end
         -- Minefield Rescue: when Auto Farm is ON and we're inside the minefield,
         -- carry downed players out to ButtonZone safety.
         if S.autoFarm        then task.spawn(doMineRescue) end
