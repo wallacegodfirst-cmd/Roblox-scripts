@@ -45,7 +45,7 @@ local OUTOFMAP = Vector3.new(9999, 200, 9999)
 -- detection) or on high velocity ("fling" detection). safeTP moves in small
 -- hops (<= MAX_HOP studs) across consecutive frames so no single step looks
 -- suspicious, and zeroes velocity each hop so it never reads as a fling.
-local MAX_HOP = 90
+local MAX_HOP = 50   -- ≤50 studs/frame → ~3000 studs/s max, well below fling detection
 local function safeTP(targetCF)
     local hrp = getHRP(); if not hrp then return end
     local goal = targetCF.Position
@@ -680,19 +680,6 @@ local function killOneZombie(zombie)
         end
     end
 
-    -- (C) physics kill: claim network ownership, then drop the zombie far below the map.
-    --     The parts must be unanchored to walk, so the SimulationRadius trick usually
-    --     grants us ownership — making this position change REPLICATE to everyone, and
-    --     the server's fall / out-of-bounds logic removes the zombie. Moving the zombie
-    --     (not ourselves) does NOT trip the player fling anti-cheat.
-    claimOwnership()
-    if zRoot and not zRoot.Anchored then
-        pcall(function()
-            zRoot.AssemblyLinearVelocity = Vector3.new(0, -120, 0)
-            zRoot.CFrame = zRoot.CFrame + Vector3.new(0, -600, 0)
-        end)
-    end
-
     -- zero any health Value/Attribute (only matters if the game reads them; harmless)
     for _, d in ipairs(zombie:GetDescendants()) do
         local nm = d.Name:lower()
@@ -1143,24 +1130,52 @@ local function doAntiCarry()
 end
 
 -- ── AUTO PROJECTS ────────────────────────────────────────────
--- Tries every known event type on "Evacuate" by name, then does a broad sweep
--- of all descendants so it works even if the event was renamed or nested deeper.
+-- Fires every event type found in the project folder. Tries multiple argument
+-- shapes because we don't know whether the server handler expects (player),
+-- (character), (humanoid), or nothing. Also fires ProximityPrompts / ClickDetectors
+-- with MaxActivationDistance=9999 so no TP is needed.
 local function fireProjectEvacuate(projName)
     local proj = WS:FindFirstChild(projName); if not proj then return end
-    -- named Evacuate first (fast path)
+    local char = LP.Character
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+
+    local function tryRemote(ev)
+        pcall(function() ev:FireServer() end)
+        pcall(function() ev:FireServer(LP) end)
+        pcall(function() ev:FireServer(char) end)
+        pcall(function() ev:FireServer(hum) end)
+    end
+    local function tryBindable(ev)
+        pcall(function() ev:Fire() end)
+        pcall(function() ev:Fire(LP) end)
+        pcall(function() ev:Fire(char) end)
+    end
+    local function tryFunction(fn)
+        pcall(function() fn:InvokeServer() end)
+        pcall(function() fn:InvokeServer(LP) end)
+    end
+
+    -- named Evacuate (fast path)
     local ev = proj:FindFirstChild("Evacuate")
     if ev then
-        if ev:IsA("BindableEvent")   then pcall(function() ev:Fire() end) end
-        if ev:IsA("RemoteEvent")     then pcall(function() ev:FireServer() end) end
-        if ev:IsA("RemoteFunction")  then pcall(function() ev:InvokeServer() end) end
-        if ev:IsA("BindableFunction") then pcall(function() ev:Invoke() end) end
+        if ev:IsA("RemoteEvent")      then tryRemote(ev)
+        elseif ev:IsA("BindableEvent") then tryBindable(ev)
+        elseif ev:IsA("RemoteFunction") then tryFunction(ev)
+        elseif ev:IsA("BindableFunction") then pcall(function() ev:Invoke() end) end
     end
-    -- broad sweep: fire all remote/bindable events in the folder
-    for _, child in ipairs(proj:GetDescendants()) do
-        if child:IsA("RemoteEvent")      then pcall(function() child:FireServer() end)
-        elseif child:IsA("BindableEvent") then pcall(function() child:Fire() end)
-        elseif child:IsA("RemoteFunction") then pcall(function() child:InvokeServer() end)
-        elseif child:IsA("BindableFunction") then pcall(function() child:Invoke() end)
+
+    -- broad sweep of everything in the folder
+    for _, d in ipairs(proj:GetDescendants()) do
+        if d:IsA("RemoteEvent")       then tryRemote(d)
+        elseif d:IsA("BindableEvent")  then tryBindable(d)
+        elseif d:IsA("RemoteFunction") then tryFunction(d)
+        elseif d:IsA("BindableFunction") then pcall(function() d:Invoke() end)
+        elseif d:IsA("ProximityPrompt") then
+            pcall(function() d.Enabled=true; d.MaxActivationDistance=9999; d.HoldDuration=0 end)
+            pcall(fireprompt, d); pcall(fireprompt, d, 0)
+        elseif d:IsA("ClickDetector") then
+            pcall(function() d.MaxActivationDistance=9999 end)
+            pcall(fireclick, d)
         end
     end
 end
@@ -1202,11 +1217,32 @@ local function doAntiPush()
 end
 
 -- ── HITBOX EXPANDER ──────────────────────────────────────────
--- Keep Y at 2 (original height) to prevent sinking into the ground.
+-- Root cause of "floating": HRP.CanCollide=true + large Size → physics pushes
+-- the character up when the expanded box clips terrain. Fix: CanCollide=false so
+-- physics stops touching it (the Humanoid uses raycasting for floor detection,
+-- not the HRP's collision box, so walking still works perfectly).
+-- Full cube (hitboxSize × hitboxSize × hitboxSize) gives a real 3D hitbox.
+-- SelectionBox makes it visible in-game so you can confirm it's working.
+local hitboxSB = nil
+
 local function doHitboxExpander()
     local char = LP.Character; if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
-    pcall(function() hrp.Size=Vector3.new(S.hitboxSize, 2, S.hitboxSize) end)
+    local hrp  = char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
+    pcall(function()
+        hrp.Size      = Vector3.new(S.hitboxSize, S.hitboxSize, S.hitboxSize)
+        hrp.CanCollide = false   -- no terrain push → no float
+    end)
+    -- Create SelectionBox once; it tracks HRP automatically via Adornee
+    if not hitboxSB or not hitboxSB.Parent then
+        local sb = Instance.new("SelectionBox")
+        sb.Adornee            = hrp
+        sb.Color3             = Color3.fromRGB(255, 50, 50)
+        sb.LineThickness      = 0.05
+        sb.SurfaceColor3      = Color3.fromRGB(255, 50, 50)
+        sb.SurfaceTransparency = 0.78
+        pcall(function() sb.Parent = game:GetService("CoreGui") end)
+        hitboxSB = sb
+    end
 end
 
 -- ── ESP TICK ─────────────────────────────────────────────────
@@ -1276,9 +1312,12 @@ end
 -- ── CHARACTER RESPAWN ────────────────────────────────────────
 LP.CharacterAdded:Connect(function()
     task.wait(0.5)
-    if S.godMode then setupGodMode() end
-    if S.noStun  then connectNoStun() end
-    if S.invis   then applyInvis(true) end
+    if S.godMode  then setupGodMode() end
+    if S.noStun   then connectNoStun() end
+    if S.invis    then applyInvis(true) end
+    -- Hitbox SelectionBox adorns the old HRP; clear it so doHitboxExpander rebuilds on new char
+    if hitboxSB and hitboxSB.Parent then hitboxSB:Destroy() end
+    hitboxSB = nil
 end)
 
 -- ── LOOPS ────────────────────────────────────────────────────
@@ -1667,14 +1706,19 @@ TabSurv:CreateToggle({
     Callback=function(v) S.noDark=v; if not v then applyNoDark(false) end end,
 })
 TabSurv:CreateToggle({
-    Name="Hitbox Expander", CurrentValue=false, Flag="hitboxExp",
+    Name="Hitbox Expander (Red box = visible hitbox)", CurrentValue=false, Flag="hitboxExp",
     Callback=function(v)
         S.hitboxExp=v
         if not v then
+            -- destroy the SelectionBox outline
+            if hitboxSB and hitboxSB.Parent then hitboxSB:Destroy() end
+            hitboxSB = nil
             local char=LP.Character
             if char then
                 local hrp=char:FindFirstChild("HumanoidRootPart")
-                if hrp then pcall(function() hrp.Size=Vector3.new(2,2,1) end) end
+                if hrp then
+                    pcall(function() hrp.Size=Vector3.new(2,2,1); hrp.CanCollide=true end)
+                end
             end
         end
     end,
