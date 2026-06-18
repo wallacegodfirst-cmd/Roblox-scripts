@@ -15,6 +15,21 @@ local function getHRP()  local c=getChar(); return c and c:FindFirstChild("Human
 
 local fireprompt = (typeof(fireproximityprompt)=="function") and fireproximityprompt or function() end
 local fireclick  = (typeof(fireclickdetector)=="function")  and fireclickdetector  or function() end
+local sethidden  = (typeof(sethiddenproperty)=="function") and sethiddenproperty or nil
+
+-- ── NETWORK OWNERSHIP (FE physics) ───────────────────────────
+-- Maxing the local player's simulation radius makes the server grant us network
+-- ownership of every unanchored part we touch, so when we move those parts their
+-- positions REPLICATE to the server and to every other player. This is what makes
+-- Float Weapons visible to everyone, not just on our own screen.
+local function claimOwnership()
+    if sethidden then
+        pcall(sethidden, LP, "SimulationRadius", math.huge)
+        pcall(sethidden, LP, "MaximumSimulationRadius", math.huge)
+    end
+    pcall(function() LP.SimulationRadius = math.huge end)
+    pcall(function() LP.MaximumSimulationRadius = math.huge end)
+end
 
 -- Out-of-map TP position (far outside map boundary, causes fall death)
 local OUTOFMAP = Vector3.new(9999, 200, 9999)
@@ -408,6 +423,25 @@ local function floatGather()
     return picked
 end
 
+-- Humanoid silhouette for the JoJo "Stand" formation. Ordered so even a few items
+-- still read as a figure (head, torso, pelvis, hands, feet first; detail fills in).
+local STAND_OFFSETS = {
+    {x= 0.0, y=5.2}, {x= 0.0, y=3.6}, {x= 0.0, y=2.1},          -- head, torso, pelvis
+    {x=-2.4, y=2.0}, {x= 2.4, y=2.0},                            -- hands
+    {x=-0.95,y=0.05},{x= 0.95,y=0.05},                           -- feet
+    {x=-1.3, y=4.3}, {x= 1.3, y=4.3},                            -- shoulders
+    {x=-0.85,y=0.8}, {x= 0.85,y=0.8},                            -- knees
+    {x=-2.0, y=3.0}, {x= 2.0, y=3.0},                            -- elbows
+    {x= 0.0, y=4.5}, {x= 0.0, y=4.1}, {x= 0.0, y=2.8},           -- neck, chest, abdomen
+    {x=-0.7, y=2.0}, {x= 0.7, y=2.0},                            -- hips
+    {x=-0.8, y=1.4}, {x= 0.8, y=1.4},                            -- thighs
+    {x=-0.9, y=0.4}, {x= 0.9, y=0.4},                            -- shins
+    {x=-2.2, y=2.5}, {x= 2.2, y=2.5},                            -- forearms
+    {x=-1.7, y=3.6}, {x= 1.7, y=3.6},                            -- upper arms
+    {x=-0.5, y=5.2}, {x= 0.5, y=5.2},                            -- head sides
+    {x=-0.65,y=4.1}, {x= 0.65,y=4.1},                            -- upper chest
+}
+
 local function floatShapeCF(shape, i, n, center, lookCF)
     local r = S.floatRadius
     if shape == "Ball" then
@@ -418,6 +452,36 @@ local function floatShapeCF(shape, i, n, center, lookCF)
         local rad = math.sqrt(math.max(0, 1 - y*y))
         local phi = k * 2.399963229728653 + floatAngle   -- golden angle
         return CFrame.new(center + Vector3.new(math.cos(phi)*rad, y, math.sin(phi)*rad) * r)
+    elseif shape == "Cube" then
+        -- sphere points projected to a cube surface, slowly rotating
+        local k   = i - 1
+        local off = 2 / n
+        local y   = (k * off) - 1 + (off / 2)
+        local rad = math.sqrt(math.max(0, 1 - y*y))
+        local phi = k * 2.399963229728653 + floatAngle
+        local dir = Vector3.new(math.cos(phi)*rad, y, math.sin(phi)*rad)
+        local m   = math.max(math.abs(dir.X), math.abs(dir.Y), math.abs(dir.Z), 1e-3)
+        return CFrame.new(center + (dir / m) * r) * CFrame.Angles(0, floatAngle, 0)
+    elseif shape == "Spiral" then
+        -- rising tornado that widens toward the top
+        local t      = (i - 1) / math.max(1, n - 1)
+        local ang    = floatAngle * 1.5 + t * math.pi * 6
+        local radius = r * (0.3 + 0.7 * t)
+        local height = t * r * 2.2 - r
+        return CFrame.new(center + Vector3.new(math.cos(ang)*radius, height, math.sin(ang)*radius))
+    elseif shape == "Stand" then
+        -- JoJo Stand: humanoid figure hovering behind-right of the player, facing forward
+        local o     = STAND_OFFSETS[((i - 1) % #STAND_OFFSETS) + 1]
+        local scale = r / 5
+        local bob   = math.sin(floatAngle) * 0.4
+        local origin = center
+            - lookCF.LookVector * 3
+            + lookCF.RightVector * 2.5
+            + Vector3.new(0, bob - 2.5, 0)
+        local pos = origin
+            + lookCF.RightVector * (o.x * scale)
+            + Vector3.new(0, o.y * scale, 0)
+        return CFrame.new(pos, pos + lookCF.LookVector)   -- parts face same way as player
     elseif shape == "Sword" then
         -- vertical blade in front of the player
         local t      = (i - 1) / math.max(1, n - 1)
@@ -448,6 +512,7 @@ end
 local function doFloatWeapons(dt)
     local hrp = getHRP(); if not hrp then return end
     floatAngle = floatAngle + dt * S.floatSpeed
+    claimOwnership()   -- force network ownership so everyone sees the formation
 
     -- refresh the controlled item set a couple times per second
     floatRegather = floatRegather + dt
@@ -1221,18 +1286,18 @@ local TabFun = Window:CreateTab("Fun", 4483362458)
 
 TabFun:CreateParagraph({
     Title   = "Float Weapons",
-    Content = "Pulls nearby items and floats them around you in a shape. Other players can see it too (items are unanchored and network-owned). Pick a shape below.",
+    Content = "Pulls nearby items and floats them around you in a shape. EVERYONE can see it: the script maxes your simulation radius to claim network ownership of the parts, so their positions replicate to the whole server. Try the 'Stand' shape for a JoJo-style figure that hovers behind you.",
 })
 TabFun:CreateToggle({
     Name="Float Weapons", CurrentValue=false, Flag="floatWeapons",
     Callback=function(v)
         S.floatWeapons=v
-        if not v then floatReleaseAll() end
+        if v then claimOwnership() else floatReleaseAll() end
     end,
 })
 TabFun:CreateDropdown({
     Name="Shape",
-    Options={"Orbit","Ball","Sword","Halo","Wings"},
+    Options={"Orbit","Ball","Cube","Spiral","Sword","Halo","Wings","Stand"},
     CurrentOption={"Orbit"},
     Flag="floatShape",
     Callback=function(opt)
