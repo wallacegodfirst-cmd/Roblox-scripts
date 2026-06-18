@@ -34,7 +34,8 @@ local S = {
     hitboxSize     = 10,
 
     autoOpenDoors  = false,
-    bypassLock     = false,
+    noclip         = false,
+    antiCarry      = false,
     stayKingCircle = false,
     autoRevive     = false,
 }
@@ -263,16 +264,29 @@ local function doStayKingCircle()
     if bpos then pcall(function() hrp.CFrame=CFrame.new(bpos+Vector3.new(0,3,0)) end) end
 end
 
--- ── BYPASS LOCK ──────────────────────────────────────────────
-local function doBypassLock()
-    local hrp = getHRP(); if not hrp then return end
-    for _, obj in ipairs(WS:GetDescendants()) do
-        if obj:IsA("ProximityPrompt") and not obj.Enabled then
-            local p = obj.Parent
-            local pos = p and p:IsA("BasePart") and p.Position
-            if pos and (hrp.Position-pos).Magnitude < 20 then
-                pcall(function() obj.Enabled=true; obj.MaxActivationDistance=30; obj.HoldDuration=0 end)
-                pcall(fireprompt, obj)
+-- ── ANTI CARRY ───────────────────────────────────────────────
+local function doAntiCarry()
+    local char = LP.Character; if not char then return end
+    for _, d in ipairs(char:GetDescendants()) do
+        if d:IsA("ProximityPrompt") then
+            local at = (d.ActionText or ""):lower()
+            if at:find("carry") or d.KeyboardKeyCode==Enum.KeyCode.Q then
+                pcall(function() d.Enabled=false end)
+            end
+        end
+    end
+    local downed = WS:FindFirstChild("DownedCharacters")
+    if downed then
+        for _, d in ipairs(downed:GetChildren()) do
+            if d.Name==LP.Name then
+                for _, pp in ipairs(d:GetDescendants()) do
+                    if pp:IsA("ProximityPrompt") then
+                        local at = (pp.ActionText or ""):lower()
+                        if at:find("carry") or pp.KeyboardKeyCode==Enum.KeyCode.Q then
+                            pcall(function() pp.Enabled=false end)
+                        end
+                    end
+                end
             end
         end
     end
@@ -379,6 +393,14 @@ LOOPS.heartbeat = RunService.Heartbeat:Connect(function()
     if S.antiPush  then doAntiPush() end
     if S.noDark    then applyNoDark(true) end
     if S.hitboxExp then doHitboxExpander() end
+    if S.noclip then
+        local char = LP.Character
+        if char then
+            for _, p in ipairs(char:GetDescendants()) do
+                if p:IsA("BasePart") then pcall(function() p.CanCollide=false end) end
+            end
+        end
+    end
 end)
 
 local espTimer  = 0
@@ -396,7 +418,7 @@ LOOPS.stepped = RunService.Stepped:Connect(function(_, dt)
     if miscTimer >= 0.4 then
         miscTimer = 0
         if S.autoOpenDoors  then doAutoOpenDoors() end
-        if S.bypassLock     then doBypassLock() end
+        if S.antiCarry      then doAntiCarry() end
         if S.stayKingCircle then doStayKingCircle() end
         if S.autoRevive     then doAutoRevive() end
     end
@@ -512,6 +534,11 @@ TabSurv:CreateToggle({
 })
 
 TabSurv:CreateToggle({
+    Name="Anti Carry (Block Others Picking You Up)", CurrentValue=false, Flag="antiCarry",
+    Callback=function(v) S.antiCarry=v end,
+})
+
+TabSurv:CreateToggle({
     Name="No Dark", CurrentValue=false, Flag="noDark",
     Callback=function(v) S.noDark=v; if not v then applyNoDark(false) end end,
 })
@@ -545,8 +572,18 @@ TabAuto:CreateToggle({
 })
 
 TabAuto:CreateToggle({
-    Name="Bypass Lock", CurrentValue=false, Flag="bypassLock",
-    Callback=function(v) S.bypassLock=v end,
+    Name="NoClip (Walk Through Walls)", CurrentValue=false, Flag="noclip",
+    Callback=function(v)
+        S.noclip=v
+        if not v then
+            local char=LP.Character
+            if char then
+                for _, p in ipairs(char:GetDescendants()) do
+                    if p:IsA("BasePart") then pcall(function() p.CanCollide=true end) end
+                end
+            end
+        end
+    end,
 })
 
 TabAuto:CreateToggle({

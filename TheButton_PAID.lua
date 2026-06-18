@@ -47,7 +47,8 @@ local S = {
     autoKillZombies = false,
 
     autoOpenDoors   = false,
-    bypassLock      = false,
+    noclip          = false,
+    antiCarry       = false,
     stayKingCircle  = false,
     alwaysGetButton = false,
 
@@ -386,7 +387,11 @@ local function doAutoRevive()
     if hum and hum.Health<=0 then pcall(function() LP:LoadCharacter() end) end
 end
 
--- ── AUTO GRAB (items come TO player) ─────────────────────────
+-- ── AUTO GRAB ────────────────────────────────────────────────
+-- For Tools: force into Backpack directly.
+-- For non-Tools: fire prompt from current position with huge MaxActivationDistance
+-- (do NOT move the item — server validates against the item's server-side position,
+--  so moving it client-side breaks the server's range check).
 local function doAutoGrab()
     local hrp = getHRP(); if not hrp then return end
     for _, child in ipairs(WS:GetChildren()) do
@@ -396,17 +401,14 @@ local function doAutoGrab()
         if child:IsA("Tool") then
             pcall(function() child.Parent=LP.Backpack end)
         else
-            -- Move item to player first
-            pcall(function() root.CFrame=hrp.CFrame*CFrame.new(0,0,-2) end)
-            -- Fire ALL prompts on the item
+            -- Fire prompts and clicks from distance; server accepts because MaxActivationDistance=1000
             for _, d in ipairs(child:GetDescendants()) do
                 if d:IsA("ProximityPrompt") then
                     pcall(function()
                         d.Enabled=true; d.MaxActivationDistance=1000
                         d.HoldDuration=0; d.RequiresLineOfSight=false
                     end)
-                    pcall(fireprompt, d)
-                    pcall(fireprompt, d, 0)
+                    pcall(fireprompt, d); pcall(fireprompt, d, 0)
                 end
                 if d:IsA("ClickDetector") then
                     pcall(function() d.MaxActivationDistance=1000 end)
@@ -567,16 +569,31 @@ local function doStayKingCircle()
     if bpos then pcall(function() hrp.CFrame=CFrame.new(bpos+Vector3.new(0,3,0)) end) end
 end
 
--- ── BYPASS LOCK ──────────────────────────────────────────────
-local function doBypassLock()
-    local hrp = getHRP(); if not hrp then return end
-    for _, obj in ipairs(WS:GetDescendants()) do
-        if obj:IsA("ProximityPrompt") and not obj.Enabled then
-            local p = obj.Parent
-            local pos = p and p:IsA("BasePart") and p.Position
-            if pos and (hrp.Position-pos).Magnitude < 20 then
-                pcall(function() obj.Enabled=true; obj.MaxActivationDistance=30; obj.HoldDuration=0 end)
-                pcall(fireprompt, obj)
+-- ── ANTI CARRY ───────────────────────────────────────────────
+-- Disables carry (Q) prompts on our own character so others can't pick us up.
+local function doAntiCarry()
+    local char = LP.Character; if not char then return end
+    for _, d in ipairs(char:GetDescendants()) do
+        if d:IsA("ProximityPrompt") then
+            local at = (d.ActionText or ""):lower()
+            if at:find("carry") or d.KeyboardKeyCode==Enum.KeyCode.Q then
+                pcall(function() d.Enabled=false end)
+            end
+        end
+    end
+    -- Also disable carry prompt if we appear in DownedCharacters
+    local downed = WS:FindFirstChild("DownedCharacters")
+    if downed then
+        for _, d in ipairs(downed:GetChildren()) do
+            if d.Name==LP.Name then
+                for _, pp in ipairs(d:GetDescendants()) do
+                    if pp:IsA("ProximityPrompt") then
+                        local at = (pp.ActionText or ""):lower()
+                        if at:find("carry") or pp.KeyboardKeyCode==Enum.KeyCode.Q then
+                            pcall(function() pp.Enabled=false end)
+                        end
+                    end
+                end
             end
         end
     end
@@ -722,6 +739,15 @@ LOOPS.heartbeat = RunService.Heartbeat:Connect(function()
     if S.antiPush  then doAntiPush() end
     if S.noDark    then applyNoDark(true) end
     if S.hitboxExp then doHitboxExpander() end
+    -- NoClip: keep all character parts non-collidable every frame
+    if S.noclip then
+        local char = LP.Character
+        if char then
+            for _, p in ipairs(char:GetDescendants()) do
+                if p:IsA("BasePart") then pcall(function() p.CanCollide=false end) end
+            end
+        end
+    end
 end)
 
 local grabTimer     = 0
@@ -772,7 +798,7 @@ LOOPS.stepped = RunService.Stepped:Connect(function(_, dt)
     if miscTimer >= 0.4 then
         miscTimer = 0
         if S.autoOpenDoors   then doAutoOpenDoors() end
-        if S.bypassLock      then doBypassLock() end
+        if S.antiCarry       then doAntiCarry() end
         if S.stayKingCircle  then doStayKingCircle() end
         if S.alwaysGetButton then doAlwaysGetButton() end
         if S.autoRevive or S.autoFarm then doAutoRevive() end
@@ -984,6 +1010,10 @@ TabSurv:CreateToggle({
     Callback=function(v) S.noStun=v; if v then connectNoStun() end end,
 })
 TabSurv:CreateToggle({
+    Name="Anti Carry (Block Others Picking You Up)", CurrentValue=false, Flag="antiCarry",
+    Callback=function(v) S.antiCarry=v end,
+})
+TabSurv:CreateToggle({
     Name="No Dark", CurrentValue=false, Flag="noDark",
     Callback=function(v) S.noDark=v; if not v then applyNoDark(false) end end,
 })
@@ -1014,8 +1044,18 @@ TabAuto:CreateToggle({
     Callback=function(v) S.autoOpenDoors=v end,
 })
 TabAuto:CreateToggle({
-    Name="Bypass Lock", CurrentValue=false, Flag="bypassLock",
-    Callback=function(v) S.bypassLock=v end,
+    Name="NoClip (Walk Through Walls)", CurrentValue=false, Flag="noclip",
+    Callback=function(v)
+        S.noclip=v
+        if not v then
+            local char=LP.Character
+            if char then
+                for _, p in ipairs(char:GetDescendants()) do
+                    if p:IsA("BasePart") then pcall(function() p.CanCollide=true end) end
+                end
+            end
+        end
+    end,
 })
 TabAuto:CreateToggle({
     Name="Stay in King Circle", CurrentValue=false, Flag="stayKingCircle",
