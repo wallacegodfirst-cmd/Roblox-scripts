@@ -597,6 +597,112 @@ local function doFloatWeapons(dt)
     end
 end
 
+-- ── ZOMBIE / NPC KILL ────────────────────────────────────────
+-- In FilteringEnabled, client-side Health=0 / BreakJoints() / Anchored=true do NOT
+-- replicate: the zombie only "dies" on YOUR screen while everyone else still sees it
+-- alive and attacking (this is exactly the "I can't see them but others can, and it's
+-- not dying" bug). The only operations that actually replicate are:
+--   (A) firing the game's own damage RemoteEvents (inside the zombie + ReplicatedStorage)
+--   (B) the game's touch-damage, triggered via firetouchinterest
+--   (C) physics on parts we hold network ownership of (drop it into the void)
+-- so killOneZombie does all three and skips the misleading client-only destruction.
+
+-- Cached list of likely combat RemoteEvents in ReplicatedStorage (rebuilt every 5s).
+local _combatRemotes, _combatRemotesAt = nil, 0
+local function getCombatRemotes()
+    if _combatRemotes and (tick() - _combatRemotesAt) < 5 then return _combatRemotes end
+    _combatRemotes = {}
+    local ok, rs = pcall(function() return game:GetService("ReplicatedStorage") end)
+    if ok and rs then
+        for _, d in ipairs(rs:GetDescendants()) do
+            if d:IsA("RemoteEvent") then
+                local nm = d.Name:lower()
+                if nm:find("damage") or nm:find("hit") or nm:find("kill")
+                or nm:find("attack") or nm:find("zombie") or nm:find("combat") or nm:find("hurt") then
+                    _combatRemotes[#_combatRemotes+1] = d
+                end
+            end
+        end
+    end
+    _combatRemotesAt = tick()
+    return _combatRemotes
+end
+
+local function killOneZombie(zombie)
+    local zHum = zombie:FindFirstChildOfClass("Humanoid")
+    if not zHum then
+        for _, d in ipairs(zombie:GetDescendants()) do
+            if d:IsA("Humanoid") then zHum = d; break end
+        end
+    end
+    local zRoot = zombie:FindFirstChild("HumanoidRootPart")
+        or (zHum and zHum.RootPart)
+        or zombie:FindFirstChildWhichIsA("BasePart")
+
+    -- (A1) cheap local TakeDamage (only works in non-strict FE, but free to try)
+    if zHum then pcall(function() zHum:TakeDamage(zHum.MaxHealth + 1e9) end) end
+
+    -- (A2) fire damage remotes — the real, replicating kill path. A few arg shapes
+    --      because we don't know the handler's expected signature.
+    local function fireDmg(ev)
+        pcall(function() ev:FireServer(zHum) end)
+        pcall(function() ev:FireServer(zHum, math.huge) end)
+        pcall(function() ev:FireServer(zombie) end)
+    end
+    for _, d in ipairs(zombie:GetDescendants()) do
+        local nm = d.Name:lower()
+        if d:IsA("RemoteEvent") and (nm:find("damage") or nm:find("hit") or nm:find("kill") or nm:find("die") or nm:find("attack")) then
+            fireDmg(d)
+        elseif d:IsA("BindableEvent") and (nm:find("damage") or nm:find("hit") or nm:find("kill") or nm:find("die")) then
+            pcall(function() d:Fire(zHum, math.huge) end)
+        end
+    end
+    for _, ev in ipairs(getCombatRemotes()) do fireDmg(ev) end
+
+    -- (B) firetouchinterest: make our character (and any equipped weapon Tool) "touch"
+    --     the zombie so the game's own touch-based combat fires on the SERVER.
+    if firetouchif and zRoot then
+        local char = LP.Character
+        if char then
+            local touchers = {}
+            local myRoot = char:FindFirstChild("HumanoidRootPart")
+            if myRoot then touchers[#touchers+1] = myRoot end
+            local tool = char:FindFirstChildOfClass("Tool")
+            if tool then
+                for _, tp in ipairs(tool:GetDescendants()) do
+                    if tp:IsA("BasePart") then touchers[#touchers+1] = tp end
+                end
+            end
+            for _, tp in ipairs(touchers) do
+                pcall(function() firetouchif(tp, zRoot, 0) end)
+                pcall(function() firetouchif(tp, zRoot, 1) end)
+            end
+        end
+    end
+
+    -- (C) physics kill: claim network ownership, then drop the zombie far below the map.
+    --     The parts must be unanchored to walk, so the SimulationRadius trick usually
+    --     grants us ownership — making this position change REPLICATE to everyone, and
+    --     the server's fall / out-of-bounds logic removes the zombie. Moving the zombie
+    --     (not ourselves) does NOT trip the player fling anti-cheat.
+    claimOwnership()
+    if zRoot and not zRoot.Anchored then
+        pcall(function()
+            zRoot.AssemblyLinearVelocity = Vector3.new(0, -120, 0)
+            zRoot.CFrame = zRoot.CFrame + Vector3.new(0, -600, 0)
+        end)
+    end
+
+    -- zero any health Value/Attribute (only matters if the game reads them; harmless)
+    for _, d in ipairs(zombie:GetDescendants()) do
+        local nm = d.Name:lower()
+        if (d:IsA("NumberValue") or d:IsA("IntValue")) and nm:find("health") then
+            pcall(function() d.Value = 0 end)
+        end
+    end
+    pcall(function() if zombie:GetAttribute("Health") ~= nil then zombie:SetAttribute("Health", 0) end end)
+end
+
 -- ── GUN KILL ─────────────────────────────────────────────────
 -- While Float Weapons spins, hits everything in orbit range.
 --
@@ -681,50 +787,7 @@ local function doGunKill()
 end
 
 -- ── AUTO KILL ZOMBIES ────────────────────────────────────────
--- Robust: does NOT require an exactly-named HumanoidRootPart. Searches the whole
--- descendant tree for a Humanoid, applies every client-side kill method, zeroes any
--- "Health" value/attribute, disables the ZombieScript, and breaks + anchors the body
--- so it can no longer chase or attack. No high-velocity launch (would trip fling kick).
-local function killOneZombie(zombie)
-    -- find a Humanoid anywhere inside
-    local zHum = zombie:FindFirstChildOfClass("Humanoid")
-    if not zHum then
-        for _, d in ipairs(zombie:GetDescendants()) do
-            if d:IsA("Humanoid") then zHum = d; break end
-        end
-    end
-    if zHum then
-        pcall(function() zHum:TakeDamage(zHum.MaxHealth + 1e9) end)
-        pcall(function() zHum.Health = 0 end)
-        pcall(function() zHum.MaxHealth = 0 end)
-        pcall(function() zHum.Health = 0 end)
-        pcall(function() zHum:ChangeState(Enum.HumanoidStateType.Dead) end)
-        pcall(function() zHum:SetStateEnabled(Enum.HumanoidStateType.Running, false) end)
-    end
-    -- zero any health-like Value/Attribute, disable behaviour scripts, and fire any
-    -- damage-style event the ZombieScript exposes inside the model
-    for _, d in ipairs(zombie:GetDescendants()) do
-        local nm = d.Name:lower()
-        if (d:IsA("NumberValue") or d:IsA("IntValue")) and nm:find("health") then
-            pcall(function() d.Value = 0 end)
-        elseif d:IsA("Script") or d:IsA("LocalScript") then
-            pcall(function() d.Disabled = true end)   -- stop its behaviour
-        elseif d:IsA("RemoteEvent") and (nm:find("damage") or nm:find("hit") or nm:find("kill") or nm:find("die")) then
-            pcall(function() d:FireServer(zHum, 1e9) end)
-        elseif d:IsA("BindableEvent") and (nm:find("damage") or nm:find("hit") or nm:find("kill") or nm:find("die")) then
-            pcall(function() d:Fire(zHum, 1e9) end)
-        end
-    end
-    pcall(function() if zombie:GetAttribute("Health") ~= nil then zombie:SetAttribute("Health", 0) end end)
-    -- break it apart and freeze every part so it cannot move/attack
-    pcall(function() zombie:BreakJoints() end)
-    for _, d in ipairs(zombie:GetDescendants()) do
-        if d:IsA("BasePart") then
-            pcall(function() d.Anchored = true; d.CanCollide = false end)
-        end
-    end
-end
-
+-- killOneZombie is defined further up (before Gun Kill, which also calls it).
 local function doAutoKillZombies()
     -- Primary: dedicated Zombies folder
     local zombieFolder = WS:FindFirstChild("Zombies")
@@ -1311,7 +1374,7 @@ LOOPS.stepped = RunService.Stepped:Connect(function(_, dt)
         if S.fling then doFling() end
     end
 
-    if zombieTimer >= 0.1 then
+    if zombieTimer >= 0.2 then
         zombieTimer = 0
         if S.autoKillZombies then doAutoKillZombies() end
     end
