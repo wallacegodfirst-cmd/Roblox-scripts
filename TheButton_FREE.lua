@@ -316,10 +316,11 @@ local function doAntiPush()
 end
 
 -- ── HITBOX EXPANDER ──────────────────────────────────────────
+-- Keep Y at 2 (original height) to prevent sinking into the ground.
 local function doHitboxExpander()
     local char = LP.Character; if not char then return end
     local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
-    pcall(function() hrp.Size = Vector3.new(S.hitboxSize, S.hitboxSize, S.hitboxSize) end)
+    pcall(function() hrp.Size = Vector3.new(S.hitboxSize, 2, S.hitboxSize) end)
 end
 
 -- ── ESP TICK ─────────────────────────────────────────────────

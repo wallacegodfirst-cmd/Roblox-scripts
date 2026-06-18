@@ -70,6 +70,26 @@ local SYS = {
     ["Project Alpha"]=true, ["Project Beta"]=true, ["Project Delta"]=true,
 }
 
+-- Mine cache: built once at load, updated on ChildAdded/Removed.
+-- Avoids calling GetDescendants() every ESP frame which causes lag.
+local mineCache = {}
+task.defer(function()
+    local mf = WS:FindFirstChild("Minefield"); if not mf then return end
+    for _, child in ipairs(mf:GetChildren()) do
+        if child:IsA("Model") or child:IsA("BasePart") then
+            mineCache[#mineCache+1] = child
+        end
+    end
+    mf.ChildAdded:Connect(function(c)
+        if c:IsA("Model") or c:IsA("BasePart") then mineCache[#mineCache+1]=c end
+    end)
+    mf.ChildRemoved:Connect(function(c)
+        for i, m in ipairs(mineCache) do
+            if m==c then table.remove(mineCache,i); removeESP(c); break end
+        end
+    end)
+end)
+
 -- ── ESP (Highlight + BillboardGui with health bar) ───────────
 local espData = {}
 
@@ -307,12 +327,19 @@ local function doAutoKillZombies()
         if zombie.Name~="Zombie" then continue end
         local zHum = zombie:FindFirstChildOfClass("Humanoid")
         local zHRP = zombie:FindFirstChild("HumanoidRootPart")
-        if zHum and zHRP and zHum.Health>0 then
-            pcall(function() zHum.Health=0 end)
-            pcall(function() zHum:TakeDamage(1e9) end)
-            pcall(function() zombie:BreakJoints() end)
-            pcall(function() zHRP.CFrame=CFrame.new(OUTOFMAP) end)
-        end
+        if not zHum or not zHRP or zHum.Health<=0 then continue end
+        -- Launch zombie far out-of-bounds so the game's void/boundary kills it
+        pcall(function()
+            zHRP.CFrame = CFrame.new(9999, 3000, 9999)
+            zHRP.AssemblyLinearVelocity = Vector3.new(0, -9999, 0)
+        end)
+        -- Attempt every client-side kill method
+        pcall(function() zHum.Health = 0 end)
+        pcall(function() zHum:TakeDamage(zHum.MaxHealth) end)
+        pcall(function() zHum:ChangeState(Enum.HumanoidStateType.Dead) end)
+        pcall(function() zombie:BreakJoints() end)
+        -- Anchor so it cannot walk back even if still alive
+        pcall(function() zHRP.Anchored = true end)
     end
 end
 
@@ -600,10 +627,11 @@ local function doAntiPush()
 end
 
 -- ── HITBOX EXPANDER ──────────────────────────────────────────
+-- Keep Y at 2 (original height) to prevent sinking into the ground.
 local function doHitboxExpander()
     local char = LP.Character; if not char then return end
     local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
-    pcall(function() hrp.Size=Vector3.new(S.hitboxSize,S.hitboxSize,S.hitboxSize) end)
+    pcall(function() hrp.Size=Vector3.new(S.hitboxSize, 2, S.hitboxSize) end)
 end
 
 -- ── ESP TICK ─────────────────────────────────────────────────
@@ -637,19 +665,21 @@ local function runESP()
         end
     end
 
-    local mineFolder = WS:FindFirstChild("Minefield")
-    if mineFolder then
-        for _, mine in ipairs(mineFolder:GetDescendants()) do
-            if mine:IsA("BasePart") or mine:IsA("Model") then
-                if S.mineESP then
-                    local mpos = mine:IsA("BasePart") and mine.Position
-                        or (mine:FindFirstChildWhichIsA("BasePart") and mine:FindFirstChildWhichIsA("BasePart").Position)
-                    local dist = (myHRP and mpos) and math.round((myHRP.Position-mpos).Magnitude) or 0
-                    getOrMakeESP(mine, Color3.fromRGB(255,180,0))
-                    updateESP(mine, "MINE ["..dist.."m]", 1)
-                elseif espData[mine] then removeESP(mine) end
+    -- Mine ESP: uses pre-built cache, only renders within 80 studs to avoid lag
+    for _, mine in ipairs(mineCache) do
+        if not mine.Parent then continue end
+        if S.mineESP then
+            local mpos = mine:IsA("BasePart") and mine.Position
+                or (mine:FindFirstChildWhichIsA("BasePart") and mine:FindFirstChildWhichIsA("BasePart").Position)
+            if not mpos then continue end
+            local dist = myHRP and math.round((myHRP.Position-mpos).Magnitude) or 0
+            if dist > 80 then
+                if espData[mine] then removeESP(mine) end
+                continue
             end
-        end
+            getOrMakeESP(mine, Color3.fromRGB(255,180,0))
+            updateESP(mine, "MINE ["..dist.."m]", 1)
+        elseif espData[mine] then removeESP(mine) end
     end
 
     for _, obj in ipairs(WS:GetChildren()) do
