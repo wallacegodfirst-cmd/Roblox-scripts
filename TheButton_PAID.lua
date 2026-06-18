@@ -926,50 +926,77 @@ end
 -- shapes because we don't know whether the server handler expects (player),
 -- (character), (humanoid), or nothing. Also fires ProximityPrompts / ClickDetectors
 -- with MaxActivationDistance=9999 so no TP is needed.
+local autoProjectRunning = {}
+
 local function fireProjectEvacuate(projName)
-    local proj = WS:FindFirstChild(projName); if not proj then return end
-    local char = LP.Character
-    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    if autoProjectRunning[projName] then return end
+    autoProjectRunning[projName] = true
+    task.spawn(function()
+        local proj = WS:FindFirstChild(projName)
+        if not proj then autoProjectRunning[projName]=false; return end
 
-    local function tryRemote(ev)
-        pcall(function() ev:FireServer() end)
-        pcall(function() ev:FireServer(LP) end)
-        pcall(function() ev:FireServer(char) end)
-        pcall(function() ev:FireServer(hum) end)
-    end
-    local function tryBindable(ev)
-        pcall(function() ev:Fire() end)
-        pcall(function() ev:Fire(LP) end)
-        pcall(function() ev:Fire(char) end)
-    end
-    local function tryFunction(fn)
-        pcall(function() fn:InvokeServer() end)
-        pcall(function() fn:InvokeServer(LP) end)
-    end
+        local hrp     = getHRP()
+        local savedCF = hrp and hrp.CFrame
+        local char    = LP.Character
+        local hum     = char and char:FindFirstChildOfClass("Humanoid")
 
-    -- named Evacuate (fast path)
-    local ev = proj:FindFirstChild("Evacuate")
-    if ev then
-        if ev:IsA("RemoteEvent")      then tryRemote(ev)
-        elseif ev:IsA("BindableEvent") then tryBindable(ev)
-        elseif ev:IsA("RemoteFunction") then tryFunction(ev)
-        elseif ev:IsA("BindableFunction") then pcall(function() ev:Invoke() end) end
-    end
-
-    -- broad sweep of everything in the folder
-    for _, d in ipairs(proj:GetDescendants()) do
-        if d:IsA("RemoteEvent")       then tryRemote(d)
-        elseif d:IsA("BindableEvent")  then tryBindable(d)
-        elseif d:IsA("RemoteFunction") then tryFunction(d)
-        elseif d:IsA("BindableFunction") then pcall(function() d:Invoke() end)
-        elseif d:IsA("ProximityPrompt") then
-            pcall(function() d.Enabled=true; d.MaxActivationDistance=9999; d.HoldDuration=0 end)
-            pcall(fireprompt, d); pcall(fireprompt, d, 0)
-        elseif d:IsA("ClickDetector") then
-            pcall(function() d.MaxActivationDistance=9999 end)
-            pcall(fireclick, d)
+        local function tryRemote(ev)
+            pcall(function() ev:FireServer() end)
+            pcall(function() ev:FireServer(LP) end)
+            pcall(function() ev:FireServer(char) end)
+            pcall(function() ev:FireServer(hum) end)
         end
-    end
+        local function tryBindable(ev)
+            pcall(function() ev:Fire() end)
+            pcall(function() ev:Fire(LP) end)
+            pcall(function() ev:Fire(char) end)
+        end
+        local function tryFunction(fn)
+            pcall(function() fn:InvokeServer() end)
+            pcall(function() fn:InvokeServer(LP) end)
+        end
+
+        -- TP inside the project zone so server-side proximity checks pass
+        local projRoot = proj:FindFirstChildWhichIsA("BasePart")
+            or proj:FindFirstChild("HumanoidRootPart")
+        if projRoot then
+            safeTP(CFrame.new(projRoot.Position + Vector3.new(0, 3, 0)))
+            task.wait(0.15)
+        end
+
+        -- named Evacuate fast path
+        local ev = proj:FindFirstChild("Evacuate")
+        if ev then
+            if ev:IsA("RemoteEvent")        then tryRemote(ev)
+            elseif ev:IsA("BindableEvent")   then tryBindable(ev)
+            elseif ev:IsA("RemoteFunction")  then tryFunction(ev)
+            elseif ev:IsA("BindableFunction") then pcall(function() ev:Invoke() end) end
+        end
+
+        -- broad sweep of everything in the folder
+        for _, d in ipairs(proj:GetDescendants()) do
+            if d:IsA("RemoteEvent")         then tryRemote(d)
+            elseif d:IsA("BindableEvent")    then tryBindable(d)
+            elseif d:IsA("RemoteFunction")   then tryFunction(d)
+            elseif d:IsA("BindableFunction") then pcall(function() d:Invoke() end)
+            elseif d:IsA("ProximityPrompt")  then
+                pcall(function() d.Enabled=true; d.MaxActivationDistance=9999; d.HoldDuration=0 end)
+                pcall(fireprompt, d); pcall(fireprompt, d, 0)
+            elseif d:IsA("ClickDetector") then
+                pcall(function() d.MaxActivationDistance=9999 end)
+                pcall(fireclick, d)
+            end
+        end
+
+        -- TP back to saved position
+        if savedCF then
+            task.wait(0.2)
+            safeTP(savedCF)
+        end
+
+        task.wait(0.8)   -- cooldown between project fire attempts
+        autoProjectRunning[projName] = false
+    end)
 end
 
 -- ── INVIS ────────────────────────────────────────────────────
