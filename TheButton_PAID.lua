@@ -1,6 +1,6 @@
 -- ============================================================
 -- Wallace Chaos Hub  |  The Button  —  PAID Edition
--- Black / Blue / Red theme  |  F6 = Panic
+-- Black / Purple theme  |  F6 = Panic
 -- ============================================================
 
 local Players    = game:GetService("Players")
@@ -98,6 +98,8 @@ local S = {
     floatRadius    = 8,
     floatSpeed     = 2,
     floatMax       = 24,
+    gunKill        = false,
+    gunKillRadius  = 15,
 
     autoKillZombies = false,
 
@@ -156,39 +158,57 @@ local function getOrMakeESP(obj, outlineColor)
 
     local hl = Instance.new("Highlight")
     hl.FillColor=outlineColor; hl.OutlineColor=outlineColor
-    hl.FillTransparency=0.6; hl.OutlineTransparency=0; hl.Parent=obj
+    hl.FillTransparency=0.45; hl.OutlineTransparency=0; hl.Parent=obj
 
     local bb = Instance.new("BillboardGui")
-    bb.AlwaysOnTop=true; bb.Size=UDim2.new(0,180,0,54)
-    bb.StudsOffset=Vector3.new(0,5,0); bb.Parent=obj
+    bb.AlwaysOnTop=true; bb.Size=UDim2.new(0,240,0,76)
+    bb.StudsOffset=Vector3.new(0,6.5,0); bb.Parent=obj
 
+    -- name + distance row
     local nm = Instance.new("TextLabel", bb)
-    nm.Name="_nm"; nm.Size=UDim2.new(1,0,0.5,0)
+    nm.Name="_nm"; nm.Size=UDim2.new(1,0,0.48,0)
     nm.BackgroundTransparency=1; nm.TextColor3=outlineColor
-    nm.TextStrokeTransparency=0.3; nm.TextStrokeColor3=Color3.new(0,0,0)
-    nm.Font=Enum.Font.GothamBold; nm.TextScaled=true; nm.Text="..."
+    nm.TextStrokeTransparency=1
+    nm.Font=Enum.Font.GothamBlack; nm.TextScaled=true; nm.Text="..."
+    local nmS = Instance.new("UIStroke", nm)
+    nmS.Color=Color3.fromRGB(0,0,0); nmS.Thickness=1.8; nmS.Transparency=0
 
+    -- health bar background
     local bg = Instance.new("Frame", bb)
-    bg.Name="_hpbg"; bg.Size=UDim2.new(1,-8,0.22,0); bg.Position=UDim2.new(0,4,0.58,0)
-    bg.BackgroundColor3=Color3.fromRGB(18,18,18); bg.BorderSizePixel=0
+    bg.Name="_hpbg"; bg.Size=UDim2.new(1,-10,0.22,0); bg.Position=UDim2.new(0,5,0.54,0)
+    bg.BackgroundColor3=Color3.fromRGB(10,10,10); bg.BorderSizePixel=0
     Instance.new("UICorner", bg).CornerRadius=UDim.new(1,0)
+    local bgS = Instance.new("UIStroke", bg)
+    bgS.Color=outlineColor; bgS.Thickness=1; bgS.Transparency=0.35
 
+    -- health fill
     local fill = Instance.new("Frame", bg)
     fill.Name="_hpf"; fill.Size=UDim2.new(1,0,1,0)
-    fill.BackgroundColor3=Color3.fromRGB(0,210,60); fill.BorderSizePixel=0
+    fill.BackgroundColor3=Color3.fromRGB(0,235,80); fill.BorderSizePixel=0
     Instance.new("UICorner", fill).CornerRadius=UDim.new(1,0)
 
+    -- hp text (percentage + number)
     local txt = Instance.new("TextLabel", bg)
     txt.Name="_hpt"; txt.Size=UDim2.fromScale(1,1)
     txt.BackgroundTransparency=1; txt.TextColor3=Color3.fromRGB(255,255,255)
-    txt.TextStrokeTransparency=0.3; txt.Font=Enum.Font.GothamBold
+    txt.TextStrokeTransparency=1; txt.Font=Enum.Font.GothamBlack
     txt.TextScaled=true; txt.ZIndex=3; txt.Text="100%"
+    local txS = Instance.new("UIStroke", txt)
+    txS.Color=Color3.fromRGB(0,0,0); txS.Thickness=1.2; txS.Transparency=0
+
+    -- HP value label below bar
+    local hl2 = Instance.new("TextLabel", bb)
+    hl2.Name="_hpv"; hl2.Size=UDim2.new(1,0,0.2,0); hl2.Position=UDim2.new(0,0,0.79,0)
+    hl2.BackgroundTransparency=1; hl2.TextColor3=Color3.fromRGB(200,200,200)
+    hl2.TextStrokeTransparency=1; hl2.Font=Enum.Font.GothamBlack; hl2.TextScaled=true; hl2.Text=""
+    local hv2S = Instance.new("UIStroke", hl2)
+    hv2S.Color=Color3.fromRGB(0,0,0); hv2S.Thickness=1.2; hv2S.Transparency=0
 
     espData[obj] = {hl, bb}
     return espData[obj]
 end
 
-local function updateESP(obj, label, hpPct)
+local function updateESP(obj, label, hpPct, maxHp)
     local e = espData[obj]; if not e then return end
     local bb = e[2]; if not bb or not bb.Parent then return end
     local nm = bb:FindFirstChild("_nm"); if nm then nm.Text=label or "" end
@@ -197,10 +217,16 @@ local function updateESP(obj, label, hpPct)
     local pct = math.clamp(hpPct or 1, 0, 1)
     if fill then
         fill.Size=UDim2.new(pct,0,1,0)
-        fill.BackgroundColor3 = pct>0.6 and Color3.fromRGB(0,210,60)
-            or pct>0.3 and Color3.fromRGB(230,170,0) or Color3.fromRGB(210,40,40)
+        fill.BackgroundColor3 = pct>0.6 and Color3.fromRGB(0,235,80)
+            or pct>0.3 and Color3.fromRGB(255,190,0) or Color3.fromRGB(240,50,50)
     end
     if txt then txt.Text=math.round(pct*100).."%" end
+    local hpv = bb:FindFirstChild("_hpv")
+    if hpv then
+        if maxHp and maxHp > 0 then
+            hpv.Text = math.round(pct*maxHp).." / "..math.round(maxHp).." HP"
+        end
+    end
 end
 
 local function removeESP(obj)
@@ -550,6 +576,62 @@ local function doFloatWeapons(dt)
     end
 end
 
+-- ── GUN KILL ─────────────────────────────────────────────────
+-- While Float Weapons is spinning, radiates damage to every humanoid within
+-- (floatRadius + gunKillRadius) studs. No teleport — pure proximity damage.
+-- Players receive moderate repeated damage; zombies/NPCs are one-shot.
+local function doGunKill()
+    if not S.floatWeapons then return end
+    local hrp = getHRP(); if not hrp then return end
+    local pos      = hrp.Position
+    local killRange = S.floatRadius + S.gunKillRadius
+
+    -- Players in range
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr == LP then continue end
+        local char = plr.Character; if not char then continue end
+        local phrp = char:FindFirstChild("HumanoidRootPart"); if not phrp then continue end
+        if (pos - phrp.Position).Magnitude <= killRange then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health > 0 then
+                pcall(function() hum:TakeDamage(30) end)
+            end
+        end
+    end
+
+    -- Zombies folder
+    local zombieFolder = WS:FindFirstChild("Zombies")
+    if zombieFolder then
+        for _, zombie in ipairs(zombieFolder:GetChildren()) do
+            local zhrp = zombie:FindFirstChild("HumanoidRootPart")
+                or zombie:FindFirstChildWhichIsA("BasePart")
+            if not zhrp then continue end
+            if (pos - zhrp.Position).Magnitude <= killRange then
+                local hum = zombie:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health > 0 then
+                    pcall(function() hum:TakeDamage(hum.MaxHealth + 1e9) end)
+                    pcall(function() hum.Health = 0 end)
+                end
+            end
+        end
+    end
+
+    -- WS-level NPCs/Ghosts/other characters
+    for _, child in ipairs(WS:GetChildren()) do
+        if Players:GetPlayerFromCharacter(child) then continue end
+        if SYS[child.Name] then continue end
+        local hum = child:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Health > 0 then
+            local root = child:FindFirstChild("HumanoidRootPart")
+                or child:FindFirstChildWhichIsA("BasePart")
+            if root and (pos - root.Position).Magnitude <= killRange then
+                pcall(function() hum:TakeDamage(hum.MaxHealth + 1e9) end)
+                pcall(function() hum.Health = 0 end)
+            end
+        end
+    end
+end
+
 -- ── AUTO KILL ZOMBIES ────────────────────────────────────────
 -- Robust: does NOT require an exactly-named HumanoidRootPart. Searches the whole
 -- descendant tree for a Humanoid, applies every client-side kill method, zeroes any
@@ -596,14 +678,24 @@ local function killOneZombie(zombie)
 end
 
 local function doAutoKillZombies()
-    local zombieFolder = WS:FindFirstChild("Zombies"); if not zombieFolder then return end
-    for _, zombie in ipairs(zombieFolder:GetChildren()) do
-        -- match "Zombie" by name OR anything that contains a ZombieScript / Humanoid
-        local isZombie = zombie.Name == "Zombie"
-            or zombie:FindFirstChild("ZombieScript")
-            or zombie:FindFirstChildOfClass("Humanoid")
-        if isZombie then
-            pcall(killOneZombie, zombie)
+    -- Primary: dedicated Zombies folder
+    local zombieFolder = WS:FindFirstChild("Zombies")
+    if zombieFolder then
+        for _, zombie in ipairs(zombieFolder:GetChildren()) do
+            local isZombie = zombie.Name == "Zombie"
+                or zombie:FindFirstChild("ZombieScript")
+                or zombie:FindFirstChildOfClass("Humanoid")
+            if isZombie then pcall(killOneZombie, zombie) end
+        end
+    end
+    -- Secondary: WS-level sweep for any stray models with a ZombieScript
+    -- (catches zombies that spawn outside the Zombies folder)
+    for _, child in ipairs(WS:GetChildren()) do
+        if not SYS[child.Name] and not Players:GetPlayerFromCharacter(child) then
+            if child:FindFirstChild("ZombieScript") or
+               (child.Name=="Zombie" and child:FindFirstChildOfClass("Humanoid")) then
+                pcall(killOneZombie, child)
+            end
         end
     end
 end
@@ -862,11 +954,26 @@ local function doAntiCarry()
 end
 
 -- ── AUTO PROJECTS ────────────────────────────────────────────
+-- Tries every known event type on "Evacuate" by name, then does a broad sweep
+-- of all descendants so it works even if the event was renamed or nested deeper.
 local function fireProjectEvacuate(projName)
     local proj = WS:FindFirstChild(projName); if not proj then return end
-    local ev = proj:FindFirstChild("Evacuate"); if not ev then return end
-    if ev:IsA("BindableEvent") then pcall(function() ev:Fire() end)
-    elseif ev:IsA("RemoteEvent") then pcall(function() ev:FireServer() end) end
+    -- named Evacuate first (fast path)
+    local ev = proj:FindFirstChild("Evacuate")
+    if ev then
+        if ev:IsA("BindableEvent")   then pcall(function() ev:Fire() end) end
+        if ev:IsA("RemoteEvent")     then pcall(function() ev:FireServer() end) end
+        if ev:IsA("RemoteFunction")  then pcall(function() ev:InvokeServer() end) end
+        if ev:IsA("BindableFunction") then pcall(function() ev:Invoke() end) end
+    end
+    -- broad sweep: fire all remote/bindable events in the folder
+    for _, child in ipairs(proj:GetDescendants()) do
+        if child:IsA("RemoteEvent")      then pcall(function() child:FireServer() end)
+        elseif child:IsA("BindableEvent") then pcall(function() child:Fire() end)
+        elseif child:IsA("RemoteFunction") then pcall(function() child:InvokeServer() end)
+        elseif child:IsA("BindableFunction") then pcall(function() child:Invoke() end)
+        end
+    end
 end
 
 -- ── INVIS ────────────────────────────────────────────────────
@@ -923,10 +1030,12 @@ local function runESP()
         if char and S.playerESP then
             local hum  = char:FindFirstChildOfClass("Humanoid")
             local phrp = char:FindFirstChild("HumanoidRootPart")
-            local pct  = (hum and hum.MaxHealth>0) and (hum.Health/hum.MaxHealth) or 1
+            local hp   = hum and hum.Health or 0
+            local mxhp = hum and hum.MaxHealth or 100
+            local pct  = mxhp>0 and (hp/mxhp) or 1
             local dist = (myHRP and phrp) and math.round((myHRP.Position-phrp.Position).Magnitude) or 0
-            getOrMakeESP(char, Color3.fromRGB(255,80,80))
-            updateESP(char, plr.Name.." ["..dist.."m]", pct)
+            getOrMakeESP(char, Color3.fromRGB(255,90,90))
+            updateESP(char, plr.Name.." ["..dist.."m]", pct, mxhp)
         elseif espData[char] then removeESP(char) end
     end
 
@@ -936,10 +1045,12 @@ local function runESP()
             if S.ghostESP then
                 local hum  = ghost:FindFirstChildOfClass("Humanoid")
                 local ghrp = ghost:FindFirstChildWhichIsA("BasePart")
-                local pct  = (hum and hum.MaxHealth>0) and (hum.Health/hum.MaxHealth) or 1
+                local hp   = hum and hum.Health or 0
+                local mxhp = hum and hum.MaxHealth or 100
+                local pct  = mxhp>0 and (hp/mxhp) or 1
                 local dist = (myHRP and ghrp) and math.round((myHRP.Position-ghrp.Position).Magnitude) or 0
-                getOrMakeESP(ghost, Color3.fromRGB(180,100,255))
-                updateESP(ghost, "GHOST:"..ghost.Name.." ["..dist.."m]", pct)
+                getOrMakeESP(ghost, Color3.fromRGB(200,110,255))
+                updateESP(ghost, "GHOST:"..ghost.Name.." ["..dist.."m]", pct, mxhp)
             elseif espData[ghost] then removeESP(ghost) end
         end
     end
@@ -1039,6 +1150,7 @@ local combatTimer   = 0
 local miscTimer     = 0
 local zombieTimer   = 0
 local projectTimer  = 0
+local gunKillTimer  = 0
 
 LOOPS.stepped = RunService.Stepped:Connect(function(_, dt)
     grabTimer    = grabTimer    + dt
@@ -1047,6 +1159,7 @@ LOOPS.stepped = RunService.Stepped:Connect(function(_, dt)
     miscTimer    = miscTimer    + dt
     zombieTimer  = zombieTimer  + dt
     projectTimer = projectTimer + dt
+    gunKillTimer = gunKillTimer + dt
 
     if grabTimer >= 0.12 then
         grabTimer = 0
@@ -1072,9 +1185,14 @@ LOOPS.stepped = RunService.Stepped:Connect(function(_, dt)
         if S.fling then doFling() end
     end
 
-    if zombieTimer >= 0.25 then
+    if zombieTimer >= 0.1 then
         zombieTimer = 0
         if S.autoKillZombies then doAutoKillZombies() end
+    end
+
+    if gunKillTimer >= 0.12 then
+        gunKillTimer = 0
+        if S.gunKill then doGunKill() end
     end
 
     if miscTimer >= 0.4 then
@@ -1126,39 +1244,39 @@ local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 local Window = Rayfield:CreateWindow({
     Name             = "Wallace Chaos Hub  |  PAID",
     LoadingTitle     = "Wallace Chaos Hub",
-    LoadingSubtitle  = "Black Edition — All Features",
+    LoadingSubtitle  = "Black / Purple Edition — All Features",
     Theme = {
         TextColor                    = Color3.fromRGB(235,235,235),
-        Background                   = Color3.fromRGB(10,10,14),
-        Topbar                       = Color3.fromRGB(18,22,38),
+        Background                   = Color3.fromRGB(8,8,12),
+        Topbar                       = Color3.fromRGB(18,8,30),
         Shadow                       = Color3.fromRGB(0,0,0),
-        NotificationBackground       = Color3.fromRGB(15,15,20),
-        NotificationActionsBackground= Color3.fromRGB(30,40,70),
-        TabBackground                = Color3.fromRGB(20,25,45),
-        TabStroke                    = Color3.fromRGB(200,30,50),
-        TabBackgroundSelected        = Color3.fromRGB(180,25,45),
-        TabTextColor                 = Color3.fromRGB(210,210,230),
+        NotificationBackground       = Color3.fromRGB(14,8,22),
+        NotificationActionsBackground= Color3.fromRGB(40,10,70),
+        TabBackground                = Color3.fromRGB(20,8,38),
+        TabStroke                    = Color3.fromRGB(150,0,230),
+        TabBackgroundSelected        = Color3.fromRGB(110,0,185),
+        TabTextColor                 = Color3.fromRGB(205,180,230),
         SelectedTabTextColor         = Color3.fromRGB(255,255,255),
-        ElementBackground            = Color3.fromRGB(16,20,36),
-        ElementBackgroundHover       = Color3.fromRGB(30,40,75),
-        SecondaryElementBackground   = Color3.fromRGB(14,18,32),
-        ElementStroke                = Color3.fromRGB(40,60,110),
-        SecondaryElementStroke       = Color3.fromRGB(120,20,35),
-        SliderBackground             = Color3.fromRGB(180,25,45),
-        SliderProgress               = Color3.fromRGB(30,100,220),
-        SliderStroke                 = Color3.fromRGB(80,130,220),
-        ToggleBackground             = Color3.fromRGB(20,30,60),
-        ToggleEnabled                = Color3.fromRGB(220,30,50),
-        ToggleDisabled               = Color3.fromRGB(40,45,60),
-        ToggleEnabledStroke          = Color3.fromRGB(255,80,100),
-        ToggleDisabledStroke         = Color3.fromRGB(60,80,130),
-        ToggleEnabledOuterStroke     = Color3.fromRGB(30,100,220),
-        ToggleDisabledOuterStroke    = Color3.fromRGB(40,60,100),
-        DropdownSelected             = Color3.fromRGB(180,25,45),
-        DropdownUnselected           = Color3.fromRGB(20,25,45),
-        InputBackground              = Color3.fromRGB(15,18,30),
-        InputStroke                  = Color3.fromRGB(180,30,50),
-        PlaceholderColor             = Color3.fromRGB(150,150,170),
+        ElementBackground            = Color3.fromRGB(16,8,28),
+        ElementBackgroundHover       = Color3.fromRGB(40,10,72),
+        SecondaryElementBackground   = Color3.fromRGB(12,6,22),
+        ElementStroke                = Color3.fromRGB(75,15,135),
+        SecondaryElementStroke       = Color3.fromRGB(130,0,210),
+        SliderBackground             = Color3.fromRGB(90,0,160),
+        SliderProgress               = Color3.fromRGB(165,0,255),
+        SliderStroke                 = Color3.fromRGB(185,70,255),
+        ToggleBackground             = Color3.fromRGB(28,8,52),
+        ToggleEnabled                = Color3.fromRGB(155,0,240),
+        ToggleDisabled               = Color3.fromRGB(38,18,58),
+        ToggleEnabledStroke          = Color3.fromRGB(210,90,255),
+        ToggleDisabledStroke         = Color3.fromRGB(65,28,100),
+        ToggleEnabledOuterStroke     = Color3.fromRGB(120,0,210),
+        ToggleDisabledOuterStroke    = Color3.fromRGB(48,18,85),
+        DropdownSelected             = Color3.fromRGB(110,0,185),
+        DropdownUnselected           = Color3.fromRGB(20,8,38),
+        InputBackground              = Color3.fromRGB(14,6,26),
+        InputStroke                  = Color3.fromRGB(140,0,220),
+        PlaceholderColor             = Color3.fromRGB(160,130,195),
     },
     DisableRayfieldPrompts = true,
     DisableBuildWarnings   = true,
@@ -1318,6 +1436,19 @@ TabFun:CreateSlider({
     Name="Max Items", Range={4,60}, Increment=1, Suffix="items",
     CurrentValue=24, Flag="floatMax",
     Callback=function(v) S.floatMax=v end,
+})
+TabFun:CreateParagraph({
+    Title   = "Gun Kill",
+    Content = "While Float Weapons is spinning, damages every player, zombie, and NPC inside the orbit radius. Players take 30 damage per hit; zombies/NPCs are one-shot. Only active when Float Weapons is ON.",
+})
+TabFun:CreateToggle({
+    Name="Gun Kill (Damages nearby while spinning)", CurrentValue=false, Flag="gunKill",
+    Callback=function(v) S.gunKill=v end,
+})
+TabFun:CreateSlider({
+    Name="Gun Kill Extra Radius", Range={0,40}, Increment=1, Suffix="studs",
+    CurrentValue=15, Flag="gunKillRadius",
+    Callback=function(v) S.gunKillRadius=v end,
 })
 
 -- Survival Tab
