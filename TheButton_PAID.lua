@@ -174,27 +174,58 @@ local function connectNoStun()
 end
 
 -- ── INF STAMINA ─────────────────────────────────────────────
-local function doInfStam()
-    local pg=LP:FindFirstChild("PlayerGui"); if not pg then return end
-    local bar=pg:FindFirstChild("StaminaBar",true); if not bar then return end
-    for _,d in ipairs(bar:GetDescendants()) do
-        if (d:IsA("NumberValue") or d:IsA("IntValue")) and d.Value>=0 and d.Value<=100 then d.Value=100 end
+-- Stamina is a Frame (not a NumberValue).
+-- Fix: disable StaminaScript + pin Frame size to full every frame.
+local function getStamBar()
+    local pg=LP:FindFirstChild("PlayerGui"); if not pg then return nil,nil end
+    local bar=pg:FindFirstChild("StaminaBar",true); if not bar then return nil,nil end
+    local scr=bar:FindFirstChild("StaminaScript")
+    local frame=bar:FindFirstChild("Stamina")  -- Frame, NOT NumberValue
+    return scr, frame
+end
+local function applyInfStam(on)
+    local scr,frame=getStamBar()
+    if scr  then pcall(function() scr.Disabled=on end) end  -- disable script = stop depletion
+    if frame and frame:IsA("Frame") and on then
+        pcall(function() frame.Size=UDim2.new(1,0,frame.Size.Y.Scale,0) end)
+    end
+end
+local function doInfStam()  -- called every Heartbeat to keep bar full
+    local scr,frame=getStamBar()
+    if scr  then pcall(function() scr.Disabled=true end) end
+    if frame and frame:IsA("Frame") then
+        pcall(function() frame.Size=UDim2.new(1,0,frame.Size.Y.Scale,0) end)
     end
 end
 
--- ── GOD MODE (reactive property-changed hook + Heartbeat) ───
+-- ── GOD MODE ────────────────────────────────────────────────
+-- Uses ghost Humanoid health as reference — workspace.Ghosts.[name]
+-- has a server Health Script keeping ghost unkillable. We copy its
+-- MaxHealth and layer a reactive GetPropertyChangedSignal hook on top.
 local godConns={}
+local function getGhostMaxHealth()
+    local gf=WS:FindFirstChild("Ghosts"); if not gf then return 1e6 end
+    for _,g in ipairs(gf:GetChildren()) do
+        local gh=g:FindFirstChildOfClass("Humanoid")
+        if gh and gh.MaxHealth>0 then return gh.MaxHealth end
+    end
+    return 1e6
+end
 local function setupGodMode()
     for _,c in ipairs(godConns) do c:Disconnect() end; godConns={}
     if not S.godMode then return end
     local hum=getHum(); if not hum then return end
-    pcall(function() hum.MaxHealth=1e6; hum.Health=1e6 end)
+    local mx=getGhostMaxHealth()  -- match ghost's unkillable health value
+    pcall(function() hum.MaxHealth=mx; hum.Health=mx end)
     pcall(function() hum.RequiresNeck=false end)
     pcall(function() hum.BreakJointsOnDeath=false end)
     pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Dead,false) end)
+    -- reactive hook: resets health the instant the server changes it
     local ok,conn=pcall(function()
         return hum:GetPropertyChangedSignal("Health"):Connect(function()
-            if S.godMode and hum.Parent then pcall(function() hum.Health=hum.MaxHealth end) end
+            if S.godMode and hum.Parent then
+                pcall(function() hum.Health=hum.MaxHealth end)
+            end
         end)
     end)
     if ok and conn then table.insert(godConns,conn) end
@@ -554,7 +585,7 @@ RunService.Heartbeat:Connect(function()
         if S.noDark     then applyNoDark()    end
         if S.antiPush   then doAntiPush()     end
         if S.stayCircle then doStayInCircle() end
-        if S.infStam    then doInfStam()      end
+        if S.infStam    then doInfStam()      end  -- pins Stamina Frame + keeps script disabled
         if S.hitbox     then doHitbox()       end
     end)
 end)
@@ -650,7 +681,7 @@ tCom:CreateToggle({Name="God Mode",CurrentValue=false,Callback=function(v)
     S.godMode=v; if v then setupGodMode() else for _,c in ipairs(godConns) do c:Disconnect() end; godConns={} end
 end})
 tCom:CreateToggle({Name="No Stun",CurrentValue=false,Callback=function(v) S.noStun=v; if v then connectNoStun() end end})
-tCom:CreateToggle({Name="Inf Stamina",CurrentValue=false,Callback=function(v) S.infStam=v end})
+tCom:CreateToggle({Name="Inf Stamina",CurrentValue=false,Callback=function(v) S.infStam=v; applyInfStam(v) end})
 tCom:CreateToggle({Name="Anti Push",CurrentValue=false,Callback=function(v) S.antiPush=v end})
 tCom:CreateDivider()
 tCom:CreateToggle({Name="Hitbox Expander",CurrentValue=false,Callback=function(v) S.hitbox=v; if not v then resetHitbox() end end})
