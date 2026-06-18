@@ -18,25 +18,6 @@ local fireclick   = (typeof(fireclickdetector)=="function")  and fireclickdetect
 local sethidden   = (typeof(sethiddenproperty)=="function") and sethiddenproperty or nil
 local firetouchif = (typeof(firetouchinterest)=="function") and firetouchinterest or nil
 
--- ── NETWORK OWNERSHIP (FE physics) ───────────────────────────
--- Maxing the local player's simulation radius makes the server grant us network
--- ownership of every unanchored part we touch, so when we move those parts their
--- positions REPLICATE to the server and to every other player. This is what makes
--- Float Weapons visible to everyone, not just on our own screen.
-local function claimOwnership()
-    -- Max SimulationRadius via sethiddenproperty (executor-specific hidden property)
-    if sethidden then
-        pcall(sethidden, LP, "SimulationRadius", math.huge)
-        pcall(sethidden, LP, "MaximumSimulationRadius", math.huge)
-    end
-    pcall(function() LP.SimulationRadius = math.huge end)
-    pcall(function() LP.MaximumSimulationRadius = math.huge end)
-    -- ReplicationFocus: tells the server to center physics replication around us,
-    -- which ensures our nearby part movements are sent to every other client.
-    local hrp = getHRP()
-    if hrp then pcall(function() WS.ReplicationFocus = hrp end) end
-end
-
 -- Out-of-map TP position (far outside map boundary, causes fall death)
 local OUTOFMAP = Vector3.new(9999, 200, 9999)
 
@@ -99,22 +80,12 @@ local S = {
     autoAttack     = false,
     fling          = false,
 
-    floatWeapons   = false,
-    floatShape     = "Orbit",
-    floatRadius    = 8,
-    floatSpeed     = 2,
-    floatMax       = 24,
-    gunKill        = false,
-    gunKillRadius  = 15,
-
     autoKillZombies = false,
 
     autoOpenDoors   = false,
     noclip          = false,
     antiCarry       = false,
     stayKingCircle  = false,
-    alwaysGetButton = false,
-
     autoRevive     = false,
     autoGrab       = false,
     grabRadius     = 50,
@@ -432,171 +403,6 @@ local function doFling()
     end
 end
 
--- ── FLOAT WEAPONS ────────────────────────────────────────────
--- Gathers nearby item parts and floats them around the player in a chosen shape
--- (Orbit ring, Ball/sphere, Sword, Halo, Wings). Parts are unanchored and their
--- CFrame is set every frame; because they are unanchored and near you, the server
--- usually grants you network ownership, so OTHER players see the formation too.
-local floatParts = {}    -- [BasePart] = originalAnchored
-local floatAngle = 0
-local floatRegather = 0
-
-local function floatRelease(part)
-    local orig = floatParts[part]
-    if orig ~= nil and part and part.Parent then
-        pcall(function() part.Anchored = orig end)
-    end
-    floatParts[part] = nil
-end
-
-local function floatReleaseAll()
-    for p in pairs(floatParts) do floatRelease(p) end
-end
-
-local function floatGather()
-    local hrp = getHRP(); if not hrp then return {} end
-    local found = {}
-    for _, child in ipairs(WS:GetChildren()) do
-        if isItem(child) then
-            local r = itemRoot(child)
-            if r and r:IsA("BasePart") then found[#found+1] = r end
-        end
-    end
-    table.sort(found, function(a, b)
-        return (a.Position-hrp.Position).Magnitude < (b.Position-hrp.Position).Magnitude
-    end)
-    local picked = {}
-    for i = 1, math.min(#found, S.floatMax) do picked[i] = found[i] end
-    return picked
-end
-
--- Humanoid silhouette for the JoJo "Stand" formation. Ordered so even a few items
--- still read as a figure (head, torso, pelvis, hands, feet first; detail fills in).
-local STAND_OFFSETS = {
-    {x= 0.0, y=5.2}, {x= 0.0, y=3.6}, {x= 0.0, y=2.1},          -- head, torso, pelvis
-    {x=-2.4, y=2.0}, {x= 2.4, y=2.0},                            -- hands
-    {x=-0.95,y=0.05},{x= 0.95,y=0.05},                           -- feet
-    {x=-1.3, y=4.3}, {x= 1.3, y=4.3},                            -- shoulders
-    {x=-0.85,y=0.8}, {x= 0.85,y=0.8},                            -- knees
-    {x=-2.0, y=3.0}, {x= 2.0, y=3.0},                            -- elbows
-    {x= 0.0, y=4.5}, {x= 0.0, y=4.1}, {x= 0.0, y=2.8},           -- neck, chest, abdomen
-    {x=-0.7, y=2.0}, {x= 0.7, y=2.0},                            -- hips
-    {x=-0.8, y=1.4}, {x= 0.8, y=1.4},                            -- thighs
-    {x=-0.9, y=0.4}, {x= 0.9, y=0.4},                            -- shins
-    {x=-2.2, y=2.5}, {x= 2.2, y=2.5},                            -- forearms
-    {x=-1.7, y=3.6}, {x= 1.7, y=3.6},                            -- upper arms
-    {x=-0.5, y=5.2}, {x= 0.5, y=5.2},                            -- head sides
-    {x=-0.65,y=4.1}, {x= 0.65,y=4.1},                            -- upper chest
-}
-
-local function floatShapeCF(shape, i, n, center, lookCF)
-    local r = S.floatRadius
-    if shape == "Ball" then
-        -- fibonacci sphere distribution
-        local k   = i - 1
-        local off = 2 / n
-        local y   = (k * off) - 1 + (off / 2)
-        local rad = math.sqrt(math.max(0, 1 - y*y))
-        local phi = k * 2.399963229728653 + floatAngle   -- golden angle
-        return CFrame.new(center + Vector3.new(math.cos(phi)*rad, y, math.sin(phi)*rad) * r)
-    elseif shape == "Cube" then
-        -- sphere points projected to a cube surface, slowly rotating
-        local k   = i - 1
-        local off = 2 / n
-        local y   = (k * off) - 1 + (off / 2)
-        local rad = math.sqrt(math.max(0, 1 - y*y))
-        local phi = k * 2.399963229728653 + floatAngle
-        local dir = Vector3.new(math.cos(phi)*rad, y, math.sin(phi)*rad)
-        local m   = math.max(math.abs(dir.X), math.abs(dir.Y), math.abs(dir.Z), 1e-3)
-        return CFrame.new(center + (dir / m) * r) * CFrame.Angles(0, floatAngle, 0)
-    elseif shape == "Spiral" then
-        -- rising tornado that widens toward the top
-        local t      = (i - 1) / math.max(1, n - 1)
-        local ang    = floatAngle * 1.5 + t * math.pi * 6
-        local radius = r * (0.3 + 0.7 * t)
-        local height = t * r * 2.2 - r
-        return CFrame.new(center + Vector3.new(math.cos(ang)*radius, height, math.sin(ang)*radius))
-    elseif shape == "Stand" then
-        -- JoJo Stand: humanoid figure hovering behind-right of the player, facing forward
-        local o     = STAND_OFFSETS[((i - 1) % #STAND_OFFSETS) + 1]
-        local scale = r / 5
-        local bob   = math.sin(floatAngle) * 0.4
-        local origin = center
-            - lookCF.LookVector * 3
-            + lookCF.RightVector * 2.5
-            + Vector3.new(0, bob - 2.5, 0)
-        local pos = origin
-            + lookCF.RightVector * (o.x * scale)
-            + Vector3.new(0, o.y * scale, 0)
-        return CFrame.new(pos, pos + lookCF.LookVector)   -- parts face same way as player
-    elseif shape == "Sword" then
-        -- vertical blade in front of the player
-        local t      = (i - 1) / math.max(1, n - 1)
-        local height = t * r * 2 - r * 0.5
-        local fwd    = lookCF.LookVector * (r * 0.4)
-        return CFrame.new(center + fwd + Vector3.new(0, height, 0))
-            * CFrame.Angles(math.rad(90), 0, 0)
-    elseif shape == "Halo" then
-        local ang = floatAngle + (i / n) * math.pi * 2
-        return CFrame.new(center + Vector3.new(math.cos(ang), 2.4, math.sin(ang)) * r)
-            * CFrame.Angles(math.rad(80), -ang, 0)
-    elseif shape == "Wings" then
-        local side      = (i % 2 == 0) and 1 or -1
-        local idx       = math.floor((i - 1) / 2)
-        local pairCount = math.ceil(n / 2)
-        local t         = idx / math.max(1, pairCount)
-        local back = -lookCF.LookVector * (1 + t * r)
-        local up   = Vector3.new(0, t * r, 0)
-        local out  = lookCF.RightVector * side * (1 + t * r * 0.7)
-        return CFrame.new(center + back + up + out)
-    else -- "Orbit" ring
-        local ang = floatAngle + (i / n) * math.pi * 2
-        return CFrame.new(center + Vector3.new(math.cos(ang), 0, math.sin(ang)) * r)
-            * CFrame.Angles(0, -ang, 0)
-    end
-end
-
-local function doFloatWeapons(dt)
-    local hrp = getHRP(); if not hrp then return end
-    floatAngle = floatAngle + dt * S.floatSpeed
-    claimOwnership()   -- force network ownership so everyone sees the formation
-
-    -- refresh the controlled item set a couple times per second
-    floatRegather = floatRegather + dt
-    if floatRegather >= 0.5 or next(floatParts) == nil then
-        floatRegather = 0
-        local picked, pickedSet = floatGather(), {}
-        for _, p in ipairs(picked) do pickedSet[p] = true end
-        for p in pairs(floatParts) do
-            if not pickedSet[p] or not p.Parent then floatRelease(p) end
-        end
-        for _, p in ipairs(picked) do
-            if floatParts[p] == nil then floatParts[p] = p.Anchored end
-        end
-    end
-
-    -- deterministic ordering so each item keeps a stable slot
-    local list = {}
-    for p in pairs(floatParts) do
-        if p.Parent then list[#list+1] = p else floatRelease(p) end
-    end
-    table.sort(list, function(a, b) return a:GetFullName() < b:GetFullName() end)
-
-    local n = #list; if n == 0 then return end
-    local center = hrp.Position + Vector3.new(0, 1, 0)
-    local lookCF = hrp.CFrame
-    for i, part in ipairs(list) do
-        local cf = floatShapeCF(S.floatShape, i, n, center, lookCF)
-        pcall(function()
-            part.Anchored = false
-            part.CanCollide = false
-            part.AssemblyLinearVelocity  = Vector3.zero
-            part.AssemblyAngularVelocity = Vector3.zero
-            part.CFrame = cf
-        end)
-    end
-end
-
 -- ── ZOMBIE / NPC KILL ────────────────────────────────────────
 -- In FilteringEnabled, client-side Health=0 / BreakJoints() / Anchored=true do NOT
 -- replicate: the zombie only "dies" on YOUR screen while everyone else still sees it
@@ -717,89 +523,6 @@ local function killOneZombie(zombie)
     pcall(function() if zombie:GetAttribute("Health") ~= nil then zombie:SetAttribute("Health", 0) end end)
 end
 
--- ── GUN KILL ─────────────────────────────────────────────────
--- While Float Weapons spins, hits everything in orbit range.
---
--- FE DAMAGE STRATEGY (TakeDamage does NOT replicate client→server in FE):
---   • firetouchinterest(orbitPart, targetPart, 0) — simulates the orbiting weapon
---     physically TOUCHING the target; if the game's weapon/damage scripts listen to
---     Touched events they will fire on the server and deal real damage.
---   • killOneZombie for NPCs — BreakJoints + disable scripts + zero health values.
---   • Velocity fling for players — launches them with an outward impulse; fall/void
---     damage is server-authoritative and always works.
---   • FireServer on any damage RemoteEvent found in ReplicatedStorage (broad sweep).
-local function doGunKill()
-    if not S.floatWeapons then return end
-    local hrp = getHRP(); if not hrp then return end
-    local pos       = hrp.Position
-    local killRange = S.floatRadius + S.gunKillRadius
-
-    -- snapshot the current orbiting parts so firetouchinterest has real parts to use
-    local orbitParts = {}
-    for p in pairs(floatParts) do
-        if p and p.Parent then orbitParts[#orbitParts+1] = p end
-    end
-
-    -- ── helper: simulate weapon touch on a target's BaseParts ───────────────
-    -- Uses only ONE orbit part (the first stable one) to avoid physics spam
-    -- that can spike our own velocity and trigger the fling anti-cheat.
-    local function touchTarget(targetModel)
-        if not firetouchif or #orbitParts == 0 then return end
-        local op = orbitParts[1]   -- single representative orbit part
-        for _, d in ipairs(targetModel:GetDescendants()) do
-            if d:IsA("BasePart") then
-                pcall(function() firetouchif(op, d, 0) end)
-            end
-        end
-    end
-
-    -- ── Players ───────────────────────────────────────────────────────────────
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr == LP then continue end
-        local char = plr.Character; if not char then continue end
-        local phrp = char:FindFirstChild("HumanoidRootPart"); if not phrp then continue end
-        if (pos - phrp.Position).Magnitude > killRange then continue end
-        local hum = char:FindFirstChildOfClass("Humanoid"); if not hum or hum.Health <= 0 then continue end
-        -- (1) firetouchinterest: triggers the game's Touched-based damage server-side
-        touchTarget(char)
-        -- (2) TakeDamage attempt (works if game is non-strict FE)
-        pcall(function() hum:TakeDamage(30) end)
-        -- NOTE: velocity fling removed — applying AssemblyLinearVelocity to another
-        -- player's HRP from the client creates physics reactions that spike OUR velocity
-        -- and trips the "Fling detected" anti-cheat (Error 267).
-    end
-
-    -- ── NPCs / Zombies helper ────────────────────────────────────────────────
-    local function killNPCsIn(container)
-        for _, child in ipairs(container:GetChildren()) do
-            if Players:GetPlayerFromCharacter(child) then continue end
-            local root = child:FindFirstChild("HumanoidRootPart")
-                or child:FindFirstChildWhichIsA("BasePart")
-            if not root then continue end
-            if (pos - root.Position).Magnitude > killRange then continue end
-            -- full kill: BreakJoints + disable scripts + zero health values
-            pcall(killOneZombie, child)
-            -- also simulate weapon touch in case game uses Touched for damage
-            touchTarget(child)
-        end
-    end
-
-    local zombieFolder = WS:FindFirstChild("Zombies")
-    if zombieFolder then killNPCsIn(zombieFolder) end
-    killNPCsIn(WS)   -- catches NPCs spawned outside the Zombies folder
-
-    -- ── Broad RemoteEvent sweep in ReplicatedStorage ─────────────────────────
-    local ok, rs = pcall(function() return game:GetService("ReplicatedStorage") end)
-    if ok and rs then
-        for _, child in ipairs(rs:GetDescendants()) do
-            local nm = child.Name:lower()
-            if child:IsA("RemoteEvent") and (nm:find("damage") or nm:find("hit") or nm:find("attack") or nm:find("kill")) then
-                pcall(function() child:FireServer() end)
-            end
-        end
-    end
-end
-
 -- ── AUTO KILL ZOMBIES ────────────────────────────────────────
 -- killOneZombie is defined further up (before Gun Kill, which also calls it).
 local function doAutoKillZombies()
@@ -822,21 +545,6 @@ local function doAutoKillZombies()
                 pcall(killOneZombie, child)
             end
         end
-    end
-end
-
--- ── ALWAYS GET BUTTON ────────────────────────────────────────
-local function doAlwaysGetButton()
-    local mm  = WS:FindFirstChild("Map") and WS.Map:FindFirstChild("MapModels")
-    local btn = mm and mm:FindFirstChild("TheButton")
-    local bp  = btn and (btn:FindFirstChild("Button") or btn)
-    if not bp then return end
-    local pp = bp:FindFirstChildOfClass("ProximityPrompt")
-        or bp:FindFirstChild("ButtonPrompt")
-        or bp:FindFirstChildWhichIsA("ProximityPrompt")
-    if pp then
-        pcall(function() pp.Enabled=true; pp.MaxActivationDistance=200; pp.HoldDuration=0 end)
-        pcall(fireprompt, pp)
     end
 end
 
@@ -1301,28 +1009,43 @@ local function doAntiPush()
 end
 
 -- ── HITBOX EXPANDER ──────────────────────────────────────────
--- Root cause of "floating": HRP.CanCollide=true + large Size → physics pushes
--- the character up when the expanded box clips terrain. Fix: CanCollide=false so
--- physics stops touching it (the Humanoid uses raycasting for floor detection,
--- not the HRP's collision box, so walking still works perfectly).
--- Full cube (hitboxSize × hitboxSize × hitboxSize) gives a real 3D hitbox.
--- SelectionBox makes it visible in-game so you can confirm it's working.
-local hitboxSB = nil
+-- Creates a separate invisible BasePart welded to HRP instead of resizing HRP.
+-- Resizing HRP + CanCollide=false causes the character to sink because the
+-- Humanoid can no longer detect the floor through the root part's collision.
+-- A separate Massless part with CanCollide=false avoids that entirely.
+local hitboxPart = nil
+local hitboxSB   = nil
 
 local function doHitboxExpander()
     local char = LP.Character; if not char then return end
     local hrp  = char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
-    pcall(function()
-        hrp.Size      = Vector3.new(S.hitboxSize, S.hitboxSize, S.hitboxSize)
-        hrp.CanCollide = false   -- no terrain push → no float
-    end)
-    -- Create SelectionBox once; it tracks HRP automatically via Adornee
+    -- create the expander part once per character
+    if not hitboxPart or not hitboxPart.Parent then
+        local bp = Instance.new("Part")
+        bp.Name        = "_HitboxExpander"
+        bp.Size        = Vector3.new(S.hitboxSize, S.hitboxSize, S.hitboxSize)
+        bp.Transparency= 1
+        bp.CanCollide  = false
+        bp.Massless    = true
+        bp.Anchored    = false
+        bp.CFrame      = hrp.CFrame
+        bp.Parent      = char
+        local weld = Instance.new("WeldConstraint")
+        weld.Part0 = hrp; weld.Part1 = bp
+        weld.Parent = bp
+        hitboxPart = bp
+    else
+        -- keep size in sync with slider
+        pcall(function()
+            hitboxPart.Size = Vector3.new(S.hitboxSize, S.hitboxSize, S.hitboxSize)
+        end)
+    end
     if not hitboxSB or not hitboxSB.Parent then
         local sb = Instance.new("SelectionBox")
-        sb.Adornee            = hrp
-        sb.Color3             = Color3.fromRGB(255, 50, 50)
-        sb.LineThickness      = 0.05
-        sb.SurfaceColor3      = Color3.fromRGB(255, 50, 50)
+        sb.Adornee             = hitboxPart
+        sb.Color3              = Color3.fromRGB(255, 50, 50)
+        sb.LineThickness       = 0.05
+        sb.SurfaceColor3       = Color3.fromRGB(255, 50, 50)
         sb.SurfaceTransparency = 0.78
         pcall(function() sb.Parent = game:GetService("CoreGui") end)
         hitboxSB = sb
@@ -1399,16 +1122,17 @@ LP.CharacterAdded:Connect(function()
     if S.godMode  then setupGodMode() end
     if S.noStun   then connectNoStun() end
     if S.invis    then applyInvis(true) end
-    -- Hitbox SelectionBox adorns the old HRP; clear it so doHitboxExpander rebuilds on new char
-    if hitboxSB and hitboxSB.Parent then hitboxSB:Destroy() end
-    hitboxSB = nil
+    -- Reset hitbox parts so doHitboxExpander rebuilds them for the new character
+    if hitboxSB   and hitboxSB.Parent   then hitboxSB:Destroy()   end
+    if hitboxPart and hitboxPart.Parent then hitboxPart:Destroy()  end
+    hitboxSB   = nil
+    hitboxPart = nil
 end)
 
 -- ── LOOPS ────────────────────────────────────────────────────
 local LOOPS = {}
 
 LOOPS.heartbeat = RunService.Heartbeat:Connect(function(dt)
-    if S.floatWeapons then doFloatWeapons(dt) end
     if S.infStam then doInfStam() end
     if S.speedHack then
         local hum = getHum()
@@ -1462,7 +1186,6 @@ local combatTimer   = 0
 local miscTimer     = 0
 local zombieTimer   = 0
 local projectTimer  = 0
-local gunKillTimer  = 0
 
 LOOPS.stepped = RunService.Stepped:Connect(function(_, dt)
     grabTimer    = grabTimer    + dt
@@ -1471,7 +1194,6 @@ LOOPS.stepped = RunService.Stepped:Connect(function(_, dt)
     miscTimer    = miscTimer    + dt
     zombieTimer  = zombieTimer  + dt
     projectTimer = projectTimer + dt
-    gunKillTimer = gunKillTimer + dt
 
     if grabTimer >= 0.12 then
         grabTimer = 0
@@ -1502,17 +1224,11 @@ LOOPS.stepped = RunService.Stepped:Connect(function(_, dt)
         if S.autoKillZombies then doAutoKillZombies() end
     end
 
-    if gunKillTimer >= 0.12 then
-        gunKillTimer = 0
-        if S.gunKill then doGunKill() end
-    end
-
     if miscTimer >= 0.4 then
         miscTimer = 0
         if S.autoOpenDoors   then doAutoOpenDoors() end
         if S.antiCarry       then doAntiCarry() end
         if S.stayKingCircle  then doStayKingCircle() end
-        if S.alwaysGetButton then doAlwaysGetButton() end
         if S.autoRevive or S.autoFarm then doAutoRevive() end
         if S.autoFarm        then task.spawn(doAutoGrab) end
         if S.autoCarry       then doAutoCarry() end
@@ -1544,7 +1260,6 @@ UIS.InputBegan:Connect(function(inp, gp)
     if inp.KeyCode==Enum.KeyCode.F6 then
         for _, c in pairs(LOOPS) do pcall(function() c:Disconnect() end) end
         clearAllESP()
-        floatReleaseAll()
         local hum = getHum()
         if hum then pcall(function() hum.WalkSpeed=16 end) end
         applyInvis(false)
@@ -1714,58 +1429,6 @@ TabCombat:CreateToggle({
     Callback=function(v) S.autoKillZombies=v end,
 })
 
--- Fun Tab
-local TabFun = Window:CreateTab("Fun", 4483362458)
-
-TabFun:CreateParagraph({
-    Title   = "Float Weapons",
-    Content = "Pulls nearby items and floats them around you in a shape. EVERYONE can see it: the script maxes your simulation radius to claim network ownership of the parts, so their positions replicate to the whole server. Try the 'Stand' shape for a JoJo-style figure that hovers behind you.",
-})
-TabFun:CreateToggle({
-    Name="Float Weapons", CurrentValue=false, Flag="floatWeapons",
-    Callback=function(v)
-        S.floatWeapons=v
-        if v then claimOwnership() else floatReleaseAll() end
-    end,
-})
-TabFun:CreateDropdown({
-    Name="Shape",
-    Options={"Orbit","Ball","Cube","Spiral","Sword","Halo","Wings","Stand"},
-    CurrentOption={"Orbit"},
-    Flag="floatShape",
-    Callback=function(opt)
-        S.floatShape = (type(opt)=="table") and opt[1] or opt
-    end,
-})
-TabFun:CreateSlider({
-    Name="Float Radius", Range={3,30}, Increment=1, Suffix="studs",
-    CurrentValue=8, Flag="floatRadius",
-    Callback=function(v) S.floatRadius=v end,
-})
-TabFun:CreateSlider({
-    Name="Spin Speed", Range={0,10}, Increment=1, Suffix="x",
-    CurrentValue=2, Flag="floatSpeed",
-    Callback=function(v) S.floatSpeed=v end,
-})
-TabFun:CreateSlider({
-    Name="Max Items", Range={4,60}, Increment=1, Suffix="items",
-    CurrentValue=24, Flag="floatMax",
-    Callback=function(v) S.floatMax=v end,
-})
-TabFun:CreateParagraph({
-    Title   = "Gun Kill",
-    Content = "While Float Weapons is spinning, damages every player, zombie, and NPC inside the orbit radius. Players take 30 damage per hit; zombies/NPCs are one-shot. Only active when Float Weapons is ON.",
-})
-TabFun:CreateToggle({
-    Name="Gun Kill (Damages nearby while spinning)", CurrentValue=false, Flag="gunKill",
-    Callback=function(v) S.gunKill=v end,
-})
-TabFun:CreateSlider({
-    Name="Gun Kill Extra Radius", Range={0,40}, Increment=1, Suffix="studs",
-    CurrentValue=15, Flag="gunKillRadius",
-    Callback=function(v) S.gunKillRadius=v end,
-})
-
 -- Survival Tab
 local TabSurv = Window:CreateTab("Survival", 4483362458)
 
@@ -1794,16 +1457,10 @@ TabSurv:CreateToggle({
     Callback=function(v)
         S.hitboxExp=v
         if not v then
-            -- destroy the SelectionBox outline
-            if hitboxSB and hitboxSB.Parent then hitboxSB:Destroy() end
-            hitboxSB = nil
-            local char=LP.Character
-            if char then
-                local hrp=char:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    pcall(function() hrp.Size=Vector3.new(2,2,1); hrp.CanCollide=true end)
-                end
-            end
+            if hitboxSB   and hitboxSB.Parent   then hitboxSB:Destroy()  end
+            if hitboxPart and hitboxPart.Parent  then hitboxPart:Destroy() end
+            hitboxSB   = nil
+            hitboxPart = nil
         end
     end,
 })
@@ -1837,10 +1494,6 @@ TabAuto:CreateToggle({
 TabAuto:CreateToggle({
     Name="Stay in King Circle", CurrentValue=false, Flag="stayKingCircle",
     Callback=function(v) S.stayKingCircle=v end,
-})
-TabAuto:CreateToggle({
-    Name="Always Get Button", CurrentValue=false, Flag="alwaysGetButton",
-    Callback=function(v) S.alwaysGetButton=v end,
 })
 TabAuto:CreateToggle({
     Name="Auto Grab Items", CurrentValue=false, Flag="autoGrab",
@@ -1945,8 +1598,15 @@ task.spawn(function()
     end
     if not zf then return end
     zf.ChildAdded:Connect(function(zombie)
-        task.wait(0.25)   -- let the zombie's Humanoid and ZombieScript fully initialize
-        if S.autoKillZombies then pcall(killOneZombie, zombie) end
+        task.spawn(function()
+            task.wait(0.25)   -- let Humanoid and ZombieScript fully initialize
+            for i = 1, 100 do
+                if not zombie.Parent then break end
+                if S.autoKillZombies then pcall(killOneZombie, zombie) end
+                if not zombie.Parent then break end
+                task.wait(0.1)
+            end
+        end)
     end)
 end)
 
