@@ -134,11 +134,19 @@ local SYS = {
     ["Project Alpha"]=true, ["Project Beta"]=true, ["Project Delta"]=true,
 }
 
--- Mine cache: built once at load, updated on ChildAdded/Removed.
--- Avoids calling GetDescendants() every ESP frame which causes lag.
+-- Mine cache: built once, updated on ChildAdded/Removed.
+-- Uses task.spawn + retry because Minefield children may load AFTER this script runs.
 local mineCache = {}
-task.defer(function()
-    local mf = WS:FindFirstChild("Minefield"); if not mf then return end
+task.spawn(function()
+    -- Wait up to 60 s for Minefield to appear
+    local mf
+    local t0 = tick()
+    while not mf and tick()-t0 < 60 do
+        mf = WS:FindFirstChild("Minefield")
+        if not mf then task.wait(1) end
+    end
+    if not mf then return end
+    task.wait(2)   -- extra wait for LandmineSpawner to populate children
     for _, child in ipairs(mf:GetChildren()) do
         if child:IsA("Model") or child:IsA("BasePart") then
             mineCache[#mineCache+1] = child
@@ -168,7 +176,14 @@ local function getOrMakeESP(obj, outlineColor)
 
     local bb = Instance.new("BillboardGui")
     bb.AlwaysOnTop=true; bb.Size=UDim2.new(0,240,0,76)
-    bb.StudsOffset=Vector3.new(0,6.5,0); bb.Parent=obj
+    bb.StudsOffset=Vector3.new(0,6.5,0)
+    -- BillboardGui must have an Adornee BasePart or it defaults to world origin (0,0,0).
+    -- For Models without PrimaryPart (e.g. Landmine) we find the nearest BasePart manually.
+    local adornee = obj:IsA("BasePart") and obj
+        or obj:FindFirstChild("HumanoidRootPart")
+        or obj:FindFirstChildWhichIsA("BasePart")
+    if adornee then bb.Adornee = adornee end
+    bb.Parent = obj
 
     -- name + distance row
     local nm = Instance.new("TextLabel", bb)
@@ -605,14 +620,15 @@ local function doGunKill()
         if p and p.Parent then orbitParts[#orbitParts+1] = p end
     end
 
-    -- ── helper: simulate weapon touch on every BasePart of a target ──────────
+    -- ── helper: simulate weapon touch on a target's BaseParts ───────────────
+    -- Uses only ONE orbit part (the first stable one) to avoid physics spam
+    -- that can spike our own velocity and trigger the fling anti-cheat.
     local function touchTarget(targetModel)
         if not firetouchif or #orbitParts == 0 then return end
+        local op = orbitParts[1]   -- single representative orbit part
         for _, d in ipairs(targetModel:GetDescendants()) do
             if d:IsA("BasePart") then
-                for _, op in ipairs(orbitParts) do
-                    pcall(function() firetouchif(op, d, 0) end)
-                end
+                pcall(function() firetouchif(op, d, 0) end)
             end
         end
     end
@@ -624,16 +640,13 @@ local function doGunKill()
         local phrp = char:FindFirstChild("HumanoidRootPart"); if not phrp then continue end
         if (pos - phrp.Position).Magnitude > killRange then continue end
         local hum = char:FindFirstChildOfClass("Humanoid"); if not hum or hum.Health <= 0 then continue end
-        -- (1) firetouchinterest: game's Touched-based damage fires server-side
+        -- (1) firetouchinterest: triggers the game's Touched-based damage server-side
         touchTarget(char)
-        -- (2) TakeDamage attempt (works in non-strict FE or if game allows it)
+        -- (2) TakeDamage attempt (works if game is non-strict FE)
         pcall(function() hum:TakeDamage(30) end)
-        -- (3) Velocity fling: outward impulse → fall / out-of-bounds kills server-side
-        pcall(function()
-            local dir = (phrp.Position - pos)
-            local unit = dir.Magnitude > 0 and dir.Unit or Vector3.new(0,1,0)
-            phrp.AssemblyLinearVelocity = unit * 90 + Vector3.new(0, 55, 0)
-        end)
+        -- NOTE: velocity fling removed — applying AssemblyLinearVelocity to another
+        -- player's HRP from the client creates physics reactions that spike OUR velocity
+        -- and trips the "Fling detected" anti-cheat (Error 267).
     end
 
     -- ── NPCs / Zombies helper ────────────────────────────────────────────────
@@ -929,6 +942,84 @@ local function doCarryKill()
     carryKillRunning = false
 end
 
+-- ── MINEFIELD RESCUE ─────────────────────────────────────────
+-- When Auto Farm is ON and we're inside the Minefield, this automatically:
+--   1. TPs to downed players in the Minefield area
+--   2. Fires the carry prompt (Q) to pick them up
+--   3. TPs to the ButtonZone (safe zone) carrying them
+-- Detects "inside minefield" by checking proximity to any cached Landmine (<150 studs).
+local mineRescueRunning = false
+
+local function isInsideMinefield()
+    local hrp = getHRP(); if not hrp then return false end
+    local myPos = hrp.Position
+    for _, mine in ipairs(mineCache) do
+        if not mine.Parent then continue end
+        local mpos = mine:IsA("BasePart") and mine.Position
+            or (mine:FindFirstChildWhichIsA("BasePart") and mine:FindFirstChildWhichIsA("BasePart").Position)
+        if mpos and (myPos - mpos).Magnitude < 150 then return true end
+    end
+    -- Fallback: check by folder existence + rough horizontal distance from origin
+    local mf = WS:FindFirstChild("Minefield")
+    if mf then
+        local mhrp = mf:FindFirstChildWhichIsA("BasePart")
+        if mhrp and (hrp.Position - mhrp.Position).Magnitude < 200 then return true end
+    end
+    return false
+end
+
+local function getMinefieldExitCF()
+    -- Primary: ButtonZone (king circle) — the acknowledged safe destination
+    local mm = WS:FindFirstChild("Map") and WS.Map:FindFirstChild("MapModels")
+    local bz = mm and mm:FindFirstChild("ButtonZone")
+    if bz then
+        local pos = bz:IsA("BasePart") and bz.Position
+            or (bz:FindFirstChildWhichIsA("BasePart") and bz:FindFirstChildWhichIsA("BasePart").Position)
+        if pos then return CFrame.new(pos + Vector3.new(0, 4, 0)) end
+    end
+    -- Fallback: near the Button itself
+    local btn = mm and mm:FindFirstChild("TheButton")
+    if btn then
+        local bp = btn:FindFirstChild("Button") or btn:FindFirstChildWhichIsA("BasePart")
+        local bpPos = bp and (bp:IsA("BasePart") and bp.Position
+            or (bp:FindFirstChildWhichIsA("BasePart") and bp:FindFirstChildWhichIsA("BasePart").Position))
+        if bpPos then return CFrame.new(bpPos + Vector3.new(5, 3, 5)) end
+    end
+    return CFrame.new(Vector3.new(0, 10, 0))   -- last resort: map origin
+end
+
+local function doMineRescue()
+    if mineRescueRunning then return end
+    if not isInsideMinefield() then return end
+    mineRescueRunning = true
+
+    local downed = WS:FindFirstChild("DownedCharacters")
+    if downed then
+        for _, d in ipairs(downed:GetChildren()) do
+            if not S.autoFarm then break end
+            local dRoot = d:FindFirstChildWhichIsA("BasePart"); if not dRoot then continue end
+            -- TP close to the downed player
+            safeTP(CFrame.new(dRoot.Position + Vector3.new(0, 2, 1.5)))
+            task.wait(0.2)
+            -- Fire the carry (Q) prompt
+            local pp = findCarryPrompt(d)
+            if pp then
+                pcall(function()
+                    pp.Enabled=true; pp.MaxActivationDistance=20
+                    pp.HoldDuration=0; pp.RequiresLineOfSight=false
+                end)
+                pcall(fireprompt, pp); pcall(fireprompt, pp, 0)
+            end
+            task.wait(0.6)   -- let carry register server-side
+            -- TP out of minefield to safety (they come with us)
+            safeTP(getMinefieldExitCF())
+            task.wait(1.0)
+        end
+    end
+
+    mineRescueRunning = false
+end
+
 -- ── AUTO OPEN DOORS ──────────────────────────────────────────
 local function doAutoOpenDoors()
     local mapDoors = WS:FindFirstChild("Map") and WS.Map:FindFirstChild("Doors")
@@ -1098,12 +1189,12 @@ local function runESP()
                 or (mine:FindFirstChildWhichIsA("BasePart") and mine:FindFirstChildWhichIsA("BasePart").Position)
             if not mpos then continue end
             local dist = myHRP and math.round((myHRP.Position-mpos).Magnitude) or 0
-            if dist > 80 then
+            if dist > 200 then
                 if espData[mine] then removeESP(mine) end
                 continue
             end
-            getOrMakeESP(mine, Color3.fromRGB(255,180,0))
-            updateESP(mine, "MINE ["..dist.."m]", 1)
+            getOrMakeESP(mine, Color3.fromRGB(255,200,0))
+            updateESP(mine, "LANDMINE ["..dist.."m]", 1)
         elseif espData[mine] then removeESP(mine) end
     end
 
@@ -1240,6 +1331,9 @@ LOOPS.stepped = RunService.Stepped:Connect(function(_, dt)
         if S.autoFarm        then doAutoGrab() end
         if S.autoCarry       then doAutoCarry() end
         if S.carryKill       then doCarryKill() end
+        -- Minefield Rescue: when Auto Farm is ON and we're inside the minefield,
+        -- carry downed players out to ButtonZone safety.
+        if S.autoFarm        then task.spawn(doMineRescue) end
     end
 
     if projectTimer >= 0.5 then
