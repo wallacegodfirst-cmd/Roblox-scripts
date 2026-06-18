@@ -78,6 +78,12 @@ local S = {
     autoAttack     = false,
     fling          = false,
 
+    floatWeapons   = false,
+    floatShape     = "Orbit",
+    floatRadius    = 8,
+    floatSpeed     = 2,
+    floatMax       = 24,
+
     autoKillZombies = false,
 
     autoOpenDoors   = false,
@@ -364,23 +370,176 @@ local function doFling()
     end
 end
 
+-- ── FLOAT WEAPONS ────────────────────────────────────────────
+-- Gathers nearby item parts and floats them around the player in a chosen shape
+-- (Orbit ring, Ball/sphere, Sword, Halo, Wings). Parts are unanchored and their
+-- CFrame is set every frame; because they are unanchored and near you, the server
+-- usually grants you network ownership, so OTHER players see the formation too.
+local floatParts = {}    -- [BasePart] = originalAnchored
+local floatAngle = 0
+local floatRegather = 0
+
+local function floatRelease(part)
+    local orig = floatParts[part]
+    if orig ~= nil and part and part.Parent then
+        pcall(function() part.Anchored = orig end)
+    end
+    floatParts[part] = nil
+end
+
+local function floatReleaseAll()
+    for p in pairs(floatParts) do floatRelease(p) end
+end
+
+local function floatGather()
+    local hrp = getHRP(); if not hrp then return {} end
+    local found = {}
+    for _, child in ipairs(WS:GetChildren()) do
+        if isItem(child) then
+            local r = itemRoot(child)
+            if r and r:IsA("BasePart") then found[#found+1] = r end
+        end
+    end
+    table.sort(found, function(a, b)
+        return (a.Position-hrp.Position).Magnitude < (b.Position-hrp.Position).Magnitude
+    end)
+    local picked = {}
+    for i = 1, math.min(#found, S.floatMax) do picked[i] = found[i] end
+    return picked
+end
+
+local function floatShapeCF(shape, i, n, center, lookCF)
+    local r = S.floatRadius
+    if shape == "Ball" then
+        -- fibonacci sphere distribution
+        local k   = i - 1
+        local off = 2 / n
+        local y   = (k * off) - 1 + (off / 2)
+        local rad = math.sqrt(math.max(0, 1 - y*y))
+        local phi = k * 2.399963229728653 + floatAngle   -- golden angle
+        return CFrame.new(center + Vector3.new(math.cos(phi)*rad, y, math.sin(phi)*rad) * r)
+    elseif shape == "Sword" then
+        -- vertical blade in front of the player
+        local t      = (i - 1) / math.max(1, n - 1)
+        local height = t * r * 2 - r * 0.5
+        local fwd    = lookCF.LookVector * (r * 0.4)
+        return CFrame.new(center + fwd + Vector3.new(0, height, 0))
+            * CFrame.Angles(math.rad(90), 0, 0)
+    elseif shape == "Halo" then
+        local ang = floatAngle + (i / n) * math.pi * 2
+        return CFrame.new(center + Vector3.new(math.cos(ang), 2.4, math.sin(ang)) * r)
+            * CFrame.Angles(math.rad(80), -ang, 0)
+    elseif shape == "Wings" then
+        local side      = (i % 2 == 0) and 1 or -1
+        local idx       = math.floor((i - 1) / 2)
+        local pairCount = math.ceil(n / 2)
+        local t         = idx / math.max(1, pairCount)
+        local back = -lookCF.LookVector * (1 + t * r)
+        local up   = Vector3.new(0, t * r, 0)
+        local out  = lookCF.RightVector * side * (1 + t * r * 0.7)
+        return CFrame.new(center + back + up + out)
+    else -- "Orbit" ring
+        local ang = floatAngle + (i / n) * math.pi * 2
+        return CFrame.new(center + Vector3.new(math.cos(ang), 0, math.sin(ang)) * r)
+            * CFrame.Angles(0, -ang, 0)
+    end
+end
+
+local function doFloatWeapons(dt)
+    local hrp = getHRP(); if not hrp then return end
+    floatAngle = floatAngle + dt * S.floatSpeed
+
+    -- refresh the controlled item set a couple times per second
+    floatRegather = floatRegather + dt
+    if floatRegather >= 0.5 or next(floatParts) == nil then
+        floatRegather = 0
+        local picked, pickedSet = floatGather(), {}
+        for _, p in ipairs(picked) do pickedSet[p] = true end
+        for p in pairs(floatParts) do
+            if not pickedSet[p] or not p.Parent then floatRelease(p) end
+        end
+        for _, p in ipairs(picked) do
+            if floatParts[p] == nil then floatParts[p] = p.Anchored end
+        end
+    end
+
+    -- deterministic ordering so each item keeps a stable slot
+    local list = {}
+    for p in pairs(floatParts) do
+        if p.Parent then list[#list+1] = p else floatRelease(p) end
+    end
+    table.sort(list, function(a, b) return a:GetFullName() < b:GetFullName() end)
+
+    local n = #list; if n == 0 then return end
+    local center = hrp.Position + Vector3.new(0, 1, 0)
+    local lookCF = hrp.CFrame
+    for i, part in ipairs(list) do
+        local cf = floatShapeCF(S.floatShape, i, n, center, lookCF)
+        pcall(function()
+            part.Anchored = false
+            part.CanCollide = false
+            part.AssemblyLinearVelocity  = Vector3.zero
+            part.AssemblyAngularVelocity = Vector3.zero
+            part.CFrame = cf
+        end)
+    end
+end
+
 -- ── AUTO KILL ZOMBIES ────────────────────────────────────────
--- Avoids the old high-velocity launch (-9999) which read as a fling and got the
--- player kicked. Uses health/state methods + anchoring the zombie in place instead.
+-- Robust: does NOT require an exactly-named HumanoidRootPart. Searches the whole
+-- descendant tree for a Humanoid, applies every client-side kill method, zeroes any
+-- "Health" value/attribute, disables the ZombieScript, and breaks + anchors the body
+-- so it can no longer chase or attack. No high-velocity launch (would trip fling kick).
+local function killOneZombie(zombie)
+    -- find a Humanoid anywhere inside
+    local zHum = zombie:FindFirstChildOfClass("Humanoid")
+    if not zHum then
+        for _, d in ipairs(zombie:GetDescendants()) do
+            if d:IsA("Humanoid") then zHum = d; break end
+        end
+    end
+    if zHum then
+        pcall(function() zHum:TakeDamage(zHum.MaxHealth + 1e9) end)
+        pcall(function() zHum.Health = 0 end)
+        pcall(function() zHum.MaxHealth = 0 end)
+        pcall(function() zHum.Health = 0 end)
+        pcall(function() zHum:ChangeState(Enum.HumanoidStateType.Dead) end)
+        pcall(function() zHum:SetStateEnabled(Enum.HumanoidStateType.Running, false) end)
+    end
+    -- zero any health-like Value/Attribute, disable behaviour scripts, and fire any
+    -- damage-style event the ZombieScript exposes inside the model
+    for _, d in ipairs(zombie:GetDescendants()) do
+        local nm = d.Name:lower()
+        if (d:IsA("NumberValue") or d:IsA("IntValue")) and nm:find("health") then
+            pcall(function() d.Value = 0 end)
+        elseif d:IsA("Script") or d:IsA("LocalScript") then
+            pcall(function() d.Disabled = true end)   -- stop its behaviour
+        elseif d:IsA("RemoteEvent") and (nm:find("damage") or nm:find("hit") or nm:find("kill") or nm:find("die")) then
+            pcall(function() d:FireServer(zHum, 1e9) end)
+        elseif d:IsA("BindableEvent") and (nm:find("damage") or nm:find("hit") or nm:find("kill") or nm:find("die")) then
+            pcall(function() d:Fire(zHum, 1e9) end)
+        end
+    end
+    pcall(function() if zombie:GetAttribute("Health") ~= nil then zombie:SetAttribute("Health", 0) end end)
+    -- break it apart and freeze every part so it cannot move/attack
+    pcall(function() zombie:BreakJoints() end)
+    for _, d in ipairs(zombie:GetDescendants()) do
+        if d:IsA("BasePart") then
+            pcall(function() d.Anchored = true; d.CanCollide = false end)
+        end
+    end
+end
+
 local function doAutoKillZombies()
     local zombieFolder = WS:FindFirstChild("Zombies"); if not zombieFolder then return end
     for _, zombie in ipairs(zombieFolder:GetChildren()) do
-        if zombie.Name~="Zombie" then continue end
-        local zHum = zombie:FindFirstChildOfClass("Humanoid")
-        local zHRP = zombie:FindFirstChild("HumanoidRootPart")
-        if not zHum or not zHRP or zHum.Health<=0 then continue end
-        -- Client-side kill methods (no velocity spike, no fling)
-        pcall(function() zHum.Health = 0 end)
-        pcall(function() zHum:TakeDamage(zHum.MaxHealth) end)
-        pcall(function() zHum:ChangeState(Enum.HumanoidStateType.Dead) end)
-        pcall(function() zombie:BreakJoints() end)
-        -- Anchor in place so it cannot chase even if the server keeps it alive
-        pcall(function() zHRP.Anchored = true end)
+        -- match "Zombie" by name OR anything that contains a ZombieScript / Humanoid
+        local isZombie = zombie.Name == "Zombie"
+            or zombie:FindFirstChild("ZombieScript")
+            or zombie:FindFirstChildOfClass("Humanoid")
+        if isZombie then
+            pcall(killOneZombie, zombie)
+        end
     end
 end
 
@@ -760,7 +919,8 @@ end)
 -- ── LOOPS ────────────────────────────────────────────────────
 local LOOPS = {}
 
-LOOPS.heartbeat = RunService.Heartbeat:Connect(function()
+LOOPS.heartbeat = RunService.Heartbeat:Connect(function(dt)
+    if S.floatWeapons then doFloatWeapons(dt) end
     if S.infStam then doInfStam() end
     if S.speedHack then
         local hum = getHum()
@@ -886,6 +1046,7 @@ UIS.InputBegan:Connect(function(inp, gp)
     if inp.KeyCode==Enum.KeyCode.F6 then
         for _, c in pairs(LOOPS) do pcall(function() c:Disconnect() end) end
         clearAllESP()
+        floatReleaseAll()
         local hum = getHum()
         if hum then pcall(function() hum.WalkSpeed=16 end) end
         applyInvis(false)
@@ -1053,6 +1214,45 @@ TabCombat:CreateToggle({
 TabCombat:CreateToggle({
     Name="Auto Kill Zombies", CurrentValue=false, Flag="autoKillZombies",
     Callback=function(v) S.autoKillZombies=v end,
+})
+
+-- Fun Tab
+local TabFun = Window:CreateTab("Fun", 4483362458)
+
+TabFun:CreateParagraph({
+    Title   = "Float Weapons",
+    Content = "Pulls nearby items and floats them around you in a shape. Other players can see it too (items are unanchored and network-owned). Pick a shape below.",
+})
+TabFun:CreateToggle({
+    Name="Float Weapons", CurrentValue=false, Flag="floatWeapons",
+    Callback=function(v)
+        S.floatWeapons=v
+        if not v then floatReleaseAll() end
+    end,
+})
+TabFun:CreateDropdown({
+    Name="Shape",
+    Options={"Orbit","Ball","Sword","Halo","Wings"},
+    CurrentOption={"Orbit"},
+    Flag="floatShape",
+    Callback=function(opt)
+        S.floatShape = (type(opt)=="table") and opt[1] or opt
+    end,
+})
+TabFun:CreateSlider({
+    Name="Float Radius", Range={3,30}, Increment=1, Suffix="studs",
+    CurrentValue=8, Flag="floatRadius",
+    Callback=function(v) S.floatRadius=v end,
+})
+TabFun:CreateSlider({
+    Name="Spin Speed", Range={0,10}, Increment=1, Suffix="x",
+    CurrentValue=2, Flag="floatSpeed",
+    Callback=function(v) S.floatSpeed=v end,
+})
+TabFun:CreateSlider({
+    Name="Max Items", Range={4,60}, Increment=1, Suffix="items",
+    CurrentValue=24, Flag="floatMax",
+    Callback=function(v) S.floatMax=v end,
 })
 
 -- Survival Tab
