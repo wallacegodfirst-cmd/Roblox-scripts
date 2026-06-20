@@ -73,11 +73,7 @@ local S = {
     infStam        = false,
     noStun         = false,
     noDark         = false,
-    hitboxExp      = false,
-    hitboxSize     = 10,
 
-    killAura       = false,
-    killAuraRadius = 20,
     autoAttack     = false,
     fling          = false,
 
@@ -88,8 +84,6 @@ local S = {
     antiCarry       = false,
     stayKingCircle  = false,
     autoRevive     = false,
-    autoGrab       = false,
-    grabRadius     = 50,
     autoItem       = false,
     autoCarry      = false,
     carryKill      = false,
@@ -398,20 +392,6 @@ local function findNearest(radius)
     return best, bestHRP
 end
 
--- ── KILL AURA ────────────────────────────────────────────────
-local function doKillAura()
-    local hrp = getHRP(); if not hrp then return end
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr==LP then continue end
-        local char = plr.Character; if not char then continue end
-        local phrp = char:FindFirstChild("HumanoidRootPart"); if not phrp then continue end
-        local hum  = char:FindFirstChildOfClass("Humanoid"); if not hum then continue end
-        if (hrp.Position-phrp.Position).Magnitude <= S.killAuraRadius then
-            pcall(function() hum:TakeDamage(1e9) end)
-        end
-    end
-end
-
 -- ── FLING ────────────────────────────────────────────────────
 -- WARNING: flinging sets another character's velocity, which is exactly what the
 -- game's "Fling detected" anti-cheat looks for. We keep the magnitude moderate and
@@ -611,89 +591,6 @@ local function doAutoRevive()
     autoReviveRunning = false
 end
 
--- ── AUTO GRAB ────────────────────────────────────────────────
--- fireproximityprompt bypasses the CLIENT-side distance check, but the server
--- still validates the player's actual CFrame before processing the pickup.
--- Fix: briefly safeTP within 5 studs of each item so the server sees us close
--- enough, fire the pickup, then hop back. For Tools we also try direct
--- backpack parent as a cheap fast-path.
-local autoGrabRunning = false
-
-local function doAutoGrab()
-    if autoGrabRunning then return end
-    autoGrabRunning = true
-    local ok = pcall(function()
-        local hrp = getHRP(); if not hrp then return end
-        local myPos  = hrp.Position
-        local origCF = hrp.CFrame
-        local moved  = false
-
-        for _, child in ipairs(WS:GetChildren()) do
-            if not S.autoGrab then break end
-            if not isItem(child) then continue end
-            local root = itemRoot(child); if not root then continue end
-            local dist = (myPos - root.Position).Magnitude
-            if dist > S.grabRadius then continue end
-
-            -- fast-path for Tools
-            if child:IsA("Tool") then
-                pcall(function() child.Parent = LP.Backpack end)
-            end
-
-            -- hop close if we're more than 5 studs away so the server accepts the prompt
-            if dist > 5 then
-                local target = CFrame.new(root.Position + Vector3.new(0, 3, 0))
-                safeTP(target)
-                moved = true
-                task.wait(0.08)
-            end
-
-            -- fire all pickup interactions on the item and its descendants
-            local function tryInteract(obj)
-                for _, d in ipairs(obj:GetDescendants()) do
-                    if d:IsA("ProximityPrompt") then
-                        pcall(function() d.Enabled=true; d.MaxActivationDistance=9999; d.HoldDuration=0; d.RequiresLineOfSight=false end)
-                        pcall(fireprompt, d); pcall(fireprompt, d, 0)
-                    end
-                    if d:IsA("ClickDetector") then
-                        pcall(function() d.MaxActivationDistance=9999 end)
-                        pcall(fireclick, d)
-                    end
-                end
-                -- also check top-level directly on the root
-                local pp = obj:FindFirstChildOfClass("ProximityPrompt")
-                if pp then
-                    pcall(function() pp.Enabled=true; pp.MaxActivationDistance=9999; pp.HoldDuration=0 end)
-                    pcall(fireprompt, pp); pcall(fireprompt, pp, 0)
-                end
-                local cd = obj:FindFirstChildOfClass("ClickDetector")
-                if cd then
-                    pcall(function() cd.MaxActivationDistance=9999 end)
-                    pcall(fireclick, cd)
-                end
-            end
-            tryInteract(child)
-
-            -- firetouchinterest as last resort
-            if firetouchif then
-                local h2 = getHRP()
-                if h2 then pcall(function() firetouchif(h2, root, 0) end) end
-            end
-
-            task.wait(0.06)
-        end
-
-        -- hop back to where we were before grabbing
-        if moved then
-            local h2 = getHRP()
-            if h2 and (h2.Position - myPos).Magnitude > 3 then
-                safeTP(origCF)
-            end
-        end
-    end)
-    autoGrabRunning = false
-end
-
 -- ── AUTO ITEM (TP to each item → pick up → TP back) ─────────
 local autoItemRunning = false
 
@@ -774,6 +671,28 @@ local function doAutoCarry()
     end
 end
 
+-- Fires every carry/drop prompt we can find so a currently-carried player is RELEASED.
+-- After you carry someone the drop prompt usually moves onto your own character, but
+-- some games keep it on the victim — so we fire both, plus any Q-bound prompt anywhere
+-- on either model.
+local function dropCarried(target)
+    local function fireDropPrompts(model)
+        if not model then return end
+        for _, d in ipairs(model:GetDescendants()) do
+            if d:IsA("ProximityPrompt") then
+                local at = (d.ActionText or ""):lower()
+                if at:find("carry") or at:find("drop") or at:find("release")
+                   or d.KeyboardKeyCode==Enum.KeyCode.Q then
+                    pcall(function() d.Enabled=true; d.MaxActivationDistance=9999; d.HoldDuration=0; d.RequiresLineOfSight=false end)
+                    pcall(fireprompt, d); pcall(fireprompt, d, 0)
+                end
+            end
+        end
+    end
+    fireDropPrompts(LP.Character)
+    fireDropPrompts(target)
+end
+
 local carryKillRunning = false
 local carryKillSavedCF = nil   -- module-level so toggle-off callback can TP back immediately
 
@@ -803,15 +722,27 @@ local function doCarryKill()
 
     -- Step 3: Save pre-void position (module-level so toggle-off can use it)
     carryKillSavedCF = getHRP() and getHRP().CFrame
-    safeTP(CFrame.new(OUTOFMAP))
 
-    -- Step 4: Wait for target death, aborting early if the toggle is turned off
-    for _ = 1, 35 do
+    -- Step 4: TP straight down into the void carrying the victim
+    safeTP(CFrame.new(OUTOFMAP))
+    task.wait(0.25)
+
+    -- Step 5: DROP the victim while we're in the void so they fall and die.
+    -- We fire the drop prompt a few times in case the first frame doesn't register.
+    for _ = 1, 5 do
+        if not S.carryKill then break end
+        dropCarried(target)
+        task.wait(0.15)
+    end
+
+    -- Step 6: Hold in the void briefly so the void/fall damage kills the dropped
+    -- player, aborting early if the toggle is turned off.
+    for _ = 1, 20 do
         task.wait(0.1)
         if not S.carryKill then break end   -- user turned it off mid-run → abort
     end
 
-    -- Step 5: TP back
+    -- Step 7: TP back to safety (victim has been left in the void)
     local returnCF = carryKillSavedCF
     carryKillSavedCF = nil
     if returnCF then safeTP(returnCF) end
@@ -1070,57 +1001,6 @@ local function doAntiPush()
     end)
 end
 
--- ── HITBOX EXPANDER ──────────────────────────────────────────
--- Creates a separate invisible BasePart welded to HRP instead of resizing HRP.
--- Resizing HRP + CanCollide=false causes the character to sink because the
--- Humanoid can no longer detect the floor through the root part's collision.
--- A separate Massless part with CanCollide=false avoids that entirely.
-local hitboxPart = nil
-local hitboxSB   = nil
-
-local function doHitboxExpander()
-    local char = LP.Character; if not char then return end
-    local hrp  = char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
-    -- create the expander part once per character
-    if not hitboxPart or not hitboxPart.Parent then
-        local bp = Instance.new("Part")
-        bp.Name        = "_HitboxExpander"
-        bp.Size        = Vector3.new(S.hitboxSize, S.hitboxSize, S.hitboxSize)
-        bp.Transparency= 1
-        bp.CanCollide  = false
-        bp.Massless    = true
-        bp.Anchored    = false
-        bp.CFrame      = hrp.CFrame
-        bp.Parent      = char
-        local weld = Instance.new("WeldConstraint")
-        weld.Part0 = hrp; weld.Part1 = bp
-        weld.Parent = bp
-        hitboxPart = bp
-    else
-        -- keep size in sync with slider
-        pcall(function()
-            hitboxPart.Size = Vector3.new(S.hitboxSize, S.hitboxSize, S.hitboxSize)
-        end)
-    end
-    if not hitboxSB or not hitboxSB.Parent then
-        local sb = Instance.new("SelectionBox")
-        sb.Adornee             = hitboxPart
-        sb.Color3              = Color3.fromRGB(255, 50, 50)
-        sb.LineThickness       = 0.05
-        sb.SurfaceColor3       = Color3.fromRGB(255, 50, 50)
-        sb.SurfaceTransparency = 0.78
-        pcall(function() sb.Parent = game:GetService("CoreGui") end)
-        hitboxSB = sb
-    end
-    -- Expand other players' HRPs client-side so they're easier to hit
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr == LP then continue end
-        local pchar = plr.Character; if not pchar then continue end
-        local phrp = pchar:FindFirstChild("HumanoidRootPart"); if not phrp then continue end
-        pcall(function() phrp.Size = Vector3.new(S.hitboxSize, S.hitboxSize, S.hitboxSize) end)
-    end
-end
-
 -- ── ESP TICK ─────────────────────────────────────────────────
 local function runESP()
     local myHRP = getHRP()
@@ -1191,11 +1071,6 @@ LP.CharacterAdded:Connect(function()
     if S.godMode  then setupGodMode() end
     if S.noStun   then connectNoStun() end
     if S.invis    then applyInvis(true) end
-    -- Reset hitbox parts so doHitboxExpander rebuilds them for the new character
-    if hitboxSB   and hitboxSB.Parent   then hitboxSB:Destroy()   end
-    if hitboxPart and hitboxPart.Parent then hitboxPart:Destroy()  end
-    hitboxSB   = nil
-    hitboxPart = nil
 end)
 
 -- ── LOOPS ────────────────────────────────────────────────────
@@ -1237,7 +1112,6 @@ LOOPS.heartbeat = RunService.Heartbeat:Connect(function(dt)
         end
     end
     if S.noDark    then applyNoDark(true) end
-    if S.hitboxExp then doHitboxExpander() end
     -- NoClip: keep all character parts non-collidable every frame
     if S.noclip then
         local char = LP.Character
@@ -1266,10 +1140,8 @@ LOOPS.stepped = RunService.Stepped:Connect(function(_, dt)
 
     if grabTimer >= 0.12 then
         grabTimer = 0
-        if S.autoGrab  then task.spawn(doAutoGrab) end
-        if S.killAura  then doKillAura() end
         if S.autoAttack then
-            local _, tHRP = findNearest(S.killAuraRadius*2)
+            local _, tHRP = findNearest(40)
             if tHRP then
                 if getHRP() then safeTP(CFrame.new(tHRP.Position+Vector3.new(0,2,3))) end
                 local tHum = tHRP.Parent and tHRP.Parent:FindFirstChildOfClass("Humanoid")
@@ -1299,7 +1171,7 @@ LOOPS.stepped = RunService.Stepped:Connect(function(_, dt)
         if S.antiCarry       then doAntiCarry() end
         if S.stayKingCircle  then doStayKingCircle() end
         if S.autoRevive or S.autoFarm then task.spawn(doAutoRevive) end
-        if S.autoFarm        then task.spawn(doAutoGrab) end
+        if S.autoFarm        then task.spawn(doAutoItemCycle) end
         if S.autoCarry       then task.spawn(doAutoCarry) end
         if S.carryKill       then task.spawn(doCarryKill) end
         -- Minefield Rescue: when Auto Farm is ON and we're inside the minefield,
@@ -1481,15 +1353,6 @@ TabMove:CreateToggle({
 local TabCombat = Window:CreateTab("Combat", 4483362458)
 
 TabCombat:CreateToggle({
-    Name="Kill Aura", CurrentValue=false, Flag="killAura",
-    Callback=function(v) S.killAura=v end,
-})
-TabCombat:CreateSlider({
-    Name="Kill Aura Radius", Range={5,100}, Increment=1, Suffix="studs",
-    CurrentValue=20, Flag="killAuraRadius",
-    Callback=function(v) S.killAuraRadius=v end,
-})
-TabCombat:CreateToggle({
     Name="Auto Attack", CurrentValue=false, Flag="autoAttack",
     Callback=function(v) S.autoAttack=v end,
 })
@@ -1521,23 +1384,6 @@ TabSurv:CreateToggle({
     Name="No Dark", CurrentValue=false, Flag="noDark",
     Callback=function(v) S.noDark=v; if not v then applyNoDark(false) end end,
 })
-TabSurv:CreateToggle({
-    Name="Hitbox Expander (Red box = visible hitbox)", CurrentValue=false, Flag="hitboxExp",
-    Callback=function(v)
-        S.hitboxExp=v
-        if not v then
-            if hitboxSB   and hitboxSB.Parent   then hitboxSB:Destroy()  end
-            if hitboxPart and hitboxPart.Parent  then hitboxPart:Destroy() end
-            hitboxSB   = nil
-            hitboxPart = nil
-        end
-    end,
-})
-TabSurv:CreateSlider({
-    Name="Hitbox Size", Range={2,60}, Increment=1, Suffix="studs",
-    CurrentValue=10, Flag="hitboxSize",
-    Callback=function(v) S.hitboxSize=v end,
-})
 
 -- Auto Tab
 local TabAuto = Window:CreateTab("Auto", 4483362458)
@@ -1563,15 +1409,6 @@ TabAuto:CreateToggle({
 TabAuto:CreateToggle({
     Name="Stay in King Circle", CurrentValue=false, Flag="stayKingCircle",
     Callback=function(v) S.stayKingCircle=v end,
-})
-TabAuto:CreateToggle({
-    Name="Auto Grab Items", CurrentValue=false, Flag="autoGrab",
-    Callback=function(v) S.autoGrab=v end,
-})
-TabAuto:CreateSlider({
-    Name="Grab Radius", Range={10,300}, Increment=5, Suffix="studs",
-    CurrentValue=50, Flag="grabRadius",
-    Callback=function(v) S.grabRadius=v end,
 })
 TabAuto:CreateToggle({
     Name="Auto Item (TP to each item)", CurrentValue=false, Flag="autoItem",
@@ -1611,7 +1448,7 @@ TabAuto:CreateToggle({
     end,
 })
 TabAuto:CreateToggle({
-    Name="Auto Farm (Revive + Grab)", CurrentValue=false, Flag="autoFarm",
+    Name="Auto Farm (Revive + Item TP)", CurrentValue=false, Flag="autoFarm",
     Callback=function(v) S.autoFarm=v end,
 })
 
@@ -1647,7 +1484,7 @@ TabProj:CreateButton({
 local TabInfo = Window:CreateTab("Info", 4483362458)
 TabInfo:CreateParagraph({
     Title   = "The Button  |  Wallace Chaos Hub",
-    Content = "F6 = Panic / kill script.\n\nAuto Item: TPs to each item one-by-one, picks it up (E), TPs back. 1.5s cooldown.\nAuto Carry: TPs close, fires Q.\nCarry Kill: Carries target → TPs outside map → waits for death → TPs back.\nAuto Grab: Items fly to you — you stay still.",
+    Content = "F6 = Panic / kill script.\n\nAuto Item: TPs to each item one-by-one, picks it up (E), TPs back. 1.5s cooldown.\nAuto Carry: TPs close, fires Q.\nCarry Kill: Carries target → TPs into the void → drops them → TPs back.",
 })
 
 -- ── INIT ─────────────────────────────────────────────────────
