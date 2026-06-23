@@ -71,6 +71,7 @@ local S = {
 
     godMode        = false,
     infStam        = false,
+    infFood        = false,
     noStun         = false,
     noDark         = false,
 
@@ -349,6 +350,70 @@ local function doInfStam()
     scanValues(LP:FindFirstChild("Values"))
     scanValues(LP:FindFirstChild("Stats"))
     scanValues(LP:FindFirstChild("leaderstats"))
+    -- Force sprint speed so you can always run regardless of other toggles
+    local hum = getHum()
+    if hum then pcall(function()
+        local spd = S.speedHack and S.speed or 24
+        if hum.WalkSpeed < spd then hum.WalkSpeed = spd end
+    end) end
+end
+
+-- ── INF FOOD (keep hunger / food bar full) ───────────────────
+local FOOD_KEYS = {"food","hunger","saturation","calories","fed","starve","eat","nourish","fill"}
+
+local function doInfFood()
+    local function maxFood(desc)
+        pcall(function()
+            local mx = rawget(desc,"MaxValue") or desc.Value or 100
+            if type(mx)~="number" or mx<=0 then mx=100 end
+            desc.Value = mx
+        end)
+    end
+    local function scanForFood(root)
+        if not root then return end
+        for _, d in ipairs(root:GetDescendants()) do
+            local nm = d.Name:lower()
+            if d:IsA("NumberValue") or d:IsA("IntValue") then
+                for _, k in ipairs(FOOD_KEYS) do
+                    if nm:find(k) then maxFood(d); break end
+                end
+            end
+            if d:IsA("LocalScript") then
+                for _, k in ipairs(FOOD_KEYS) do
+                    if nm:find(k) then pcall(function() d.Disabled=true end); break end
+                end
+            end
+            if d:IsA("Frame") then
+                for _, k in ipairs(FOOD_KEYS) do
+                    if nm:find(k) then
+                        pcall(function() d.Size=UDim2.new(1,0,d.Size.Y.Scale,0) end)
+                        break
+                    end
+                end
+            end
+        end
+    end
+    local char = LP.Character
+    if char then
+        for k, v in pairs(char:GetAttributes()) do
+            local nm = k:lower()
+            if type(v)=="number" then
+                for _, fk in ipairs(FOOD_KEYS) do
+                    if nm:find(fk) then
+                        pcall(function() char:SetAttribute(k, math.max(v, 100)) end)
+                        break
+                    end
+                end
+            end
+        end
+        scanForFood(char)
+    end
+    local pg = LP:FindFirstChild("PlayerGui")
+    if pg then scanForFood(pg) end
+    scanForFood(LP:FindFirstChild("PlayerData"))
+    scanForFood(LP:FindFirstChild("Values"))
+    scanForFood(LP:FindFirstChild("Stats"))
+    scanForFood(LP:FindFirstChild("leaderstats"))
 end
 
 -- ── NO STUN ──────────────────────────────────────────────────
@@ -1078,6 +1143,7 @@ local LOOPS = {}
 
 LOOPS.heartbeat = RunService.Heartbeat:Connect(function(dt)
     if S.infStam then doInfStam() end
+    if S.infFood then doInfFood() end
     if S.speedHack then
         local hum = getHum()
         if hum then pcall(function() hum.WalkSpeed=S.speed end) end
@@ -1371,6 +1437,10 @@ TabSurv:CreateToggle({
 TabSurv:CreateToggle({
     Name="Inf Stamina", CurrentValue=false, Flag="infStam",
     Callback=function(v) S.infStam=v end,
+})
+TabSurv:CreateToggle({
+    Name="Inf Food (Keep Hunger Full)", CurrentValue=false, Flag="infFood",
+    Callback=function(v) S.infFood=v end,
 })
 TabSurv:CreateToggle({
     Name="No Stun", CurrentValue=false, Flag="noStun",
