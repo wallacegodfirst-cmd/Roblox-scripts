@@ -342,30 +342,64 @@ local function isDowned(char)
     return false
 end
 
-local LOOT_KEYWORDS={
-    "m4","ak","ar","usp","glock","pistol","revolver","shotgun","smg","mp5","rifle",
-    "sniper","awp","deagle","desert","beretta","magnum","p90","mac","uzi",
-    "knife","bat","sword","crowbar",
-    "cash","money","bag","loot","drug","cocaine","weed","contraband","package",
-    "briefcase","wallet","jewel","gold","diamond",
-}
+-- Dropped loot is NOT a top-level Workspace child (game nests it under Map /
+-- Drops / Ignore), so the old WS:GetChildren() scan found nothing. Build a
+-- cache from WS:GetDescendants() on a slow timer; classify each object in a
+-- SINGLE pass (no nested GetDescendants, no loose substrings like "ar").
 local IGNORE_MODELS={Terrain=true,Camera=true,Workspace=true}
-
-local function isCriminalityLoot(obj)
-    if IGNORE_MODELS[obj.Name] then return false end
-    if not (obj:IsA("Model") or obj:IsA("Tool") or obj:IsA("BasePart")) then return false end
-    if obj:IsA("Model") and obj:FindFirstChildOfClass("Humanoid") then return false end
-    if Players:GetPlayerFromCharacter(obj) then return false end
-    local nm=obj.Name:lower()
-    for _,k in ipairs(LOOT_KEYWORDS) do if nm:find(k) then return true end end
-    for _,d in ipairs(obj:GetDescendants()) do
-        if d:IsA("ProximityPrompt") then
-            local at=(d.ActionText or ""):lower()
-            if at:find("pick") or at:find("grab") or at:find("take") or at:find("collect") then return true end
-        end
-        if d:IsA("ClickDetector") then return true end
-    end
+local LOOT_NAME_WORDS={
+    "cash","money","duffel","duffle","briefcase","loot","contraband","package",
+    "cocaine","heroin","weed","drug","jewel","goldbar","diamond","wallet",
+    "medkit","bandage","armor","ammo",
+}
+local LOOT_PROMPT_WORDS={"pick","grab","take","collect","loot","steal","rob"}
+local function nameHasLootWord(nm)
+    for _,w in ipairs(LOOT_NAME_WORDS) do if nm:find(w,1,true) then return true end end
     return false
+end
+-- Returns the Model/Tool to highlight, or nil. Cheap, single-object test.
+local function classifyLoot(obj)
+    if obj:IsA("Tool") then
+        local p=obj.Parent
+        if p and p~=LP.Character and not p:FindFirstChildOfClass("Humanoid") and not p:IsA("Backpack") then
+            return obj
+        end
+        return nil
+    end
+    if obj:IsA("ProximityPrompt") then
+        local at=(obj.ActionText or ""):lower()
+        for _,w in ipairs(LOOT_PROMPT_WORDS) do
+            if at:find(w,1,true) then
+                local m=obj:FindFirstAncestorWhichIsA("Model") or obj.Parent
+                if m and m~=WS and not IGNORE_MODELS[m.Name]
+                   and not m:FindFirstChildOfClass("Humanoid")
+                   and not Players:GetPlayerFromCharacter(m) then return m end
+                return nil
+            end
+        end
+        return nil
+    end
+    if obj:IsA("Model") and not IGNORE_MODELS[obj.Name]
+       and not obj:FindFirstChildOfClass("Humanoid")
+       and not Players:GetPlayerFromCharacter(obj)
+       and nameHasLootWord(obj.Name:lower()) then
+        return obj
+    end
+    return nil
+end
+-- thin wrapper kept for any other callers
+local function isCriminalityLoot(obj) return classifyLoot(obj)~=nil end
+local lootCache={}
+local function rebuildLootCache()
+    lootCache={}
+    local seen={}
+    for _,obj in ipairs(WS:GetDescendants()) do
+        local target=classifyLoot(obj)
+        if target and not seen[target] then
+            seen[target]=true
+            table.insert(lootCache,target)
+        end
+    end
 end
 
 -- ── FIND NEAREST ─────────────────────────────────────────────
@@ -705,8 +739,8 @@ local function doAutoLoot()
     local hrp=getHRP(); if not hrp then lootRunning=false; return end
     local savedCF=hrp.CFrame
 
-    for _,obj in ipairs(WS:GetChildren()) do
-        if not isCriminalityLoot(obj) then continue end
+    rebuildLootCache()
+    for _,obj in ipairs(lootCache) do
         if not obj.Parent then continue end
         local root=obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
         if not root then continue end
@@ -767,38 +801,47 @@ local function applyFullbright(on)
 end
 
 -- ── INF STAMINA ───────────────────────────────────────────────
-local function doInfStam()
-    local function maxVal(d) pcall(function() d.Value=1e6 end) end
-    local function scan(root)
-        if not root then return end
-        for _,d in ipairs(root:GetDescendants()) do
-            local nm=d.Name:lower()
-            if (d:IsA("NumberValue") or d:IsA("IntValue")) and
-               (nm:find("stam") or nm:find("energy") or nm:find("sprint") or nm:find("run")) then maxVal(d) end
-            if d:IsA("LocalScript") and (nm:find("stam") or nm:find("sprint") or nm:find("energy")) then
-                pcall(function() d.Disabled=true end)
-            end
+-- The full GetDescendants() walk used to run EVERY Heartbeat (froze the
+-- client). Now scan ONCE (enable/respawn) to cache the value objects, then
+-- the per-tick apply only re-sets cached refs + attributes (cheap, no walks).
+local stamValues={}
+local STAM_WORDS={"stam","energy","sprint","run"}
+local function nameIsStam(nm)
+    for _,w in ipairs(STAM_WORDS) do if nm:find(w,1,true) then return true end end
+    return false
+end
+local function scanStamina()
+    stamValues={}
+    local function consider(d)
+        local nm=d.Name:lower()
+        if (d:IsA("NumberValue") or d:IsA("IntValue")) and nameIsStam(nm) then
+            table.insert(stamValues,d)
+        elseif d:IsA("LocalScript") and (nm:find("stam",1,true) or nm:find("sprint",1,true) or nm:find("energy",1,true)) then
+            -- deliberately excludes "run" (would disable PlayerRun/RunAnimation/etc.)
+            pcall(function() d.Disabled=true end)
         end
     end
     local char=LP.Character
+    if char then for _,d in ipairs(char:GetDescendants()) do consider(d) end end
+    for _,fname in ipairs({"PlayerGui","PlayerData","Values","Stats"}) do
+        local f=LP:FindFirstChild(fname)
+        if f then for _,d in ipairs(f:GetDescendants()) do consider(d) end end
+    end
+end
+local function applyInfStam()
+    local char=LP.Character
     if char then
         for k,v in pairs(char:GetAttributes()) do
-            local nm=k:lower()
-            if type(v)=="number" and (nm:find("stam") or nm:find("energy") or nm:find("sprint") or nm:find("run")) then
+            if type(v)=="number" and nameIsStam(k:lower()) then
                 pcall(function() char:SetAttribute(k,1e6) end)
             end
         end
-        scan(char)
     end
-    scan(LP:FindFirstChild("PlayerGui"))
-    scan(LP:FindFirstChild("PlayerData"))
-    scan(LP:FindFirstChild("Values"))
-    scan(LP:FindFirstChild("Stats"))
-    local hum=getHum()
-    if hum then pcall(function()
-        local spd=S.speedHack and S.speed or 24
-        if hum.WalkSpeed<spd then hum.WalkSpeed=spd end
-    end) end
+    for i=#stamValues,1,-1 do
+        local d=stamValues[i]
+        if d and d.Parent then pcall(function() d.Value=1e6 end)
+        else table.remove(stamValues,i) end
+    end
 end
 
 -- ── AUTO OPEN DOORS ───────────────────────────────────────────
@@ -1005,13 +1048,17 @@ local function runESP()
     end
 
     if S.lootESP then
-        for _,obj in ipairs(WS:GetChildren()) do
-            if isCriminalityLoot(obj) then
+        for i=#lootCache,1,-1 do
+            local obj=lootCache[i]
+            if not obj or not obj.Parent then
+                if obj and espData[obj] then removeESP(obj) end
+                table.remove(lootCache,i)
+            else
                 local root=obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
                 local dist=(myHRP and root) and math.round((myHRP.Position-root.Position).Magnitude) or 0
                 getOrMakeESP(obj, Color3.fromRGB(80,255,80))
                 updateESP(obj, obj.Name.." ["..dist.."m]", 1)
-            elseif espData[obj] then removeESP(obj) end
+            end
         end
     end
 end
@@ -1020,7 +1067,7 @@ end
 LP.CharacterAdded:Connect(function()
     task.wait(0.5)
     if S.fullbright  then applyFullbright(true) end
-    if S.infStam     then doInfStam() end
+    if S.infStam     then scanStamina(); applyInfStam() end
     if S.autoSprint  then sprintHeld=false; setAutoSprint(true) end
     if S.antiDown    then setupAntiDown() end
     if S.fly         then setFly(true) end
@@ -1058,13 +1105,14 @@ local LOOPS={}
 LOOPS.heartbeat=RunService.Heartbeat:Connect(function()
     if S.speedHack then
         local hum=getHum()
-        if hum then pcall(function() hum.WalkSpeed=S.speed end) end
+        -- only write when it differs — redundant per-frame writes fight the
+        -- server and make movement look jittery to other players
+        if hum and hum.WalkSpeed~=S.speed then pcall(function() hum.WalkSpeed=S.speed end) end
     end
     if S.customJump then
         local hum=getHum()
-        if hum then pcall(function() hum.JumpPower=S.jumpPower end) end
+        if hum and hum.JumpPower~=S.jumpPower then pcall(function() hum.JumpPower=S.jumpPower end) end
     end
-    if S.infStam then doInfStam() end
     if S.antiFallDmg or S.noFallDmg then
         local hrp=getHRP()
         if hrp then pcall(function()
@@ -1115,15 +1163,22 @@ LOOPS.heartbeat=RunService.Heartbeat:Connect(function()
     if S.antiBleed then doAntiBleed() end
 end)
 
-local espT=0; local doorT=0; local doorRefT=99; local autoT=0; local tracerT=0; local overlayT=0
+local espT=0; local doorT=0; local doorRefT=99; local lootRefT=99; local stamT=0; local autoT=0; local tracerT=0; local overlayT=0
 local gunT=0; local skeleT=0; local trigT=0
 
 LOOPS.stepped=RunService.Stepped:Connect(function(_,dt)
-    espT=espT+dt; doorT=doorT+dt; autoT=autoT+dt
+    espT=espT+dt; doorT=doorT+dt; autoT=autoT+dt; stamT=stamT+dt
     tracerT=tracerT+dt; overlayT=overlayT+dt
     gunT=gunT+dt; skeleT=skeleT+dt; trigT=trigT+dt
 
-    if espT>=0.25 then espT=0; runESP() end
+    if espT>=0.25 then
+        espT=0
+        if S.lootESP then
+            lootRefT=lootRefT+0.25
+            if lootRefT>=2.5 then lootRefT=0; rebuildLootCache() end
+        end
+        runESP()
+    end
     if doorT>=0.5 then
         doorT=0
         if S.autoOpenDoors then
@@ -1133,6 +1188,7 @@ LOOPS.stepped=RunService.Stepped:Connect(function(_,dt)
         end
         if S.antiPickup    then doAntiPickup() end
     end
+    if stamT>=0.5 then stamT=0; if S.infStam then applyInfStam() end end
     if autoT>=0.4 then
         autoT=0
         if S.autoRespawn  then doAutoRespawn() end
@@ -1212,7 +1268,7 @@ TabAuto:CreateToggle({Name="Auto Finisher",CurrentValue=false,Flag="autoFinisher
 -- ESP & VISUALS TAB
 local TabESP=Window:CreateTab("ESP & Visuals",4483362458)
 TabESP:CreateToggle({Name="Player ESP",CurrentValue=false,Flag="playerESP",Callback=function(v) S.playerESP=v; if not v then for _,plr in ipairs(Players:GetPlayers()) do if plr~=LP and plr.Character then removeESP(plr.Character) end end end end})
-TabESP:CreateToggle({Name="Loot ESP (Guns / Cash / Bags)",CurrentValue=false,Flag="lootESP",Callback=function(v) S.lootESP=v; if not v then for _,obj in ipairs(WS:GetChildren()) do if isCriminalityLoot(obj) then removeESP(obj) end end end end})
+TabESP:CreateToggle({Name="Loot ESP (Guns / Cash / Bags)",CurrentValue=false,Flag="lootESP",Callback=function(v) S.lootESP=v; if v then lootRefT=99 else for _,obj in ipairs(lootCache) do if espData[obj] then removeESP(obj) end end end end})
 TabESP:CreateToggle({Name="Weapon Held ESP",CurrentValue=false,Flag="weaponESP",Callback=function(v) S.weaponESP=v end})
 TabESP:CreateToggle({Name="Cash Amount ESP",CurrentValue=false,Flag="cashESP",Callback=function(v) S.cashESP=v end})
 TabESP:CreateToggle({Name="Skeleton ESP",CurrentValue=false,Flag="skeletonESP",Callback=function(v) S.skeletonESP=v end})
@@ -1227,7 +1283,7 @@ local TabMove=Window:CreateTab("Movement",4483362458)
 TabMove:CreateToggle({Name="Auto Jump",CurrentValue=false,Flag="autoJump",Callback=function(v) S.autoJump=v end})
 TabMove:CreateToggle({Name="Speed Hack",CurrentValue=false,Flag="speedHack",Callback=function(v) S.speedHack=v; if not v and not S.autoSprint then local h=getHum(); if h then pcall(function() h.WalkSpeed=16 end) end end end})
 TabMove:CreateSlider({Name="Speed Value",Range={16,300},Increment=1,Suffix="studs/s",CurrentValue=32,Flag="speedValue",Callback=function(v) S.speed=v end})
-TabMove:CreateToggle({Name="Infinite Stamina",CurrentValue=false,Flag="infStam",Callback=function(v) S.infStam=v end})
+TabMove:CreateToggle({Name="Infinite Stamina",CurrentValue=false,Flag="infStam",Callback=function(v) S.infStam=v; if v then scanStamina(); applyInfStam() end end})
 TabMove:CreateToggle({Name="Bunny Hop",CurrentValue=false,Flag="bunnyHop",Callback=function(v) S.bunnyHop=v end})
 TabMove:CreateToggle({Name="Fly",CurrentValue=false,Flag="fly",Callback=function(v) S.fly=v; setFly(v) end})
 TabMove:CreateToggle({Name="Noclip",CurrentValue=false,Flag="noclip",Callback=function(v) S.noclip=v; if not v then local char=LP.Character; if char then for _,p in ipairs(char:GetDescendants()) do if p:IsA("BasePart") then pcall(function() p.CanCollide=true end) end end end end end})
