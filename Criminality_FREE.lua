@@ -384,7 +384,9 @@ local function doInfStam()
 end
 
 -- ── AUTO OPEN DOORS / GATES ───────────────────────────────────
--- Cache doors once; update on DescendantAdded/Removing to avoid scanning every 0.5s
+-- Door list is cached and only rebuilt (slowly) while the toggle is on.
+-- NO always-on Workspace.Descendant* connections — those froze the client
+-- on Criminality's high-churn map (bullets/effects fire the handler nonstop).
 local doorCache = {}
 local function isDoorModel(nm)
     return nm:match("^Door") or nm:match("N_ARM_Door") or nm:match("^Elevator") or nm:match("DoubleDoors")
@@ -393,8 +395,7 @@ local function rebuildDoorCache()
     doorCache = {}
     for _, obj in ipairs(WS:GetDescendants()) do
         if obj:IsA("Model") then
-            local nm = obj.Name
-            local match = isDoorModel(nm)
+            local match = isDoorModel(obj.Name)
             if not match then
                 local vals = obj:FindFirstChild("Values")
                 if vals and vals:FindFirstChild("DoubleDoors") then match = true end
@@ -403,22 +404,6 @@ local function rebuildDoorCache()
         end
     end
 end
-rebuildDoorCache()
-WS.DescendantAdded:Connect(function(obj)
-    if not obj:IsA("Model") then return end
-    local nm = obj.Name
-    local match = isDoorModel(nm)
-    if not match then
-        local vals = obj:FindFirstChild("Values")
-        if vals and vals:FindFirstChild("DoubleDoors") then match = true end
-    end
-    if match then table.insert(doorCache, obj) end
-end)
-WS.DescendantRemoving:Connect(function(obj)
-    for i, v in ipairs(doorCache) do
-        if v == obj then table.remove(doorCache, i); break end
-    end
-end)
 
 local function doAutoOpenDoors()
     local hrp = getHRP(); if not hrp then return end
@@ -455,11 +440,20 @@ local function doAutoRespawn()
     end)
 end
 
--- ── AUTO SPRINT (one-shot apply, not per-frame) ──────────────
-local function applyAutoSprint()
-    if not S.autoSprint then return end
-    local hum = getHum()
-    if hum then pcall(function() hum.WalkSpeed = 24 end) end
+-- ── AUTO SPRINT (hold the game's own sprint key, never touch WalkSpeed) ──
+-- Setting WalkSpeed fights Criminality's locomotion. Instead we hold Left
+-- Shift via VirtualInputManager so the game sprints natively. Pair with
+-- Infinite Stamina for permanent sprint.
+local VIM = game:GetService("VirtualInputManager")
+local sprintHeld = false
+local function setAutoSprint(on)
+    if on and not sprintHeld then
+        sprintHeld = true
+        pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.LeftShift, false, game) end)
+    elseif (not on) and sprintHeld then
+        sprintHeld = false
+        pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.LeftShift, false, game) end)
+    end
 end
 
 -- ── ANTI PICKUP ───────────────────────────────────────────────
@@ -577,7 +571,7 @@ LP.CharacterAdded:Connect(function()
     task.wait(0.5)
     if S.fullbright  then applyFullbright(true) end
     if S.infStam     then doInfStam() end
-    if S.autoSprint  then applyAutoSprint() end
+    if S.autoSprint  then sprintHeld=false; setAutoSprint(true) end
 end)
 
 -- ── LOOPS ────────────────────────────────────────────────────
@@ -634,6 +628,7 @@ end)
 
 local espT      = 0
 local doorT     = 0
+local doorRefT  = 99   -- force a rebuild on first enable
 local autoT     = 0
 local tracerT   = 0
 local overlayT  = 0
@@ -651,7 +646,11 @@ LOOPS.stepped = RunService.Stepped:Connect(function(_, dt)
     end
     if doorT >= 0.5 then
         doorT = 0
-        if S.autoOpenDoors then doAutoOpenDoors() end
+        if S.autoOpenDoors then
+            doorRefT = doorRefT + 0.5
+            if doorRefT >= 8 then doorRefT = 0; rebuildDoorCache() end
+            doAutoOpenDoors()
+        end
         if S.antiPickup    then doAntiPickup() end
     end
     if autoT >= 0.4 then
@@ -742,18 +741,11 @@ local TabAuto = Window:CreateTab("Auto", 4483362458)
 
 TabAuto:CreateToggle({
     Name="Auto Open Doors / Gates", CurrentValue=false, Flag="autoOpenDoors",
-    Callback=function(v) S.autoOpenDoors=v end,
+    Callback=function(v) S.autoOpenDoors=v; if v then rebuildDoorCache() end end,
 })
 TabAuto:CreateToggle({
     Name="Auto Sprint", CurrentValue=false, Flag="autoSprint",
-    Callback=function(v)
-        S.autoSprint=v
-        if v then
-            applyAutoSprint()
-        elseif not S.speedHack then
-            local hum=getHum(); if hum then pcall(function() hum.WalkSpeed=16 end) end
-        end
-    end,
+    Callback=function(v) S.autoSprint=v; setAutoSprint(v) end,
 })
 TabAuto:CreateToggle({
     Name="Auto Respawn", CurrentValue=false, Flag="autoRespawn",
