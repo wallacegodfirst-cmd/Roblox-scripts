@@ -1,6 +1,6 @@
 -- ============================================================
--- Wallace Chaos Hub  |  Criminality  —  FREE Edition
--- Black / Purple theme  |  F6 = Panic
+-- Valtix Hub  |  Criminality  —  FREE Edition
+-- Blue theme  |  F6 = Panic
 -- ============================================================
 
 local Players    = game:GetService("Players")
@@ -384,17 +384,46 @@ local function doInfStam()
 end
 
 -- ── AUTO OPEN DOORS / GATES ───────────────────────────────────
+-- Cache doors once; update on DescendantAdded/Removing to avoid scanning every 0.5s
+local doorCache = {}
+local function isDoorModel(nm)
+    return nm:match("^Door") or nm:match("N_ARM_Door") or nm:match("^Elevator") or nm:match("DoubleDoors")
+end
+local function rebuildDoorCache()
+    doorCache = {}
+    for _, obj in ipairs(WS:GetDescendants()) do
+        if obj:IsA("Model") then
+            local nm = obj.Name
+            local match = isDoorModel(nm)
+            if not match then
+                local vals = obj:FindFirstChild("Values")
+                if vals and vals:FindFirstChild("DoubleDoors") then match = true end
+            end
+            if match then table.insert(doorCache, obj) end
+        end
+    end
+end
+rebuildDoorCache()
+WS.DescendantAdded:Connect(function(obj)
+    if not obj:IsA("Model") then return end
+    local nm = obj.Name
+    local match = isDoorModel(nm)
+    if not match then
+        local vals = obj:FindFirstChild("Values")
+        if vals and vals:FindFirstChild("DoubleDoors") then match = true end
+    end
+    if match then table.insert(doorCache, obj) end
+end)
+WS.DescendantRemoving:Connect(function(obj)
+    for i, v in ipairs(doorCache) do
+        if v == obj then table.remove(doorCache, i); break end
+    end
+end)
+
 local function doAutoOpenDoors()
     local hrp = getHRP(); if not hrp then return end
-    for _, obj in ipairs(WS:GetDescendants()) do
-        if not obj:IsA("Model") then continue end
-        local nm = obj.Name
-        local isDoor = nm:match("^Door") or nm:match("N_ARM_Door") or nm:match("^Elevator")
-        if not isDoor then
-            local vals = obj:FindFirstChild("Values")
-            if vals and vals:FindFirstChild("DoubleDoors") then isDoor = true end
-        end
-        if not isDoor then continue end
+    for _, obj in ipairs(doorCache) do
+        if not obj.Parent then continue end
         local root = obj:FindFirstChildWhichIsA("BasePart")
         if not root or (hrp.Position - root.Position).Magnitude > 60 then continue end
         for _, pp in ipairs(obj:GetDescendants()) do
@@ -424,6 +453,13 @@ local function doAutoRespawn()
         if not deathRespawn then return end
         deathRespawn:InvokeServer("KMG4R904")
     end)
+end
+
+-- ── AUTO SPRINT (one-shot apply, not per-frame) ──────────────
+local function applyAutoSprint()
+    if not S.autoSprint then return end
+    local hum = getHum()
+    if hum then pcall(function() hum.WalkSpeed = 24 end) end
 end
 
 -- ── ANTI PICKUP ───────────────────────────────────────────────
@@ -539,8 +575,9 @@ end
 -- ── CHARACTER ADDED ───────────────────────────────────────────
 LP.CharacterAdded:Connect(function()
     task.wait(0.5)
-    if S.fullbright then applyFullbright(true) end
-    if S.infStam    then doInfStam() end
+    if S.fullbright  then applyFullbright(true) end
+    if S.infStam     then doInfStam() end
+    if S.autoSprint  then applyAutoSprint() end
 end)
 
 -- ── LOOPS ────────────────────────────────────────────────────
@@ -550,11 +587,6 @@ LOOPS.heartbeat = RunService.Heartbeat:Connect(function()
     if S.speedHack then
         local hum = getHum()
         if hum then pcall(function() hum.WalkSpeed=S.speed end) end
-    elseif S.autoSprint then
-        local hum = getHum()
-        if hum then pcall(function()
-            if hum.WalkSpeed < 24 then hum.WalkSpeed=24 end
-        end) end
     end
     if S.customJump then
         local hum = getHum()
@@ -656,7 +688,7 @@ UIS.InputBegan:Connect(function(inp, gpe)
         local pg = LP:FindFirstChild("PlayerGui")
         if pg then
             for _, g in ipairs(pg:GetChildren()) do
-                if g.Name:find("Rayfield") or g.Name:find("Wallace") then
+                if g.Name:find("Rayfield") or g.Name:find("Valtix") then
                     pcall(function() g:Destroy() end)
                 end
             end
@@ -668,40 +700,40 @@ end)
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 
 local Window = Rayfield:CreateWindow({
-    Name            = "Wallace Chaos Hub  |  Criminality  FREE",
+    Name            = "Valtix Hub  |  Criminality  FREE",
     Icon            = 0,
-    LoadingTitle    = "Wallace Chaos Hub",
+    LoadingTitle    = "Valtix Hub",
     LoadingSubtitle = "Criminality  —  FREE Edition",
     Theme = {
-        Background          = Color3.fromRGB(8,8,12),
-        Header              = Color3.fromRGB(12,12,18),
-        TextColor           = Color3.fromRGB(240,240,255),
-        ElementBackground   = Color3.fromRGB(18,18,26),
-        SecondaryBackground = Color3.fromRGB(14,14,20),
-        Stroke              = Color3.fromRGB(60,0,120),
-        SubTextColor        = Color3.fromRGB(160,140,200),
-        PlaceholderColor    = Color3.fromRGB(100,80,140),
-        TabBackground       = Color3.fromRGB(10,10,16),
-        TabStroke           = Color3.fromRGB(150,0,230),
-        TabTextColor        = Color3.fromRGB(200,180,240),
+        Background          = Color3.fromRGB(8,10,14),
+        Header              = Color3.fromRGB(10,14,20),
+        TextColor           = Color3.fromRGB(230,240,255),
+        ElementBackground   = Color3.fromRGB(14,18,28),
+        SecondaryBackground = Color3.fromRGB(11,15,22),
+        Stroke              = Color3.fromRGB(0,60,160),
+        SubTextColor        = Color3.fromRGB(140,170,220),
+        PlaceholderColor    = Color3.fromRGB(80,110,180),
+        TabBackground       = Color3.fromRGB(8,12,18),
+        TabStroke           = Color3.fromRGB(0,120,255),
+        TabTextColor        = Color3.fromRGB(180,200,240),
         SelectedTabTextColor= Color3.fromRGB(255,255,255),
-        SliderBackground    = Color3.fromRGB(20,20,30),
-        SliderProgress      = Color3.fromRGB(140,0,220),
-        SliderStroke        = Color3.fromRGB(100,0,180),
-        ToggleBackground    = Color3.fromRGB(20,20,30),
-        ToggleEnabled       = Color3.fromRGB(155,0,240),
-        ToggleDisabled      = Color3.fromRGB(40,40,55),
-        ToggleEnabledStroke = Color3.fromRGB(180,0,255),
-        ToggleDisabledStroke= Color3.fromRGB(60,60,80),
-        ToggleEnabledOuterStroke  = Color3.fromRGB(120,0,200),
-        ToggleDisabledOuterStroke = Color3.fromRGB(35,35,50),
-        InputBackground     = Color3.fromRGB(16,16,24),
-        InputStroke         = Color3.fromRGB(80,0,160),
-        PlaceholderText     = Color3.fromRGB(100,80,140),
+        SliderBackground    = Color3.fromRGB(14,18,28),
+        SliderProgress      = Color3.fromRGB(0,100,220),
+        SliderStroke        = Color3.fromRGB(0,80,180),
+        ToggleBackground    = Color3.fromRGB(14,18,28),
+        ToggleEnabled       = Color3.fromRGB(0,120,255),
+        ToggleDisabled      = Color3.fromRGB(35,40,55),
+        ToggleEnabledStroke = Color3.fromRGB(0,150,255),
+        ToggleDisabledStroke= Color3.fromRGB(50,60,80),
+        ToggleEnabledOuterStroke  = Color3.fromRGB(0,100,220),
+        ToggleDisabledOuterStroke = Color3.fromRGB(30,36,50),
+        InputBackground     = Color3.fromRGB(12,16,24),
+        InputStroke         = Color3.fromRGB(0,70,160),
+        PlaceholderText     = Color3.fromRGB(80,110,180),
     },
     DisableRayfieldPrompts = true,
     DisableBuildWarnings   = true,
-    ConfigurationSaving    = { Enabled=true, FolderName="WallaceChaos_Criminality", FileName="FREE_Config" },
+    ConfigurationSaving    = { Enabled=true, FolderName="Valtix_Criminality", FileName="FREE_Config" },
     KeySystem              = false,
 })
 
@@ -716,7 +748,9 @@ TabAuto:CreateToggle({
     Name="Auto Sprint", CurrentValue=false, Flag="autoSprint",
     Callback=function(v)
         S.autoSprint=v
-        if not v and not S.speedHack then
+        if v then
+            applyAutoSprint()
+        elseif not S.speedHack then
             local hum=getHum(); if hum then pcall(function() hum.WalkSpeed=16 end) end
         end
     end,

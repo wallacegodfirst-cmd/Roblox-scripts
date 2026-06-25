@@ -1,6 +1,6 @@
 -- ============================================================
--- Wallace Chaos Hub  |  Criminality  —  PREMIUM Edition
--- Black / Purple theme  |  F6 = Panic
+-- Valtix Hub  |  Criminality  —  PREMIUM Edition
+-- Red theme  |  F6 = Panic
 -- Includes everything in FREE + Combat, Gun Mods, Survival, Farming
 -- ============================================================
 
@@ -802,17 +802,44 @@ local function doInfStam()
 end
 
 -- ── AUTO OPEN DOORS ───────────────────────────────────────────
+-- Cache doors once; update on DescendantAdded/Removing to avoid scanning every 0.5s
+local doorCache={}
+local function isDoorModel(nm)
+    return nm:match("^Door") or nm:match("N_ARM_Door") or nm:match("^Elevator") or nm:match("DoubleDoors")
+end
+local function rebuildDoorCache()
+    doorCache={}
+    for _,obj in ipairs(WS:GetDescendants()) do
+        if obj:IsA("Model") then
+            local nm=obj.Name; local match=isDoorModel(nm)
+            if not match then
+                local vals=obj:FindFirstChild("Values")
+                if vals and vals:FindFirstChild("DoubleDoors") then match=true end
+            end
+            if match then table.insert(doorCache,obj) end
+        end
+    end
+end
+rebuildDoorCache()
+WS.DescendantAdded:Connect(function(obj)
+    if not obj:IsA("Model") then return end
+    local nm=obj.Name; local match=isDoorModel(nm)
+    if not match then
+        local vals=obj:FindFirstChild("Values")
+        if vals and vals:FindFirstChild("DoubleDoors") then match=true end
+    end
+    if match then table.insert(doorCache,obj) end
+end)
+WS.DescendantRemoving:Connect(function(obj)
+    for i,v in ipairs(doorCache) do
+        if v==obj then table.remove(doorCache,i); break end
+    end
+end)
+
 local function doAutoOpenDoors()
     local hrp=getHRP(); if not hrp then return end
-    for _,obj in ipairs(WS:GetDescendants()) do
-        if not obj:IsA("Model") then continue end
-        local nm=obj.Name
-        local isDoor=nm:match("^Door") or nm:match("N_ARM_Door") or nm:match("^Elevator")
-        if not isDoor then
-            local vals=obj:FindFirstChild("Values")
-            if vals and vals:FindFirstChild("DoubleDoors") then isDoor=true end
-        end
-        if not isDoor then continue end
+    for _,obj in ipairs(doorCache) do
+        if not obj.Parent then continue end
         local root=obj:FindFirstChildWhichIsA("BasePart")
         if not root or (hrp.Position-root.Position).Magnitude>60 then continue end
         for _,pp in ipairs(obj:GetDescendants()) do
@@ -842,6 +869,13 @@ local function doAutoRespawn()
         if not deathRespawn then return end
         deathRespawn:InvokeServer("KMG4R904")
     end)
+end
+
+-- ── AUTO SPRINT (one-shot apply, not per-frame) ──────────────
+local function applyAutoSprint()
+    if not S.autoSprint then return end
+    local hum=getHum()
+    if hum then pcall(function() hum.WalkSpeed=24 end) end
 end
 
 -- ── ANTI PICKUP ───────────────────────────────────────────────
@@ -995,6 +1029,7 @@ LP.CharacterAdded:Connect(function()
     task.wait(0.5)
     if S.fullbright  then applyFullbright(true) end
     if S.infStam     then doInfStam() end
+    if S.autoSprint  then applyAutoSprint() end
     if S.antiDown    then setupAntiDown() end
     if S.fly         then setFly(true) end
 end)
@@ -1016,7 +1051,7 @@ UIS.InputBegan:Connect(function(inp,gpe)
         local pg=LP:FindFirstChild("PlayerGui")
         if pg then
             for _,g in ipairs(pg:GetChildren()) do
-                if g.Name:find("Rayfield") or g.Name:find("Wallace") then pcall(function() g:Destroy() end) end
+                if g.Name:find("Rayfield") or g.Name:find("Valtix") then pcall(function() g:Destroy() end) end
             end
         end
     end
@@ -1032,9 +1067,6 @@ LOOPS.heartbeat=RunService.Heartbeat:Connect(function()
     if S.speedHack then
         local hum=getHum()
         if hum then pcall(function() hum.WalkSpeed=S.speed end) end
-    elseif S.autoSprint then
-        local hum=getHum()
-        if hum then pcall(function() if hum.WalkSpeed<24 then hum.WalkSpeed=24 end end) end
     end
     if S.customJump then
         local hum=getHum()
@@ -1148,34 +1180,34 @@ end)
 local Rayfield=loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 
 local Window=Rayfield:CreateWindow({
-    Name            = "Wallace Chaos Hub  |  Criminality  PREMIUM",
+    Name            = "Valtix Hub  |  Criminality  PREMIUM",
     Icon            = 0,
-    LoadingTitle    = "Wallace Chaos Hub",
+    LoadingTitle    = "Valtix Hub",
     LoadingSubtitle = "Criminality  —  PREMIUM Edition",
     Theme={
-        Background=Color3.fromRGB(8,8,12), Header=Color3.fromRGB(12,12,18),
-        TextColor=Color3.fromRGB(240,240,255), ElementBackground=Color3.fromRGB(18,18,26),
-        SecondaryBackground=Color3.fromRGB(14,14,20), Stroke=Color3.fromRGB(60,0,120),
-        SubTextColor=Color3.fromRGB(160,140,200), PlaceholderColor=Color3.fromRGB(100,80,140),
-        TabBackground=Color3.fromRGB(10,10,16), TabStroke=Color3.fromRGB(150,0,230),
-        TabTextColor=Color3.fromRGB(200,180,240), SelectedTabTextColor=Color3.fromRGB(255,255,255),
-        SliderBackground=Color3.fromRGB(20,20,30), SliderProgress=Color3.fromRGB(140,0,220),
-        SliderStroke=Color3.fromRGB(100,0,180), ToggleBackground=Color3.fromRGB(20,20,30),
-        ToggleEnabled=Color3.fromRGB(155,0,240), ToggleDisabled=Color3.fromRGB(40,40,55),
-        ToggleEnabledStroke=Color3.fromRGB(180,0,255), ToggleDisabledStroke=Color3.fromRGB(60,60,80),
-        ToggleEnabledOuterStroke=Color3.fromRGB(120,0,200), ToggleDisabledOuterStroke=Color3.fromRGB(35,35,50),
-        InputBackground=Color3.fromRGB(16,16,24), InputStroke=Color3.fromRGB(80,0,160),
-        PlaceholderText=Color3.fromRGB(100,80,140),
+        Background=Color3.fromRGB(10,8,8), Header=Color3.fromRGB(16,10,10),
+        TextColor=Color3.fromRGB(255,235,235), ElementBackground=Color3.fromRGB(22,14,14),
+        SecondaryBackground=Color3.fromRGB(18,10,10), Stroke=Color3.fromRGB(160,0,0),
+        SubTextColor=Color3.fromRGB(220,160,160), PlaceholderColor=Color3.fromRGB(180,100,100),
+        TabBackground=Color3.fromRGB(12,8,8), TabStroke=Color3.fromRGB(220,30,30),
+        TabTextColor=Color3.fromRGB(240,180,180), SelectedTabTextColor=Color3.fromRGB(255,255,255),
+        SliderBackground=Color3.fromRGB(22,14,14), SliderProgress=Color3.fromRGB(200,20,20),
+        SliderStroke=Color3.fromRGB(160,10,10), ToggleBackground=Color3.fromRGB(22,14,14),
+        ToggleEnabled=Color3.fromRGB(220,30,30), ToggleDisabled=Color3.fromRGB(50,35,35),
+        ToggleEnabledStroke=Color3.fromRGB(255,50,50), ToggleDisabledStroke=Color3.fromRGB(80,50,50),
+        ToggleEnabledOuterStroke=Color3.fromRGB(200,20,20), ToggleDisabledOuterStroke=Color3.fromRGB(40,28,28),
+        InputBackground=Color3.fromRGB(18,10,10), InputStroke=Color3.fromRGB(140,0,0),
+        PlaceholderText=Color3.fromRGB(180,100,100),
     },
     DisableRayfieldPrompts=true, DisableBuildWarnings=true,
-    ConfigurationSaving={Enabled=true, FolderName="WallaceChaos_Criminality", FileName="PREM_Config"},
+    ConfigurationSaving={Enabled=true, FolderName="Valtix_Criminality", FileName="PREM_Config"},
     KeySystem=false,
 })
 
 -- AUTO TAB
 local TabAuto=Window:CreateTab("Auto",4483362458)
 TabAuto:CreateToggle({Name="Auto Open Doors / Gates",CurrentValue=false,Flag="autoOpenDoors",Callback=function(v) S.autoOpenDoors=v end})
-TabAuto:CreateToggle({Name="Auto Sprint",CurrentValue=false,Flag="autoSprint",Callback=function(v) S.autoSprint=v; if not v and not S.speedHack then local h=getHum(); if h then pcall(function() h.WalkSpeed=16 end) end end end})
+TabAuto:CreateToggle({Name="Auto Sprint",CurrentValue=false,Flag="autoSprint",Callback=function(v) S.autoSprint=v; if v then applyAutoSprint() elseif not S.speedHack then local h=getHum(); if h then pcall(function() h.WalkSpeed=16 end) end end end})
 TabAuto:CreateToggle({Name="Auto Respawn",CurrentValue=false,Flag="autoRespawn",Callback=function(v) S.autoRespawn=v end})
 TabAuto:CreateToggle({Name="Anti Pick-Up (Block Rob / Carry)",CurrentValue=false,Flag="antiPickup",Callback=function(v) S.antiPickup=v end})
 TabAuto:CreateToggle({Name="Anti Fall Damage",CurrentValue=false,Flag="antiFallDmg",Callback=function(v) S.antiFallDmg=v end})
