@@ -1147,29 +1147,19 @@ LOOPS.heartbeat=RunService.Heartbeat:Connect(function()
             end
         end) end
     end
-    if S.noclip then
-        local char=LP.Character
-        if char then
-            for _,p in ipairs(char:GetDescendants()) do
-                if p:IsA("BasePart") then pcall(function() p.CanCollide=false end) end
-            end
-        end
-    end
     -- Aimbot
     if S.aimbot then doAimbot() end
-    -- Gun mods every frame
-    applyGunMods()
     -- Anti-bleed
     if S.antiBleed then doAntiBleed() end
 end)
 
 local espT=0; local doorT=0; local doorRefT=99; local lootRefT=99; local stamT=0; local autoT=0; local tracerT=0; local overlayT=0
-local gunT=0; local skeleT=0; local trigT=0
+local gunT=0; local skeleT=0; local trigT=0; local noclipT=0
 
 LOOPS.stepped=RunService.Stepped:Connect(function(_,dt)
     espT=espT+dt; doorT=doorT+dt; autoT=autoT+dt; stamT=stamT+dt
     tracerT=tracerT+dt; overlayT=overlayT+dt
-    gunT=gunT+dt; skeleT=skeleT+dt; trigT=trigT+dt
+    gunT=gunT+dt; skeleT=skeleT+dt; trigT=trigT+dt; noclipT=noclipT+dt
 
     if espT>=0.25 then
         espT=0
@@ -1218,6 +1208,13 @@ LOOPS.stepped=RunService.Stepped:Connect(function(_,dt)
         if S.triggerBot then doTriggerBot() end
     end
     if gunT>=0.1 then gunT=0; applyGunMods() end
+    if noclipT>=0.1 then noclipT=0
+        if S.noclip then
+            local char=LP.Character
+            if char then for _,p in ipairs(char:GetDescendants()) do if p:IsA("BasePart") then pcall(function() p.CanCollide=false end) end end
+            end
+        end
+    end
 end)
 
 -- Auto loot runs in its own task
@@ -1281,8 +1278,8 @@ TabESP:CreateToggle({Name="Fullbright + No Fog",CurrentValue=false,Flag="fullbri
 -- MOVEMENT TAB
 local TabMove=Window:CreateTab("Movement",4483362458)
 TabMove:CreateToggle({Name="Auto Jump",CurrentValue=false,Flag="autoJump",Callback=function(v) S.autoJump=v end})
-TabMove:CreateToggle({Name="Speed Hack",CurrentValue=false,Flag="speedHack",Callback=function(v) S.speedHack=v; if not v and not S.autoSprint then local h=getHum(); if h then pcall(function() h.WalkSpeed=16 end) end end end})
-TabMove:CreateSlider({Name="Speed Value",Range={16,300},Increment=1,Suffix="studs/s",CurrentValue=32,Flag="speedValue",Callback=function(v) S.speed=v end})
+TabMove:CreateToggle({Name="Speed Hack  ⚠ server-visible",CurrentValue=false,Flag="speedHack",Callback=function(v) S.speedHack=v; if not v and not S.autoSprint then local h=getHum(); if h then pcall(function() h.WalkSpeed=16 end) end end end})
+TabMove:CreateSlider({Name="Speed Value",Range={16,60},Increment=1,Suffix="studs/s",CurrentValue=32,Flag="speedValue",Callback=function(v) S.speed=v end})
 TabMove:CreateToggle({Name="Infinite Stamina",CurrentValue=false,Flag="infStam",Callback=function(v) S.infStam=v; if v then scanStamina(); applyInfStam() end end})
 TabMove:CreateToggle({Name="Bunny Hop",CurrentValue=false,Flag="bunnyHop",Callback=function(v) S.bunnyHop=v end})
 TabMove:CreateToggle({Name="Fly",CurrentValue=false,Flag="fly",Callback=function(v) S.fly=v; setFly(v) end})

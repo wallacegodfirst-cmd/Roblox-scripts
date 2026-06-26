@@ -19,8 +19,6 @@ local fireprompt  = (typeof(fireproximityprompt)=="function") and fireproximityp
 local fireclick   = (typeof(fireclickdetector)=="function")  and fireclickdetector  or function() end
 local firetouchif = (typeof(firetouchinterest)=="function")  and firetouchinterest  or nil
 local sethidden   = (typeof(sethiddenproperty)=="function")  and sethiddenproperty  or nil
-local hmm         = (typeof(hookmetamethod)=="function")     and hookmetamethod      or nil
-local gncm        = (typeof(getnamecallmethod)=="function")  and getnamecallmethod   or nil
 
 -- ── SAFE TELEPORT ────────────────────────────────────────────
 local MAX_HOP = 15
@@ -94,39 +92,8 @@ local S = {
     aimbotPredict = false,
 }
 
--- ── SILENT AIM namecall hook ──────────────────────────────────
--- Intercepts shoot/hit RemoteEvents and redirects the target position
+-- silentAimTarget used by aimbot for target tracking
 local silentAimTarget = nil
-local origNamecall
-
-if hmm and gncm then
-    pcall(function()
-        origNamecall = hmm(game, "__namecall", function(self, ...)
-            if not S.silentAim then return origNamecall(self, ...) end
-            local method = gncm()
-            if (method == "FireServer" or method == "InvokeServer") and typeof(self) == "Instance" then
-                local name = self.Name:lower()
-                if name:find("shoot") or name:find("fire") or name:find("hit")
-                   or name:find("bullet") or name:find("damage") or name:find("attack") then
-                    if silentAimTarget and silentAimTarget.Parent then
-                        local args = {...}
-                        for i, v in ipairs(args) do
-                            if typeof(v) == "Vector3" then
-                                args[i] = silentAimTarget.Position
-                            elseif typeof(v) == "CFrame" then
-                                args[i] = CFrame.new(silentAimTarget.Position)
-                            elseif typeof(v) == "Instance" and pcall(function() return v:IsA("BasePart") end) then
-                                args[i] = silentAimTarget
-                            end
-                        end
-                        return origNamecall(self, unpack(args))
-                    end
-                end
-            end
-            return origNamecall(self, ...)
-        end)
-    end)
-end
 
 -- ── FOV / VISIBILITY ─────────────────────────────────────────
 local function inFOV(worldPos, fovRadius)
@@ -1213,7 +1180,7 @@ UIS.InputBegan:Connect(function(inp,gpe)
     if gpe then return end
     if inp.KeyCode==S.aimbotKey then aimbotActive=true end
     if inp.KeyCode==Enum.KeyCode.F6 then
-        S.godMode=false; S.silentAim=false; S.spinbot=false; S.freecam=false; S.antiAFK=false
+        S.godMode=false; S.spinbot=false; S.freecam=false; S.antiAFK=false
         setGodMode(false); setSpinbot(false); setFreecam(false); setFly(false); setAntiAFK(false)
         for _,c in pairs(LOOPS) do pcall(function() c:Disconnect() end) end
         clearAllESP(); applyFullbright(false)
@@ -1254,12 +1221,7 @@ LOOPS.heartbeat=RunService.Heartbeat:Connect(function()
             elseif ny~=v.Y then hrp.AssemblyLinearVelocity=Vector3.new(v.X,ny,v.Z) end
         end) end
     end
-    if S.noclip then
-        local char=LP.Character
-        if char then for _,p in ipairs(char:GetDescendants()) do if p:IsA("BasePart") then pcall(function() p.CanCollide=false end) end end end
-    end
     if S.aimbot then doAimbot() end
-    applyGunMods()
     if S.antiBleed then doAntiBleed() end
     if S.godMode then
         local hum=getHum()
@@ -1274,11 +1236,11 @@ LOOPS.heartbeat=RunService.Heartbeat:Connect(function()
 end)
 
 local espT=0; local doorT=0; local doorRefT=99; local lootRefT=99; local stamT=0; local autoT=0; local tracerT=0; local overlayT=0
-local skeleT=0; local trigT=0; local auraT=0
+local skeleT=0; local trigT=0; local auraT=0; local gunT=0; local noclipT=0
 
 LOOPS.stepped=RunService.Stepped:Connect(function(_,dt)
     espT=espT+dt; doorT=doorT+dt; autoT=autoT+dt; stamT=stamT+dt
-    tracerT=tracerT+dt; overlayT=overlayT+dt; skeleT=skeleT+dt; trigT=trigT+dt; auraT=auraT+dt
+    tracerT=tracerT+dt; overlayT=overlayT+dt; skeleT=skeleT+dt; trigT=trigT+dt; auraT=auraT+dt; gunT=gunT+dt; noclipT=noclipT+dt
 
     if espT>=0.25 then
         espT=0
@@ -1319,6 +1281,14 @@ LOOPS.stepped=RunService.Stepped:Connect(function(_,dt)
     if overlayT>=0.05 then overlayT=0; updateOverlays() end
     if trigT>=0.05 then trigT=0; if S.triggerBot then doTriggerBot() end end
     if auraT>=0.3 then auraT=0; if S.killAura then task.spawn(doKillAura) end end
+    if gunT>=0.1 then gunT=0; applyGunMods() end
+    if noclipT>=0.1 then noclipT=0
+        if S.noclip then
+            local char=LP.Character
+            if char then for _,p in ipairs(char:GetDescendants()) do if p:IsA("BasePart") then pcall(function() p.CanCollide=false end) end end
+            end
+        end
+    end
 end)
 
 task.spawn(function()
@@ -1381,8 +1351,8 @@ TabESP:CreateToggle({Name="Fullbright + No Fog",CurrentValue=false,Flag="fullbri
 -- MOVEMENT TAB
 local TabMove=Window:CreateTab("Movement",4483362458)
 TabMove:CreateToggle({Name="Auto Jump",CurrentValue=false,Flag="autoJump",Callback=function(v) S.autoJump=v end})
-TabMove:CreateToggle({Name="Speed Hack",CurrentValue=false,Flag="speedHack",Callback=function(v) S.speedHack=v; if not v and not S.autoSprint then local h=getHum(); if h then pcall(function() h.WalkSpeed=16 end) end end end})
-TabMove:CreateSlider({Name="Speed Value",Range={16,300},Increment=1,Suffix="studs/s",CurrentValue=32,Flag="speedValue",Callback=function(v) S.speed=v end})
+TabMove:CreateToggle({Name="Speed Hack  ⚠ server-visible",CurrentValue=false,Flag="speedHack",Callback=function(v) S.speedHack=v; if not v and not S.autoSprint then local h=getHum(); if h then pcall(function() h.WalkSpeed=16 end) end end end})
+TabMove:CreateSlider({Name="Speed Value",Range={16,60},Increment=1,Suffix="studs/s",CurrentValue=32,Flag="speedValue",Callback=function(v) S.speed=v end})
 TabMove:CreateToggle({Name="Infinite Stamina",CurrentValue=false,Flag="infStam",Callback=function(v) S.infStam=v; if v then scanStamina(); applyInfStam() end end})
 TabMove:CreateToggle({Name="Bunny Hop",CurrentValue=false,Flag="bunnyHop",Callback=function(v) S.bunnyHop=v end})
 TabMove:CreateToggle({Name="Fly",CurrentValue=false,Flag="fly",Callback=function(v) S.fly=v; setFly(v) end})
@@ -1434,14 +1404,9 @@ TabFarm:CreateButton({Name="Auto Deposit / Sell Now",Callback=function() task.sp
 
 -- RAGE COMBAT TAB
 local TabRage=Window:CreateTab("Rage Combat",4483362458)
-TabRage:CreateToggle({
-    Name="Silent Aim (⚠ needs hookmetamethod executor)",CurrentValue=false,Flag="silentAim",
-    Callback=function(v)
-        S.silentAim=v
-        if v and not origNamecall then
-            Rayfield:Notify({Title="Silent Aim",Content="Your executor does not support hookmetamethod. Silent Aim will not work.",Duration=6})
-        end
-    end,
+TabRage:CreateParagraph({
+    Title="Silent Aim — Removed",
+    Content="⚠ Silent Aim has been removed. Criminality detects hookmetamethod on game and kicks with Error 267. Use Legit Aimbot (Combat tab) instead — it's undetectable.",
 })
 TabRage:CreateToggle({
     Name="Hitbox Expander (Enlarge Enemy HRP)",CurrentValue=false,Flag="hitboxExpand",
@@ -1500,7 +1465,7 @@ TabAdv:CreateSlider({Name="Reach Amount",Range={8,80},Increment=1,Suffix="studs"
 local TabInfo=Window:CreateTab("Info",4483362458)
 TabInfo:CreateParagraph({
     Title="Criminality  |  PLUS Edition",
-    Content="F6 = Panic / kill script.\n\nRage Combat: Silent Aim hooks __namecall (needs Synapse X / Script-Ware). Hitbox Expander enlarges enemy HRP. Kill Aura TPs close and melees in range. Spinbot rotates your HRP to make you hard to hit. TP-Kill TPs behind nearest enemy and attacks.\n\nGod Mode: locks HP to max every frame and blocks dead state — server validates HP so it may revert on damage.\n\nAuto Farm: loops through Rob → Cash Collect → ATM/Safe → Deposit automatically.\n\nTeleport: uses Map/ATMz, Map/BredMakurz, Map/Shopz folder structure from the game.\n\n⚠ Server-authoritative features are tagged. Anything that says ⚠ may be patched or kicked if the server validates.",
+    Content="F6 = Panic / kill script.\n\nRage Combat: Hitbox Expander enlarges enemy HRP. Kill Aura TPs close and melees in range. Spinbot rotates your HRP to make you hard to hit. TP-Kill TPs behind nearest enemy and attacks.\n\nGod Mode: locks HP to max every frame and blocks dead state — server validates HP so it may revert on damage.\n\nAuto Farm: loops through Rob → Cash Collect → ATM/Safe → Deposit automatically.\n\nTeleport: uses Map/ATMz, Map/BredMakurz, Map/Shopz folder structure from the game.\n\n⚠ Server-authoritative features are tagged. Anything that says ⚠ may be patched or kicked if the server validates.",
 })
 
 -- INIT
