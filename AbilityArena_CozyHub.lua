@@ -1,4 +1,4 @@
--- Valutix Hub | Ability Arena | v2.13.0
+-- Valutix Hub | Ability Arena | v2.13.1
 -- by Valutix Hub Owner
 -- v2.8.0: Kill Aura fixed (crash bug killed the loop), real clicking, One Shot Punch
 --         remote wired into every M1, fixed M1 packet bytes, buffer sends, hitbox
@@ -51,6 +51,7 @@
 --          target - stops the constant snap-back/rubber-banding.
 -- v2.12.0: added best-effort God Mode (re-applies full HP + flips existing safe/damage flags).
 -- v2.13.0: added Ability Aim Assist (face nearest enemy w/ velocity lead on skill cast).
+-- v2.13.1: removed God Mode.
 
 local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
 
@@ -71,7 +72,7 @@ local LP = Players.LocalPlayer
 -- ============================================================
 local S = {
     AntiRagdoll=false, AntiPush=false, AntiVoid=false,
-    SaveHealth=false, SaveHealthPct=35, SaveHealthHeight=700, GodMode=false,
+    SaveHealth=false, SaveHealthPct=35, SaveHealthHeight=700,
     RemoveWaterBorder=false, AntiKillBricks=false,
     M1Hitbox=false, M1HitboxSize=50,
     HitboxAbility=false, HitboxAbilitySize=40, HitboxAllParts=false,
@@ -1420,36 +1421,6 @@ task.spawn(function()
     end
 end)
 
--- ============================================================
--- GOD MODE (best-effort). In the lobby you have infinite health, so a flag
--- (attribute / value) controls whether you can be damaged. We can't read the
--- game's internals from here, so this: (1) re-applies full health every frame,
--- and (2) flips any EXISTING boolean attribute that looks like a safe/lobby/
--- invincible flag ON, and damage-enable flags OFF. It does NOT touch whatever
--- disables your M1, so you stay able to attack. If the real flag lives only on
--- the server, the dump snippet (shared in chat) will tell us its exact name.
--- ============================================================
-local GOD_SAFE = {"Invincible","Invulnerable","Godmode","GodMode","God","Safe","InLobby","Lobby","Protected","Immune","NoDamage","Spawnshield","SpawnShield"}
-local GOD_DMG  = {"CanDamage","CanTakeDamage","Damageable","TakeDamage","Vulnerable"}
-local function applyGodMode()
-    local char = getChar(); if not char then return end
-    local _, maxh = getHealth()
-    if maxh and maxh > 0 then
-        if type(char:GetAttribute("Health")) == "number" then pcall(function() char:SetAttribute("Health", maxh) end) end
-        local hv = char:FindFirstChild("Health")
-        if hv and (hv:IsA("NumberValue") or hv:IsA("IntValue")) then pcall(function() hv.Value = maxh end) end
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum then pcall(function() hum.Health = hum.MaxHealth end) end
-    end
-    for _,a in ipairs(GOD_SAFE) do
-        if type(char:GetAttribute(a)) == "boolean" then pcall(function() char:SetAttribute(a, true) end) end
-    end
-    for _,a in ipairs(GOD_DMG) do
-        if type(char:GetAttribute(a)) == "boolean" then pcall(function() char:SetAttribute(a, false) end) end
-    end
-end
-hook(RunService.Heartbeat, function() if S.GodMode then applyGodMode() end end)
-
 -- ── ABILITY AIM ASSIST ─────────────────────────────────────────
 -- On a skill keypress, snap to face the nearest enemy (with simple velocity
 -- lead) so directional abilities land. Facing-based, same as Auto Ability.
@@ -1592,7 +1563,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Valutix Hub | Ability Arena",
     LoadingTitle = "Valutix Hub",
-    LoadingSubtitle = "v2.13.0 - by Valutix Hub Owner",
+    LoadingSubtitle = "v2.13.1 - by Valutix Hub Owner",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -1650,11 +1621,11 @@ local UtilityTab   = Window:CreateTab("Utility",   "wrench")
 
 -- \u2500\u2500 HOME (landing page) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 HomeTab:CreateSection("Welcome")
-HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.13.0\nPick a tab on the left to get started."})
+HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.13.1\nPick a tab on the left to get started."})
 HomeTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
 HomeTab:CreateParagraph({Title="Best combo", Content="Dash Behind On Hit (lands your M1 + puts you behind them) + M1 Hitbox. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
 HomeTab:CreateSection("Credits")
-HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.13.0 - by Valutix Hub Owner"})
+HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.13.1 - by Valutix Hub Owner"})
 
 CombatTab:CreateSection("Survival")
 CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
@@ -1681,7 +1652,6 @@ end})
 CombatTab:CreateToggle({Name="Save Health (low HP -> fly to sky, heal, drop back)", CurrentValue=false, Flag="SaveHealth", Callback=function(v) S.SaveHealth=v end})
 CombatTab:CreateSlider({Name="Save Health: trigger at HP %", Range={5,90}, Increment=5, Suffix="%", CurrentValue=35, Flag="SaveHealthPct", Callback=function(v) S.SaveHealthPct=v end})
 CombatTab:CreateSlider({Name="Save Health: sky height", Range={100,2000}, Increment=50, Suffix="studs", CurrentValue=700, Flag="SaveHealthHeight", Callback=function(v) S.SaveHealthHeight=v end})
-CombatTab:CreateToggle({Name="God Mode (best-effort - re-applies HP + safe flags)", CurrentValue=false, Flag="GodMode", Callback=function(v) S.GodMode=v end})
 
 CombatTab:CreateSection("Hitboxes")
 CombatTab:CreateToggle({Name="M1 Hitbox Expander (your M1 reaches farther)", CurrentValue=false, Flag="M1Hitbox", Callback=function(v)
@@ -1883,4 +1853,4 @@ UtilityTab:CreateButton({Name="Unload Valutix Hub", Callback=function()
 end})
 
 
-Rayfield:Notify({Title="Valutix Hub v2.13.0", Content="Loaded - by Valutix Hub Owner", Duration=6})
+Rayfield:Notify({Title="Valutix Hub v2.13.1", Content="Loaded - by Valutix Hub Owner", Duration=6})
