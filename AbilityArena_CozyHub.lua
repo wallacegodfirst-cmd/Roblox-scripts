@@ -1,4 +1,4 @@
--- Valutix Hub | Ability Arena | v2.13.3
+-- Valutix Hub | Ability Arena | v2.13.4
 -- by Valutix Hub Owner
 -- v2.8.0: Kill Aura fixed (crash bug killed the loop), real clicking, One Shot Punch
 --         remote wired into every M1, fixed M1 packet bytes, buffer sends, hitbox
@@ -56,6 +56,8 @@
 --          and force the M1 click so it fires even with the menu open.
 -- v2.13.3: Auto Farm/Play M1 lands consistently - throttled swing cadence (~0.35s) so the M1
 --          isn't cancelled before its hit-frame; abilities spaced out so they don't interrupt it.
+-- v2.13.4: auto-farm now clicks ON the enemy (forced); broader ability detection; added a
+--          'Dump Player Data' debug button to read the game's real attributes/values.
 
 local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
 
@@ -267,8 +269,9 @@ local function clickM1(force)
     doClick(safeClickPoint())
 end
 
-local function clickAtTarget(target)
-    if typingNow() or mouseOverGui() then return end
+local function clickAtTarget(target, force)
+    if typingNow() then return end
+    if not force and mouseOverGui() then return end
     local char = target and target.Character
     local tr   = char and charPart(char)
     if not tr then doClick(safeClickPoint()); return end
@@ -825,7 +828,7 @@ end
 -- Best-effort: which ability/element a player has. This game exposes no
 -- guaranteed signal, so we try attributes, StringValue children, a child named
 -- like a known ability, then a Tool. Returns nil if it can't tell.
-local ABILITY_ATTRS = {"Element","Ability","Move","Class","Skill","Power","Weapon","Kit","Stand","Fruit"}
+local ABILITY_ATTRS = {"Element","Ability","Move","Class","Skill","Power","Weapon","Kit","Stand","Fruit","CurrentAbility","ActiveElement","ActiveAbility","SelectedAbility","EquippedAbility"}
 local _knownAbil, _knownAbilT = nil, 0
 local function knownAbilities()
     if _knownAbil and (tick()-_knownAbilT) < 5 then return _knownAbil end
@@ -843,8 +846,18 @@ local function getPlayerAbility(char)
         local sv = char:FindFirstChild(k)
         if sv and sv:IsA("StringValue") and #sv.Value>0 then return sv.Value end
     end
+    -- ObjectValue pointing at the ability, anywhere on the char (e.g. char.Stats.Ability.Value)
+    for _,k in ipairs(ABILITY_ATTRS) do
+        local ov = char:FindFirstChild(k, true)
+        if ov then
+            if ov:IsA("ObjectValue") and ov.Value then return ov.Value.Name end
+            if ov:IsA("StringValue") and #ov.Value>0 then return ov.Value end
+        end
+    end
     local known = knownAbilities()
-    for _,c in ipairs(char:GetChildren()) do if known[c.Name] then return c.Name end end
+    for _,c in ipairs(char:GetDescendants()) do
+        if (c:IsA("BasePart") or c:IsA("Model") or c:IsA("Folder") or c:IsA("ModuleScript")) and known[c.Name] then return c.Name end
+    end
     local tool = char:FindFirstChildOfClass("Tool"); if tool then return tool.Name end
     return nil
 end
@@ -1475,7 +1488,7 @@ local function attackTarget(target)
     -- before its hit-frame, so damage rarely registered. ~0.35s lets each land.
     if now - lastFarmM1 >= 0.35 then
         lastFarmM1 = now
-        clickM1(true); fireM1()
+        clickAtTarget(target, true); fireM1()
     end
     -- abilities on a slower cadence so they don't keep interrupting the M1 swing
     if now - lastFarmAbil >= 1.0 then
@@ -1579,7 +1592,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Valutix Hub | Ability Arena",
     LoadingTitle = "Valutix Hub",
-    LoadingSubtitle = "v2.13.3 - by Valutix Hub Owner",
+    LoadingSubtitle = "v2.13.4 - by Valutix Hub Owner",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -1637,11 +1650,11 @@ local UtilityTab   = Window:CreateTab("Utility",   "wrench")
 
 -- \u2500\u2500 HOME (landing page) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 HomeTab:CreateSection("Welcome")
-HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.13.3\nPick a tab on the left to get started."})
+HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.13.4\nPick a tab on the left to get started."})
 HomeTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
 HomeTab:CreateParagraph({Title="Best combo", Content="Dash Behind On Hit (lands your M1 + puts you behind them) + M1 Hitbox. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
 HomeTab:CreateSection("Credits")
-HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.13.3 - by Valutix Hub Owner"})
+HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.13.4 - by Valutix Hub Owner"})
 
 CombatTab:CreateSection("Survival")
 CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
@@ -1855,6 +1868,26 @@ UtilityTab:CreateToggle({Name="Instant Respawn", CurrentValue=false, Flag="Insta
 UtilityTab:CreateButton({Name="Rejoin Server", Callback=rejoin})
 UtilityTab:CreateButton({Name="Server Hop", Callback=serverHop})
 
+UtilityTab:CreateSection("Debug")
+UtilityTab:CreateParagraph({Title="Dump Player Data", Content="Prints every player's character attributes + value-objects to the executor console (F9 / your console). Paste it back so the ESP ability + god-mode flag can be wired exactly."})
+UtilityTab:CreateButton({Name="Dump Player Data (to console)", Callback=function()
+    local function dump(char, tag)
+        if not char then return end
+        print("=====", tag, char.Name, "=====")
+        local attrs = char:GetAttributes()
+        for k,v in pairs(attrs) do print("  Attr:", k, "=", tostring(v), "("..typeof(v)..")") end
+        for _,d in ipairs(char:GetDescendants()) do
+            if d:IsA("StringValue") or d:IsA("ObjectValue") or d:IsA("NumberValue") or d:IsA("IntValue") or d:IsA("BoolValue") then
+                local val = d:IsA("ObjectValue") and (d.Value and d.Value.Name or "nil") or tostring(d.Value)
+                print("  Value:", d:GetFullName(), "=", val)
+            end
+        end
+    end
+    dump(LP.Character, "SELF")
+    for _,pl in ipairs(Players:GetPlayers()) do if pl ~= LP then dump(pl.Character, "PLAYER") end end
+    Rayfield:Notify({Title="Valutix Hub", Content="Dumped to console (open F9 / executor console).", Duration=5})
+end})
+
 UtilityTab:CreateSection("Admin")
 UtilityTab:CreateButton({Name="Unload Valutix Hub", Callback=function()
     for _,c in pairs(Conns) do pcall(function() c:Disconnect() end) end
@@ -1869,4 +1902,4 @@ UtilityTab:CreateButton({Name="Unload Valutix Hub", Callback=function()
 end})
 
 
-Rayfield:Notify({Title="Valutix Hub v2.13.3", Content="Loaded - by Valutix Hub Owner", Duration=6})
+Rayfield:Notify({Title="Valutix Hub v2.13.4", Content="Loaded - by Valutix Hub Owner", Duration=6})
