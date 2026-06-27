@@ -35,11 +35,11 @@
 --         your EXACT pre-grab spot on the map (backCF) instead. Hitbox + Ability
 --         Hitbox sizes bumped (50/40, up to 150) so the reach is big enough for the
 --         game's overlap check to register your hits.
--- v2.9.7: ESP now reads HP from characters with NO Humanoid (custom Health
---         object/attribute) instead of showing a blank label. Added Anti Water
---         (removes the Workspace.Border.Water border parts so the water hazard is
---         gone) and Anti Kill Bricks (removes Workspace.KillBricks); both re-sweep
---         on a loop to catch hazards that stream in / respawn after a server hop.
+-- v2.9.7: ESP now reads HP for characters with NO Humanoid (custom Health) so the
+--         label is never blank. Added "Remove Water Border" (destroys the invisible
+--         Border.Water walls so Anti Water actually holds) and "Anti Kill Bricks"
+--         (destroys Workspace.KillBricks so they can't touch-kill you). Both are
+--         toggles that re-clear every second to beat re-replication.
 
 local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
 
@@ -60,8 +60,8 @@ local LP = Players.LocalPlayer
 -- ============================================================
 local S = {
     AntiRagdoll=false, AntiPush=false, AntiVoid=false,
-    AntiWater=false, AntiKillBricks=false,
     SaveHealth=false, SaveHealthPct=35, SaveHealthHeight=700,
+    RemoveWaterBorder=false, AntiKillBricks=false,
     M1Hitbox=false, M1HitboxSize=50,
     HitboxAbility=false, HitboxAbilitySize=40,
     AutoM1=false,
@@ -378,6 +378,13 @@ RunService.Heartbeat:Connect(function()
     if sz <= 0 then
         if next(hbOriginal) then restoreHitboxes() end
         return
+    end
+    -- prune players who died or left so hbOriginal can't grow without bound
+    for name in pairs(hbOriginal) do
+        local p = Players:FindFirstChild(name)
+        if not p or not p.Character or not isAlive(p.Character) then
+            hbOriginal[name] = nil
+        end
     end
     for _,p in ipairs(Players:GetPlayers()) do
         if p ~= LP and p.Character and isAlive(p.Character) then
@@ -779,6 +786,26 @@ local function getHealth()
     return nil
 end
 
+-- read ANY character's health the same way (used by ESP so the label is never
+-- blank for this game's Humanoid-less characters)
+local function getTargetHealth(char)
+    if not char then return nil end
+    local h = char:FindFirstChildOfClass("Humanoid")
+    if h and h.MaxHealth and h.MaxHealth > 0 then return h.Health, h.MaxHealth end
+    local cur = char:GetAttribute("Health")
+    if type(cur) == "number" then
+        local mx = char:GetAttribute("MaxHealth")
+        return cur, (type(mx) == "number" and mx > 0 and mx) or 100
+    end
+    local hv = char:FindFirstChild("Health")
+    if hv and (hv:IsA("NumberValue") or hv:IsA("IntValue")) then
+        local mv = char:FindFirstChild("MaxHealth")
+        local mx = (mv and (mv:IsA("NumberValue") or mv:IsA("IntValue")) and mv.Value) or 100
+        return hv.Value, (mx > 0 and mx) or 100
+    end
+    return nil
+end
+
 local function ensureFloat()
     if not floatPart or floatPart.Parent == nil then
         floatPart = Instance.new("Part")
@@ -809,47 +836,6 @@ local function isKillPart(inst)
     if kb and inst:IsDescendantOf(kb) then return true end
     return tostring(inst.Name):lower():find("kill") ~= nil
 end
-
--- ============================================================
--- ANTI WATER (remove water border) + ANTI KILL BRICKS (remove)
--- This game's water hazard is Parts under Workspace.Border.Water (not Terrain),
--- and lethal bricks live under Workspace.KillBricks. Destroy them client-side so
--- they can't touch / kill / slow you. A 1s loop re-sweeps so hazards that stream
--- in or respawn (e.g. after a server hop) get cleaned up too.
--- NOTE: this is client-side removal. It stops touch/collision hazards; if the
--- game also validates kills server-side it can still apply damage.
--- ============================================================
-local function destroyBasePartsIn(container)
-    if not container then return 0 end
-    local n = 0
-    for _, d in ipairs(container:GetDescendants()) do
-        if d:IsA("BasePart") then
-            pcall(function() d:Destroy() end)
-            n += 1
-        end
-    end
-    return n
-end
-
--- finds the water border folder: Workspace.Border.Water (falls back to any
--- folder literally named "Water" anywhere in Workspace).
-local function waterBorderFolder()
-    local border = Workspace:FindFirstChild("Border")
-    local water  = border and border:FindFirstChild("Water")
-    if water then return water end
-    return Workspace:FindFirstChild("Water", true)
-end
-
-task.spawn(function()
-    while task.wait(1) do
-        if S.AntiWater then
-            pcall(function() destroyBasePartsIn(waterBorderFolder()) end)
-        end
-        if S.AntiKillBricks then
-            pcall(function() destroyBasePartsIn(Workspace:FindFirstChild("KillBricks")) end)
-        end
-    end
-end)
 
 RunService.Heartbeat:Connect(function()
     if not S.AntiVoid then
@@ -905,6 +891,53 @@ RunService.Heartbeat:Connect(function()
             root.AssemblyLinearVelocity = Vector3.zero
             root.CFrame = tpCF + Vector3.new(0, 6, 0)
         end
+    end
+end)
+
+-- ============================================================
+-- ANTI WATER BORDER + ANTI KILL BRICKS
+-- The map fences the water with invisible "Border Part"s under
+-- Workspace.Border.Water that shove you back / drown you, and KillBricks
+-- under Workspace.KillBricks insta-kill on touch. Removing them client-side
+-- is what actually makes "Anti Water" hold and stops the kill bricks. Both
+-- toggles destroy on enable AND re-clear every second (the server can
+-- re-stream the parts in, so a one-shot wouldn't be enough).
+-- ============================================================
+local function destroyWaterBorder()
+    local cleared = 0
+    local roots = {}
+    local border = Workspace:FindFirstChild("Border")
+    if border then
+        local w = border:FindFirstChild("Water")
+        if w then roots[#roots+1] = w end
+    end
+    local w2 = Workspace:FindFirstChild("Water")   -- in case it sits at the top level
+    if w2 then roots[#roots+1] = w2 end
+    for _,r in ipairs(roots) do
+        if r:IsA("BasePart") then pcall(function() r:Destroy() end); cleared += 1 end
+        for _,d in ipairs(r:GetDescendants()) do
+            if d:IsA("BasePart") then pcall(function() d:Destroy() end); cleared += 1 end
+        end
+    end
+    return cleared
+end
+
+local function destroyKillBricks()
+    local cleared = 0
+    local kb = Workspace:FindFirstChild("KillBricks")
+    if kb then
+        for _,d in ipairs(kb:GetDescendants()) do
+            if d:IsA("BasePart") then pcall(function() d:Destroy() end); cleared += 1 end
+        end
+        if kb:IsA("BasePart") then pcall(function() kb:Destroy() end); cleared += 1 end
+    end
+    return cleared
+end
+
+task.spawn(function()
+    while task.wait(1) do
+        if S.RemoveWaterBorder then pcall(destroyWaterBorder) end
+        if S.AntiKillBricks    then pcall(destroyKillBricks) end
     end
 end)
 
@@ -1107,26 +1140,6 @@ local function clearESP()
         if d.line then pcall(function() d.line:Remove() end) end
     end
     espPool = {}
-end
--- Read a target's HP with OR without a standard Humanoid. Many of this game's
--- characters have no Humanoid (custom "Health" object/attribute), so the ESP
--- label used to stay blank for them. Mirrors the local getHealth() reader.
-local function getTargetHealth(char)
-    if not char then return nil end
-    local h = char:FindFirstChildOfClass("Humanoid")
-    if h and h.MaxHealth and h.MaxHealth > 0 then return h.Health, h.MaxHealth end
-    local cur = char:GetAttribute("Health")
-    if type(cur) == "number" then
-        local mx = char:GetAttribute("MaxHealth")
-        return cur, (type(mx) == "number" and mx > 0 and mx) or 100
-    end
-    local hv = char:FindFirstChild("Health")
-    if hv and (hv:IsA("NumberValue") or hv:IsA("IntValue")) then
-        local mv = char:FindFirstChild("MaxHealth")
-        local mx = (mv and (mv:IsA("NumberValue") or mv:IsA("IntValue")) and mv.Value) or 100
-        return hv.Value, (mx > 0 and mx) or 100
-    end
-    return nil
 end
 local hasDrawing = (typeof(Drawing) == "table") or (Drawing ~= nil)
 local espTimer = 0
@@ -1440,20 +1453,18 @@ CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="An
 end})
 CombatTab:CreateToggle({Name="Anti-Push (knockback)", CurrentValue=false, Flag="AntiPush", Callback=function(v) S.AntiPush=v end})
 CombatTab:CreateToggle({Name="Anti Void / Water (instant TP back)", CurrentValue=false, Flag="AntiVoid", Callback=function(v) S.AntiVoid=v end})
-CombatTab:CreateToggle({Name="Anti Water (remove water border)", CurrentValue=false, Flag="AntiWater", Callback=function(v)
-    S.AntiWater=v
+CombatTab:CreateToggle({Name="Remove Water Border (makes Anti Water hold)", CurrentValue=false, Flag="RemoveWaterBorder", Callback=function(v)
+    S.RemoveWaterBorder=v
     if v then
-        local n = 0
-        pcall(function() n = destroyBasePartsIn(waterBorderFolder()) end)
-        Rayfield:Notify({Title="Money/FreeHub", Content="Removed "..n.." water border part(s).", Duration=3})
+        local n=destroyWaterBorder()
+        Rayfield:Notify({Title="Money/FreeHub", Content="Water border removed ("..n.." parts). Keeps clearing while on.", Duration=4})
     end
 end})
-CombatTab:CreateToggle({Name="Anti Kill Bricks (remove)", CurrentValue=false, Flag="AntiKillBricks", Callback=function(v)
+CombatTab:CreateToggle({Name="Anti Kill Bricks (remove them)", CurrentValue=false, Flag="AntiKillBricks", Callback=function(v)
     S.AntiKillBricks=v
     if v then
-        local n = 0
-        pcall(function() n = destroyBasePartsIn(Workspace:FindFirstChild("KillBricks")) end)
-        Rayfield:Notify({Title="Money/FreeHub", Content="Removed "..n.." kill brick(s).", Duration=3})
+        local n=destroyKillBricks()
+        Rayfield:Notify({Title="Money/FreeHub", Content="Kill bricks removed ("..n.." parts). Keeps clearing while on.", Duration=4})
     end
 end})
 CombatTab:CreateToggle({Name="Save Health (low HP -> fly to sky, heal, drop back)", CurrentValue=false, Flag="SaveHealth", Callback=function(v) S.SaveHealth=v end})
@@ -1635,6 +1646,6 @@ end})
 UtilityTab:CreateSection("Status")
 UtilityTab:CreateParagraph({Title="Credits", Content="Money/FreeHub v2.9.7 - by Money/FreeHub Owner"})
 UtilityTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
-UtilityTab:CreateParagraph({Title="Best combo", Content="Dash Behind On Hit (lands your M1 + puts you behind them) + M1 Hitbox. Anti-Ragdoll + Anti Void + Save Health for survival. Anti Water + Anti Kill Bricks remove the map hazards. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
+UtilityTab:CreateParagraph({Title="Best combo", Content="Dash Behind On Hit (lands your M1 + puts you behind them) + M1 Hitbox. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
 
 Rayfield:Notify({Title="Money/FreeHub v2.9.7", Content="Loaded - by Money/FreeHub Owner", Duration=6})
