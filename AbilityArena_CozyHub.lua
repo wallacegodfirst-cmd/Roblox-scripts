@@ -734,6 +734,26 @@ local function clearESP()
     end
     espPool = {}
 end
+-- Read a target's HP with OR without a standard Humanoid. Many of this game's
+-- characters have no Humanoid (custom "Health" object/attribute), so the ESP
+-- label used to stay blank for them. Mirrors the local getHealth() reader.
+local function getTargetHealth(char)
+    if not char then return nil end
+    local h = char:FindFirstChildOfClass("Humanoid")
+    if h and h.MaxHealth and h.MaxHealth > 0 then return h.Health, h.MaxHealth end
+    local cur = char:GetAttribute("Health")
+    if type(cur) == "number" then
+        local mx = char:GetAttribute("MaxHealth")
+        return cur, (type(mx) == "number" and mx > 0 and mx) or 100
+    end
+    local hv = char:FindFirstChild("Health")
+    if hv and (hv:IsA("NumberValue") or hv:IsA("IntValue")) then
+        local mv = char:FindFirstChild("MaxHealth")
+        local mx = (mv and (mv:IsA("NumberValue") or mv:IsA("IntValue")) and mv.Value) or 100
+        return hv.Value, (mx > 0 and mx) or 100
+    end
+    return nil
+end
 local hasDrawing = (typeof(Drawing) == "table") or (Drawing ~= nil)
 local espTimer = 0
 RunService.RenderStepped:Connect(function(dt)
@@ -776,14 +796,20 @@ RunService.RenderStepped:Connect(function(dt)
         local hum  = char and char:FindFirstChildOfClass("Humanoid")
         local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
         d.bill.Enabled = S.ESP and head ~= nil
-        if S.ESP and head and hum then
+        if S.ESP and head then
             local myRoot = getRoot()
             local dist   = (myRoot and root) and math.floor((root.Position-myRoot.Position).Magnitude) or 0
-            local hp     = math.floor(hum.Health)
-            d.lbl.Text   = string.format("%s | %d HP | %dm", name, hp, dist)
-            d.lbl.TextColor3 = S.ESPColor
-                and Color3.fromRGB(255*(1-hp/math.max(hum.MaxHealth,1)), 255*(hp/math.max(hum.MaxHealth,1)), 60)
-                or Color3.new(1,1,1)
+            local hp, maxHp = getTargetHealth(char)
+            if hp and maxHp then
+                hp = math.floor(hp)
+                d.lbl.Text = string.format("%s | %d/%d HP | %dm", name, hp, math.floor(maxHp), dist)
+                d.lbl.TextColor3 = S.ESPColor
+                    and Color3.fromRGB(255*(1-hp/math.max(maxHp,1)), 255*(hp/math.max(maxHp,1)), 60)
+                    or Color3.new(1,1,1)
+            else
+                d.lbl.Text = string.format("%s | ?? HP | %dm", name, dist)
+                d.lbl.TextColor3 = Color3.new(1,1,1)
+            end
         end
         if d.line then
             if S.Tracers and root then
