@@ -1,4 +1,4 @@
--- Valutix Hub | Ability Arena | v2.13.4
+-- Valutix Hub | Ability Arena | v2.13.5
 -- by Valutix Hub Owner
 -- v2.8.0: Kill Aura fixed (crash bug killed the loop), real clicking, One Shot Punch
 --         remote wired into every M1, fixed M1 packet bytes, buffer sends, hitbox
@@ -58,6 +58,8 @@
 --          isn't cancelled before its hit-frame; abilities spaced out so they don't interrupt it.
 -- v2.13.4: auto-farm now clicks ON the enemy (forced); broader ability detection; added a
 --          'Dump Player Data' debug button to read the game's real attributes/values.
+-- v2.13.5: reverted Auto Farm/Play to the original point-blank brute-force (teleport INSIDE the
+--          target's hitbox every 0.1s) that actually lands hits; the distance-gating broke it.
 
 local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
 
@@ -1456,56 +1458,29 @@ hook(UserInputService.InputBegan, function(i, gpe)
     faceTo(lead)
 end)
 
--- Auto-attack one target: stand ~3 studs off FACING them (so directional M1s
--- land), kill momentum so you don't fling, then M1 + abilities. (tpTo() is
--- defined later in the file, so the velocity-zero is inlined here.)
-local lastFarmM1, lastFarmAbil = 0, 0
-local function attackTarget(target)
-    local char = target and target.Character
-    local tr   = char and charPart(char)
-    local root = getRoot()
-    if not (tr and root) then return end
-    -- aim at a real body part, not the (possibly expanded) Hitbox cube
-    local dest = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head") or tr
-    local d = (dest.Position - root.Position).Magnitude
-    if d > 8 then
-        -- out of range: snap beside them ONCE, facing them, momentum killed
-        local aim = CFrame.new(dest.Position - dest.CFrame.LookVector*3 + Vector3.new(0,1.5,0), dest.Position)
-        pcall(function()
-            root.AssemblyLinearVelocity  = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-            root.CFrame = aim
-        end)
-    else
-        -- already in range: only ROTATE to face them (no position write), so the
-        -- server stops fighting/rolling you back every cycle
-        pcall(function()
-            root.CFrame = CFrame.new(root.Position, Vector3.new(dest.Position.X, root.Position.Y, dest.Position.Z))
-        end)
-    end
-    local now = tick()
-    -- M1 at a real SWING cadence. Spamming clickM1 every 0.1s cancelled the swing
-    -- before its hit-frame, so damage rarely registered. ~0.35s lets each land.
-    if now - lastFarmM1 >= 0.35 then
-        lastFarmM1 = now
-        clickAtTarget(target, true); fireM1()
-    end
-    -- abilities on a slower cadence so they don't keep interrupting the M1 swing
-    if now - lastFarmAbil >= 1.0 then
-        lastFarmAbil = now
-        tapKey(Enum.KeyCode.E)
-        tapKey(Enum.KeyCode.R)
-        if S.CastQ then tapKey(Enum.KeyCode.Q) end
-        if S.CastT then tapKey(Enum.KeyCode.T) end
-    end
-end
-
+-- Auto Farm / Auto Play: ORIGINAL v2.9.6 brute-force. Teleport your root to
+-- ~4 studs below the target's Hitbox CENTRE every 0.1s, which drops you INSIDE
+-- their hitbox (point-blank) so the M1 overlap lands; then spam click + M1 +
+-- abilities. (Distance-gating + cadence broke this by standing you outside.)
 task.spawn(function()
     while task.wait(0.1) do
         if S.AutoFarm and S.FarmTarget then
             pcall(function()
-                local t = Players:FindFirstChild(S.FarmTarget)
-                if t and t.Character and isAlive(t.Character) then attackTarget(t) end
+                local t    = Players:FindFirstChild(S.FarmTarget)
+                local root = getRoot()
+                if t and t.Character and root then
+                    local tr = charPart(t.Character)
+                    if tr then
+                        local pos = tr.Position - Vector3.new(0, 4, 0)
+                        pcall(function() root.CFrame = CFrame.new(pos) end)
+                        clickAtTarget(t, true)
+                        fireM1(); fireM1(); fireM1()
+                        tapKey(Enum.KeyCode.E)
+                        tapKey(Enum.KeyCode.R)
+                        if S.CastQ then tapKey(Enum.KeyCode.Q) end
+                        if S.CastT then tapKey(Enum.KeyCode.T) end
+                    end
+                end
             end)
         end
     end
@@ -1516,7 +1491,15 @@ task.spawn(function()
         if S.AutoPlay then
             pcall(function()
                 local target = nearestPlayer(S.AutoPlayRange)
-                if target then attackTarget(target) end
+                if not target or not target.Character then return end
+                local tr   = charPart(target.Character)
+                local root = getRoot()
+                if not (tr and root) then return end
+                local pos = tr.Position - Vector3.new(0, 4, 0)
+                pcall(function() root.CFrame = CFrame.new(pos) end)
+                clickAtTarget(target, true)
+                fireM1(); fireM1()
+                tapKey(Enum.KeyCode.E)
             end)
         end
     end
@@ -1592,7 +1575,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Valutix Hub | Ability Arena",
     LoadingTitle = "Valutix Hub",
-    LoadingSubtitle = "v2.13.4 - by Valutix Hub Owner",
+    LoadingSubtitle = "v2.13.5 - by Valutix Hub Owner",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -1650,11 +1633,11 @@ local UtilityTab   = Window:CreateTab("Utility",   "wrench")
 
 -- \u2500\u2500 HOME (landing page) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 HomeTab:CreateSection("Welcome")
-HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.13.4\nPick a tab on the left to get started."})
+HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.13.5\nPick a tab on the left to get started."})
 HomeTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
 HomeTab:CreateParagraph({Title="Best combo", Content="Dash Behind On Hit (lands your M1 + puts you behind them) + M1 Hitbox. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
 HomeTab:CreateSection("Credits")
-HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.13.4 - by Valutix Hub Owner"})
+HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.13.5 - by Valutix Hub Owner"})
 
 CombatTab:CreateSection("Survival")
 CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
@@ -1902,4 +1885,4 @@ UtilityTab:CreateButton({Name="Unload Valutix Hub", Callback=function()
 end})
 
 
-Rayfield:Notify({Title="Valutix Hub v2.13.4", Content="Loaded - by Valutix Hub Owner", Duration=6})
+Rayfield:Notify({Title="Valutix Hub v2.13.5", Content="Loaded - by Valutix Hub Owner", Duration=6})
