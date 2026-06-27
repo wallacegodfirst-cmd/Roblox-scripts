@@ -1,4 +1,4 @@
--- Money/FreeHub | Ability Arena | v2.9.7
+-- Money/FreeHub | Ability Arena | v2.9.8
 -- by Money/FreeHub Owner
 -- v2.8.0: Kill Aura fixed (crash bug killed the loop), real clicking, One Shot Punch
 --         remote wired into every M1, fixed M1 packet bytes, buffer sends, hitbox
@@ -40,6 +40,7 @@
 --         Border.Water walls so Anti Water actually holds) and "Anti Kill Bricks"
 --         (destroys Workspace.KillBricks so they can't touch-kill you). Both are
 --         toggles that re-clear every second to beat re-replication.
+-- v2.9.8: neon-red Rayfield theme (near-black UI, glowing red toggles/sliders/tabs).
 
 local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
 
@@ -1431,10 +1432,51 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Money/FreeHub | Ability Arena",
     LoadingTitle = "Money/FreeHub",
-    LoadingSubtitle = "v2.9.7 - by Money/FreeHub Owner",
+    LoadingSubtitle = "v2.9.8 - by Money/FreeHub Owner",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
+    -- Neon-red dark theme (near-black bg, glowing red toggles/sliders/selected tab)
+    Theme = {
+        TextColor                    = Color3.fromRGB(235, 235, 235),
+        Background                   = Color3.fromRGB(15, 12, 13),
+        Topbar                       = Color3.fromRGB(22, 16, 18),
+        Shadow                       = Color3.fromRGB(8, 6, 7),
+
+        NotificationBackground       = Color3.fromRGB(20, 14, 16),
+        NotificationActionsBackground= Color3.fromRGB(255, 45, 45),
+
+        TabBackground                = Color3.fromRGB(28, 20, 22),
+        TabStroke                    = Color3.fromRGB(70, 22, 26),
+        TabBackgroundSelected        = Color3.fromRGB(255, 40, 40),  -- selected tab = neon red
+        TabTextColor                 = Color3.fromRGB(200, 190, 192),
+        SelectedTabTextColor         = Color3.fromRGB(20, 12, 13),   -- dark text on red for contrast
+
+        ElementBackground            = Color3.fromRGB(26, 19, 21),
+        ElementBackgroundHover       = Color3.fromRGB(38, 24, 27),
+        SecondaryElementBackground   = Color3.fromRGB(22, 16, 18),
+        ElementStroke                = Color3.fromRGB(58, 26, 30),
+        SecondaryElementStroke       = Color3.fromRGB(50, 24, 28),
+
+        SliderBackground             = Color3.fromRGB(120, 18, 22),  -- dark red track
+        SliderProgress               = Color3.fromRGB(255, 45, 45),  -- neon red fill
+        SliderStroke                 = Color3.fromRGB(255, 85, 85),
+
+        ToggleBackground             = Color3.fromRGB(30, 22, 24),
+        ToggleEnabled                = Color3.fromRGB(255, 45, 45),  -- neon red ON
+        ToggleDisabled               = Color3.fromRGB(85, 80, 82),   -- grey OFF
+        ToggleEnabledStroke          = Color3.fromRGB(255, 95, 95),
+        ToggleDisabledStroke         = Color3.fromRGB(115, 110, 112),
+        ToggleEnabledOuterStroke     = Color3.fromRGB(180, 30, 34),
+        ToggleDisabledOuterStroke    = Color3.fromRGB(55, 50, 52),
+
+        DropdownSelected             = Color3.fromRGB(40, 24, 27),
+        DropdownUnselected           = Color3.fromRGB(26, 19, 21),
+
+        InputBackground              = Color3.fromRGB(28, 21, 23),
+        InputStroke                  = Color3.fromRGB(75, 34, 38),
+        PlaceholderColor             = Color3.fromRGB(150, 138, 140),
+    },
 })
 
 local CombatTab    = Window:CreateTab("Combat",    4483362458)
@@ -1644,8 +1686,8 @@ UtilityTab:CreateButton({Name="Unload Money/FreeHub", Callback=function()
 end})
 
 UtilityTab:CreateSection("Status")
-UtilityTab:CreateParagraph({Title="Credits", Content="Money/FreeHub v2.9.7 - by Money/FreeHub Owner"})
+UtilityTab:CreateParagraph({Title="Credits", Content="Money/FreeHub v2.9.8 - by Money/FreeHub Owner"})
 UtilityTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
 UtilityTab:CreateParagraph({Title="Best combo", Content="Dash Behind On Hit (lands your M1 + puts you behind them) + M1 Hitbox. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
 
-Rayfield:Notify({Title="Money/FreeHub v2.9.7", Content="Loaded - by Money/FreeHub Owner", Duration=6})
+Rayfield:Notify({Title="Money/FreeHub v2.9.8", Content="Loaded - by Money/FreeHub Owner", Duration=6})
