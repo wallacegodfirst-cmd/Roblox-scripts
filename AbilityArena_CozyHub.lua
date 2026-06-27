@@ -1,4 +1,4 @@
--- Valutix Hub | Ability Arena | v2.10.0
+-- Valutix Hub | Ability Arena | v2.11.0
 -- by Valutix Hub Owner
 -- v2.8.0: Kill Aura fixed (crash bug killed the loop), real clicking, One Shot Punch
 --         remote wired into every M1, fixed M1 packet bytes, buffer sends, hitbox
@@ -44,6 +44,8 @@
 -- v2.9.9: rebranded to Valutix Hub; added a Home tab + per-tab sidebar icons.
 -- v2.10.0: teleport fixes (no fling, removed lobby TP-to-Spawn, safe Click-TP, auto-refresh
 --          target lists, Save-Health-safe Safe-Spawn) + full Unload disconnect + lighting restore.
+-- v2.11.0: richer ESP (ability + colored health bar + 2D boxes + max-distance), View Player
+--          (spectate), and a stronger hitbox (handles Model hitboxes + whole-body, cap 300).
 
 local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
 
@@ -67,7 +69,7 @@ local S = {
     SaveHealth=false, SaveHealthPct=35, SaveHealthHeight=700,
     RemoveWaterBorder=false, AntiKillBricks=false,
     M1Hitbox=false, M1HitboxSize=50,
-    HitboxAbility=false, HitboxAbilitySize=40,
+    HitboxAbility=false, HitboxAbilitySize=40, HitboxAllParts=false,
     AutoM1=false,
     AutoAbility=false, AutoAbilityRange=25,
     CastE=true, CastQ=false, CastR=false, CastT=false,
@@ -79,7 +81,8 @@ local S = {
     SpeedHack=false, Speed=16,
     InfiniteJump=false,
     SpinBot=false, AntiFling=false,
-    ESP=false, ESPColor=true, Tracers=false,
+    ESP=false, ESPColor=true, Tracers=false, ESPBox=false, ESPAbility=true, ESPMaxDist=0,
+    Viewing=nil, ViewTarget=nil,
     EnemyHighlight=false, HighlightColor="Bright blue",
     FullBright=false,
     AutoFarm=false, FarmTarget=nil,
@@ -337,23 +340,16 @@ end
 -- enlarged hitbox is shown faint-red so you can SEE the reach.
 -- Targets via isAlive() (NOT a Humanoid - this game's chars lack one).
 -- ============================================================
-local hbOriginal = {}
+local hbOriginal = {}   -- keyed by the BasePart instance -> original props
 local abilityBurstUntil = 0
 local function restoreHitboxes()
-    for name, parts in pairs(hbOriginal) do
-        local p = Players:FindFirstChild(name)
-        local char = p and p.Character
-        if char then
-            for partName, orig in pairs(parts) do
-                local part = char:FindFirstChild(partName)
-                if part then pcall(function()
-                    part.Size = orig.size; part.Transparency = orig.transp
-                    part.CanCollide = orig.collide; part.Massless = orig.massless
-                    part.CanTouch = orig.touch; part.Color = orig.color
-                    part.Material = orig.material
-                end) end
-            end
-        end
+    for part, orig in pairs(hbOriginal) do
+        if part and part.Parent then pcall(function()
+            part.Size = orig.size; part.Transparency = orig.transp
+            part.CanCollide = orig.collide; part.Massless = orig.massless
+            part.CanTouch = orig.touch; part.CanQuery = orig.query
+            part.Color = orig.color; part.Material = orig.material
+        end) end
     end
     hbOriginal = {}
 end
@@ -369,45 +365,57 @@ local function wantedHitboxSize()
     return sz
 end
 
+-- Parts to grow on an enemy. Fixes the old bug where a Model "Hitbox" was
+-- skipped entirely (only direct BaseParts were grown). Optionally grows EVERY
+-- BasePart in the character for maximum reach.
+local function hitboxParts(char)
+    local out = {}
+    local hb = char:FindFirstChild("Hitbox")
+    if hb then
+        if hb:IsA("BasePart") then out[#out+1] = hb
+        elseif hb:IsA("Model") then
+            for _,d in ipairs(hb:GetDescendants()) do if d:IsA("BasePart") then out[#out+1] = d end end
+        end
+    end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp and hrp:IsA("BasePart") then out[#out+1] = hrp end
+    if S.HitboxAllParts then
+        for _,d in ipairs(char:GetDescendants()) do if d:IsA("BasePart") then out[#out+1] = d end end
+    end
+    return out
+end
+
 hook(RunService.Heartbeat, function()
     local sz = wantedHitboxSize()
     if sz <= 0 then
         if next(hbOriginal) then restoreHitboxes() end
         return
     end
-    -- prune players who died or left so hbOriginal can't grow without bound
-    for name in pairs(hbOriginal) do
-        local p = Players:FindFirstChild(name)
-        if not p or not p.Character or not isAlive(p.Character) then
-            hbOriginal[name] = nil
-        end
+    -- prune destroyed/removed parts so hbOriginal can't grow without bound
+    for part in pairs(hbOriginal) do
+        if not part or not part.Parent then hbOriginal[part] = nil end
     end
     for _,p in ipairs(Players:GetPlayers()) do
         if p ~= LP and p.Character and isAlive(p.Character) then
-            local char = p.Character
-            for _,partName in ipairs({"Hitbox","HumanoidRootPart"}) do
-                local part = char:FindFirstChild(partName)
-                if part and part:IsA("BasePart") then
-                    hbOriginal[p.Name] = hbOriginal[p.Name] or {}
-                    if not hbOriginal[p.Name][partName] then
-                        hbOriginal[p.Name][partName] = {
-                            size=part.Size, transp=part.Transparency,
-                            collide=part.CanCollide, massless=part.Massless,
-                            touch=part.CanTouch, color=part.Color,
-                            material=part.Material
-                        }
-                    end
-                    pcall(function()
-                        part.Massless    = true
-                        part.CanCollide  = false
-                        part.CanQuery    = true
-                        part.CanTouch    = true
-                        if part.Size.X ~= sz then part.Size = Vector3.new(sz, sz, sz) end
-                        part.Transparency = 0.55
-                        part.Color       = Color3.fromRGB(255, 60, 60)
-                        part.Material    = Enum.Material.ForceField
-                    end)
+            for _,part in ipairs(hitboxParts(p.Character)) do
+                if not hbOriginal[part] then
+                    hbOriginal[part] = {
+                        size=part.Size, transp=part.Transparency,
+                        collide=part.CanCollide, massless=part.Massless,
+                        touch=part.CanTouch, query=part.CanQuery,
+                        color=part.Color, material=part.Material
+                    }
                 end
+                pcall(function()
+                    part.Massless    = true
+                    part.CanCollide  = false
+                    part.CanQuery    = true
+                    part.CanTouch    = true
+                    if part.Size.X ~= sz then part.Size = Vector3.new(sz, sz, sz) end
+                    part.Transparency = 0.55
+                    part.Color        = Color3.fromRGB(255, 60, 60)
+                    part.Material     = Enum.Material.ForceField
+                end)
             end
         end
     end
@@ -802,6 +810,33 @@ local function getTargetHealth(char)
     return nil
 end
 
+-- Best-effort: which ability/element a player has. This game exposes no
+-- guaranteed signal, so we try attributes, StringValue children, a child named
+-- like a known ability, then a Tool. Returns nil if it can't tell.
+local ABILITY_ATTRS = {"Element","Ability","Move","Class","Skill","Power","Weapon","Kit","Stand","Fruit"}
+local _knownAbil, _knownAbilT = nil, 0
+local function knownAbilities()
+    if _knownAbil and (tick()-_knownAbilT) < 5 then return _knownAbil end
+    _knownAbil = {}; _knownAbilT = tick()
+    pcall(function() for _,n in ipairs(abilityNames()) do _knownAbil[n] = true end end)
+    pcall(function() for _,n in ipairs(auraNames())    do _knownAbil[n] = true end end)
+    return _knownAbil
+end
+local function getPlayerAbility(char)
+    if not char then return nil end
+    for _,k in ipairs(ABILITY_ATTRS) do
+        local v = char:GetAttribute(k); if type(v)=="string" and #v>0 then return v end
+    end
+    for _,k in ipairs(ABILITY_ATTRS) do
+        local sv = char:FindFirstChild(k)
+        if sv and sv:IsA("StringValue") and #sv.Value>0 then return sv.Value end
+    end
+    local known = knownAbilities()
+    for _,c in ipairs(char:GetChildren()) do if known[c.Name] then return c.Name end end
+    local tool = char:FindFirstChildOfClass("Tool"); if tool then return tool.Name end
+    return nil
+end
+
 local function ensureFloat()
     if not floatPart or floatPart.Parent == nil then
         floatPart = Instance.new("Part")
@@ -1131,80 +1166,147 @@ hook(RunService.Heartbeat, function()
 end)
 
 local espPool = {}
+local hasDrawing = (typeof(Drawing) == "table") or (Drawing ~= nil)
 local function clearESP()
     for _,d in pairs(espPool) do
         pcall(function() d.bill:Destroy() end)
         if d.line then pcall(function() d.line:Remove() end) end
+        if d.box  then pcall(function() d.box:Remove()  end) end
     end
     espPool = {}
 end
-local hasDrawing = (typeof(Drawing) == "table") or (Drawing ~= nil)
+local function hpColor(frac)
+    frac = math.clamp(frac, 0, 1)
+    return Color3.fromRGB(math.floor(255*(1-frac)), math.floor(255*frac), 55)
+end
+local function espLabel(parent, posY, sizeY, txtSize, bold)
+    local l = Instance.new("TextLabel")
+    l.BackgroundTransparency = 1
+    l.Position = UDim2.new(0,0,posY,0)
+    l.Size     = UDim2.new(1,0,0,sizeY)
+    l.Font     = bold and Enum.Font.GothamBold or Enum.Font.Gotham
+    l.TextSize = txtSize
+    l.TextColor3 = Color3.new(1,1,1)
+    l.TextStrokeTransparency = 0
+    l.Parent = parent
+    return l
+end
 local espTimer = 0
 hook(RunService.RenderStepped, function(dt)
-    if not S.ESP and not S.Tracers then if next(espPool) then clearESP() end return end
+    if not (S.ESP or S.Tracers or S.ESPBox) then if next(espPool) then clearESP() end return end
     espTimer += dt
-    if espTimer >= 0.4 then
+    if espTimer >= 0.3 then
         espTimer = 0
         for name,d in pairs(espPool) do
             local p = Players:FindFirstChild(name)
             if not p or not p.Character then
                 pcall(function() d.bill:Destroy() end)
                 if d.line then pcall(function() d.line:Remove() end) end
+                if d.box  then pcall(function() d.box:Remove()  end) end
                 espPool[name] = nil
             end
         end
         for _,p in ipairs(Players:GetPlayers()) do
             if p ~= LP and p.Character and p.Character:FindFirstChild("Head") and not espPool[p.Name] then
+                local head = p.Character.Head
                 local bill = Instance.new("BillboardGui")
-                bill.Name="MFHESP"; bill.Adornee=p.Character.Head; bill.Size=UDim2.new(0,200,0,40)
-                bill.StudsOffset=Vector3.new(0,2.5,0); bill.AlwaysOnTop=true
-                local lbl = Instance.new("TextLabel"); lbl.Parent=bill
-                lbl.Size=UDim2.new(1,0,1,0); lbl.BackgroundTransparency=1
-                lbl.Font=Enum.Font.GothamBold; lbl.TextScaled=false; lbl.TextSize=14
-                lbl.TextStrokeTransparency=0; lbl.TextColor3=Color3.new(1,1,1)
-                bill.Parent = p.Character.Head
-                local line
+                bill.Name="MFHESP"; bill.Adornee=head; bill.Size=UDim2.new(0,210,0,58)
+                bill.StudsOffset=Vector3.new(0,3,0); bill.AlwaysOnTop=true
+                local nameLbl = espLabel(bill, 0.00, 16, 14, true)
+                local abilLbl = espLabel(bill, 0.27, 13, 13, true); abilLbl.TextColor3 = Color3.fromRGB(255,70,70)
+                local barBG = Instance.new("Frame")
+                barBG.Position=UDim2.new(0.1,0,0.54,0); barBG.Size=UDim2.new(0.8,0,0,7)
+                barBG.BackgroundColor3=Color3.fromRGB(15,15,15); barBG.BorderSizePixel=0
+                barBG.BackgroundTransparency=0.2; barBG.Parent=bill
+                local barFill = Instance.new("Frame")
+                barFill.Size=UDim2.new(1,0,1,0); barFill.BorderSizePixel=0
+                barFill.BackgroundColor3=Color3.fromRGB(0,200,0); barFill.Parent=barBG
+                local infoLbl = espLabel(bill, 0.74, 13, 11, false); infoLbl.TextColor3=Color3.fromRGB(215,215,215)
+                bill.Parent = head
+                local line, box
                 if hasDrawing then
-                    line = Drawing.new("Line"); line.Thickness=1.5; line.Transparency=1
-                    line.Color = Color3.fromRGB(120,170,255)
+                    line = Drawing.new("Line");   line.Thickness=1.5; line.Transparency=1; line.Color=Color3.fromRGB(255,70,70)
+                    box  = Drawing.new("Square"); box.Thickness=1.5; box.Filled=false; box.Transparency=1; box.Color=Color3.fromRGB(255,70,70)
                 end
-                espPool[p.Name] = {bill=bill, lbl=lbl, line=line}
+                espPool[p.Name] = {bill=bill, nameLbl=nameLbl, abilLbl=abilLbl, barBG=barBG, barFill=barFill, infoLbl=infoLbl, line=line, box=box}
             end
         end
     end
     local cam = Workspace.CurrentCamera
+    local myRoot = getRoot()
     for name,d in pairs(espPool) do
         local p    = Players:FindFirstChild(name)
         local char = p and p.Character
         local head = char and char:FindFirstChild("Head")
-        local root = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
-        d.bill.Enabled = S.ESP and head ~= nil
-        if S.ESP and head then
-            local myRoot = getRoot()
-            local dist   = (myRoot and root) and math.floor((root.Position-myRoot.Position).Magnitude) or 0
-            local hp, maxHp = getTargetHealth(char)
-            if hp and maxHp then
-                hp = math.floor(hp)
-                d.lbl.Text = string.format("%s | %d/%d HP | %dm", name, hp, math.floor(maxHp), dist)
-                d.lbl.TextColor3 = S.ESPColor
-                    and Color3.fromRGB(255*(1-hp/math.max(maxHp,1)), 255*(hp/math.max(maxHp,1)), 60)
-                    or Color3.new(1,1,1)
+        local root = char and (char:FindFirstChild("HumanoidRootPart") or charPart(char))
+        local dist = (myRoot and root) and math.floor((root.Position-myRoot.Position).Magnitude) or 0
+        local within = (S.ESPMaxDist or 0) <= 0 or dist <= S.ESPMaxDist
+        local hp, maxHp = getTargetHealth(char)
+        local frac = (hp and maxHp and maxHp > 0) and math.clamp(hp/maxHp, 0, 1) or nil
+        local col  = (S.ESPColor and frac) and hpColor(frac) or Color3.fromRGB(255,70,70)
+        local showText = S.ESP and head ~= nil and within
+        d.bill.Enabled = showText
+        if showText then
+            d.nameLbl.Text = name; d.nameLbl.TextColor3 = col
+            d.abilLbl.Text = S.ESPAbility and (getPlayerAbility(char) or "?") or ""
+            if frac then
+                d.barBG.Visible = true
+                d.barFill.Size = UDim2.new(frac,0,1,0)
+                d.barFill.BackgroundColor3 = col
+                d.infoLbl.Text = string.format("%d/%d  -  %dm", math.floor(hp), math.floor(maxHp), dist)
             else
-                d.lbl.Text = string.format("%s | ?? HP | %dm", name, dist)
-                d.lbl.TextColor3 = Color3.new(1,1,1)
+                d.barBG.Visible = false
+                d.infoLbl.Text = string.format("?? HP  -  %dm", dist)
             end
         end
         if d.line then
-            if S.Tracers and root then
+            if S.Tracers and root and within then
                 local sp, on = cam:WorldToViewportPoint(root.Position)
                 if on then
-                    d.line.Visible = true
-                    d.line.From = Vector2.new(cam.ViewportSize.X/2, cam.ViewportSize.Y)
-                    d.line.To   = Vector2.new(sp.X, sp.Y)
-                else d.line.Visible = false end
-            else d.line.Visible = false end
+                    d.line.Visible=true; d.line.Color=col
+                    d.line.From=Vector2.new(cam.ViewportSize.X/2, cam.ViewportSize.Y)
+                    d.line.To=Vector2.new(sp.X, sp.Y)
+                else d.line.Visible=false end
+            else d.line.Visible=false end
+        end
+        if d.box then
+            if S.ESPBox and head and root and within then
+                local topV = cam:WorldToViewportPoint(head.Position + Vector3.new(0,2,0))
+                local botV = cam:WorldToViewportPoint(root.Position - Vector3.new(0,3,0))
+                if topV.Z > 0 and botV.Z > 0 then
+                    local bh = math.abs(botV.Y - topV.Y); local bw = bh*0.6
+                    local cx = (topV.X + botV.X)/2; local topY = math.min(topV.Y, botV.Y)
+                    d.box.Visible=true; d.box.Color=col
+                    d.box.Size=Vector2.new(bw, bh); d.box.Position=Vector2.new(cx - bw/2, topY)
+                else d.box.Visible=false end
+            else d.box.Visible=false end
         end
     end
+end)
+
+-- ── VIEW PLAYER (spectate) - reuses Camera.CameraSubject ───────────────────
+local function viewPlayer(name)
+    local pl = name and Players:FindFirstChild(name); local char = pl and pl.Character
+    local subj = char and (char:FindFirstChildOfClass("Humanoid") or char:FindFirstChild("Head") or charPart(char))
+    local cam = Workspace.CurrentCamera
+    if subj and cam then
+        pcall(function() cam.CameraSubject = subj end); S.Viewing = name
+        Rayfield:Notify({Title="Valutix Hub", Content="Now viewing "..name..".", Duration=3})
+    else
+        Rayfield:Notify({Title="Valutix Hub", Content="Player not found.", Duration=3})
+    end
+end
+local function stopView()
+    local cam = Workspace.CurrentCamera; local me = getHum() or getRoot()
+    if cam and me then pcall(function() cam.CameraSubject = me end) end
+    S.Viewing = nil
+end
+hook(RunService.RenderStepped, function()           -- re-assert subject across respawns
+    if not S.Viewing then return end
+    local pl = Players:FindFirstChild(S.Viewing); local char = pl and pl.Character
+    local subj = char and (char:FindFirstChildOfClass("Humanoid") or char:FindFirstChild("Head"))
+    local cam = Workspace.CurrentCamera
+    if subj and cam and cam.CameraSubject ~= subj then pcall(function() cam.CameraSubject = subj end) end
 end)
 
 local function setFullBright(on)
@@ -1425,7 +1527,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Valutix Hub | Ability Arena",
     LoadingTitle = "Valutix Hub",
-    LoadingSubtitle = "v2.10.0 - by Valutix Hub Owner",
+    LoadingSubtitle = "v2.11.0 - by Valutix Hub Owner",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -1483,11 +1585,11 @@ local UtilityTab   = Window:CreateTab("Utility",   "wrench")
 
 -- \u2500\u2500 HOME (landing page) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 HomeTab:CreateSection("Welcome")
-HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.10.0\nPick a tab on the left to get started."})
+HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.11.0\nPick a tab on the left to get started."})
 HomeTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
 HomeTab:CreateParagraph({Title="Best combo", Content="Dash Behind On Hit (lands your M1 + puts you behind them) + M1 Hitbox. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
 HomeTab:CreateSection("Credits")
-HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.10.0 - by Valutix Hub Owner"})
+HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.11.0 - by Valutix Hub Owner"})
 
 CombatTab:CreateSection("Survival")
 CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
@@ -1520,12 +1622,13 @@ CombatTab:CreateToggle({Name="M1 Hitbox Expander (your M1 reaches farther)", Cur
     S.M1Hitbox=v
     if not v then restoreHitboxes() end
 end})
-CombatTab:CreateSlider({Name="M1 Hitbox Size", Range={1,150}, Increment=1, Suffix="studs", CurrentValue=50, Flag="M1HitboxSize", Callback=function(v) S.M1HitboxSize=v end})
+CombatTab:CreateSlider({Name="M1 Hitbox Size", Range={1,300}, Increment=1, Suffix="studs", CurrentValue=50, Flag="M1HitboxSize", Callback=function(v) S.M1HitboxSize=v end})
 CombatTab:CreateToggle({Name="Ability Hitbox Expander (pulses bigger on E)", CurrentValue=false, Flag="HitboxAbility", Callback=function(v)
     S.HitboxAbility=v
     if not v then destroyAbilityHb(); restoreHitboxes() end
 end})
-CombatTab:CreateSlider({Name="Ability Hitbox Size", Range={1,150}, Increment=1, Suffix="studs", CurrentValue=40, Flag="HitboxAbilitySize", Callback=function(v) S.HitboxAbilitySize=v end})
+CombatTab:CreateSlider({Name="Ability Hitbox Size", Range={1,300}, Increment=1, Suffix="studs", CurrentValue=40, Flag="HitboxAbilitySize", Callback=function(v) S.HitboxAbilitySize=v end})
+CombatTab:CreateToggle({Name="Expand Whole Body (max reach, looks huge)", CurrentValue=false, Flag="HitboxAllParts", Callback=function(v) S.HitboxAllParts=v; if not v then restoreHitboxes() end end})
 
 CombatTab:CreateSection("Auto")
 CombatTab:CreateToggle({Name="Auto M1 (click spam)", CurrentValue=false, Flag="AutoM1", Callback=function(v) S.AutoM1=v end})
@@ -1637,12 +1740,22 @@ MovementTab:CreateToggle({Name="Anti-Fling", CurrentValue=false, Flag="AntiFling
 VisualsTab:CreateToggle({Name="Player ESP", CurrentValue=false, Flag="ESP", Callback=function(v) S.ESP=v end})
 VisualsTab:CreateToggle({Name="Color By HP", CurrentValue=true, Flag="ESPColor", Callback=function(v) S.ESPColor=v end})
 VisualsTab:CreateToggle({Name="Tracers", CurrentValue=false, Flag="Tracers", Callback=function(v) S.Tracers=v end})
+VisualsTab:CreateToggle({Name="ESP Boxes (2D)", CurrentValue=false, Flag="ESPBox", Callback=function(v) S.ESPBox=v end})
+VisualsTab:CreateToggle({Name="Show Ability on ESP", CurrentValue=true, Flag="ESPAbility", Callback=function(v) S.ESPAbility=v end})
+VisualsTab:CreateSlider({Name="ESP Max Distance (0 = unlimited)", Range={0,2000}, Increment=10, Suffix="studs", CurrentValue=0, Flag="ESPMaxDist", Callback=function(v) S.ESPMaxDist=v end})
 VisualsTab:CreateToggle({Name="Enemy Highlight", CurrentValue=false, Flag="EnemyHighlight", Callback=function(v) S.EnemyHighlight=v end})
 VisualsTab:CreateDropdown({Name="Highlight Color", Options={"Bright blue","Bright red","Lime green","New Yeller","White","Magenta"}, CurrentOption={"Bright blue"}, Flag="HighlightColor", Callback=function(o)
     S.HighlightColor = (type(o)=="table" and o[1]) or o
     clearHighlights()
 end})
 VisualsTab:CreateToggle({Name="Full Bright", CurrentValue=false, Flag="FullBright", Callback=function(v) S.FullBright=v; setFullBright(v) end})
+
+VisualsTab:CreateSection("View Player")
+local viewDrop = VisualsTab:CreateDropdown({Name="Spectate Target", Options=playerNames(), CurrentOption={}, Flag="ViewTarget", Callback=function(o)
+    S.ViewTarget = (type(o)=="table" and o[1]) or o
+end})
+VisualsTab:CreateButton({Name="View Player", Callback=function() viewPlayer(S.ViewTarget) end})
+VisualsTab:CreateButton({Name="Stop Viewing", Callback=stopView})
 
 VisualsTab:CreateSection("Auras")
 VisualsTab:CreateParagraph({Title="Add Aura", Content="Pick any aura and click Add Aura to wear its effect. Use Remove Aura to take it off."})
@@ -1677,6 +1790,7 @@ end})
 local function refreshPlayerDrops()
     pcall(function() tpDrop:Refresh(playerNames()) end)
     pcall(function() farmDrop:Refresh(playerNames()) end)
+    pcall(function() viewDrop:Refresh(playerNames()) end)
 end
 hook(Players.PlayerAdded,    function() task.delay(0.3, refreshPlayerDrops) end)
 hook(Players.PlayerRemoving, function() task.delay(0.3, refreshPlayerDrops) end)
@@ -1691,6 +1805,7 @@ UtilityTab:CreateButton({Name="Unload Valutix Hub", Callback=function()
     for _,c in pairs(Conns) do pcall(function() c:Disconnect() end) end
     for _,c in ipairs(Listeners) do pcall(function() c:Disconnect() end) end
     pcall(function() setFullBright(false) end)   -- restore lighting if Full Bright was on
+    pcall(function() stopView() end)             -- restore camera if spectating
     clearESP(); clearHighlights(); restoreHitboxes(); destroyAbilityHb(); clearAura()
     if floatPart then pcall(function() floatPart:Destroy() end) end
     local h=getHum(); if h then setRagdollStates(h, true) end
@@ -1699,4 +1814,4 @@ UtilityTab:CreateButton({Name="Unload Valutix Hub", Callback=function()
 end})
 
 
-Rayfield:Notify({Title="Valutix Hub v2.10.0", Content="Loaded - by Valutix Hub Owner", Duration=6})
+Rayfield:Notify({Title="Valutix Hub v2.11.0", Content="Loaded - by Valutix Hub Owner", Duration=6})
