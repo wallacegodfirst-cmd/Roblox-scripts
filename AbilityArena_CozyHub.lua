@@ -1,4 +1,4 @@
--- Valutix Hub | Ability Arena | v2.11.1
+-- Valutix Hub | Ability Arena | v2.11.2
 -- by Valutix Hub Owner
 -- v2.8.0: Kill Aura fixed (crash bug killed the loop), real clicking, One Shot Punch
 --         remote wired into every M1, fixed M1 packet bytes, buffer sends, hitbox
@@ -47,6 +47,8 @@
 -- v2.11.0: richer ESP (ability + colored health bar + 2D boxes + max-distance), View Player
 --          (spectate), and a stronger hitbox (handles Model hitboxes + whole-body, cap 300).
 -- v2.11.1: fixed Auto Farm / Auto Play - now face the target, no fling, correct position.
+-- v2.11.2: Auto Farm/Play only teleport when out of range (>8 studs), then just face the
+--          target - stops the constant snap-back/rubber-banding.
 
 local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
 
@@ -1423,12 +1425,24 @@ local function attackTarget(target)
     local tr   = char and charPart(char)
     local root = getRoot()
     if not (tr and root) then return end
-    local aim = CFrame.new(tr.Position - tr.CFrame.LookVector*3 + Vector3.new(0,1.5,0), tr.Position)
-    pcall(function()
-        root.AssemblyLinearVelocity  = Vector3.zero
-        root.AssemblyAngularVelocity = Vector3.zero
-        root.CFrame = aim
-    end)
+    -- aim at a real body part, not the (possibly expanded) Hitbox cube
+    local dest = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head") or tr
+    local d = (dest.Position - root.Position).Magnitude
+    if d > 8 then
+        -- out of range: snap beside them ONCE, facing them, momentum killed
+        local aim = CFrame.new(dest.Position - dest.CFrame.LookVector*3 + Vector3.new(0,1.5,0), dest.Position)
+        pcall(function()
+            root.AssemblyLinearVelocity  = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+            root.CFrame = aim
+        end)
+    else
+        -- already in range: only ROTATE to face them (no position write), so the
+        -- server stops fighting/rolling you back every cycle
+        pcall(function()
+            root.CFrame = CFrame.new(root.Position, Vector3.new(dest.Position.X, root.Position.Y, dest.Position.Z))
+        end)
+    end
     clickM1(); fireM1(); fireM1()
     tapKey(Enum.KeyCode.E)
     tapKey(Enum.KeyCode.R)
@@ -1528,7 +1542,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Valutix Hub | Ability Arena",
     LoadingTitle = "Valutix Hub",
-    LoadingSubtitle = "v2.11.1 - by Valutix Hub Owner",
+    LoadingSubtitle = "v2.11.2 - by Valutix Hub Owner",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -1586,11 +1600,11 @@ local UtilityTab   = Window:CreateTab("Utility",   "wrench")
 
 -- \u2500\u2500 HOME (landing page) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 HomeTab:CreateSection("Welcome")
-HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.11.1\nPick a tab on the left to get started."})
+HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.11.2\nPick a tab on the left to get started."})
 HomeTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
 HomeTab:CreateParagraph({Title="Best combo", Content="Dash Behind On Hit (lands your M1 + puts you behind them) + M1 Hitbox. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
 HomeTab:CreateSection("Credits")
-HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.11.1 - by Valutix Hub Owner"})
+HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.11.2 - by Valutix Hub Owner"})
 
 CombatTab:CreateSection("Survival")
 CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
@@ -1815,4 +1829,4 @@ UtilityTab:CreateButton({Name="Unload Valutix Hub", Callback=function()
 end})
 
 
-Rayfield:Notify({Title="Valutix Hub v2.11.1", Content="Loaded - by Valutix Hub Owner", Duration=6})
+Rayfield:Notify({Title="Valutix Hub v2.11.2", Content="Loaded - by Valutix Hub Owner", Duration=6})
