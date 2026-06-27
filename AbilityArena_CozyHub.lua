@@ -1,4 +1,4 @@
--- Valutix Hub | Ability Arena | v2.9.9
+-- Valutix Hub | Ability Arena | v2.10.0
 -- by Valutix Hub Owner
 -- v2.8.0: Kill Aura fixed (crash bug killed the loop), real clicking, One Shot Punch
 --         remote wired into every M1, fixed M1 packet bytes, buffer sends, hitbox
@@ -42,6 +42,8 @@
 --         toggles that re-clear every second to beat re-replication.
 -- v2.9.8: neon-red Rayfield theme (near-black UI, glowing red toggles/sliders/tabs).
 -- v2.9.9: rebranded to Valutix Hub; added a Home tab + per-tab sidebar icons.
+-- v2.10.0: teleport fixes (no fling, removed lobby TP-to-Spawn, safe Click-TP, auto-refresh
+--          target lists, Save-Health-safe Safe-Spawn) + full Unload disconnect + lighting restore.
 
 local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
 
@@ -120,18 +122,6 @@ end
 -- A safe MAP SPAWN to land on (workspace.GameMap.Spawns = invisible neon Parts).
 -- Used to return you to the map after grabbing an ability so you don't get
 -- stranded in the lobby / ability area and die.
-local function spawnPart()
-    local gm = Workspace:FindFirstChild("GameMap")
-    local folder = gm and gm:FindFirstChild("Spawns")
-    if folder then
-        local parts = {}
-        for _,c in ipairs(folder:GetChildren()) do
-            if c:IsA("BasePart") then parts[#parts+1] = c end
-        end
-        if #parts > 0 then return parts[math.random(1, #parts)] end
-    end
-    return Workspace:FindFirstChildOfClass("SpawnLocation") or Workspace:FindFirstChild("SpawnLocation", true)
-end
 
 -- ============================================================
 -- REMOTE LAYER (Jolt_Reliable wants BUFFERS, not strings)
@@ -294,6 +284,10 @@ local function bind(name, conn)
     Conns[name] = conn
 end
 
+-- Track every top-level event connection so Unload can fully disconnect them.
+local Listeners = {}
+local function hook(sig, fn) local c = sig:Connect(fn); Listeners[#Listeners+1] = c; return c end
+
 -- ============================================================
 -- TARGET HELPERS
 -- ============================================================
@@ -375,7 +369,7 @@ local function wantedHitboxSize()
     return sz
 end
 
-RunService.Heartbeat:Connect(function()
+hook(RunService.Heartbeat, function()
     local sz = wantedHitboxSize()
     if sz <= 0 then
         if next(hbOriginal) then restoreHitboxes() end
@@ -420,7 +414,7 @@ RunService.Heartbeat:Connect(function()
 end)
 
 -- pressing E pulses the Ability expand bigger for a moment
-UserInputService.InputBegan:Connect(function(i, gpe)
+hook(UserInputService.InputBegan, function(i, gpe)
     if gpe then return end
     if i.KeyCode == Enum.KeyCode.E and S.HitboxAbility then
         abilityBurstUntil = tick() + 0.6
@@ -691,7 +685,7 @@ end
 local healPanic = false
 local healSaveCF = nil
 local healPanicT = 0
-LP.CharacterAdded:Connect(function(char)
+hook(LP.CharacterAdded, function(char)
     destroyAbilityHb()
     healPanic = false
     task.wait(0.2)
@@ -702,7 +696,7 @@ if LP.Character then pcall(applyCharacter, LP.Character) end
 
 local STUN_ATTRS = {"Ragdoll","Ragdolled","Stunned","Stun","Knocked","Knockback","KO","Downed"}
 local ragClock = 0
-RunService.Heartbeat:Connect(function(dt)
+hook(RunService.Heartbeat, function(dt)
     if not S.AntiRagdoll then return end
     local hum, char = getHum(), getChar()
     if not (hum and char) then return end
@@ -739,7 +733,7 @@ RunService.Heartbeat:Connect(function(dt)
     end
 end)
 
-RunService.Stepped:Connect(function()
+hook(RunService.Stepped, function()
     if S.Fly then return end
     if not (S.AntiPush or S.AntiFling) then return end
     local char, root, hum = getChar(), getRoot(), getHum()
@@ -839,7 +833,7 @@ local function isKillPart(inst)
     return tostring(inst.Name):lower():find("kill") ~= nil
 end
 
-RunService.Heartbeat:Connect(function()
+hook(RunService.Heartbeat, function()
     if not S.AntiVoid then
         if floatPart then pcall(function() floatPart:Destroy() end); floatPart = nil end
         return
@@ -940,6 +934,7 @@ task.spawn(function()
     while task.wait(1) do
         if S.RemoveWaterBorder then pcall(destroyWaterBorder) end
         if S.AntiKillBricks    then pcall(destroyKillBricks) end
+        if S.FullBright        then pcall(function() setFullBright(true) end) end
     end
 end)
 
@@ -948,7 +943,7 @@ end)
 -- the sky and HOLD you there so nothing can reach you; when HP is back up
 -- (you finished healing), drop you back to exactly where you were.
 -- ============================================================
-RunService.Heartbeat:Connect(function()
+hook(RunService.Heartbeat, function()
     if not S.SaveHealth then
         if healPanic then               -- toggled off mid-panic: bring us back down
             healPanic = false
@@ -999,7 +994,7 @@ end)
 -- ============================================================
 -- INPUT EXTRAS
 -- ============================================================
-UserInputService.JumpRequest:Connect(function()
+hook(UserInputService.JumpRequest, function()
     if S.InfiniteJump then
         local h = getHum()
         if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end
@@ -1007,18 +1002,18 @@ UserInputService.JumpRequest:Connect(function()
 end)
 
 -- Click TP moved to V (T is an ability key in this game - it was clashing)
-UserInputService.InputBegan:Connect(function(i, gpe)
+hook(UserInputService.InputBegan, function(i, gpe)
     if gpe then return end
     if S.ClickTP and i.KeyCode == Enum.KeyCode.V then
         pcall(function()
-            local m = LP:GetMouse(); local root = getRoot()
-            if m and root and m.Hit then root.CFrame = CFrame.new(m.Hit.Position + Vector3.new(0,4,0)) end
+            local m = LP:GetMouse()
+            if m and m.Target and m.Hit then tpTo(CFrame.new(m.Hit.Position + Vector3.new(0,4,0))) end
         end)
     end
 end)
 
 pcall(function()
-    LP.Idled:Connect(function()
+    hook(LP.Idled, function()
         if not S.AntiAFK then return end
         local vu = game:GetService("VirtualUser")
         vu:CaptureController(); vu:ClickButton2(Vector2.new())
@@ -1029,7 +1024,7 @@ end)
 -- MOVEMENT
 -- ============================================================
 local flyKeys = {W=false,A=false,S=false,D=false,Up=false,Down=false}
-UserInputService.InputBegan:Connect(function(i, gpe)
+hook(UserInputService.InputBegan, function(i, gpe)
     if gpe then return end
     local k=i.KeyCode
     if     k==Enum.KeyCode.W           then flyKeys.W=true
@@ -1039,7 +1034,7 @@ UserInputService.InputBegan:Connect(function(i, gpe)
     elseif k==Enum.KeyCode.Space       then flyKeys.Up=true
     elseif k==Enum.KeyCode.LeftControl then flyKeys.Down=true end
 end)
-UserInputService.InputEnded:Connect(function(i)
+hook(UserInputService.InputEnded, function(i)
     local k=i.KeyCode
     if     k==Enum.KeyCode.W           then flyKeys.W=false
     elseif k==Enum.KeyCode.A           then flyKeys.A=false
@@ -1048,7 +1043,7 @@ UserInputService.InputEnded:Connect(function(i)
     elseif k==Enum.KeyCode.Space       then flyKeys.Up=false
     elseif k==Enum.KeyCode.LeftControl then flyKeys.Down=false end
 end)
-RunService.RenderStepped:Connect(function(dt)
+hook(RunService.RenderStepped, function(dt)
     if not S.Fly then return end
     local root = getRoot(); if not root then return end
     local hum = getHum()
@@ -1091,7 +1086,7 @@ task.spawn(function()
     end
 end)
 
-RunService.Stepped:Connect(function()
+hook(RunService.Stepped, function()
     if not (S.Noclip or grabNoclip) then return end
     local c = getChar(); if not c then return end
     for _,pt in ipairs(c:GetDescendants()) do
@@ -1099,7 +1094,7 @@ RunService.Stepped:Connect(function()
     end
 end)
 
-RunService.RenderStepped:Connect(function()
+hook(RunService.RenderStepped, function()
     if not S.CamLock then return end
     local tgt = nearestPlayer(S.CamLockRange); if not tgt or not tgt.Character then return end
     local head = tgt.Character:FindFirstChild("Head") or tgt.Character:FindFirstChild("HumanoidRootPart")
@@ -1116,7 +1111,7 @@ local function clearHighlights()
     for _,h in pairs(highlights) do pcall(function() h:Destroy() end) end
     highlights = {}
 end
-RunService.Heartbeat:Connect(function()
+hook(RunService.Heartbeat, function()
     if not S.EnemyHighlight then if next(highlights) then clearHighlights() end return end
     for name,h in pairs(highlights) do
         local p = Players:FindFirstChild(name)
@@ -1145,7 +1140,7 @@ local function clearESP()
 end
 local hasDrawing = (typeof(Drawing) == "table") or (Drawing ~= nil)
 local espTimer = 0
-RunService.RenderStepped:Connect(function(dt)
+hook(RunService.RenderStepped, function(dt)
     if not S.ESP and not S.Tracers then if next(espPool) then clearESP() end return end
     espTimer += dt
     if espTimer >= 0.4 then
@@ -1224,7 +1219,7 @@ local function setFullBright(on)
     end)
 end
 
-RunService.Heartbeat:Connect(function()
+hook(RunService.Heartbeat, function()
     local h, root = getHum(), getRoot()
     if not (h and root) then return end
     if S.SpeedHack then
@@ -1276,7 +1271,7 @@ end)
 -- behind them (this also lands your M1 point-blank) and dash (Q). No more
 -- LeftShift / shift-lock messing with your camera.
 local lastDashHit = 0
-UserInputService.InputBegan:Connect(function(i, gpe)
+hook(UserInputService.InputBegan, function(i, gpe)
     if gpe then return end
     if not S.DashBehind then return end
     if i.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
@@ -1378,30 +1373,27 @@ end)
 -- ============================================================
 -- TELEPORT HELPERS
 -- ============================================================
+-- Safe teleport: always zero velocity first so you never fling/snap-back/die.
+local function tpTo(cf)
+    local root = getRoot(); if not (root and cf) then return false end
+    pcall(function()
+        root.AssemblyLinearVelocity  = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+        root.CFrame = cf
+    end)
+    return true
+end
 local function tpToPlayer(name, behind)
     local p = name and Players:FindFirstChild(name)
-    local root = getRoot()
     local char = p and p.Character
     local tr = char and charPart(char)
-    if not (tr and root) then
+    if not (tr and getRoot()) then
         Rayfield:Notify({Title="Valutix Hub", Content="Target not found.", Duration=3})
         return
     end
-    if behind then
-        pcall(function() root.CFrame = CFrame.new(tr.Position - tr.CFrame.LookVector*4 + Vector3.new(0,1,0), tr.Position) end)
-    else
-        pcall(function() root.CFrame = CFrame.new(tr.Position + tr.CFrame.LookVector*4 + Vector3.new(0,1,0), tr.Position) end)
-    end
-end
-local function tpToSpawn()
-    local root = getRoot(); if not root then return end
-    local sp = spawnPart()
-    if sp then
-        local p = sp:IsA("BasePart") and sp.Position or sp:GetPivot().Position
-        pcall(function() root.CFrame = CFrame.new(p + Vector3.new(0, 5, 0)) end)
-    else
-        Rayfield:Notify({Title="Valutix Hub", Content="No spawn found in this map.", Duration=3})
-    end
+    local off = (behind and -1 or 1) * tr.CFrame.LookVector * 4 + Vector3.new(0,1,0)
+    -- look at the target so a follow-up M1 lands
+    tpTo(CFrame.new(tr.Position + off, tr.Position))
 end
 
 local function rejoin() pcall(function() TeleportService:Teleport(game.PlaceId, LP) end) end
@@ -1433,7 +1425,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Valutix Hub | Ability Arena",
     LoadingTitle = "Valutix Hub",
-    LoadingSubtitle = "v2.9.9 - by Valutix Hub Owner",
+    LoadingSubtitle = "v2.10.0 - by Valutix Hub Owner",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -1491,11 +1483,11 @@ local UtilityTab   = Window:CreateTab("Utility",   "wrench")
 
 -- \u2500\u2500 HOME (landing page) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 HomeTab:CreateSection("Welcome")
-HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.9.9\nPick a tab on the left to get started."})
+HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.10.0\nPick a tab on the left to get started."})
 HomeTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
 HomeTab:CreateParagraph({Title="Best combo", Content="Dash Behind On Hit (lands your M1 + puts you behind them) + M1 Hitbox. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
 HomeTab:CreateSection("Credits")
-HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.9.9 - by Valutix Hub Owner"})
+HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.10.0 - by Valutix Hub Owner"})
 
 CombatTab:CreateSection("Survival")
 CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
@@ -1576,22 +1568,22 @@ TeleportsTab:CreateButton({Name="TP To Target (in front)", Callback=function() t
 TeleportsTab:CreateButton({Name="TP Behind Target", Callback=function() tpToPlayer(S.TPTarget, true) end})
 TeleportsTab:CreateButton({Name="TP Behind Nearest Player", Callback=function()
     local p = nearestPlayer()
-    if p then tpToPlayer(p.Name, true) end
+    if p then tpToPlayer(p.Name, true)
+    else Rayfield:Notify({Title="Valutix Hub", Content="No players nearby.", Duration=3}) end
 end})
 TeleportsTab:CreateButton({Name="Refresh Player List", Callback=function()
     pcall(function() tpDrop:Refresh(playerNames()) end)
 end})
 
 TeleportsTab:CreateSection("Places")
-TeleportsTab:CreateButton({Name="TP To Spawn", Callback=tpToSpawn})
 TeleportsTab:CreateButton({Name="TP To Ability Pads (lobby)", Callback=function()
     local f = findElementFolder()
     local root = getRoot()
     if f and root then
         local pos = f:GetChildren()[1]
-        if pos then
-            local p = pos:IsA("BasePart") and pos.Position or pos:GetPivot().Position
-            pcall(function() root.CFrame = CFrame.new(p + Vector3.new(0, 5, 0)) end)
+        if pos and (pos:IsA("BasePart") or pos:IsA("Model")) then
+            local pp = pos:IsA("BasePart") and pos.Position or pos:GetPivot().Position
+            tpTo(CFrame.new(pp + Vector3.new(0, 5, 0)))
         end
     else
         Rayfield:Notify({Title="Valutix Hub", Content="Ability pads not found - are you in the lobby?", Duration=3})
@@ -1608,10 +1600,11 @@ TeleportsTab:CreateButton({Name="Set Safe Spawn (save position)", Callback=funct
     end
 end})
 TeleportsTab:CreateButton({Name="TP to Safe Spawn", Callback=function()
-    local root = getRoot()
     local tpCF = savedSpawnCF or lastSafeCF
-    if root and tpCF then
-        pcall(function() root.CFrame = tpCF + Vector3.new(0, 3, 0) end)
+    if tpCF then
+        healPanic = false                     -- cancel any Save Health sky-anchor first
+        local r = getRoot(); if r then pcall(function() r.Anchored = false end) end
+        tpTo(tpCF + Vector3.new(0, 3, 0))
     else
         Rayfield:Notify({Title="Valutix Hub", Content="No safe spawn set yet.", Duration=4})
     end
@@ -1680,6 +1673,14 @@ FarmTab:CreateButton({Name="Refresh Player List", Callback=function()
     pcall(function() farmDrop:Refresh(playerNames()) end)
 end})
 
+-- Keep the Teleport + Farm target lists current as players join/leave.
+local function refreshPlayerDrops()
+    pcall(function() tpDrop:Refresh(playerNames()) end)
+    pcall(function() farmDrop:Refresh(playerNames()) end)
+end
+hook(Players.PlayerAdded,    function() task.delay(0.3, refreshPlayerDrops) end)
+hook(Players.PlayerRemoving, function() task.delay(0.3, refreshPlayerDrops) end)
+
 UtilityTab:CreateToggle({Name="Anti-AFK", CurrentValue=false, Flag="AntiAFK", Callback=function(v) S.AntiAFK=v end})
 UtilityTab:CreateToggle({Name="Instant Respawn", CurrentValue=false, Flag="InstantRespawn", Callback=function(v) S.InstantRespawn=v end})
 UtilityTab:CreateButton({Name="Rejoin Server", Callback=rejoin})
@@ -1688,6 +1689,8 @@ UtilityTab:CreateButton({Name="Server Hop", Callback=serverHop})
 UtilityTab:CreateSection("Admin")
 UtilityTab:CreateButton({Name="Unload Valutix Hub", Callback=function()
     for _,c in pairs(Conns) do pcall(function() c:Disconnect() end) end
+    for _,c in ipairs(Listeners) do pcall(function() c:Disconnect() end) end
+    pcall(function() setFullBright(false) end)   -- restore lighting if Full Bright was on
     clearESP(); clearHighlights(); restoreHitboxes(); destroyAbilityHb(); clearAura()
     if floatPart then pcall(function() floatPart:Destroy() end) end
     local h=getHum(); if h then setRagdollStates(h, true) end
@@ -1696,4 +1699,4 @@ UtilityTab:CreateButton({Name="Unload Valutix Hub", Callback=function()
 end})
 
 
-Rayfield:Notify({Title="Valutix Hub v2.9.9", Content="Loaded - by Valutix Hub Owner", Duration=6})
+Rayfield:Notify({Title="Valutix Hub v2.10.0", Content="Loaded - by Valutix Hub Owner", Duration=6})
