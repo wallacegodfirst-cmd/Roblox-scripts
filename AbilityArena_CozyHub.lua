@@ -1,4 +1,4 @@
--- Valutix Hub | Ability Arena | v2.12.0
+-- Valutix Hub | Ability Arena | v2.13.0
 -- by Valutix Hub Owner
 -- v2.8.0: Kill Aura fixed (crash bug killed the loop), real clicking, One Shot Punch
 --         remote wired into every M1, fixed M1 packet bytes, buffer sends, hitbox
@@ -50,6 +50,7 @@
 -- v2.11.2: Auto Farm/Play only teleport when out of range (>8 studs), then just face the
 --          target - stops the constant snap-back/rubber-banding.
 -- v2.12.0: added best-effort God Mode (re-applies full HP + flips existing safe/damage flags).
+-- v2.13.0: added Ability Aim Assist (face nearest enemy w/ velocity lead on skill cast).
 
 local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
 
@@ -80,6 +81,7 @@ local S = {
     DashBehind=false, DashRange=45,
     AutoDash=false, AutoDashKey="Q", AutoDashDelay=0.6,
     CamLock=false, CamLockRange=120,
+    AimAssist=false, AimAssistRange=140, AimAssistLead=0.12,
     Fly=false, FlySpeed=60,
     Noclip=false,
     SpeedHack=false, Speed=16,
@@ -1448,6 +1450,23 @@ local function applyGodMode()
 end
 hook(RunService.Heartbeat, function() if S.GodMode then applyGodMode() end end)
 
+-- ── ABILITY AIM ASSIST ─────────────────────────────────────────
+-- On a skill keypress, snap to face the nearest enemy (with simple velocity
+-- lead) so directional abilities land. Facing-based, same as Auto Ability.
+local AIM_KEYS = {
+    [Enum.KeyCode.E]=true, [Enum.KeyCode.Q]=true, [Enum.KeyCode.R]=true,
+    [Enum.KeyCode.T]=true, [Enum.KeyCode.F]=true,
+}
+hook(UserInputService.InputBegan, function(i, gpe)
+    if gpe or not S.AimAssist then return end
+    if not AIM_KEYS[i.KeyCode] or typingNow() then return end
+    local tgt = nearestPlayer(S.AimAssistRange)
+    local tr  = tgt and tgt.Character and charPart(tgt.Character)
+    if not tr then return end
+    local lead = tr.Position + tr.AssemblyLinearVelocity * (S.AimAssistLead or 0.12)
+    faceTo(lead)
+end)
+
 -- Auto-attack one target: stand ~3 studs off FACING them (so directional M1s
 -- land), kill momentum so you don't fling, then M1 + abilities. (tpTo() is
 -- defined later in the file, so the velocity-zero is inlined here.)
@@ -1573,7 +1592,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Valutix Hub | Ability Arena",
     LoadingTitle = "Valutix Hub",
-    LoadingSubtitle = "v2.12.0 - by Valutix Hub Owner",
+    LoadingSubtitle = "v2.13.0 - by Valutix Hub Owner",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -1631,11 +1650,11 @@ local UtilityTab   = Window:CreateTab("Utility",   "wrench")
 
 -- \u2500\u2500 HOME (landing page) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 HomeTab:CreateSection("Welcome")
-HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.12.0\nPick a tab on the left to get started."})
+HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.13.0\nPick a tab on the left to get started."})
 HomeTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
 HomeTab:CreateParagraph({Title="Best combo", Content="Dash Behind On Hit (lands your M1 + puts you behind them) + M1 Hitbox. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
 HomeTab:CreateSection("Credits")
-HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.12.0 - by Valutix Hub Owner"})
+HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.13.0 - by Valutix Hub Owner"})
 
 CombatTab:CreateSection("Survival")
 CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
@@ -1694,6 +1713,9 @@ CombatTab:CreateSlider({Name="Auto Dash Speed (lower = faster)", Range={1,20}, I
 CombatTab:CreateSection("Aim")
 CombatTab:CreateToggle({Name="Camera Lock (nearest)", CurrentValue=false, Flag="CamLock", Callback=function(v) S.CamLock=v end})
 CombatTab:CreateSlider({Name="Cam Lock Range", Range={20,300}, Increment=5, Suffix="studs", CurrentValue=120, Flag="CamLockRange", Callback=function(v) S.CamLockRange=v end})
+CombatTab:CreateToggle({Name="Ability Aim Assist (face enemy on skill cast)", CurrentValue=false, Flag="AimAssist", Callback=function(v) S.AimAssist=v end})
+CombatTab:CreateSlider({Name="Aim Assist Range", Range={20,400}, Increment=10, Suffix="studs", CurrentValue=140, Flag="AimAssistRange", Callback=function(v) S.AimAssistRange=v end})
+CombatTab:CreateSlider({Name="Aim Assist Lead (prediction)", Range={0,50}, Increment=1, Suffix="x0.01s", CurrentValue=12, Flag="AimAssistLead100", Callback=function(v) S.AimAssistLead=v/100 end})
 
 AbilitiesTab:CreateSection("Ability Grabber")
 AbilitiesTab:CreateParagraph({Title="Ability Grabber", Content="Pick any ability from the list to equip it instantly. Raise Grab Delay if an ability needs a moment longer to register."})
@@ -1861,4 +1883,4 @@ UtilityTab:CreateButton({Name="Unload Valutix Hub", Callback=function()
 end})
 
 
-Rayfield:Notify({Title="Valutix Hub v2.12.0", Content="Loaded - by Valutix Hub Owner", Duration=6})
+Rayfield:Notify({Title="Valutix Hub v2.13.0", Content="Loaded - by Valutix Hub Owner", Duration=6})
