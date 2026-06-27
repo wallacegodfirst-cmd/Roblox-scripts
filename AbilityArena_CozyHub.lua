@@ -1,5 +1,5 @@
--- Money/FreeHub | Ability Arena | v2.9.8
--- by Money/FreeHub Owner
+-- Valutix Hub | Ability Arena | v2.9.9
+-- by Valutix Hub Owner
 -- v2.8.0: Kill Aura fixed (crash bug killed the loop), real clicking, One Shot Punch
 --         remote wired into every M1, fixed M1 packet bytes, buffer sends, hitbox
 --         expanders reworked (M1 + Ability share one engine), Teleports tab added.
@@ -41,6 +41,7 @@
 --         (destroys Workspace.KillBricks so they can't touch-kill you). Both are
 --         toggles that re-clear every second to beat re-replication.
 -- v2.9.8: neon-red Rayfield theme (near-black UI, glowing red toggles/sliders/tabs).
+-- v2.9.9: rebranded to Valutix Hub; added a Home tab + per-tab sidebar icons.
 
 local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
 
@@ -490,7 +491,7 @@ local function grabAbility(name)
     if grabbing or not name or name == "" then return end
     local f = findElementFolder()
     if not f then
-        Rayfield:Notify({Title="Money/FreeHub", Content="ElementSelection not found - are you in the lobby?", Duration=4})
+        Rayfield:Notify({Title="Valutix Hub", Content="ElementSelection not found - are you in the lobby?", Duration=4})
         return
     end
     local pad = f:FindFirstChild(name); if not pad then return end
@@ -626,12 +627,12 @@ local function applyAuraNow(name)
 end
 local function addAura(name)
     local f = vfxFolder()
-    if not f then Rayfield:Notify({Title="Money/FreeHub", Content="VFX assets folder not found.", Duration=3}); return end
-    if not (name and f:FindFirstChild(name)) then Rayfield:Notify({Title="Money/FreeHub", Content="Pick an aura first.", Duration=3}); return end
+    if not f then Rayfield:Notify({Title="Valutix Hub", Content="VFX assets folder not found.", Duration=3}); return end
+    if not (name and f:FindFirstChild(name)) then Rayfield:Notify({Title="Valutix Hub", Content="Pick an aura first.", Duration=3}); return end
     clearAura()
     activeAura = name
     applyAuraNow(name)
-    Rayfield:Notify({Title="Money/FreeHub", Content="Aura '"..name.."' on - it stays until you Remove it.", Duration=4})
+    Rayfield:Notify({Title="Valutix Hub", Content="Aura '"..name.."' on - it stays until you Remove it.", Duration=4})
 end
 -- keep the aura alive + emitting so it "stands longer" (re-emits every 0.5s)
 task.spawn(function()
@@ -1383,7 +1384,7 @@ local function tpToPlayer(name, behind)
     local char = p and p.Character
     local tr = char and charPart(char)
     if not (tr and root) then
-        Rayfield:Notify({Title="Money/FreeHub", Content="Target not found.", Duration=3})
+        Rayfield:Notify({Title="Valutix Hub", Content="Target not found.", Duration=3})
         return
     end
     if behind then
@@ -1399,7 +1400,7 @@ local function tpToSpawn()
         local p = sp:IsA("BasePart") and sp.Position or sp:GetPivot().Position
         pcall(function() root.CFrame = CFrame.new(p + Vector3.new(0, 5, 0)) end)
     else
-        Rayfield:Notify({Title="Money/FreeHub", Content="No spawn found in this map.", Duration=3})
+        Rayfield:Notify({Title="Valutix Hub", Content="No spawn found in this map.", Duration=3})
     end
 end
 
@@ -1430,9 +1431,9 @@ end
 -- GUI
 -- ============================================================
 local Window = Rayfield:CreateWindow({
-    Name = "Money/FreeHub | Ability Arena",
-    LoadingTitle = "Money/FreeHub",
-    LoadingSubtitle = "v2.9.8 - by Money/FreeHub Owner",
+    Name = "Valutix Hub | Ability Arena",
+    LoadingTitle = "Valutix Hub",
+    LoadingSubtitle = "v2.9.9 - by Valutix Hub Owner",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -1479,13 +1480,22 @@ local Window = Rayfield:CreateWindow({
     },
 })
 
-local CombatTab    = Window:CreateTab("Combat",    4483362458)
-local AbilitiesTab = Window:CreateTab("Abilities", 4483362458)
-local TeleportsTab = Window:CreateTab("Teleports", 4483362458)
-local MovementTab  = Window:CreateTab("Movement",  4483362458)
-local VisualsTab   = Window:CreateTab("Visuals",   4483362458)
-local FarmTab      = Window:CreateTab("Farm",      4483362458)
-local UtilityTab   = Window:CreateTab("Utility",   4483362458)
+local HomeTab      = Window:CreateTab("Home",      "home")
+local CombatTab    = Window:CreateTab("Combat",    "swords")
+local AbilitiesTab = Window:CreateTab("Abilities", "sparkles")
+local TeleportsTab = Window:CreateTab("Teleports", "navigation")
+local MovementTab  = Window:CreateTab("Movement",  "footprints")
+local VisualsTab   = Window:CreateTab("Visuals",   "eye")
+local FarmTab      = Window:CreateTab("Farm",      "target")
+local UtilityTab   = Window:CreateTab("Utility",   "wrench")
+
+-- \u2500\u2500 HOME (landing page) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+HomeTab:CreateSection("Welcome")
+HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.9.9\nPick a tab on the left to get started."})
+HomeTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
+HomeTab:CreateParagraph({Title="Best combo", Content="Dash Behind On Hit (lands your M1 + puts you behind them) + M1 Hitbox. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
+HomeTab:CreateSection("Credits")
+HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.9.9 - by Valutix Hub Owner"})
 
 CombatTab:CreateSection("Survival")
 CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
@@ -1499,14 +1509,14 @@ CombatTab:CreateToggle({Name="Remove Water Border (makes Anti Water hold)", Curr
     S.RemoveWaterBorder=v
     if v then
         local n=destroyWaterBorder()
-        Rayfield:Notify({Title="Money/FreeHub", Content="Water border removed ("..n.." parts). Keeps clearing while on.", Duration=4})
+        Rayfield:Notify({Title="Valutix Hub", Content="Water border removed ("..n.." parts). Keeps clearing while on.", Duration=4})
     end
 end})
 CombatTab:CreateToggle({Name="Anti Kill Bricks (remove them)", CurrentValue=false, Flag="AntiKillBricks", Callback=function(v)
     S.AntiKillBricks=v
     if v then
         local n=destroyKillBricks()
-        Rayfield:Notify({Title="Money/FreeHub", Content="Kill bricks removed ("..n.." parts). Keeps clearing while on.", Duration=4})
+        Rayfield:Notify({Title="Valutix Hub", Content="Kill bricks removed ("..n.." parts). Keeps clearing while on.", Duration=4})
     end
 end})
 CombatTab:CreateToggle({Name="Save Health (low HP -> fly to sky, heal, drop back)", CurrentValue=false, Flag="SaveHealth", Callback=function(v) S.SaveHealth=v end})
@@ -1584,7 +1594,7 @@ TeleportsTab:CreateButton({Name="TP To Ability Pads (lobby)", Callback=function(
             pcall(function() root.CFrame = CFrame.new(p + Vector3.new(0, 5, 0)) end)
         end
     else
-        Rayfield:Notify({Title="Money/FreeHub", Content="Ability pads not found - are you in the lobby?", Duration=3})
+        Rayfield:Notify({Title="Valutix Hub", Content="Ability pads not found - are you in the lobby?", Duration=3})
     end
 end})
 TeleportsTab:CreateToggle({Name="Click Teleport  [V]", CurrentValue=false, Flag="ClickTP", Callback=function(v) S.ClickTP=v end})
@@ -1594,7 +1604,7 @@ TeleportsTab:CreateButton({Name="Set Safe Spawn (save position)", Callback=funct
     local root = getRoot()
     if root then
         savedSpawnCF = root.CFrame
-        Rayfield:Notify({Title="Money/FreeHub", Content="Safe spawn saved!", Duration=4})
+        Rayfield:Notify({Title="Valutix Hub", Content="Safe spawn saved!", Duration=4})
     end
 end})
 TeleportsTab:CreateButton({Name="TP to Safe Spawn", Callback=function()
@@ -1603,12 +1613,12 @@ TeleportsTab:CreateButton({Name="TP to Safe Spawn", Callback=function()
     if root and tpCF then
         pcall(function() root.CFrame = tpCF + Vector3.new(0, 3, 0) end)
     else
-        Rayfield:Notify({Title="Money/FreeHub", Content="No safe spawn set yet.", Duration=4})
+        Rayfield:Notify({Title="Valutix Hub", Content="No safe spawn set yet.", Duration=4})
     end
 end})
 TeleportsTab:CreateButton({Name="Clear Safe Spawn", Callback=function()
     savedSpawnCF = nil
-    Rayfield:Notify({Title="Money/FreeHub", Content="Safe spawn cleared.", Duration=3})
+    Rayfield:Notify({Title="Valutix Hub", Content="Safe spawn cleared.", Duration=3})
 end})
 
 MovementTab:CreateToggle({Name="Fly (WASD + Space/Ctrl)", CurrentValue=false, Flag="Fly", Callback=function(v) S.Fly=v end})
@@ -1658,7 +1668,7 @@ FarmTab:CreateSlider({Name="Auto Play Search Range", Range={10,300}, Increment=5
 FarmTab:CreateSection("Auto Farm")
 FarmTab:CreateToggle({Name="Auto Farm Target", CurrentValue=false, Flag="AutoFarm", Callback=function(v)
     if v and not S.FarmTarget then
-        Rayfield:Notify({Title="Money/FreeHub", Content="Pick a target first.", Duration=3})
+        Rayfield:Notify({Title="Valutix Hub", Content="Pick a target first.", Duration=3})
         v=false
     end
     S.AutoFarm=v
@@ -1676,7 +1686,7 @@ UtilityTab:CreateButton({Name="Rejoin Server", Callback=rejoin})
 UtilityTab:CreateButton({Name="Server Hop", Callback=serverHop})
 
 UtilityTab:CreateSection("Admin")
-UtilityTab:CreateButton({Name="Unload Money/FreeHub", Callback=function()
+UtilityTab:CreateButton({Name="Unload Valutix Hub", Callback=function()
     for _,c in pairs(Conns) do pcall(function() c:Disconnect() end) end
     clearESP(); clearHighlights(); restoreHitboxes(); destroyAbilityHb(); clearAura()
     if floatPart then pcall(function() floatPart:Destroy() end) end
@@ -1685,9 +1695,5 @@ UtilityTab:CreateButton({Name="Unload Money/FreeHub", Callback=function()
     pcall(function() Rayfield:Destroy() end)
 end})
 
-UtilityTab:CreateSection("Status")
-UtilityTab:CreateParagraph({Title="Credits", Content="Money/FreeHub v2.9.8 - by Money/FreeHub Owner"})
-UtilityTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
-UtilityTab:CreateParagraph({Title="Best combo", Content="Dash Behind On Hit (lands your M1 + puts you behind them) + M1 Hitbox. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
 
-Rayfield:Notify({Title="Money/FreeHub v2.9.8", Content="Loaded - by Money/FreeHub Owner", Duration=6})
+Rayfield:Notify({Title="Valutix Hub v2.9.9", Content="Loaded - by Valutix Hub Owner", Duration=6})
