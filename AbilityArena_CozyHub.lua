@@ -1,4 +1,4 @@
--- Valutix Hub | Ability Arena | v2.13.2
+-- Valutix Hub | Ability Arena | v2.13.3
 -- by Valutix Hub Owner
 -- v2.8.0: Kill Aura fixed (crash bug killed the loop), real clicking, One Shot Punch
 --         remote wired into every M1, fixed M1 packet bytes, buffer sends, hitbox
@@ -54,6 +54,8 @@
 -- v2.13.1: removed God Mode.
 -- v2.13.2: Auto Farm/Play now actually deal damage - auto-grow the enemy hitbox while on,
 --          and force the M1 click so it fires even with the menu open.
+-- v2.13.3: Auto Farm/Play M1 lands consistently - throttled swing cadence (~0.35s) so the M1
+--          isn't cancelled before its hit-frame; abilities spaced out so they don't interrupt it.
 
 local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
 
@@ -1444,6 +1446,7 @@ end)
 -- Auto-attack one target: stand ~3 studs off FACING them (so directional M1s
 -- land), kill momentum so you don't fling, then M1 + abilities. (tpTo() is
 -- defined later in the file, so the velocity-zero is inlined here.)
+local lastFarmM1, lastFarmAbil = 0, 0
 local function attackTarget(target)
     local char = target and target.Character
     local tr   = char and charPart(char)
@@ -1467,11 +1470,21 @@ local function attackTarget(target)
             root.CFrame = CFrame.new(root.Position, Vector3.new(dest.Position.X, root.Position.Y, dest.Position.Z))
         end)
     end
-    clickM1(true); fireM1(); fireM1()
-    tapKey(Enum.KeyCode.E)
-    tapKey(Enum.KeyCode.R)
-    if S.CastQ then tapKey(Enum.KeyCode.Q) end
-    if S.CastT then tapKey(Enum.KeyCode.T) end
+    local now = tick()
+    -- M1 at a real SWING cadence. Spamming clickM1 every 0.1s cancelled the swing
+    -- before its hit-frame, so damage rarely registered. ~0.35s lets each land.
+    if now - lastFarmM1 >= 0.35 then
+        lastFarmM1 = now
+        clickM1(true); fireM1()
+    end
+    -- abilities on a slower cadence so they don't keep interrupting the M1 swing
+    if now - lastFarmAbil >= 1.0 then
+        lastFarmAbil = now
+        tapKey(Enum.KeyCode.E)
+        tapKey(Enum.KeyCode.R)
+        if S.CastQ then tapKey(Enum.KeyCode.Q) end
+        if S.CastT then tapKey(Enum.KeyCode.T) end
+    end
 end
 
 task.spawn(function()
@@ -1566,7 +1579,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Valutix Hub | Ability Arena",
     LoadingTitle = "Valutix Hub",
-    LoadingSubtitle = "v2.13.2 - by Valutix Hub Owner",
+    LoadingSubtitle = "v2.13.3 - by Valutix Hub Owner",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -1624,11 +1637,11 @@ local UtilityTab   = Window:CreateTab("Utility",   "wrench")
 
 -- \u2500\u2500 HOME (landing page) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 HomeTab:CreateSection("Welcome")
-HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.13.2\nPick a tab on the left to get started."})
+HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.13.3\nPick a tab on the left to get started."})
 HomeTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
 HomeTab:CreateParagraph({Title="Best combo", Content="Dash Behind On Hit (lands your M1 + puts you behind them) + M1 Hitbox. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
 HomeTab:CreateSection("Credits")
-HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.13.2 - by Valutix Hub Owner"})
+HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.13.3 - by Valutix Hub Owner"})
 
 CombatTab:CreateSection("Survival")
 CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
@@ -1856,4 +1869,4 @@ UtilityTab:CreateButton({Name="Unload Valutix Hub", Callback=function()
 end})
 
 
-Rayfield:Notify({Title="Valutix Hub v2.13.2", Content="Loaded - by Valutix Hub Owner", Duration=6})
+Rayfield:Notify({Title="Valutix Hub v2.13.3", Content="Loaded - by Valutix Hub Owner", Duration=6})
