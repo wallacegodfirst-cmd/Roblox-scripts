@@ -1,4 +1,4 @@
--- Valutix Hub | Ability Arena | v2.13.1
+-- Valutix Hub | Ability Arena | v2.13.2
 -- by Valutix Hub Owner
 -- v2.8.0: Kill Aura fixed (crash bug killed the loop), real clicking, One Shot Punch
 --         remote wired into every M1, fixed M1 packet bytes, buffer sends, hitbox
@@ -52,6 +52,8 @@
 -- v2.12.0: added best-effort God Mode (re-applies full HP + flips existing safe/damage flags).
 -- v2.13.0: added Ability Aim Assist (face nearest enemy w/ velocity lead on skill cast).
 -- v2.13.1: removed God Mode.
+-- v2.13.2: Auto Farm/Play now actually deal damage - auto-grow the enemy hitbox while on,
+--          and force the M1 click so it fires even with the menu open.
 
 local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
 
@@ -257,8 +259,9 @@ local function mouseOverGui()
     return false
 end
 
-local function clickM1()
-    if typingNow() or mouseOverGui() then return end
+local function clickM1(force)
+    if typingNow() then return end
+    if not force and mouseOverGui() then return end
     doClick(safeClickPoint())
 end
 
@@ -363,7 +366,7 @@ end
 
 local function wantedHitboxSize()
     local sz = 0
-    if S.M1Hitbox then sz = math.max(sz, S.M1HitboxSize) end
+    if S.M1Hitbox or S.AutoFarm or S.AutoPlay then sz = math.max(sz, S.M1HitboxSize) end
     if S.HitboxAbility then
         local a = S.HitboxAbilitySize
         if tick() < abilityBurstUntil then a = a * 1.5 end
@@ -1464,7 +1467,7 @@ local function attackTarget(target)
             root.CFrame = CFrame.new(root.Position, Vector3.new(dest.Position.X, root.Position.Y, dest.Position.Z))
         end)
     end
-    clickM1(); fireM1(); fireM1()
+    clickM1(true); fireM1(); fireM1()
     tapKey(Enum.KeyCode.E)
     tapKey(Enum.KeyCode.R)
     if S.CastQ then tapKey(Enum.KeyCode.Q) end
@@ -1563,7 +1566,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Valutix Hub | Ability Arena",
     LoadingTitle = "Valutix Hub",
-    LoadingSubtitle = "v2.13.1 - by Valutix Hub Owner",
+    LoadingSubtitle = "v2.13.2 - by Valutix Hub Owner",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -1621,11 +1624,11 @@ local UtilityTab   = Window:CreateTab("Utility",   "wrench")
 
 -- \u2500\u2500 HOME (landing page) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 HomeTab:CreateSection("Welcome")
-HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.13.1\nPick a tab on the left to get started."})
+HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.13.2\nPick a tab on the left to get started."})
 HomeTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
 HomeTab:CreateParagraph({Title="Best combo", Content="Dash Behind On Hit (lands your M1 + puts you behind them) + M1 Hitbox. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
 HomeTab:CreateSection("Credits")
-HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.13.1 - by Valutix Hub Owner"})
+HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.13.2 - by Valutix Hub Owner"})
 
 CombatTab:CreateSection("Survival")
 CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
@@ -1853,4 +1856,4 @@ UtilityTab:CreateButton({Name="Unload Valutix Hub", Callback=function()
 end})
 
 
-Rayfield:Notify({Title="Valutix Hub v2.13.1", Content="Loaded - by Valutix Hub Owner", Duration=6})
+Rayfield:Notify({Title="Valutix Hub v2.13.2", Content="Loaded - by Valutix Hub Owner", Duration=6})
