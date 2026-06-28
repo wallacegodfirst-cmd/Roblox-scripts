@@ -13,6 +13,7 @@
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 local HttpService = game:GetService("HttpService")
 local Players     = game:GetService("Players")
+local RunService  = game:GetService("RunService")
 local LP          = Players.LocalPlayer
 
 local Window = Rayfield:CreateWindow({
@@ -227,7 +228,6 @@ end
 
 -- ── KNIFE MODEL PICKER (swap the equipped T-knife to a Weapons-folder model) ──
 local SelectedKnifeModel = nil          -- chosen Weapons-folder model name, or nil = default
-local knifeModelSwaps = {}              -- anchorPart -> {model, clones={}, hidden={}}
 
 local KNIFE_WORDS = {"knife","karambit","talon","bayonet","butterfly","dagger","melee","kara"}
 local function looksKnife(name)
@@ -266,44 +266,69 @@ local function modelMeshes(model)
     return out
 end
 
-local function restoreKnifeModel()
-    for _, s in pairs(knifeModelSwaps) do
-        for _, c in ipairs(s.clones) do pcall(function() c:Destroy() end) end
-        for _, h in ipairs(s.hidden) do
-            if h.part and h.part.Parent then pcall(function() h.part.Transparency = h.t end) end
-        end
-    end
-    knifeModelSwaps = {}
+-- Persistent follower: build the clone ONCE under the Camera (survives the game's
+-- constant viewmodel rebuilds), then every frame snap it onto the live knife and
+-- hide the real one via LocalTransparencyModifier (which also survives rebuilds).
+local knifeClone, knifeCloneModel
+local knifeHidden = {}             -- live knife parts we hid (restore on Default)
+local knifeOffset = CFrame.new()   -- single place to nudge alignment if a model sits off
+
+local function setHidden(part, on) pcall(function() part.LocalTransparencyModifier = on and 1 or 0 end) end
+local function destroyKnifeClone()
+    if knifeClone then pcall(function() knifeClone:Destroy() end) end
+    knifeClone, knifeCloneModel = nil, nil
 end
 
--- overlay the chosen model's meshes onto the equipped knife (welded), hide originals
-local function applyKnifeModelSwap()
+local function restoreKnifeModel()
+    destroyKnifeClone()
+    for _, p in ipairs(knifeHidden) do if p and p.Parent then setHidden(p, false) end end
+    knifeHidden = {}
+end
+
+local function buildKnifeClone(template)
+    destroyKnifeClone()
+    local holder = Instance.new("Model"); holder.Name = "VXKnifeSwap"
+    local primary
+    for _, m in ipairs(modelMeshes(template)) do
+        local c = m:Clone()
+        c.Anchored=false; c.CanCollide=false; c.Massless=true; c.CanQuery=false
+        c.Parent = holder
+        if not primary then primary = c end
+    end
+    if not primary then holder:Destroy(); return end
+    for _, c in ipairs(holder:GetChildren()) do
+        if c ~= primary and c:IsA("MeshPart") then
+            local w = Instance.new("WeldConstraint"); w.Part0 = primary; w.Part1 = c; w.Parent = c
+        end
+    end
+    holder.PrimaryPart = primary
+    holder.Parent = workspace.CurrentCamera
+    knifeClone, knifeCloneModel = holder, SelectedKnifeModel
+end
+
+local function applyKnifeModelSwap()      -- GUI calls this on select
     if not SelectedKnifeModel then return end
     local template = WeaponsFolder:FindFirstChild(SelectedKnifeModel)
-    if not template then return end
-    local eq = equippedKnifeParts(); if #eq == 0 then return end
-    local anchor = eq[1]
-    local cur = knifeModelSwaps[anchor]
-    if cur and cur.model == SelectedKnifeModel and cur.clones[1] and cur.clones[1].Parent then return end
-    restoreKnifeModel()
-    local src = modelMeshes(template); if #src == 0 then return end
-    local clones, hidden = {}, {}
-    for _, p in ipairs(eq) do
-        hidden[#hidden+1] = {part=p, t=p.Transparency}
-        pcall(function() p.Transparency = 1 end)
-    end
-    local srcPivot = template:GetPivot()
-    for _, m in ipairs(src) do          -- keep each mesh's offset within the model, aligned to the anchor
-        local clone = m:Clone()
-        clone.Anchored=false; clone.CanCollide=false; clone.Massless=true; clone.CanQuery=false
-        pcall(function() clone.CFrame = anchor.CFrame * srcPivot:ToObjectSpace(m.CFrame) end)
-        clone.Parent = anchor.Parent
-        local weld = Instance.new("WeldConstraint")
-        weld.Part0 = anchor; weld.Part1 = clone; weld.Parent = clone
-        clones[#clones+1] = clone
-    end
-    knifeModelSwaps[anchor] = {model = SelectedKnifeModel, clones = clones, hidden = hidden}
+    if template then buildKnifeClone(template) end
 end
+
+RunService.RenderStepped:Connect(function()
+    if not SelectedKnifeModel then return end
+    local template = WeaponsFolder:FindFirstChild(SelectedKnifeModel); if not template then return end
+    if not knifeClone or knifeClone.Parent == nil or knifeCloneModel ~= SelectedKnifeModel then
+        buildKnifeClone(template)
+    end
+    if not knifeClone then return end
+    local eq = equippedKnifeParts()
+    if #eq == 0 then
+        for _, c in ipairs(knifeClone:GetDescendants()) do if c:IsA("MeshPart") then setHidden(c, true) end end
+        return
+    end
+    local anchor = eq[1]; knifeHidden = eq
+    for _, p in ipairs(eq) do setHidden(p, true) end                                   -- hide the real knife
+    for _, c in ipairs(knifeClone:GetDescendants()) do if c:IsA("MeshPart") then setHidden(c, false) end end
+    pcall(function() knifeClone:PivotTo(anchor.CFrame * knifeOffset) end)              -- snap onto the hand
+end)
 
 -- re-skin what you SEE: Camera.Arms viewmodel + your character.
 -- Knives = MODEL swap; everything else = texture / SurfaceAppearance swap.
@@ -336,7 +361,6 @@ end
 task.spawn(function()
     while task.wait(0.3) do
         pcall(LiveWorkspaceOverride)
-        pcall(applyKnifeModelSwap)
     end
 end)
 
