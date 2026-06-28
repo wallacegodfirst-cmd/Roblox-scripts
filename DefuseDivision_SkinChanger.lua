@@ -76,42 +76,50 @@ local function findWeaponTemplate(weaponName)
     return nil
 end
 
--- a skin folder's "look": ANY SurfaceAppearance, plus a fallback texture string.
-local function getSkinAppearance(skinFolder)
-    if not skinFolder then return nil end
-    local direct = skinFolder:FindFirstChild("Texture")
-    if direct and direct:IsA("SurfaceAppearance") then return direct end
+-- Map partName -> {sa=SurfaceAppearance, tex=textureID} from a skin folder, plus a
+-- generic "*" entry for a single folder-level SurfaceAppearance / texture (guns).
+-- Gloves & multi-part knives store ONE SurfaceAppearance PER MeshPart (e.g.
+-- Wrap1_lowLeftMain, Wrap2_lowLeft), so we copy each part's look onto the
+-- matching-named target part instead of cloning one look onto everything.
+local function buildSkinMap(skinFolder)
+    local map = {}
+    if not skinFolder then return map end
     for _, d in ipairs(skinFolder:GetDescendants()) do
-        if d:IsA("SurfaceAppearance") then return d end
+        if d:IsA("MeshPart") then
+            local e = map[d.Name] or {}; map[d.Name] = e
+            local sa = d:FindFirstChildOfClass("SurfaceAppearance")
+            if sa then e.sa = sa end
+            if d.TextureID ~= "" then e.tex = d.TextureID end
+        elseif d:IsA("SurfaceAppearance") and d.Parent and not d.Parent:IsA("MeshPart") then
+            local g = map["*"] or {}; map["*"] = g; g.sa = d           -- e.g. a "Texture" SA at folder root
+        elseif d:IsA("StringValue") and tostring(d.Value):find("rbxassetid") then
+            local g = map["*"] or {}; map["*"] = g; g.tex = d.Value     -- worldmodel / textureid fallback
+        end
     end
-    return nil
-end
-local function getSkinTexture(skinFolder)
-    if not skinFolder then return nil end
-    local wm = skinFolder:FindFirstChild("Worldmodel") or skinFolder:FindFirstChild("TextureID")
-    if wm and wm:IsA("StringValue") and wm.Value ~= "" then return wm.Value end
-    for _, d in ipairs(skinFolder:GetDescendants()) do
-        if d:IsA("StringValue") and tostring(d.Value):find("rbxassetid") then return d.Value end
-    end
-    return nil
+    return map
 end
 
--- apply a skin folder's look to every MeshPart under `root`
+local function applyEntry(part, e)
+    if not e then return end
+    if e.sa then
+        for _, old in ipairs(part:GetChildren()) do
+            if old:IsA("SurfaceAppearance") then old:Destroy() end
+        end
+        e.sa:Clone().Parent = part
+    elseif e.tex then
+        pcall(function() part.TextureID = e.tex end)
+    end
+end
+
+-- copy each skin part's appearance onto the matching-named MeshPart under `root`,
+-- falling back to the generic "*" entry for parts with no name match.
 local function applySkinToRoot(root, skinFolder)
     if not (root and skinFolder) then return end
-    local sa  = getSkinAppearance(skinFolder)
-    local tex = getSkinTexture(skinFolder)
-    if not (sa or tex) then return end
+    local map = buildSkinMap(skinFolder)
+    if not next(map) then return end
     for _, part in ipairs(root:GetDescendants()) do
         if part:IsA("MeshPart") then
-            if sa then
-                for _, old in ipairs(part:GetChildren()) do
-                    if old:IsA("SurfaceAppearance") then old:Destroy() end
-                end
-                sa:Clone().Parent = part
-            elseif tex then
-                pcall(function() part.TextureID = tex end)
-            end
+            applyEntry(part, map[part.Name] or map["*"])
         end
     end
 end
