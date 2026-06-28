@@ -271,7 +271,14 @@ end
 -- hide the real one via LocalTransparencyModifier (which also survives rebuilds).
 local knifeClone, knifeCloneModel
 local knifeHidden = {}             -- live knife parts we hid (restore on Default)
-local knifeOffset = CFrame.new()   -- single place to nudge alignment if a model sits off
+local knifeOffset = CFrame.new()   -- recomputed from the sliders below
+local knifePos   = Vector3.new(0, 0, 0)   -- studs
+local knifeRot   = Vector3.new(0, 0, 0)   -- degrees
+local knifeScale = 1
+local function updateKnifeOffset()
+    knifeOffset = CFrame.new(knifePos)
+        * CFrame.Angles(math.rad(knifeRot.X), math.rad(knifeRot.Y), math.rad(knifeRot.Z))
+end
 
 local function setHidden(part, on) pcall(function() part.LocalTransparencyModifier = on and 1 or 0 end) end
 local function destroyKnifeClone()
@@ -288,16 +295,25 @@ end
 local function buildKnifeClone(template)
     destroyKnifeClone()
     local holder = Instance.new("Model"); holder.Name = "VXKnifeSwap"
-    local primary
+    local clones, primary, primaryPos = {}, nil, nil
     for _, m in ipairs(modelMeshes(template)) do
         local c = m:Clone()
         c.Anchored=false; c.CanCollide=false; c.Massless=true; c.CanQuery=false
         c.Parent = holder
-        if not primary then primary = c end
+        clones[#clones+1] = c
+        if not primary then primary = c; primaryPos = m.Position end
     end
     if not primary then holder:Destroy(); return end
-    for _, c in ipairs(holder:GetChildren()) do
-        if c ~= primary and c:IsA("MeshPart") then
+    -- scale the whole model: resize each part + scale its offset from the primary
+    if knifeScale ~= 1 then
+        for _, c in ipairs(clones) do
+            local off = (c.Position - primaryPos) * knifeScale
+            c.Size = c.Size * knifeScale
+            pcall(function() c.CFrame = CFrame.new(primary.Position + off) * (c.CFrame - c.CFrame.Position) end)
+        end
+    end
+    for _, c in ipairs(clones) do
+        if c ~= primary then
             local w = Instance.new("WeldConstraint"); w.Part0 = primary; w.Part1 = c; w.Parent = c
         end
     end
@@ -324,7 +340,9 @@ RunService.RenderStepped:Connect(function()
         for _, c in ipairs(knifeClone:GetDescendants()) do if c:IsA("MeshPart") then setHidden(c, true) end end
         return
     end
-    local anchor = eq[1]; knifeHidden = eq
+    local anchor = eq[1]
+    for _, p in ipairs(eq) do if p.Size.Magnitude > anchor.Size.Magnitude then anchor = p end end
+    knifeHidden = eq
     for _, p in ipairs(eq) do setHidden(p, true) end                                   -- hide the real knife
     for _, c in ipairs(knifeClone:GetDescendants()) do if c:IsA("MeshPart") then setHidden(c, false) end end
     pcall(function() knifeClone:PivotTo(anchor.CFrame * knifeOffset) end)              -- snap onto the hand
@@ -432,6 +450,21 @@ do
             end
         end,
     })
+end
+
+TabWeapons:CreateSection("Knife Position (drag to grip it in hand)")
+do
+    local function mk(name, lo, hi, inc, def, setter)
+        TabWeapons:CreateSlider({Name=name, Range={lo,hi}, Increment=inc, Suffix="", CurrentValue=def,
+            Callback=function(v) setter(v) end})
+    end
+    mk("Pos X", -5,5, 0.05, 0, function(v) knifePos = Vector3.new(v, knifePos.Y, knifePos.Z); updateKnifeOffset() end)
+    mk("Pos Y", -5,5, 0.05, 0, function(v) knifePos = Vector3.new(knifePos.X, v, knifePos.Z); updateKnifeOffset() end)
+    mk("Pos Z", -5,5, 0.05, 0, function(v) knifePos = Vector3.new(knifePos.X, knifePos.Y, v); updateKnifeOffset() end)
+    mk("Rot X", -180,180, 1, 0, function(v) knifeRot = Vector3.new(v, knifeRot.Y, knifeRot.Z); updateKnifeOffset() end)
+    mk("Rot Y", -180,180, 1, 0, function(v) knifeRot = Vector3.new(knifeRot.X, v, knifeRot.Z); updateKnifeOffset() end)
+    mk("Rot Z", -180,180, 1, 0, function(v) knifeRot = Vector3.new(knifeRot.X, knifeRot.Y, v); updateKnifeOffset() end)
+    mk("Scale", 0.2,3, 0.05, 1, function(v) knifeScale = v; if SelectedKnifeModel then pcall(applyKnifeModelSwap) end end)
 end
 
 TabWeapons:CreateSection("Weapon Inventory")
