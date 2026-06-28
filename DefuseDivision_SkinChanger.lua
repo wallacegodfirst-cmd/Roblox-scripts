@@ -113,14 +113,18 @@ end
 
 -- copy each skin part's appearance onto the matching-named MeshPart under `root`,
 -- falling back to the generic "*" entry for parts with no name match.
-local function applySkinToRoot(root, skinFolder)
+local function applySkinToRoot(root, skinFolder, allowGeneric)
     if not (root and skinFolder) then return end
     local map = buildSkinMap(skinFolder)
     if not next(map) then return end
+    local function handle(part)
+        local e = map[part.Name]
+        if not e and allowGeneric then e = map["*"] end
+        applyEntry(part, e)
+    end
+    if root:IsA("MeshPart") then handle(root) end
     for _, part in ipairs(root:GetDescendants()) do
-        if part:IsA("MeshPart") then
-            applyEntry(part, map[part.Name] or map["*"])
-        end
+        if part:IsA("MeshPart") then handle(part) end
     end
 end
 
@@ -129,27 +133,122 @@ local function getSkinFolder(weaponName, skinName)
     return wf and wf:FindFirstChild(skinName) or nil
 end
 
--- bake the skin into the game's weapon blueprint so newly-spawned models inherit it
+-- first-person weapons live under Camera.Arms in this game (NOT Camera.Viewmodel)
+local function viewmodelRoots()
+    local cam = workspace.CurrentCamera
+    local roots = {}
+    if cam then
+        for _, nm in ipairs({"Arms", "Viewmodel", "ViewModel"}) do
+            local r = cam:FindFirstChild(nm); if r then roots[#roots+1] = r end
+        end
+        if #roots == 0 then
+            for _, c in ipairs(cam:GetChildren()) do if c:IsA("Model") then roots[#roots+1] = c end end
+        end
+    end
+    return roots
+end
+
+-- find the equipped weapon model/part under a root by lenient name match
+local function findWeaponModel(root, weaponName)
+    local wn = string.lower(weaponName)
+    for _, d in ipairs(root:GetDescendants()) do
+        if d:IsA("Model") or d:IsA("MeshPart") then
+            local n = string.lower(d.Name)
+            if n == wn or n:find(wn, 1, true) or wn:find(n, 1, true) then return d end
+        end
+    end
+    return nil
+end
+
+-- ── KNIFE MODEL SWAP (change the knife MESH itself, e.g. -> Karambit) ──────────
+-- A knife "skin" is a different mesh, not just a texture. MeshPart.MeshId can't be
+-- set at runtime, so we overlay a CLONE of the skin's mesh onto the equipped knife
+-- part (welded so it follows the swing) and hide the original.
+local knifeSwaps = setmetatable({}, {__mode = "k"})  -- targetPart -> {skin, clone, origTrans}
+
+local function clearKnifeSwap(target)
+    local s = knifeSwaps[target]
+    if s then
+        if s.clone then pcall(function() s.clone:Destroy() end) end
+        if target and target.Parent then pcall(function() target.Transparency = s.origTrans or 0 end) end
+        knifeSwaps[target] = nil
+    end
+end
+local function clearAllKnifeSwaps()
+    for target in pairs(knifeSwaps) do clearKnifeSwap(target) end
+end
+
+local function sourceMesh(skinFolder)
+    for _, d in ipairs(skinFolder:GetDescendants()) do
+        if d:IsA("MeshPart") and d.MeshId ~= "" then return d end
+    end
+    return nil
+end
+
+local function applyKnifeModel(root, skinFolder, skinName, weaponName)
+    local wm = findWeaponModel(root, weaponName)
+    if not wm then return end
+    local src = sourceMesh(skinFolder)
+    if not src then return end
+    local targets = {}
+    if wm:IsA("MeshPart") then targets[1] = wm
+    else for _, d in ipairs(wm:GetDescendants()) do
+        if d:IsA("MeshPart") and string.lower(d.Name) ~= "handle" then targets[#targets+1] = d end
+    end end
+    for _, target in ipairs(targets) do
+        local cur = knifeSwaps[target]
+        if not (cur and cur.skin == skinName and cur.clone and cur.clone.Parent) then
+            clearKnifeSwap(target)
+            local clone = src:Clone()
+            clone.Name = "SkinSwap"
+            clone.Anchored = false; clone.CanCollide = false; clone.Massless = true; clone.CanQuery = false
+            pcall(function() clone.CFrame = target.CFrame end)
+            clone.Parent = target.Parent
+            local w = Instance.new("WeldConstraint"); w.Part0 = target; w.Part1 = clone; w.Parent = clone
+            local origTrans = target.Transparency
+            pcall(function() target.Transparency = 1 end)
+            knifeSwaps[target] = {skin = skinName, clone = clone, origTrans = origTrans}
+        end
+    end
+end
+
+-- bake texture skins into the game's weapon blueprint so new models inherit them
 local function InjectIntoGameBlueprints(weaponName, skinName)
     if not weaponName or not skinName or skinName == "None" then return end
     local template = findWeaponTemplate(weaponName)
     local skinFolder = getSkinFolder(weaponName, skinName)
-    if template and skinFolder then applySkinToRoot(template, skinFolder) end
+    if template and skinFolder then applySkinToRoot(template, skinFolder, true) end
 end
 
--- re-skin what you actually SEE: the first-person Viewmodel + your character
+local function isKnifeName(weaponName)
+    local lw = string.lower(weaponName)
+    return lw:find("knife") or lw:find("karambit") or lw:find("melee") or lw:find("blade") or lw:find("dagger")
+end
+
+-- re-skin what you SEE: Camera.Arms viewmodel + your character.
+-- Knives = MODEL swap; everything else = texture / SurfaceAppearance swap.
 local function LiveWorkspaceOverride()
-    local camera = workspace.CurrentCamera
-    local vm  = camera and camera:FindFirstChild("Viewmodel")
-    local char = LP.Character
+    local roots = viewmodelRoots()
+    if LP.Character then roots[#roots+1] = LP.Character end
     for weaponName, currentSkin in pairs(_G.ActiveSkins) do
+        local knife = isKnifeName(weaponName)
         if currentSkin and currentSkin ~= "None" then
             local skinFolder = getSkinFolder(weaponName, currentSkin)
             if skinFolder then
-                InjectIntoGameBlueprints(weaponName, currentSkin)
-                if vm then applySkinToRoot(vm, skinFolder) end        -- first-person hands/knife/gun
-                if char then applySkinToRoot(char, skinFolder) end    -- third-person gloves / held knife
+                if knife then
+                    for _, root in ipairs(roots) do applyKnifeModel(root, skinFolder, currentSkin, weaponName) end
+                else
+                    local template = findWeaponTemplate(weaponName)
+                    if template then applySkinToRoot(template, skinFolder, true) end
+                    for _, root in ipairs(roots) do
+                        local wm = findWeaponModel(root, weaponName)
+                        if wm then applySkinToRoot(wm, skinFolder, true)
+                        else applySkinToRoot(root, skinFolder, false) end
+                    end
+                end
             end
+        elseif knife and currentSkin == "None" then
+            clearAllKnifeSwaps()
         end
     end
 end
