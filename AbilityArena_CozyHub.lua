@@ -1,4 +1,4 @@
--- Valutix Hub | Ability Arena | v2.13.5
+-- Valutix Hub | Ability Arena | v2.13.6
 -- by Valutix Hub Owner
 -- v2.8.0: Kill Aura fixed (crash bug killed the loop), real clicking, One Shot Punch
 --         remote wired into every M1, fixed M1 packet bytes, buffer sends, hitbox
@@ -60,6 +60,8 @@
 --          'Dump Player Data' debug button to read the game's real attributes/values.
 -- v2.13.5: reverted Auto Farm/Play to the original point-blank brute-force (teleport INSIDE the
 --          target's hitbox every 0.1s) that actually lands hits; the distance-gating broke it.
+-- v2.13.6: added M1 Packet Spy (Utility>Debug) to capture a real damaging M1 packet so buildM1
+--          can be rebuilt to carry the target (fixes Auto Farm M1 dealing no damage).
 
 local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
 
@@ -103,7 +105,7 @@ local S = {
     AutoFarm=false, FarmTarget=nil,
     AutoPlay=false, AutoPlayRange=100,
     AntiAFK=false, InstantRespawn=false, ClickTP=false,
-    GrabDelay=3, GrabReturn=true,
+    GrabDelay=3, GrabReturn=true, M1Spy=false,
     TPTarget=nil,
 }
 
@@ -202,6 +204,33 @@ local function buildSkillNewDir(skill, direction)
 end
 
 local function fireM1() fireRaw(buildM1()) end
+
+-- ── M1 PACKET SPY (debug) ──────────────────────────────────────
+-- Logs every outgoing Jolt_Reliable payload so we can capture a REAL damaging
+-- M1 (with a populated "Hits" list) and rebuild buildM1 to carry the target.
+-- Installs the hook only when you enable the toggle (opt-in). Some anti-cheats
+-- detect __namecall hooks - enable briefly, capture one hit, disable.
+local m1SpyInstalled = false
+local function installM1Spy()
+    if m1SpyInstalled then return true end
+    if typeof(hookmetamethod) ~= "function" or typeof(getnamecallmethod) ~= "function" then return false end
+    m1SpyInstalled = true
+    local old
+    old = hookmetamethod(game, "__namecall", function(self, ...)
+        if S.M1Spy and self == JoltReliable and getnamecallmethod() == "FireServer" then
+            local payload = (...)
+            local s
+            if typeof(payload) == "buffer" then pcall(function() s = buffer.tostring(payload) end)
+            elseif type(payload) == "string" then s = payload end
+            if s then
+                local b = {}; for i = 1, #s do b[i] = string.byte(s, i) end
+                print("[M1SPY] len="..#s.." | ascii: "..(s:gsub("[^%w%p ]", ".")).." | bytes: "..table.concat(b, ","))
+            end
+        end
+        return old(self, ...)
+    end)
+    return true
+end
 local function fireSkill(skill) fireRaw(buildSkillNew(skill)) end
 local function fireDash(direction)
     fireRaw(buildSkillNewDir("Dash", direction))
@@ -1575,7 +1604,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Valutix Hub | Ability Arena",
     LoadingTitle = "Valutix Hub",
-    LoadingSubtitle = "v2.13.5 - by Valutix Hub Owner",
+    LoadingSubtitle = "v2.13.6 - by Valutix Hub Owner",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -1633,11 +1662,11 @@ local UtilityTab   = Window:CreateTab("Utility",   "wrench")
 
 -- \u2500\u2500 HOME (landing page) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 HomeTab:CreateSection("Welcome")
-HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.13.5\nPick a tab on the left to get started."})
+HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.13.6\nPick a tab on the left to get started."})
 HomeTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
 HomeTab:CreateParagraph({Title="Best combo", Content="Dash Behind On Hit (lands your M1 + puts you behind them) + M1 Hitbox. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
 HomeTab:CreateSection("Credits")
-HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.13.5 - by Valutix Hub Owner"})
+HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.13.6 - by Valutix Hub Owner"})
 
 CombatTab:CreateSection("Survival")
 CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
@@ -1871,6 +1900,18 @@ UtilityTab:CreateButton({Name="Dump Player Data (to console)", Callback=function
     Rayfield:Notify({Title="Valutix Hub", Content="Dumped to console (open F9 / executor console).", Duration=5})
 end})
 
+UtilityTab:CreateToggle({Name="Spy M1 Packets  [debug, uses a hook]", CurrentValue=false, Flag="M1Spy", Callback=function(v)
+    S.M1Spy = v
+    if v then
+        if installM1Spy() then
+            Rayfield:Notify({Title="Valutix Hub", Content="M1 Spy ON. Turn OFF Auto Farm/Auto M1, then LEFT-CLICK an enemy once. Copy the [M1SPY] line with 'UseM1'/'Hits' from console.", Duration=10})
+        else
+            S.M1Spy = false
+            Rayfield:Notify({Title="Valutix Hub", Content="Your executor has no hookmetamethod - can't spy packets.", Duration=6})
+        end
+    end
+end})
+
 UtilityTab:CreateSection("Admin")
 UtilityTab:CreateButton({Name="Unload Valutix Hub", Callback=function()
     for _,c in pairs(Conns) do pcall(function() c:Disconnect() end) end
@@ -1885,4 +1926,4 @@ UtilityTab:CreateButton({Name="Unload Valutix Hub", Callback=function()
 end})
 
 
-Rayfield:Notify({Title="Valutix Hub v2.13.5", Content="Loaded - by Valutix Hub Owner", Duration=6})
+Rayfield:Notify({Title="Valutix Hub v2.13.6", Content="Loaded - by Valutix Hub Owner", Duration=6})
