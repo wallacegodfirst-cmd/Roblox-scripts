@@ -14,6 +14,7 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 local HttpService = game:GetService("HttpService")
 local Players     = game:GetService("Players")
 local RunService  = game:GetService("RunService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local LP          = Players.LocalPlayer
 
 local Window = Rayfield:CreateWindow({
@@ -248,11 +249,16 @@ local function knifeWeapons()           -- knife models in the Weapons folder
     return out
 end
 
+local function inSwapClone(d)            -- true if part belongs to OUR clone (named VXKnifeSwap)
+    local a = d
+    while a do if a.Name == "VXKnifeSwap" then return true end; a = a.Parent end
+    return false
+end
 local function equippedKnifeParts()     -- the equipped knife's meshparts under the viewmodel
     local parts = {}
     for _, root in ipairs(viewmodelRoots()) do
         for _, d in ipairs(root:GetDescendants()) do
-            if d:IsA("MeshPart") and looksKnife(d.Name) then parts[#parts+1] = d end
+            if d:IsA("MeshPart") and looksKnife(d.Name) and not inSwapClone(d) then parts[#parts+1] = d end
         end
     end
     return parts
@@ -342,8 +348,17 @@ RunService.RenderStepped:Connect(function()
     end
     local anchor = eq[1]
     for _, p in ipairs(eq) do if p.Size.Magnitude > anchor.Size.Magnitude then anchor = p end end
-    knifeHidden = eq
-    for _, p in ipairs(eq) do setHidden(p, true) end                                   -- hide the real knife
+    -- hide the WHOLE equipped knife model so the original never peeks through (no double knife)
+    local model = anchor.Parent
+    knifeHidden = {}
+    if model then
+        for _, d in ipairs(model:GetDescendants()) do
+            if d:IsA("MeshPart") and not inSwapClone(d) then setHidden(d, true); knifeHidden[#knifeHidden+1] = d end
+        end
+    else
+        knifeHidden = eq
+        for _, p in ipairs(eq) do setHidden(p, true) end
+    end
     for _, c in ipairs(knifeClone:GetDescendants()) do if c:IsA("MeshPart") then setHidden(c, false) end end
     pcall(function() knifeClone:PivotTo(anchor.CFrame * knifeOffset) end)              -- snap onto the hand
 end)
@@ -493,5 +508,77 @@ table.sort(folders, function(a, b) return a.Name:lower() < b.Name:lower() end)
 for _, folder in ipairs(folders) do
     BuildDropdown(TabWeapons, folder)
 end
+
+-- ── AUTO FARM (team teleport-aimbot) ──────────────────────────────────────────
+local AutoFarm, MyTeam, FireRate = false, "Terrorists", 12
+
+local function teamOf(plr)
+    if plr.Team then return plr.Team.Name end
+    local t = plr:GetAttribute("Team"); if t ~= nil then return tostring(t) end
+    return nil
+end
+local function oppositeTeam(t)
+    if t == "Terrorists" then return "Counter Terrorist" end
+    if t == "Counter Terrorist" then return "Terrorists" end
+    return nil
+end
+local function charRoot(c) return c and (c:FindFirstChild("HumanoidRootPart") or c.PrimaryPart or c:FindFirstChildWhichIsA("BasePart")) end
+local function targetAlive(c)
+    if not c then return false end
+    local h = c:FindFirstChildOfClass("Humanoid"); if h then return h.Health > 0 end
+    local hp = c:GetAttribute("Health"); if type(hp) == "number" then return hp > 0 end
+    return true
+end
+local function enemies(opp)
+    local out = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP and teamOf(plr) == opp and plr.Character and targetAlive(plr.Character) then out[#out+1] = plr end
+    end
+    return out
+end
+local function fireOnce()
+    pcall(function()
+        VirtualInputManager:SendMouseButtonEvent(0,0,0,true,game,0)
+        task.wait(0.03)
+        VirtualInputManager:SendMouseButtonEvent(0,0,0,false,game,0)
+    end)
+end
+
+task.spawn(function()
+    while true do
+        if AutoFarm then
+            pcall(function()
+                local opp = oppositeTeam(MyTeam); if not opp then return end
+                local target = enemies(opp)[1]
+                local mc, tc = LP.Character, target and target.Character
+                local mr, tr = charRoot(mc), tc and charRoot(tc)
+                if target and mr and tr then
+                    mr.CFrame = tr.CFrame * CFrame.new(0, 0, 4)                       -- teleport just behind them
+                    local cam = workspace.CurrentCamera
+                    local head = tc:FindFirstChild("Head") or tr
+                    if cam and head then cam.CFrame = CFrame.new(cam.CFrame.Position, head.Position) end  -- aim
+                    fireOnce()                                                        -- shoot for them
+                end
+            end)
+        end
+        task.wait(1 / math.max(1, FireRate))
+    end
+end)
+
+local TabFarm = Window:CreateTab("Auto Farm", 4483362458)
+TabFarm:CreateSection("Auto Farm (teleport + shoot the enemy team)")
+TabFarm:CreateDropdown({Name="Your Team", Options={"Terrorists","Counter Terrorist"}, CurrentOption={"Terrorists"}, MultipleOptions=false,
+    Callback=function(s) MyTeam = (type(s)=="table" and s[1]) or s end})
+TabFarm:CreateToggle({Name="Auto Farm (kill enemy team one by one)", CurrentValue=false, Flag="AutoFarm",
+    Callback=function(v) AutoFarm = v end})
+TabFarm:CreateSlider({Name="Fire Rate", Range={2,20}, Increment=1, Suffix="cps", CurrentValue=12,
+    Callback=function(v) FireRate = v end})
+TabFarm:CreateButton({Name="Dump Teams + Health (debug)", Callback=function()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        local c = plr.Character
+        print("[FARM]", plr.Name, "team=", tostring(teamOf(plr)), "alive=", tostring(c and targetAlive(c)), "hp=", tostring(c and c:GetAttribute("Health")))
+    end
+    Rayfield:Notify({Title="Auto Farm", Content="Dumped teams/health to console (F9).", Duration=4})
+end})
 
 Rayfield:Notify({Title="Skin Changer", Content=("Loaded %d weapon/skin categories. Pick a skin from any dropdown."):format(#folders), Duration=5})
