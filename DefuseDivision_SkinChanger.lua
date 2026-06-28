@@ -225,6 +225,86 @@ local function isKnifeName(weaponName)
     return lw:find("knife") or lw:find("karambit") or lw:find("melee") or lw:find("blade") or lw:find("dagger")
 end
 
+-- ── KNIFE MODEL PICKER (swap the equipped T-knife to a Weapons-folder model) ──
+local SelectedKnifeModel = nil          -- chosen Weapons-folder model name, or nil = default
+local knifeModelSwaps = {}              -- anchorPart -> {model, clones={}, hidden={}}
+
+local KNIFE_WORDS = {"knife","karambit","talon","bayonet","butterfly","dagger","melee","kara"}
+local function looksKnife(name)
+    local n = string.lower(name)
+    for _, w in ipairs(KNIFE_WORDS) do if n:find(w, 1, true) then return true end end
+    return false
+end
+
+local function knifeWeapons()           -- knife models in the Weapons folder
+    local out = {}
+    for _, w in ipairs(WeaponsFolder:GetChildren()) do
+        local isk = looksKnife(w.Name)
+        if not isk then for _, d in ipairs(w:GetDescendants()) do
+            if string.lower(d.Name):find("knife", 1, true) then isk = true; break end end
+        end
+        if isk then out[#out+1] = w end
+    end
+    return out
+end
+
+local function equippedKnifeParts()     -- the equipped knife's meshparts under the viewmodel
+    local parts = {}
+    for _, root in ipairs(viewmodelRoots()) do
+        for _, d in ipairs(root:GetDescendants()) do
+            if d:IsA("MeshPart") and looksKnife(d.Name) then parts[#parts+1] = d end
+        end
+    end
+    return parts
+end
+
+local function modelMeshes(model)
+    local out = {}
+    for _, d in ipairs(model:GetDescendants()) do
+        if d:IsA("MeshPart") and d.MeshId ~= "" then out[#out+1] = d end
+    end
+    return out
+end
+
+local function restoreKnifeModel()
+    for _, s in pairs(knifeModelSwaps) do
+        for _, c in ipairs(s.clones) do pcall(function() c:Destroy() end) end
+        for _, h in ipairs(s.hidden) do
+            if h.part and h.part.Parent then pcall(function() h.part.Transparency = h.t end) end
+        end
+    end
+    knifeModelSwaps = {}
+end
+
+-- overlay the chosen model's meshes onto the equipped knife (welded), hide originals
+local function applyKnifeModelSwap()
+    if not SelectedKnifeModel then return end
+    local template = WeaponsFolder:FindFirstChild(SelectedKnifeModel)
+    if not template then return end
+    local eq = equippedKnifeParts(); if #eq == 0 then return end
+    local anchor = eq[1]
+    local cur = knifeModelSwaps[anchor]
+    if cur and cur.model == SelectedKnifeModel and cur.clones[1] and cur.clones[1].Parent then return end
+    restoreKnifeModel()
+    local src = modelMeshes(template); if #src == 0 then return end
+    local clones, hidden = {}, {}
+    for _, p in ipairs(eq) do
+        hidden[#hidden+1] = {part=p, t=p.Transparency}
+        pcall(function() p.Transparency = 1 end)
+    end
+    local srcPivot = template:GetPivot()
+    for _, m in ipairs(src) do          -- keep each mesh's offset within the model, aligned to the anchor
+        local clone = m:Clone()
+        clone.Anchored=false; clone.CanCollide=false; clone.Massless=true; clone.CanQuery=false
+        pcall(function() clone.CFrame = anchor.CFrame * srcPivot:ToObjectSpace(m.CFrame) end)
+        clone.Parent = anchor.Parent
+        local weld = Instance.new("WeldConstraint")
+        weld.Part0 = anchor; weld.Part1 = clone; weld.Parent = clone
+        clones[#clones+1] = clone
+    end
+    knifeModelSwaps[anchor] = {model = SelectedKnifeModel, clones = clones, hidden = hidden}
+end
+
 -- re-skin what you SEE: Camera.Arms viewmodel + your character.
 -- Knives = MODEL swap; everything else = texture / SurfaceAppearance swap.
 local function LiveWorkspaceOverride()
@@ -256,6 +336,7 @@ end
 task.spawn(function()
     while task.wait(0.3) do
         pcall(LiveWorkspaceOverride)
+        pcall(applyKnifeModelSwap)
     end
 end)
 
@@ -308,6 +389,26 @@ TabWeapons:CreateButton({
         end
     end,
 })
+
+TabWeapons:CreateSection("Knife Model")
+do
+    local opts = {"TKnife (Default)"}
+    for _, w in ipairs(knifeWeapons()) do opts[#opts+1] = w.Name end
+    TabWeapons:CreateDropdown({
+        Name = "Swap Knife To",
+        Options = opts,
+        CurrentOption = {"TKnife (Default)"},
+        MultipleOptions = false,
+        Callback = function(sel)
+            local choice = (type(sel) == "table" and sel[1]) or sel
+            if choice == "TKnife (Default)" then
+                SelectedKnifeModel = nil; restoreKnifeModel()
+            else
+                SelectedKnifeModel = choice; pcall(applyKnifeModelSwap)
+            end
+        end,
+    })
+end
 
 TabWeapons:CreateSection("Weapon Inventory")
 
