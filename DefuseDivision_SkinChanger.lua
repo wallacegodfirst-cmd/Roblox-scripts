@@ -344,32 +344,45 @@ local function restoreKnifeModel()
     knifeHidden = {}
 end
 
+-- the grip reference inside a template: its OWN "Handle" part if it has one, else the
+-- centroid of its meshes. This is the point we line up with Camera.Arms.Handle, so EVERY
+-- model (even ones with no Handle of their own) seats in the hand the same way.
+local function templateGripCF(template, meshes)
+    for _, d in ipairs(template:GetDescendants()) do
+        if d:IsA("BasePart") and string.lower(d.Name) == "handle" then return d.CFrame end
+    end
+    if #meshes > 0 then
+        local sum = Vector3.zero
+        for _, m in ipairs(meshes) do sum = sum + m.Position end
+        return CFrame.new(sum / #meshes)
+    end
+    return CFrame.new()
+end
+
 local function buildKnifeClone(template)
     destroyKnifeClone()
+    local meshes = modelMeshes(template)
+    if #meshes == 0 then return end
     local holder = Instance.new("Model"); holder.Name = "VXKnifeSwap"
-    local clones, primary, primaryPos = {}, nil, nil
-    for _, m in ipairs(modelMeshes(template)) do
+    local gripCF = templateGripCF(template, meshes)
+    -- invisible GRIP primary at the template's handle -> this is what aligns onto Camera.Arms.Handle
+    local grip = Instance.new("Part")
+    grip.Name="Grip"; grip.Size=Vector3.new(0.05,0.05,0.05); grip.Transparency=1
+    grip.Anchored=false; grip.CanCollide=false; grip.Massless=true; grip.CanQuery=false
+    grip.CFrame = gripCF; grip.Parent = holder
+    for _, m in ipairs(meshes) do
         local c = m:Clone()
         c.Anchored=false; c.CanCollide=false; c.Massless=true; c.CanQuery=false
-        c.Parent = holder
-        clones[#clones+1] = c
-        if not primary then primary = c; primaryPos = m.Position end
-    end
-    if not primary then holder:Destroy(); return end
-    -- scale the whole model: resize each part + scale its offset from the primary
-    if knifeScale ~= 1 then
-        for _, c in ipairs(clones) do
-            local off = (c.Position - primaryPos) * knifeScale
+        local rel = gripCF:ToObjectSpace(m.CFrame)       -- keep each mesh posed RELATIVE to the grip
+        if knifeScale ~= 1 then
             c.Size = c.Size * knifeScale
-            pcall(function() c.CFrame = CFrame.new(primary.Position + off) * (c.CFrame - c.CFrame.Position) end)
+            rel = CFrame.new(rel.Position * knifeScale) * (rel - rel.Position)
         end
+        c.CFrame = grip.CFrame * rel
+        c.Parent = holder
+        local w = Instance.new("WeldConstraint"); w.Part0 = grip; w.Part1 = c; w.Parent = c
     end
-    for _, c in ipairs(clones) do
-        if c ~= primary then
-            local w = Instance.new("WeldConstraint"); w.Part0 = primary; w.Part1 = c; w.Parent = c
-        end
-    end
-    holder.PrimaryPart = primary
+    holder.PrimaryPart = grip                            -- PivotTo uses this -> grip lands on the hand handle
     holder.Parent = workspace.CurrentCamera
     knifeClone, knifeCloneModel = holder, SelectedKnifeModel
 end
