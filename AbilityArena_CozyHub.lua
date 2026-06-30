@@ -1,4 +1,4 @@
--- Valutix Hub | Ability Arena | v2.13.6
+-- Valutix Hub | Ability Arena | v2.14.0
 -- by Valutix Hub Owner
 -- v2.8.0: Kill Aura fixed (crash bug killed the loop), real clicking, One Shot Punch
 --         remote wired into every M1, fixed M1 packet bytes, buffer sends, hitbox
@@ -106,6 +106,7 @@ local S = {
     AutoPlay=false, AutoPlayRange=100,
     AntiAFK=false, InstantRespawn=false, ClickTP=false,
     GrabDelay=3, GrabReturn=true, M1Spy=false,
+    VFXOn=false, VFXShape="Ball", VFXColor=Color3.fromRGB(255,40,40), VFXSize=6, VFXTransparency=0.4, VFXParticles=true, VFXRate=30,
     TPTarget=nil,
 }
 
@@ -691,6 +692,58 @@ task.spawn(function()
                     if inst and inst.Parent then enableVfx(inst) end
                 end
             end)
+        end
+    end
+end)
+
+-- ============================================================
+-- VFX MAKER (client-side custom aura: shape/color/size/particles).
+-- Builds your own effect on your body. NOTE: client-side only - others won't
+-- see it (a server-side / "publish to everyone" VFX needs the game's broadcast
+-- remote, which isn't exposed here). "Publish" here = save/share the preset config.
+-- ============================================================
+local customVFX = {}
+local function clearCustomVFX()
+    for _, p in ipairs(customVFX) do pcall(function() p:Destroy() end) end
+    customVFX = {}
+end
+local function applyCustomVFX()
+    clearCustomVFX()
+    local char = getChar(); if not char then return end
+    local mount = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+                or char:FindFirstChild("HumanoidRootPart") or charPart(char)
+    if not mount then return end
+    local part = Instance.new("Part")
+    part.Name = "MFHCustomVFX"
+    part.Shape = (S.VFXShape == "Block" and Enum.PartType.Block)
+              or (S.VFXShape == "Cylinder" and Enum.PartType.Cylinder)
+              or Enum.PartType.Ball
+    part.Size = Vector3.new(S.VFXSize, S.VFXSize, S.VFXSize)
+    part.Color = S.VFXColor
+    part.Material = Enum.Material.Neon
+    part.Transparency = S.VFXTransparency
+    part.CanCollide = false; part.CanQuery = false; part.Massless = true; part.Anchored = false
+    pcall(function() part.CFrame = mount.CFrame end)
+    part.Parent = mount
+    local w = Instance.new("WeldConstraint"); w.Part0 = mount; w.Part1 = part; w.Parent = part
+    customVFX[#customVFX+1] = part
+    if S.VFXParticles then
+        local att = Instance.new("Attachment", part)
+        local pe = Instance.new("ParticleEmitter", att)
+        pe.Color = ColorSequence.new(S.VFXColor)
+        pe.Rate = S.VFXRate
+        pe.Lifetime = NumberRange.new(0.4, 1.3)
+        pe.Speed = NumberRange.new(2, 6)
+        pe.Size = NumberSequence.new(math.max(0.3, S.VFXSize * 0.15))
+        pe.LightEmission = 0.7
+    end
+end
+-- keep it alive + re-apply on respawn
+task.spawn(function()
+    while task.wait(0.5) do
+        if S.VFXOn then
+            local alive = customVFX[1] and customVFX[1].Parent
+            if not alive then pcall(applyCustomVFX) end
         end
     end
 end)
@@ -1552,14 +1605,23 @@ end)
 -- ============================================================
 -- TELEPORT HELPERS
 -- ============================================================
--- Safe teleport: always zero velocity first so you never fling/snap-back/die.
-local function tpTo(cf)
+-- Safe teleport: zero velocity AND hold the position for a short window so the
+-- game's anti-teleport can't rubber-band you back.
+local _holdCF, _holdUntil = nil, 0
+hook(RunService.RenderStepped, function()
+    if _holdCF and tick() < _holdUntil then
+        local root = getRoot()
+        if root then pcall(function() root.AssemblyLinearVelocity = Vector3.zero; root.CFrame = _holdCF end) end
+    end
+end)
+local function tpTo(cf, holdSec)
     local root = getRoot(); if not (root and cf) then return false end
     pcall(function()
         root.AssemblyLinearVelocity  = Vector3.zero
         root.AssemblyAngularVelocity = Vector3.zero
         root.CFrame = cf
     end)
+    _holdCF = cf; _holdUntil = tick() + (holdSec or 0.5)
     return true
 end
 local function tpToPlayer(name, behind)
@@ -1604,7 +1666,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Valutix Hub | Ability Arena",
     LoadingTitle = "Valutix Hub",
-    LoadingSubtitle = "v2.13.6 - by Valutix Hub Owner",
+    LoadingSubtitle = "v2.14.0 - by Valutix Hub Owner",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -1666,7 +1728,7 @@ HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.13.6
 HomeTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
 HomeTab:CreateParagraph({Title="Best combo", Content="Dash Behind On Hit (lands your M1 + puts you behind them) + M1 Hitbox. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
 HomeTab:CreateSection("Credits")
-HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.13.6 - by Valutix Hub Owner"})
+HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.14.0 - by Valutix Hub Owner"})
 
 CombatTab:CreateSection("Survival")
 CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
@@ -1847,6 +1909,24 @@ VisualsTab:CreateButton({Name="Add Aura", Callback=function() addAura(selAura) e
 VisualsTab:CreateButton({Name="Remove Aura", Callback=clearAura})
 VisualsTab:CreateButton({Name="Refresh Aura List", Callback=function() pcall(function() auraDrop:Refresh(auraNames()) end) end})
 
+VisualsTab:CreateSection("VFX Maker (make your own)")
+VisualsTab:CreateParagraph({Title="VFX Maker", Content="Build your own aura: shape, color, size, particles. Client-side (only you see it). Save Preset to reuse/share the config."})
+VisualsTab:CreateDropdown({Name="Shape", Options={"Ball","Block","Cylinder"}, CurrentOption={"Ball"}, Flag="VFXShape", Callback=function(o) S.VFXShape=(type(o)=="table" and o[1]) or o; if S.VFXOn then applyCustomVFX() end end})
+VisualsTab:CreateColorPicker({Name="Color", Color=Color3.fromRGB(255,40,40), Flag="VFXColor", Callback=function(c) S.VFXColor=c; if S.VFXOn then applyCustomVFX() end end})
+VisualsTab:CreateSlider({Name="Size", Range={1,30}, Increment=1, Suffix="studs", CurrentValue=6, Flag="VFXSize", Callback=function(v) S.VFXSize=v; if S.VFXOn then applyCustomVFX() end end})
+VisualsTab:CreateSlider({Name="Transparency", Range={0,100}, Increment=5, Suffix="%", CurrentValue=40, Flag="VFXTransp", Callback=function(v) S.VFXTransparency=v/100; if S.VFXOn then applyCustomVFX() end end})
+VisualsTab:CreateToggle({Name="Particles", CurrentValue=true, Flag="VFXParticles", Callback=function(v) S.VFXParticles=v; if S.VFXOn then applyCustomVFX() end end})
+VisualsTab:CreateSlider({Name="Particle Rate", Range={0,200}, Increment=5, Suffix="/s", CurrentValue=30, Flag="VFXRate", Callback=function(v) S.VFXRate=v; if S.VFXOn then applyCustomVFX() end end})
+VisualsTab:CreateToggle({Name="Apply My VFX", CurrentValue=false, Flag="VFXOn", Callback=function(v) S.VFXOn=v; if v then applyCustomVFX() else clearCustomVFX() end end})
+VisualsTab:CreateButton({Name="Save / Copy Preset", Callback=function()
+    local preset = string.format("shape=%s|r=%d|g=%d|b=%d|size=%d|transp=%d|particles=%s|rate=%d",
+        S.VFXShape, math.floor(S.VFXColor.R*255), math.floor(S.VFXColor.G*255), math.floor(S.VFXColor.B*255),
+        S.VFXSize, math.floor(S.VFXTransparency*100), tostring(S.VFXParticles), S.VFXRate)
+    pcall(function() if writefile then writefile("ValutixVFX.txt", preset) end end)
+    pcall(function() if setclipboard then setclipboard(preset) end end)
+    Rayfield:Notify({Title="VFX Maker", Content="Preset saved + copied to clipboard. Share it to let others rebuild it.", Duration=5})
+end})
+
 FarmTab:CreateSection("Auto Play")
 FarmTab:CreateToggle({Name="Auto Play (fight nearest enemy automatically)", CurrentValue=false, Flag="AutoPlay", Callback=function(v) S.AutoPlay=v end})
 FarmTab:CreateSlider({Name="Auto Play Search Range", Range={10,300}, Increment=5, Suffix="studs", CurrentValue=100, Flag="AutoPlayRange", Callback=function(v) S.AutoPlayRange=v end})
@@ -1926,4 +2006,4 @@ UtilityTab:CreateButton({Name="Unload Valutix Hub", Callback=function()
 end})
 
 
-Rayfield:Notify({Title="Valutix Hub v2.13.6", Content="Loaded - by Valutix Hub Owner", Duration=6})
+Rayfield:Notify({Title="Valutix Hub v2.14.0", Content="Loaded - by Valutix Hub Owner", Duration=6})
