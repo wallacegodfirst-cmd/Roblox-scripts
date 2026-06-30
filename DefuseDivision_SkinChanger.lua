@@ -460,9 +460,57 @@ local function LiveWorkspaceOverride()
     end
 end
 
+-- ── CUSTOM SKIN MIXER (Studio-style: take ANY skin's look and put it on ANY weapon) ──
+-- A skin's "look" = its SurfaceAppearance + texture + base colour. We grab ONE representative
+-- look from the source skin and paint it onto EVERY mesh of the target weapon — so a gun skin's
+-- material/colour lands on the knife (or vice-versa), for every skin type (SA, texture, or plain colour).
+_G.CustomMix = _G.CustomMix or {}     -- targetWeaponName -> {cat=sourceCategory, skin=sourceSkin}
+
+local function representativeLook(skinFolder)
+    local look = {}
+    if not skinFolder then return look end
+    for _, d in ipairs(skinFolder:GetDescendants()) do
+        if d:IsA("SurfaceAppearance") and not look.sa then look.sa = d end
+        if d:IsA("MeshPart") then
+            if d.TextureID ~= "" and not look.tex then look.tex = d.TextureID end
+            if not look.color then look.color = d.Color end
+        end
+    end
+    return look
+end
+local function applyLookToAll(root, look)
+    if not (root and look and (look.sa or look.tex or look.color)) then return end
+    local function paint(p)
+        if look.sa then
+            for _, old in ipairs(p:GetChildren()) do if old:IsA("SurfaceAppearance") then old:Destroy() end end
+            pcall(function() look.sa:Clone().Parent = p end)
+        elseif look.tex then pcall(function() p.TextureID = look.tex end) end
+        if look.color then pcall(function() p.Color = look.color end) end
+    end
+    if root:IsA("MeshPart") then paint(root) end
+    for _, d in ipairs(root:GetDescendants()) do if d:IsA("MeshPart") then paint(d) end end
+end
+local function applyCustomMixes()
+    if not next(_G.CustomMix) then return end
+    local roots = viewmodelRoots(); if LP.Character then roots[#roots+1] = LP.Character end
+    for target, src in pairs(_G.CustomMix) do
+        local sf = getSkinFolder(src.cat, src.skin)
+        if sf then
+            local look = representativeLook(sf)
+            local tmpl = findWeaponTemplate(target); if tmpl then applyLookToAll(tmpl, look) end   -- bake into blueprint
+            for _, root in ipairs(roots) do
+                local wm = findWeaponModel(root, target)
+                if wm then applyLookToAll(wm, look) end                                            -- viewmodel/character weapon only (never the arms)
+            end
+            if isKnifeName(target) and knifeClone then applyLookToAll(knifeClone, look) end          -- if the knife is model-swapped, paint the clone
+        end
+    end
+end
+
 task.spawn(function()
     while task.wait(0.3) do
         pcall(LiveWorkspaceOverride)
+        pcall(applyCustomMixes)
     end
 end)
 
@@ -589,4 +637,70 @@ for _, folder in ipairs(folders) do
     BuildDropdown(TabWeapons, folder)
 end
 
-Rayfield:Notify({Title="Skin Changer", Content=("Loaded %d weapon/skin categories. Pick a skin from any dropdown."):format(#folders), Duration=5})
+-- ── CUSTOMIZE SKIN tab (RBX-Studio-style mixer: put ANY skin on a knife or gun) ──
+do
+    local TabMix = Window:CreateTab("Customize Skin", 4483362458)
+    TabMix:CreateSection("Take a skin FROM one weapon, put it ON another")
+
+    local cats = {}
+    for _, f in ipairs(SkinsFolder:GetChildren()) do cats[#cats+1] = f.Name end
+    table.sort(cats, function(a,b) return a:lower() < b:lower() end)
+
+    local function skinsOf(cat)
+        local o = {}
+        local f = SkinsFolder:FindFirstChild(cat)
+        if f then for _, s in ipairs(f:GetChildren()) do o[#o+1] = s.Name end end
+        if #o == 0 then o[1] = "(no skins)" end
+        return o
+    end
+
+    local srcCat  = cats[1]
+    local srcSkin = skinsOf(srcCat)[1]
+    local tgt     = cats[1]
+    local srcSkinDrop
+
+    TabMix:CreateDropdown({
+        Name = "Source weapon  (copy the skin FROM)",
+        Options = cats, CurrentOption = {cats[1]}, MultipleOptions = false,
+        Callback = function(s)
+            srcCat = (type(s)=="table" and s[1]) or s
+            srcSkin = skinsOf(srcCat)[1]
+            if srcSkinDrop then pcall(function() srcSkinDrop:Refresh(skinsOf(srcCat), false) end) end
+        end,
+    })
+    srcSkinDrop = TabMix:CreateDropdown({
+        Name = "Source skin  (the look to copy)",
+        Options = skinsOf(srcCat), CurrentOption = {skinsOf(srcCat)[1]}, MultipleOptions = false,
+        Callback = function(s) srcSkin = (type(s)=="table" and s[1]) or s end,
+    })
+    TabMix:CreateDropdown({
+        Name = "Target weapon  (paint it ONTO — knife or gun)",
+        Options = cats, CurrentOption = {cats[1]}, MultipleOptions = false,
+        Callback = function(s) tgt = (type(s)=="table" and s[1]) or s end,
+    })
+
+    TabMix:CreateButton({
+        Name = "Apply skin  →  target",
+        Callback = function()
+            if not srcSkin or srcSkin == "(no skins)" then
+                Rayfield:Notify({Title="Customize", Content="Pick a real source skin first.", Duration=3}); return
+            end
+            _G.CustomMix[tgt] = {cat = srcCat, skin = srcSkin}
+            pcall(applyCustomMixes)
+            Rayfield:Notify({Title="Customize Skin", Content=(srcCat.." · "..srcSkin.."  →  "..tgt), Duration=4})
+        end,
+    })
+    TabMix:CreateButton({
+        Name = "Clear custom skin on this target",
+        Callback = function() _G.CustomMix[tgt] = nil; Rayfield:Notify({Title="Customize", Content="Cleared "..tgt, Duration=3}) end,
+    })
+    TabMix:CreateButton({
+        Name = "Clear ALL custom skins",
+        Callback = function() _G.CustomMix = {}; Rayfield:Notify({Title="Customize", Content="Cleared all custom skins.", Duration=3}) end,
+    })
+
+    TabMix:CreateSection("Tip")
+    TabMix:CreateParagraph({Title="How it works", Content="Grabs the source skin's SurfaceAppearance / texture / colour and paints it onto EVERY mesh of the target weapon. Works for any skin type. For knives this also paints the swapped model from the Knife Model tab. Combine with the Pos/Rot sliders, then Save Configuration."})
+end
+
+Rayfield:Notify({Title="Skin Changer", Content=("Loaded %d weapon/skin categories. New: 'Customize Skin' tab — put any skin on a knife/gun."):format(#folders), Duration=6})
