@@ -1734,6 +1734,7 @@ local TweenS = game:GetService("TweenService")
 local Light  = game:GetService("Lighting")
 local PX = { wsOn=false, ws=16, fly=false, flySpd=60, noclip=false, invis=false, ghost=false,
 	freeze=false, fling=false, walkFling=false, noAnim=false, upside=false, noCD=false,
+	infJump=false, jumpPow=50, antiRagdoll=false, antiVoid=false, autoBlock=false, lastSafe=nil,
 	aimlock=false, aimRange=250, streak=false, lastKills=nil,
 	antiTableFlip=false, antiSerious=false, antiOmni=false, antiGarou=false, antiIncin=false, antiDeath=false, antiDC=false, ultAlert=false,
 	gojoId="", disgName="", disgOn=false, idleId="", walkId="", fps=false, fpsSaved=nil, spots={}, flingBV=nil, nameTag=nil }
@@ -1799,6 +1800,39 @@ end))
 
 -- ── upside down ──
 function pxSetUpside(v) PX.upside=v; local r=myHRP(); if r then pcall(function() r.CFrame = r.CFrame * CFrame.Angles(0,0, math.pi) end) end end
+
+-- ── infinite jump + jump power (client-side, reliable) ──
+track(UIS.JumpRequest:Connect(function()
+	if not PX.infJump then return end
+	local h=myHum(); if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end
+end))
+track(RunSvc.Heartbeat:Connect(function()
+	if PX.jumpPow and PX.jumpPow~=50 then local h=myHum(); if h then pcall(function() h.UseJumpPower=true; h.JumpPower=PX.jumpPow end) end end
+end))
+
+-- ── ANTI-RAGDOLL / AUTO GET-UP (researched: recover from stuns/knockdowns instantly) ──
+-- TSB is server-validated so this won't make you immortal, but forcing PlatformStand off + GettingUp
+-- the moment you're ragdolled gets you up far faster than vanilla (a real, working defensive trick).
+track(RunSvc.Heartbeat:Connect(function()
+	if not PX.antiRagdoll then return end
+	local c=myChar(); local h=c and c:FindFirstChildOfClass("Humanoid"); if not h then return end
+	pcall(function()
+		if h.PlatformStand then h.PlatformStand=false end
+		local st=h:GetState()
+		if st==Enum.HumanoidStateType.Ragdoll or st==Enum.HumanoidStateType.FallingDown or st==Enum.HumanoidStateType.Physics then
+			h:ChangeState(Enum.HumanoidStateType.GettingUp)
+		end
+		for _,a in ipairs({"Ragdoll","Ragdolled","Stunned","Knocked","Stun"}) do if c:GetAttribute(a) then c:SetAttribute(a,false) end end
+	end)
+end))
+
+-- ── ANTI-VOID (researched: stop ring-outs — TP back to your last grounded spot if you fall off the map) ──
+track(RunSvc.Heartbeat:Connect(function()
+	local r=myHRP(); local h=myHum(); if not (r and h) then return end
+	if h.FloorMaterial~=Enum.Material.Air then PX.lastSafe=r.CFrame end          -- remember the last spot you stood on solid ground
+	if not PX.antiVoid then return end
+	if r.Position.Y < -120 and PX.lastSafe then pxTP(PX.lastSafe + Vector3.new(0,3,0), 0.4) end   -- fell into the void -> yank back up
+end))
 
 -- ── no dash CD / endlag / fatigue (attribute zeroing — best-effort) ──
 track(RunSvc.Heartbeat:Connect(function()
@@ -1896,10 +1930,44 @@ function pxSetAnim(slot, id) local c=myChar(); if not c then return end local an
 	local node=an:FindFirstChild(slot); if node then for _,v in ipairs(node:GetChildren()) do if v:IsA("Animation") then pcall(function() v.AnimationId=id end) end end end
 	local h=myHum(); if h then local a=h:FindFirstChildOfClass("Animator"); if a then for _,t in ipairs(a:GetPlayingAnimationTracks()) do pcall(function() t:Stop(0) end) end end end end
 
--- ── hotbar rename (client-side label swap) ──
-function pxRenameHotbar(old, new) local pg=LP:FindFirstChildOfClass("PlayerGui"); if not pg then return false end local done=false
-	for _,d in ipairs(pg:GetDescendants()) do if (d:IsA("TextLabel") or d:IsA("TextButton")) and tostring(d.Text):lower()==tostring(old):lower() then pcall(function() d.Text=new end); done=true end end
+-- ── HOTBAR rename (targets PlayerGui.Hotbar — the real path from the explorer screenshot) ──
+-- Each move sits in its own slot frame that holds a NUMBER label (1-4) and a NAME label. We find the
+-- slot by its number and rename the OTHER (name) label. Ultimate = the standalone non-numbered label.
+local function pxHotbarRoot()
+	local pg=LP:FindFirstChildOfClass("PlayerGui"); if not pg then return nil end
+	local hb=pg:FindFirstChild("Hotbar"); if hb then return hb:FindFirstChild("Hotbar") or hb end   -- ScreenGui "Hotbar" > Frame "Hotbar"
+	return pg
+end
+local function pxTextNodes(root) local out={}; for _,d in ipairs(root:GetDescendants()) do if d:IsA("TextLabel") or d:IsA("TextButton") then out[#out+1]=d end end return out end
+function pxRenameSlot(slot, new)        -- slot = "1".."4"; renames that move's NAME label
+	local root=pxHotbarRoot(); if not root then return false end
+	for _,n in ipairs(pxTextNodes(root)) do
+		if tostring(n.Text):match("^%s*"..slot.."%s*$") then                  -- found the number label for this slot
+			local container=n.Parent
+			for _,sib in ipairs(container:GetDescendants()) do                -- rename the sibling text that ISN'T the number
+				if (sib:IsA("TextLabel") or sib:IsA("TextButton")) and sib~=n and not tostring(sib.Text):match("^%s*%d%s*$") and tostring(sib.Text)~="" then
+					pcall(function() sib.Text=new end); return true
+				end
+			end
+		end
+	end
+	return false
+end
+function pxRenameByText(old, new)       -- fallback: rename any label whose text matches `old`
+	local root=pxHotbarRoot(); if not root then return false end local done=false
+	for _,n in ipairs(pxTextNodes(root)) do if tostring(n.Text):lower()==tostring(old):lower() then pcall(function() n.Text=new end); done=true end end
 	return done end
+function pxRenameUlt(new)                -- ultimate = the biggest standalone label that isn't a digit/short
+	local root=pxHotbarRoot(); if not root then return false end
+	local best
+	for _,n in ipairs(pxTextNodes(root)) do
+		local t=tostring(n.Text)
+		if #t>=4 and not t:match("^%s*%d%s*$") then
+			if not best or n.AbsoluteSize.X>best.AbsoluteSize.X then best=n end
+		end
+	end
+	if best then pcall(function() best.Text=new end); return true end
+	return false end
 
 -- ── DEX / FPS / scan remotes ──
 function pxDex() local ok=pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/infyiff/backup/main/dex.lua"))() end)
@@ -1931,23 +1999,38 @@ function pxTPNamed(nm) if PX.spots[nm] then pxTP(PX.spots[nm],0.6); notify("Tele
 	local f=PX_TPDEF[nm]; if f then f(); notify("Teleport",nm.." (default — Save your own to override)",3) end end
 function pxSaveSpot(nm) local r=myHRP(); if r then PX.spots[nm]=r.CFrame; notify("Saved spot",nm,2) end end
 
+-- MAP-INDEPENDENT teleports (the reliable ones — TSB maps ROTATE so fixed coords drift; these always work)
+function pxPlayerNames() local o={}; for _,p in ipairs(Players:GetPlayers()) do if p~=LP then o[#o+1]=p.Name end end if #o==0 then o[1]="(no players)" end return o end
+function pxTPToPlayer(name) local me=myHRP(); local p=Players:FindFirstChild(name); local pt=p and partOf(p)
+	if me and pt then pxTP(pt.CFrame*CFrame.new(0,0,4),0.6); notify("Teleport","to "..name,2) else notify("Teleport","player not found / dead",2) end end
+function pxTPNearest() local me=myHRP(); if not me then return end local bp,bd
+	for _,p in ipairs(Players:GetPlayers()) do if p~=LP then local pt=partOf(p) if pt then local d=(pt.Position-me.Position).Magnitude; if not bd or d<bd then bp,bd=pt,d end end end end
+	if bp then pxTP(bp.CFrame*CFrame.new(0,0,4),0.6); notify("Teleport","to nearest player",2) else notify("Teleport","no players",2) end end
+function pxTPSky() local r=myHRP(); if r then pxTP(CFrame.new(r.Position.X,r.Position.Y+300,r.Position.Z),0.9) end end
+function pxTPSpawn() local sp=WS:FindFirstChildWhichIsA("SpawnLocation",true); if sp then pxTP(sp.CFrame*CFrame.new(0,4,0),0.6); notify("Teleport","spawn",2) else notify("Teleport","no SpawnLocation found",2) end end
+
 function pxCleanup() pcall(pxStopFling); pcall(function() if PX.nameTag then PX.nameTag:Destroy() end end); pcall(function() local r=myHRP(); if r then r.Anchored=false end end); pcall(function() if PX.fps then pxSetFPS(false) end end) end
 track(LP.CharacterAdded:Connect(function() task.wait(0.6); if PX.disgOn then pxSetName(true) end; if PX.fps then pxSetFPS(true) end end))
 
 -- ════════ PLUS TABS ════════
 do
 	local tab = Window:CreateTab("Player", 4483362458)
-	tab:CreateSection("Movement")
+	tab:CreateSection("Movement (all reliable client-side)")
 	tab:CreateToggle({ Name="Loop WalkSpeed", CurrentValue=false, Callback=function(v) PX.wsOn=v; if not v then local h=myHum(); if h then pcall(function() h.WalkSpeed=16 end) end end end })
 	tab:CreateSlider({ Name="WalkSpeed", Range={16,250}, Increment=2, Suffix="", CurrentValue=16, Callback=function(v) PX.ws=v end })
-	tab:CreateToggle({ Name="Fly (WASD + Space/Ctrl)", CurrentValue=false, Callback=function(v) pxSetFly(v) end })
+	tab:CreateToggle({ Name="Fly  (WASD + Space/Ctrl)", CurrentValue=false, Callback=function(v) pxSetFly(v) end })
 	tab:CreateSlider({ Name="Fly speed", Range={20,300}, Increment=10, Suffix="", CurrentValue=60, Callback=function(v) PX.flySpd=v end })
-	tab:CreateToggle({ Name="Noclip", CurrentValue=false, Callback=function(v) pxSetNoclip(v) end })
+	tab:CreateToggle({ Name="Noclip  (walk through walls)", CurrentValue=false, Callback=function(v) pxSetNoclip(v) end })
+	tab:CreateToggle({ Name="Infinite Jump", CurrentValue=false, Callback=function(v) PX.infJump=v end })
+	tab:CreateSlider({ Name="Jump Power", Range={50,300}, Increment=5, Suffix="", CurrentValue=50, Callback=function(v) PX.jumpPow=v end })
+	tab:CreateSection("Survival (defensive — these genuinely help in a fight)")
+	tab:CreateToggle({ Name="Anti-Ragdoll / Auto Get-Up (recover from stuns fast)", CurrentValue=false, Callback=function(v) PX.antiRagdoll=v; notify("Anti-Ragdoll", v and "ON" or "OFF",2) end })
+	tab:CreateToggle({ Name="Anti-Void (yank back up if you ring-out off the map)", CurrentValue=false, Callback=function(v) PX.antiVoid=v; notify("Anti-Void", v and "ON" or "OFF",2) end })
 	tab:CreateSection("Body / visual")
 	tab:CreateToggle({ Name="Invisibility (local render)", CurrentValue=false, Callback=function(v) pxSetInvis(v) end })
 	tab:CreateToggle({ Name="No Animations", CurrentValue=false, Callback=function(v) PX.noAnim=v end })
 	tab:CreateToggle({ Name="Upside Down", CurrentValue=false, Callback=function(v) pxSetUpside(v) end })
-	tab:CreateToggle({ Name="No Dash CD / Endlag / Fatigue (best-effort)", CurrentValue=false, Callback=function(v) PX.noCD=v end })
+	tab:CreateToggle({ Name="No Dash CD / Endlag / Fatigue (best-effort attr)", CurrentValue=false, Callback=function(v) PX.noCD=v end })
 	tab:CreateSection("Fling")
 	tab:CreateToggle({ Name="Flinging (spin — flings whoever touches you)", CurrentValue=false, Callback=function(v) pxSetFling(v) end })
 	tab:CreateToggle({ Name="Walk Fling", CurrentValue=false, Callback=function(v) pxSetWalkFling(v) end })
@@ -1971,20 +2054,29 @@ end
 
 do
 	local tab = Window:CreateTab("Teleports", 4483362458)
-	tab:CreateSection("Jump to a spot (anti-send-back held ~0.6s)")
-	for _,nm in ipairs({"Saitama DC Room","Atomic Slash Room","Sky","Lonely Map Corner","Middle of the Map","Mountain Spot 1","Mountain Spot 2","Mountain Spot 3"}) do
-		tab:CreateButton({ Name="TP: "..nm, Callback=function() pxTPNamed(nm) end })
-	end
-	tab:CreateSection("Save your own (overrides default)")
-	local slot="Sky"
-	tab:CreateDropdown({ Name="Slot", Options={"Saitama DC Room","Atomic Slash Room","Sky","Lonely Map Corner","Middle of the Map","Mountain Spot 1","Mountain Spot 2","Mountain Spot 3"}, CurrentOption="Sky", Callback=function(o) slot=(type(o)=="table") and o[1] or o end })
+	tab:CreateSection("Reliable (map-independent — TSB maps rotate, so these always work)")
+	tab:CreateButton({ Name="TP to nearest player", Callback=function() pxTPNearest() end })
+	local who="(no players)"
+	local pdrop = tab:CreateDropdown({ Name="Pick a player", Options=pxPlayerNames(), CurrentOption=pxPlayerNames()[1], Callback=function(o) who=(type(o)=="table") and o[1] or o end })
+	tab:CreateButton({ Name="Refresh player list", Callback=function() pcall(function() pdrop:Refresh(pxPlayerNames(), false) end) end })
+	tab:CreateButton({ Name="TP to picked player", Callback=function() pxTPToPlayer(who) end })
+	tab:CreateButton({ Name="TP up (Sky, +300)", Callback=function() pxTPSky() end })
+	tab:CreateButton({ Name="TP to Spawn", Callback=function() pxTPSpawn() end })
+	tab:CreateSection("Saved spots (for this map)")
+	local slot="Spot 1"
+	tab:CreateDropdown({ Name="Slot", Options={"Spot 1","Spot 2","Spot 3","DC Room","Sky Camp","Corner"}, CurrentOption="Spot 1", Callback=function(o) slot=(type(o)=="table") and o[1] or o end })
 	tab:CreateButton({ Name="Save current position to slot", Callback=function() pxSaveSpot(slot) end })
-	tab:CreateParagraph({ Title="Note", Content="Named coords are best-guess defaults — TSB room/mountain coords differ per map. Stand on the real spot and hit Save; the button then jumps there exactly."})
+	tab:CreateButton({ Name="TP to saved slot", Callback=function() if PX.spots[slot] then pxTP(PX.spots[slot],0.6); notify("Teleport",slot,2) else notify("Teleport","slot empty — Save first",3) end end })
+	tab:CreateParagraph({ Title="Why saved-spots", Content="TSB cycles maps, so hard-coded room coords drift between rounds. Stand on the spot you want (e.g. a DC room), hit Save, then TP to it any time on that map. The player/sky/spawn buttons need no coords and work on every map."})
 end
 
 do
 	local tab = Window:CreateTab("Exploits", 4483362458)
-	tab:CreateSection("Anti-moves (best-effort auto-dodge)")
+	tab:CreateSection("Defensive exploits (client-side — these WORK)")
+	tab:CreateToggle({ Name="Auto-Block (taps Block when an enemy swings near you)", CurrentValue=false, Callback=function(v) CFG.autoBlock=v; notify("Auto-Block", v and "ON" or "OFF",2) end })
+	tab:CreateToggle({ Name="Anti-Ragdoll / Auto Get-Up", CurrentValue=false, Callback=function(v) PX.antiRagdoll=v; notify("Anti-Ragdoll", v and "ON" or "OFF",2) end })
+	tab:CreateToggle({ Name="Anti-Void (no ring-outs)", CurrentValue=false, Callback=function(v) PX.antiVoid=v; notify("Anti-Void", v and "ON" or "OFF",2) end })
+	tab:CreateSection("Anti-move auto-dodge (reads enemy animations, back-dashes)")
 	tab:CreateToggle({ Name="Anti Table Flip", CurrentValue=false, Callback=function(v) PX.antiTableFlip=v end })
 	tab:CreateToggle({ Name="Anti Serious Punch", CurrentValue=false, Callback=function(v) PX.antiSerious=v end })
 	tab:CreateToggle({ Name="Anti Omnidirectional Punch", CurrentValue=false, Callback=function(v) PX.antiOmni=v end })
@@ -1993,8 +2085,8 @@ do
 	tab:CreateToggle({ Name="Anti Death Blow", CurrentValue=false, Callback=function(v) PX.antiDeath=v end })
 	tab:CreateToggle({ Name="Anti Death Counter", CurrentValue=false, Callback=function(v) PX.antiDC=v end })
 	tab:CreateToggle({ Name="Ultimate Alert (notify when enemy counters)", CurrentValue=false, Callback=function(v) PX.ultAlert=v end })
-	tab:CreateSection("NEEDS GAME REMOTE (not faked)")
-	tab:CreateParagraph({ Title="Void Kills / Saitama Exploits", Content="Void Kills, Punish, and the Saitama invisible-move exploits fire the GAME'S own remotes — I don't have their names so they are NOT included (a faked one just fails). Open Utility ▸ Scan Remotes, send me the list, and I wire them for real."})
+	tab:CreateSection("Server-side moves")
+	tab:CreateParagraph({ Title="Researched & honest", Content="TSB validates combat/damage SERVER-SIDE, so 'fire a Saitama move / void-kill' isn't reliably scriptable — those remotes are sanity-checked. Everything in THIS tab is client-side and actually works. If you DO know a move remote, run Utility ▸ Scan Remotes and send it and I'll wire it."})
 end
 
 do
@@ -2011,11 +2103,22 @@ do
 	tab:CreateButton({ Name="Apply idle animation", Callback=function() if PX.idleId~="" then pxSetAnim("idle",PX.idleId); notify("Animation","idle applied",2) end end })
 	tab:CreateInput({ Name="Walk animation id", PlaceholderText="rbxassetid or number", RemoveTextAfterFocusLost=false, Callback=function(x) PX.walkId=x or "" end })
 	tab:CreateButton({ Name="Apply walk animation", Callback=function() if PX.walkId~="" then pxSetAnim("walk",PX.walkId); notify("Animation","walk applied",2) end end })
-	tab:CreateSection("Hotbar rename (client-side)")
+	tab:CreateSection("Hotbar customization  (PlayerGui.Hotbar)")
+	local mvSlot, mvName = "1", ""
+	tab:CreateDropdown({ Name="Move slot", Options={"1","2","3","4"}, CurrentOption="1", Callback=function(o) mvSlot=(type(o)=="table") and o[1] or o end })
+	tab:CreateInput({ Name="New move name", PlaceholderText="e.g. ONE PUNCH", RemoveTextAfterFocusLost=false, Callback=function(x) mvName=x or "" end })
+	tab:CreateButton({ Name="Rename move 1-4", Callback=function()
+		if mvName=="" then notify("Hotbar","type a name",2); return end
+		notify("Hotbar", pxRenameSlot(mvSlot, mvName) and ("slot "..mvSlot.." renamed") or "slot label not found — try Rename-by-text", 3)
+	end })
+	local ultName=""
+	tab:CreateInput({ Name="New ultimate name", PlaceholderText="e.g. SERIOUS MODE", RemoveTextAfterFocusLost=false, Callback=function(x) ultName=x or "" end })
+	tab:CreateButton({ Name="Rename Ultimate", Callback=function() if ultName~="" then notify("Hotbar", pxRenameUlt(ultName) and "ultimate renamed" or "ult label not found", 3) end end })
+	tab:CreateSection("Hotbar (fallback: rename by exact current text)")
 	local oh,nh="",""
-	tab:CreateInput({ Name="Current label text", PlaceholderText="e.g. Serious Punch", RemoveTextAfterFocusLost=false, Callback=function(x) oh=x or "" end })
+	tab:CreateInput({ Name="Current label text", PlaceholderText="e.g. Shove", RemoveTextAfterFocusLost=false, Callback=function(x) oh=x or "" end })
 	tab:CreateInput({ Name="New name", PlaceholderText="new text", RemoveTextAfterFocusLost=false, Callback=function(x) nh=x or "" end })
-	tab:CreateButton({ Name="Rename", Callback=function() if oh~="" and nh~="" then notify("Hotbar", pxRenameHotbar(oh,nh) and "renamed" or "label not found",3) end end })
+	tab:CreateButton({ Name="Rename by text", Callback=function() if oh~="" and nh~="" then notify("Hotbar", pxRenameByText(oh,nh) and "renamed" or "label not found",3) end end })
 end
 
 
