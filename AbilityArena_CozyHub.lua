@@ -1,4 +1,4 @@
--- Valutix Hub | Ability Arena | v2.14.0
+-- Valutix Hub | Ability Arena | v2.15.0
 -- by Valutix Hub Owner
 -- v2.8.0: Kill Aura fixed (crash bug killed the loop), real clicking, One Shot Punch
 --         remote wired into every M1, fixed M1 packet bytes, buffer sends, hitbox
@@ -106,7 +106,9 @@ local S = {
     AutoPlay=false, AutoPlayRange=100,
     AntiAFK=false, InstantRespawn=false, ClickTP=false,
     GrabDelay=3, GrabReturn=true, M1Spy=false,
-    VFXOn=false, VFXShape="Ball", VFXColor=Color3.fromRGB(255,40,40), VFXSize=6, VFXTransparency=0.4, VFXParticles=true, VFXRate=30,
+    VFXOn=false, VFXShape="Ball", VFXShapeOn=true, VFXColor=Color3.fromRGB(255,40,40), VFXColor2=Color3.fromRGB(255,180,40),
+    VFXSize=6, VFXTransparency=0.4, VFXParticles=true, VFXTexture="Sparkles", VFXRate=80, VFXSpeed=6, VFXSpread=180, VFXPSize=1.2,
+    VFXRainbow=false, VFXLight=true, VFXBrightness=5, VFXRings=false, VFXRingCount=2, VFXSpin=2, VFXBeams=false, VFXTrail=true,
     TPTarget=nil,
 }
 
@@ -702,51 +704,171 @@ end)
 -- see it (a server-side / "publish to everyone" VFX needs the game's broadcast
 -- remote, which isn't exposed here). "Publish" here = save/share the preset config.
 -- ============================================================
-local customVFX = {}
+local VFX_TEX = {
+    Sparkles = "rbxasset://textures/particles/sparkles_main.dds",
+    Fire     = "rbxasset://textures/particles/fire_main.dds",
+    Smoke    = "rbxasset://textures/particles/smoke_main.dds",
+    Square   = "",
+}
+local vfxObjs, vfxRings, vfxChar = {}, {}, nil
 local function clearCustomVFX()
-    for _, p in ipairs(customVFX) do pcall(function() p:Destroy() end) end
-    customVFX = {}
+    for _, o in ipairs(vfxObjs) do pcall(function() o:Destroy() end) end
+    vfxObjs, vfxRings = {}, nil
+    vfxRings = {}
+end
+local function vfxMount()
+    local char = getChar(); if not char then return nil end
+    return char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+        or char:FindFirstChild("HumanoidRootPart") or charPart(char)
+end
+local function vfxColorSeq()
+    if (not S.VFXRainbow) and S.VFXColor2 then
+        return ColorSequence.new({ColorSequenceKeypoint.new(0, S.VFXColor), ColorSequenceKeypoint.new(1, S.VFXColor2)})
+    end
+    return ColorSequence.new(S.VFXColor)
 end
 local function applyCustomVFX()
     clearCustomVFX()
-    local char = getChar(); if not char then return end
-    local mount = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
-                or char:FindFirstChild("HumanoidRootPart") or charPart(char)
-    if not mount then return end
-    local part = Instance.new("Part")
-    part.Name = "MFHCustomVFX"
-    part.Shape = (S.VFXShape == "Block" and Enum.PartType.Block)
-              or (S.VFXShape == "Cylinder" and Enum.PartType.Cylinder)
-              or Enum.PartType.Ball
-    part.Size = Vector3.new(S.VFXSize, S.VFXSize, S.VFXSize)
-    part.Color = S.VFXColor
-    part.Material = Enum.Material.Neon
-    part.Transparency = S.VFXTransparency
-    part.CanCollide = false; part.CanQuery = false; part.Massless = true; part.Anchored = false
-    pcall(function() part.CFrame = mount.CFrame end)
-    part.Parent = mount
-    local w = Instance.new("WeldConstraint"); w.Part0 = mount; w.Part1 = part; w.Parent = part
-    customVFX[#customVFX+1] = part
+    local mount = vfxMount(); if not mount then return end
+    vfxChar = getChar()
+    -- core glowing shape
+    if S.VFXShapeOn then
+        local part = Instance.new("Part")
+        part.Name = "MFHVFXCore"
+        part.Shape = (S.VFXShape=="Block" and Enum.PartType.Block) or (S.VFXShape=="Cylinder" and Enum.PartType.Cylinder) or Enum.PartType.Ball
+        part.Size = Vector3.new(S.VFXSize, S.VFXSize, S.VFXSize)
+        part.Color = S.VFXColor; part.Material = Enum.Material.Neon; part.Transparency = S.VFXTransparency
+        part.CanCollide=false; part.CanQuery=false; part.Massless=true; part.Anchored=false
+        pcall(function() part.CFrame = mount.CFrame end); part.Parent = mount
+        local w = Instance.new("WeldConstraint"); w.Part0=mount; w.Part1=part; w.Parent=part
+        vfxObjs[#vfxObjs+1] = part
+    end
+    -- particles
     if S.VFXParticles then
-        local att = Instance.new("Attachment", part)
+        local att = Instance.new("Attachment", mount); vfxObjs[#vfxObjs+1] = att
         local pe = Instance.new("ParticleEmitter", att)
-        pe.Color = ColorSequence.new(S.VFXColor)
+        pe.Texture = VFX_TEX[S.VFXTexture] or VFX_TEX.Sparkles
+        pe.Color = vfxColorSeq()
         pe.Rate = S.VFXRate
-        pe.Lifetime = NumberRange.new(0.4, 1.3)
-        pe.Speed = NumberRange.new(2, 6)
-        pe.Size = NumberSequence.new(math.max(0.3, S.VFXSize * 0.15))
-        pe.LightEmission = 0.7
+        pe.Lifetime = NumberRange.new(S.VFXSpeed > 0 and 0.5 or 0.4, math.max(0.6, S.VFXSize/3))
+        pe.Speed = NumberRange.new(S.VFXSpeed*0.4, S.VFXSpeed)
+        pe.SpreadAngle = Vector2.new(S.VFXSpread, S.VFXSpread)
+        pe.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, S.VFXPSize), NumberSequenceKeypoint.new(1, 0)})
+        pe.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0,0.15), NumberSequenceKeypoint.new(1,1)})
+        pe.LightEmission = 0.85; pe.LightInfluence = 0
+        pe.Rotation = NumberRange.new(0,360); pe.RotSpeed = NumberRange.new(-120,120)
+        vfxObjs[#vfxObjs+1] = pe
+    end
+    -- light
+    if S.VFXLight then
+        local lp = Instance.new("PointLight", mount)
+        lp.Color = S.VFXColor; lp.Brightness = S.VFXBrightness; lp.Range = math.max(8, S.VFXSize*2)
+        vfxObjs[#vfxObjs+1] = lp
+    end
+    -- spinning rings (neon discs orbiting you)
+    if S.VFXRings then
+        for i = 1, math.max(1, S.VFXRingCount) do
+            local ring = Instance.new("Part")
+            ring.Name="MFHVFXRing"; ring.Shape=Enum.PartType.Cylinder
+            ring.Size = Vector3.new(0.25, S.VFXSize*1.7, S.VFXSize*1.7)
+            ring.Color = (S.VFXColor2 and i%2==0) and S.VFXColor2 or S.VFXColor
+            ring.Material=Enum.Material.Neon; ring.Transparency=0.35
+            ring.CanCollide=false; ring.CanQuery=false; ring.Massless=true; ring.Anchored=true
+            ring.Parent = workspace
+            vfxObjs[#vfxObjs+1] = ring
+            vfxRings[#vfxRings+1] = {part=ring, phase=(i/S.VFXRingCount)*math.pi*2, tilt=i*35}
+        end
+    end
+    -- beams / pillars circling you
+    if S.VFXBeams then
+        for i = 1, 6 do
+            local b = Instance.new("Part")
+            b.Name="MFHVFXBeam"; b.Shape=Enum.PartType.Cylinder
+            b.Size = Vector3.new(S.VFXSize*1.6, 0.35, 0.35)
+            b.Color = (S.VFXColor2 and i%2==0) and S.VFXColor2 or S.VFXColor
+            b.Material=Enum.Material.Neon; b.Transparency=0.35
+            b.CanCollide=false; b.CanQuery=false; b.Massless=true; b.Anchored=true
+            b.Parent = workspace
+            vfxObjs[#vfxObjs+1] = b
+            vfxRings[#vfxRings+1] = {part=b, phase=(i/6)*math.pi*2, beam=true}
+        end
+    end
+    -- trail
+    if S.VFXTrail then
+        local a0=Instance.new("Attachment", mount); a0.Position=Vector3.new(0,-1.6,0)
+        local a1=Instance.new("Attachment", mount); a1.Position=Vector3.new(0,1.6,0)
+        local tr=Instance.new("Trail", mount)
+        tr.Attachment0=a0; tr.Attachment1=a1; tr.Lifetime=0.6; tr.LightEmission=0.85
+        tr.WidthScale=NumberSequence.new({NumberSequenceKeypoint.new(0,1), NumberSequenceKeypoint.new(1,0)})
+        tr.Color = vfxColorSeq()
+        vfxObjs[#vfxObjs+1]=a0; vfxObjs[#vfxObjs+1]=a1; vfxObjs[#vfxObjs+1]=tr
     end
 end
--- keep it alive + re-apply on respawn
-task.spawn(function()
-    while task.wait(0.5) do
-        if S.VFXOn then
-            local alive = customVFX[1] and customVFX[1].Parent
-            if not alive then pcall(applyCustomVFX) end
+-- animation: rainbow hue cycle + spin rings/beams around you
+hook(RunService.RenderStepped, function()
+    if not S.VFXOn then return end
+    if S.VFXRainbow then
+        local col = Color3.fromHSV((tick()*0.2) % 1, 1, 1)
+        for _, o in ipairs(vfxObjs) do
+            if o:IsA("ParticleEmitter") then o.Color = ColorSequence.new(col)
+            elseif o:IsA("Trail") then o.Color = ColorSequence.new(col)
+            elseif o:IsA("PointLight") then o.Color = col
+            elseif o:IsA("Part") then o.Color = col end
+        end
+    end
+    local mount = vfxMount()
+    if mount and #vfxRings > 0 then
+        local t = tick() * S.VFXSpin
+        for _, r in ipairs(vfxRings) do
+            if r.part and r.part.Parent then
+                if r.beam then
+                    local ang = r.phase + t
+                    local off = Vector3.new(math.cos(ang)*S.VFXSize, 0, math.sin(ang)*S.VFXSize)
+                    r.part.CFrame = mount.CFrame * CFrame.new(off) * CFrame.Angles(0,0,math.rad(90))
+                else
+                    r.part.CFrame = mount.CFrame * CFrame.Angles(math.rad(r.tilt), r.phase + t, 0) * CFrame.Angles(0,0,math.rad(90))
+                end
+            end
         end
     end
 end)
+-- keep alive + re-apply on respawn
+task.spawn(function()
+    while task.wait(0.5) do
+        if S.VFXOn then
+            if getChar() ~= vfxChar or not (vfxObjs[1] and vfxObjs[1].Parent) then pcall(applyCustomVFX) end
+        end
+    end
+end)
+
+-- ── VFX PRESETS (one-click aura looks) ─────────────────────────
+local VFX_PRESETS = {
+    Fire      = {Shape="Ball",Color=Color3.fromRGB(255,90,0),Color2=Color3.fromRGB(255,210,0),Texture="Fire",Rate=140,Speed=11,Spread=45,Light=true,Brightness=7,Rings=false,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=5,Transp=0.5},
+    Ice       = {Shape="Ball",Color=Color3.fromRGB(120,220,255),Color2=Color3.fromRGB(225,250,255),Texture="Sparkles",Rate=90,Speed=4,Spread=160,Light=true,Brightness=4,Rings=true,RingCount=2,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=5,Transp=0.5},
+    Lightning = {Shape="Ball",Color=Color3.fromRGB(120,180,255),Color2=Color3.fromRGB(255,255,255),Texture="Sparkles",Rate=170,Speed=16,Spread=180,Light=true,Brightness=9,Rings=false,Beams=true,Trail=false,Rainbow=false,ShapeOn=false,Size=4,Transp=0.5},
+    Galaxy    = {Shape="Ball",Color=Color3.fromRGB(150,60,255),Color2=Color3.fromRGB(60,160,255),Texture="Sparkles",Rate=110,Speed=3,Spread=200,Light=true,Brightness=5,Rings=true,RingCount=3,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=6,Transp=0.6},
+    Shadow    = {Shape="Ball",Color=Color3.fromRGB(70,0,100),Color2=Color3.fromRGB(20,20,30),Texture="Smoke",Rate=90,Speed=3,Spread=180,Light=true,Brightness=3,Rings=false,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=6,Transp=0.5},
+    Holy      = {Shape="Ball",Color=Color3.fromRGB(255,240,150),Color2=Color3.fromRGB(255,255,255),Texture="Sparkles",Rate=120,Speed=5,Spread=160,Light=true,Brightness=9,Rings=true,RingCount=2,Beams=true,Trail=false,Rainbow=false,ShapeOn=true,Size=5,Transp=0.6},
+    Toxic     = {Shape="Ball",Color=Color3.fromRGB(120,255,40),Color2=Color3.fromRGB(40,160,0),Texture="Smoke",Rate=90,Speed=4,Spread=170,Light=true,Brightness=4,Rings=false,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=5,Transp=0.5},
+    Rainbow   = {Shape="Ball",Texture="Sparkles",Rate=140,Speed=6,Spread=180,Light=true,Brightness=6,Rings=true,RingCount=3,Beams=false,Trail=true,Rainbow=true,ShapeOn=true,Size=5,Transp=0.4},
+    Void      = {Shape="Ball",Color=Color3.fromRGB(25,0,35),Color2=Color3.fromRGB(150,0,210),Texture="Smoke",Rate=110,Speed=2,Spread=200,Light=true,Brightness=4,Rings=true,RingCount=2,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=7,Transp=0.4},
+    Sakura    = {Shape="Ball",Color=Color3.fromRGB(255,150,200),Color2=Color3.fromRGB(255,215,235),Texture="Sparkles",Rate=80,Speed=3,Spread=200,Light=true,Brightness=3,Rings=false,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=5,Transp=0.6},
+    Nuke      = {Shape="Ball",Color=Color3.fromRGB(255,150,0),Color2=Color3.fromRGB(255,40,0),Texture="Fire",Rate=110,Speed=14,Spread=200,Light=true,Brightness=10,Rings=true,RingCount=2,Beams=true,Trail=false,Rainbow=false,ShapeOn=true,Size=8,Transp=0.3},
+}
+local function applyVFXPreset(name)
+    local pr = VFX_PRESETS[name]; if not pr then return end
+    S.VFXShape=pr.Shape or S.VFXShape; S.VFXShapeOn = pr.ShapeOn~=false
+    if pr.Color then S.VFXColor=pr.Color end
+    if pr.Color2 then S.VFXColor2=pr.Color2 end
+    S.VFXTexture=pr.Texture or S.VFXTexture; S.VFXRate=pr.Rate or S.VFXRate
+    S.VFXSpeed=pr.Speed or S.VFXSpeed; S.VFXSpread=pr.Spread or S.VFXSpread
+    S.VFXLight = pr.Light~=false; S.VFXBrightness=pr.Brightness or S.VFXBrightness
+    S.VFXRings = pr.Rings==true; S.VFXRingCount=pr.RingCount or S.VFXRingCount
+    S.VFXBeams = pr.Beams==true; S.VFXTrail = pr.Trail==true; S.VFXRainbow = pr.Rainbow==true
+    S.VFXSize=pr.Size or S.VFXSize; S.VFXTransparency=pr.Transp or S.VFXTransparency
+    S.VFXParticles = true
+    if S.VFXOn then applyCustomVFX() end
+end
 
 -- ============================================================
 -- SURVIVAL (anti ragdoll / push / void)
@@ -1666,7 +1788,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Valutix Hub | Ability Arena",
     LoadingTitle = "Valutix Hub",
-    LoadingSubtitle = "v2.14.0 - by Valutix Hub Owner",
+    LoadingSubtitle = "v2.15.0 - by Valutix Hub Owner",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -1724,11 +1846,11 @@ local UtilityTab   = Window:CreateTab("Utility",   "wrench")
 
 -- \u2500\u2500 HOME (landing page) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 HomeTab:CreateSection("Welcome")
-HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.14.0\nPick a tab on the left to get started."})
+HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.15.0\nPick a tab on the left to get started."})
 HomeTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
 HomeTab:CreateParagraph({Title="Best combo", Content="Dash Behind On Hit (lands your M1 + puts you behind them) + M1 Hitbox. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
 HomeTab:CreateSection("Credits")
-HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.14.0 - by Valutix Hub Owner"})
+HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.15.0 - by Valutix Hub Owner"})
 
 CombatTab:CreateSection("Survival")
 CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
@@ -1909,22 +2031,45 @@ VisualsTab:CreateButton({Name="Add Aura", Callback=function() addAura(selAura) e
 VisualsTab:CreateButton({Name="Remove Aura", Callback=clearAura})
 VisualsTab:CreateButton({Name="Refresh Aura List", Callback=function() pcall(function() auraDrop:Refresh(auraNames()) end) end})
 
-VisualsTab:CreateSection("VFX Maker (make your own)")
-VisualsTab:CreateParagraph({Title="VFX Maker", Content="Build your own aura: shape, color, size, particles. Client-side (only you see it). Save Preset to reuse/share the config."})
-VisualsTab:CreateDropdown({Name="Shape", Options={"Ball","Block","Cylinder"}, CurrentOption={"Ball"}, Flag="VFXShape", Callback=function(o) S.VFXShape=(type(o)=="table" and o[1]) or o; if S.VFXOn then applyCustomVFX() end end})
-VisualsTab:CreateColorPicker({Name="Color", Color=Color3.fromRGB(255,40,40), Flag="VFXColor", Callback=function(c) S.VFXColor=c; if S.VFXOn then applyCustomVFX() end end})
-VisualsTab:CreateSlider({Name="Size", Range={1,30}, Increment=1, Suffix="studs", CurrentValue=6, Flag="VFXSize", Callback=function(v) S.VFXSize=v; if S.VFXOn then applyCustomVFX() end end})
-VisualsTab:CreateSlider({Name="Transparency", Range={0,100}, Increment=5, Suffix="%", CurrentValue=40, Flag="VFXTransp", Callback=function(v) S.VFXTransparency=v/100; if S.VFXOn then applyCustomVFX() end end})
-VisualsTab:CreateToggle({Name="Particles", CurrentValue=true, Flag="VFXParticles", Callback=function(v) S.VFXParticles=v; if S.VFXOn then applyCustomVFX() end end})
-VisualsTab:CreateSlider({Name="Particle Rate", Range={0,200}, Increment=5, Suffix="/s", CurrentValue=30, Flag="VFXRate", Callback=function(v) S.VFXRate=v; if S.VFXOn then applyCustomVFX() end end})
-VisualsTab:CreateToggle({Name="Apply My VFX", CurrentValue=false, Flag="VFXOn", Callback=function(v) S.VFXOn=v; if v then applyCustomVFX() else clearCustomVFX() end end})
+VisualsTab:CreateSection("AURA / VFX MAKER")
+VisualsTab:CreateParagraph({Title="Aura Maker", Content="Build your own aura like the Aura games - presets, dual colour / rainbow, particles, light, spinning rings, beams, trail. Client-side (only you see it)."})
+local function reVFX() if S.VFXOn then applyCustomVFX() end end
+VisualsTab:CreateToggle({Name="Apply My Aura", CurrentValue=false, Flag="VFXOn", Callback=function(v) S.VFXOn=v; if v then applyCustomVFX() else clearCustomVFX() end end})
+VisualsTab:CreateDropdown({Name="Preset", Options={"Fire","Ice","Lightning","Galaxy","Shadow","Holy","Toxic","Rainbow","Void","Sakura","Nuke"}, CurrentOption={}, Flag="VFXPreset", Callback=function(o) applyVFXPreset((type(o)=="table" and o[1]) or o); S.VFXOn=true; applyCustomVFX() end})
+
+VisualsTab:CreateSection("Aura - Core")
+VisualsTab:CreateToggle({Name="Core Shape", CurrentValue=true, Flag="VFXShapeOn", Callback=function(v) S.VFXShapeOn=v; reVFX() end})
+VisualsTab:CreateDropdown({Name="Shape", Options={"Ball","Block","Cylinder"}, CurrentOption={"Ball"}, Flag="VFXShape", Callback=function(o) S.VFXShape=(type(o)=="table" and o[1]) or o; reVFX() end})
+VisualsTab:CreateColorPicker({Name="Color 1", Color=Color3.fromRGB(255,40,40), Flag="VFXColor", Callback=function(c) S.VFXColor=c; reVFX() end})
+VisualsTab:CreateColorPicker({Name="Color 2 (gradient)", Color=Color3.fromRGB(255,180,40), Flag="VFXColor2", Callback=function(c) S.VFXColor2=c; reVFX() end})
+VisualsTab:CreateToggle({Name="Rainbow (animated)", CurrentValue=false, Flag="VFXRainbow", Callback=function(v) S.VFXRainbow=v; reVFX() end})
+VisualsTab:CreateSlider({Name="Size", Range={1,30}, Increment=1, Suffix="studs", CurrentValue=6, Flag="VFXSize", Callback=function(v) S.VFXSize=v; reVFX() end})
+VisualsTab:CreateSlider({Name="Transparency", Range={0,100}, Increment=5, Suffix="%", CurrentValue=40, Flag="VFXTransp", Callback=function(v) S.VFXTransparency=v/100; reVFX() end})
+
+VisualsTab:CreateSection("Aura - Particles")
+VisualsTab:CreateToggle({Name="Particles", CurrentValue=true, Flag="VFXParticles", Callback=function(v) S.VFXParticles=v; reVFX() end})
+VisualsTab:CreateDropdown({Name="Particle Texture", Options={"Sparkles","Fire","Smoke","Square"}, CurrentOption={"Sparkles"}, Flag="VFXTexture", Callback=function(o) S.VFXTexture=(type(o)=="table" and o[1]) or o; reVFX() end})
+VisualsTab:CreateSlider({Name="Particle Rate", Range={0,300}, Increment=5, Suffix="/s", CurrentValue=80, Flag="VFXRate", Callback=function(v) S.VFXRate=v; reVFX() end})
+VisualsTab:CreateSlider({Name="Particle Speed", Range={0,30}, Increment=1, Suffix="spd", CurrentValue=6, Flag="VFXSpeed", Callback=function(v) S.VFXSpeed=v; reVFX() end})
+VisualsTab:CreateSlider({Name="Particle Spread", Range={0,360}, Increment=10, Suffix="deg", CurrentValue=180, Flag="VFXSpread", Callback=function(v) S.VFXSpread=v; reVFX() end})
+VisualsTab:CreateSlider({Name="Particle Size", Range={1,20}, Increment=1, Suffix="x0.1", CurrentValue=12, Flag="VFXPSize", Callback=function(v) S.VFXPSize=v/10; reVFX() end})
+
+VisualsTab:CreateSection("Aura - Extras")
+VisualsTab:CreateToggle({Name="Light Glow", CurrentValue=true, Flag="VFXLight", Callback=function(v) S.VFXLight=v; reVFX() end})
+VisualsTab:CreateSlider({Name="Light Brightness", Range={0,15}, Increment=1, Suffix="", CurrentValue=5, Flag="VFXBrightness", Callback=function(v) S.VFXBrightness=v; reVFX() end})
+VisualsTab:CreateToggle({Name="Spinning Rings", CurrentValue=false, Flag="VFXRings", Callback=function(v) S.VFXRings=v; reVFX() end})
+VisualsTab:CreateSlider({Name="Ring Count", Range={1,5}, Increment=1, Suffix="", CurrentValue=2, Flag="VFXRingCount", Callback=function(v) S.VFXRingCount=v; reVFX() end})
+VisualsTab:CreateSlider({Name="Spin Speed", Range={0,10}, Increment=1, Suffix="", CurrentValue=2, Flag="VFXSpin", Callback=function(v) S.VFXSpin=v end})
+VisualsTab:CreateToggle({Name="Beams / Pillars", CurrentValue=false, Flag="VFXBeams", Callback=function(v) S.VFXBeams=v; reVFX() end})
+VisualsTab:CreateToggle({Name="Trail", CurrentValue=true, Flag="VFXTrail", Callback=function(v) S.VFXTrail=v; reVFX() end})
 VisualsTab:CreateButton({Name="Save / Copy Preset", Callback=function()
-    local preset = string.format("shape=%s|r=%d|g=%d|b=%d|size=%d|transp=%d|particles=%s|rate=%d",
-        S.VFXShape, math.floor(S.VFXColor.R*255), math.floor(S.VFXColor.G*255), math.floor(S.VFXColor.B*255),
-        S.VFXSize, math.floor(S.VFXTransparency*100), tostring(S.VFXParticles), S.VFXRate)
-    pcall(function() if writefile then writefile("ValutixVFX.txt", preset) end end)
+    local function rgb(c) return math.floor(c.R*255)..","..math.floor(c.G*255)..","..math.floor(c.B*255) end
+    local preset = string.format("shape=%s|c1=%s|c2=%s|size=%d|transp=%d|tex=%s|rate=%d|speed=%d|spread=%d|rainbow=%s|light=%s|bright=%d|rings=%s|ringc=%d|beams=%s|trail=%s",
+        S.VFXShape, rgb(S.VFXColor), rgb(S.VFXColor2), S.VFXSize, math.floor(S.VFXTransparency*100), S.VFXTexture, S.VFXRate, S.VFXSpeed, S.VFXSpread,
+        tostring(S.VFXRainbow), tostring(S.VFXLight), S.VFXBrightness, tostring(S.VFXRings), S.VFXRingCount, tostring(S.VFXBeams), tostring(S.VFXTrail))
+    pcall(function() if writefile then writefile("ValutixAura.txt", preset) end end)
     pcall(function() if setclipboard then setclipboard(preset) end end)
-    Rayfield:Notify({Title="VFX Maker", Content="Preset saved + copied to clipboard. Share it to let others rebuild it.", Duration=5})
+    Rayfield:Notify({Title="Aura Maker", Content="Preset saved + copied. Share the text to let others rebuild your aura.", Duration=5})
 end})
 
 FarmTab:CreateSection("Auto Play")
@@ -2006,4 +2151,4 @@ UtilityTab:CreateButton({Name="Unload Valutix Hub", Callback=function()
 end})
 
 
-Rayfield:Notify({Title="Valutix Hub v2.14.0", Content="Loaded - by Valutix Hub Owner", Duration=6})
+Rayfield:Notify({Title="Valutix Hub v2.15.0", Content="Loaded - by Valutix Hub Owner", Duration=6})
