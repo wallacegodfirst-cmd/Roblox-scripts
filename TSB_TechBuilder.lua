@@ -48,7 +48,8 @@ local CFG = {
 	hitbox = false, hitboxSize = 12, approach = false,   -- hitbox expander (enemy hit-part size) + auto-approach the target on run
 	autoCombo = false, smartCD = true, skillCD = 8, fightStopDist = 35, smartEngage = true,   -- auto-chain + skill-CD M1-sub + far-stop + dash-in re-engage (never whiff into empty air)
 	smartCombat = true, meleeRange = 16, autoEvade = false, antiCounter = false, evadeDir = "Right", lockImage = "", dashToTarget = true, sweat = false,   -- dashToTarget = every combo dash goes INTO the enemy; sweat = shift-lock flick + side-dash during M1s (Sweaty+ combos)
-	chase = false, chaseSecs = 1.4,   -- master "walk/dash toward a far target" switch (OFF = combos run in place, never run off like a noob) + how long it may chase
+	chase = true, chaseSecs = 1.2,   -- REWORK: default ON but BOUNDED (~1.2s) so combos actually CLOSE on the enemy and land, without the old endless noob-running
+	autoBlock = false, autoBlockRange = 14,   -- tap Block when a nearby enemy is mid-attack and we're NOT comboing (defensive layer for 1v1s)
 	stopOnDeath = true, debug = false,
 	runMode = "Toggle",    -- "Toggle" or "Hold" the run key
 	mobileBar = false,     -- floating always-visible Run/Stop/Lock/Test bar (for touch / no keyboard)
@@ -732,6 +733,28 @@ track(RunSvc.Heartbeat:Connect(function()
 	local down = isIncapacitated(hum, char)
 	if wasDown and not down and (os.clock()-lastEvade) > 0.7 then lastEvade=os.clock(); pcall(evadeDash) end   -- transitioned DOWN -> RECOVERED: dash out now
 	wasDown = down
+end))
+
+-- ════════ AUTO-BLOCK (defensive layer): tap the Block bind when a nearby enemy is mid-attack and we are NOT
+-- comboing. Reads enemy attack animations within autoBlockRange. Best-effort (server decides if the block holds).
+local lastAutoBlock = 0
+track(RunSvc.Heartbeat:Connect(function()
+	if not CFG.autoBlock then return end
+	if STATE=="running" then return end                       -- don't block during our own combo (would cancel it)
+	if os.clock()-lastAutoBlock < 0.4 then return end
+	local me = myHRP(); if not me then return end
+	local bk = bindKC("Block"); if not bk or bk=="M1" or bk=="M2" then return end
+	for _,plr in ipairs(Players:GetPlayers()) do if plr~=LP and plr.Character then
+		local pt=plr.Character:FindFirstChild("HumanoidRootPart"); local h=plr.Character:FindFirstChildOfClass("Humanoid")
+		if pt and h and (pt.Position-me.Position).Magnitude <= (CFG.autoBlockRange or 14) then
+			local anim=h:FindFirstChildOfClass("Animator")
+			if anim then local ok,tr=pcall(function() return anim:GetPlayingAnimationTracks() end)
+				if ok then for _,t in ipairs(tr) do local nm=((t.Name or "")..((t.Animation and t.Animation.Name) or "")):lower()
+					if nm:find("punch") or nm:find("m1") or nm:find("attack") or nm:find("combat") or nm:find("hit") then
+						lastAutoBlock=os.clock(); kDown(bk); task.delay(0.28, function() kUp(bk) end); return
+					end end end end
+		end
+	end end
 end))
 
 -- runStep: preDelay -> (do action, repeatGap) x reps -> postDelay. Every wait is cancellable.
@@ -1433,7 +1456,7 @@ local RED = {
 	InputBackground = Color3.fromRGB(31,21,23), InputStroke = Color3.fromRGB(70,38,42), PlaceholderColor = Color3.fromRGB(150,118,120),
 }
 local Window = Rayfield:CreateWindow({
-	Name = "Vaultix Hub", LoadingTitle = "Vaultix Hub", LoadingSubtitle = "Dash & Tech Builder · TSB",
+	Name = "Vaultix Hub", LoadingTitle = "Vaultix Hub", LoadingSubtitle = "TSB Tech Builder v3.0 · reworked",
 	Theme = RED, DisableRayfieldPrompts = true, ConfigurationSaving = { Enabled = false }, KeySystem = false,
 })
 
@@ -1460,6 +1483,46 @@ function autoNext()
 end
 onRunDone = function(natural)
 	if natural and CFG.autoCombo then task.delay(0.5, function() if CFG.autoCombo and STATE=="idle" then autoNext() end end) end
+end
+
+-- ───────── FIGHT tab (reworked: the one-click "just win the 1v1" page) ─────────
+do
+	local tab = Window:CreateTab("Fight", 4483362458)
+	tab:CreateSection("One-click fight")
+	tab:CreateButton({ Name = "LOCK + RUN COMBO  (nearest enemy)", Callback = function()
+		CFG.lockOn = true; if lockToggle then pcall(function() lockToggle:Set(true) end) end
+		lockTarget = nil; refreshLock()
+		local ch = (selChar and selChar~="Generic / Other" and selChar) or detectCharacter() or "Generic / Other"
+		local c = CHARS[ch]; local cb = c and c.combos and c.combos[1]
+		if not (cb and currentTargetPart()) and not cb then notify("Fight","no combo found for "..ch,3); return end
+		if not currentTargetPart() then notify("Fight","no enemy in lock range — get closer",3); return end
+		loadSeq(mkSteps(cb.t)); notify("Fight", ch.." · "..cb.n, 3); task.wait(0.12); runSeq()
+	end })
+	tab:CreateButton({ Name = "STOP", Callback = function() stopSeq(); notify("Stopped","fight off · lock-on stays on",2) end })
+	tab:CreateToggle({ Name = "Auto-repeat: keep running the combo on the nearest enemy", CurrentValue = CFG.autoCombo and true or false, Callback = function(v)
+		CFG.autoCombo = v; saveCfg()
+		if v then
+			CFG.lockOn = true; if lockToggle then pcall(function() lockToggle:Set(true) end) end
+			lockTarget=nil; refreshLock()
+			if STATE=="idle" and currentTargetPart() then autoNext() end
+		end
+	end })
+	tab:CreateSection("Make hits land")
+	tab:CreateToggle({ Name = "Chase: close the gap so the combo reaches (bounded, no noob-running)", CurrentValue = CFG.chase and true or false, Callback = function(v) CFG.chase = v; notify("Chase", v and "ON" or "OFF (runs in place)", 2) end })
+	tab:CreateToggle({ Name = "M1 Reach (hitbox expander — visual, server may ignore)", CurrentValue = CFG.hitbox and true or false, Callback = function(v) setHitbox(v); notify("M1 Reach", v and "ON" or "OFF", 2) end })
+	tab:CreateSlider({ Name = "M1 Reach size", Range = {4,60}, Increment = 1, Suffix = " studs", CurrentValue = CFG.hitboxSize or 12, Callback = function(v) CFG.hitboxSize = v; saveCfg() end })
+	tab:CreateSlider({ Name = "Combo speed (lower = faster)", Range = {10,200}, Increment = 5, Suffix = "%", CurrentValue = math.floor((CFG.comboSpeed or 1)*100), Callback = function(v) CFG.comboSpeed = v/100; saveCfg() end })
+	tab:CreateSection("Defense")
+	tab:CreateToggle({ Name = "Auto-block (taps Block when an enemy swings near you)", CurrentValue = CFG.autoBlock and true or false, Callback = function(v) CFG.autoBlock = v; notify("Auto-block", v and "ON" or "OFF", 2) end })
+	tab:CreateToggle({ Name = "Auto-evade (dash out the moment you recover from a knockdown)", CurrentValue = CFG.autoEvade and true or false, Callback = function(v) CFG.autoEvade = v; saveCfg(); notify("Auto-evade", v and "ON" or "OFF", 2) end })
+	tab:CreateSection("Aim")
+	lockToggle = tab:CreateToggle({ Name = "Lock-On (console-style: enemy centered)", CurrentValue = CFG.lockOn and true or false, Callback = function(v) CFG.lockOn = v; if not v then lockTarget=nil end; saveCfg() end })
+	tab:CreateKeybind({ Name = "Run / STOP", CurrentKeybind = CFG.runKey or "T", HoldToInteract = false, Callback = function() triggerRun() end })
+	tab:CreateKeybind({ Name = "Toggle lock-on", CurrentKeybind = CFG.lockKey or "C", HoldToInteract = false, Callback = function()
+		CFG.lockOn = not CFG.lockOn; if not CFG.lockOn then lockTarget=nil end; saveCfg()
+		if lockToggle then pcall(function() lockToggle:Set(CFG.lockOn) end) end
+		notify("Lock-on", CFG.lockOn and "ON" or "OFF", 2)
+	end })
 end
 
 -- ───────── BUILDER tab ─────────
@@ -1676,5 +1739,5 @@ local function unload()
 end
 do local gg=(getgenv and getgenv()) or _G; gg.__TSB_UNLOAD=unload end
 
-notify("Vaultix Hub", "loaded — Character tab: pick a char, slide the combo #, Load", 5)
-print("[Vaultix] loaded — Rayfield UI, reworked roster + smart combat.")
+notify("Vaultix Hub v3.0", "Open the FIGHT tab → LOCK + RUN COMBO. Chase is ON so hits land; Auto-block for defense.", 6)
+print("[Vaultix] v3.0 loaded — reworked: Fight tab, chase-on default, auto-block, jump-tap launchers.")
