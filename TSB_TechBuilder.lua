@@ -38,7 +38,7 @@ local STEP_VERSION = 3   -- bump when the step format changes; migration handles
 -- ════════ CONFIG ════════
 local DEFAULT_BINDS = { M1="MouseButton1", Dash="Q", Block="F", Jump="Space", Run="W",
                         Ultimate="G", Skill1="One", Skill2="Two", Skill3="Three", Skill4="Four" }
-local function cloneTbl(t) local o={}; for k,v in pairs(t) do o[k]=v end; return o end
+function cloneTbl(t) local o={}; for k,v in pairs(t) do o[k]=v end; return o end
 local CFG = {
 	version = STEP_VERSION,
 	comboSpeed = 0.8,      -- scales ALL timings (gaps AND holds). 1=normal, lower=faster, higher=slower.
@@ -91,15 +91,14 @@ local function track(conn) CONNS[#CONNS+1]=conn; return conn end
 local HELD = {}
 local win  -- the builder window (assigned when the GUI is built) — used so replayed M1 clicks land in the GAME, not the UI
 local OVERLAYS = {}  -- popups/overlays (step editor, dropdowns, mobile bar) M1 must ALSO avoid, not just the main window
-local function regOverlay(f)   if f then OVERLAYS[f]=true end end
-local function unregOverlay(f) if f then OVERLAYS[f]=nil  end end
-local function overRect(mp, inst)
+function regOverlay(f)   if f then OVERLAYS[f]=true end end
+function overRect(mp, inst)
 	if not inst or not inst.Parent or not inst.Visible then return false end
 	local p,sz = inst.AbsolutePosition, inst.AbsoluteSize
 	return mp.X>=p.X-6 and mp.X<=p.X+sz.X+6 and mp.Y>=p.Y-6 and mp.Y<=p.Y+sz.Y+6
 end
 -- isPointerOverBuilderUI: cursor over the window OR any open popup/overlay → a replayed M1 must be redirected into the game
-local function isPointerOverBuilderUI()
+function isPointerOverBuilderUI()
 	local mp = UIS:GetMouseLocation()
 	if win and win.Visible and overRect(mp, win) then return true end
 	for f in pairs(OVERLAYS) do if overRect(mp, f) then return true end end
@@ -107,7 +106,7 @@ local function isPointerOverBuilderUI()
 end
 local REPLAYING = false   -- true while a tech/test replays → M1 ALWAYS clicks the game centre, never a UI button (works with ANY UI lib)
 local lockTarget, lockPart   -- lock-on target (declared here so gameClickPos can aim replayed M1 clicks at the enemy)
-local function gameClickPos()
+function gameClickPos()
 	if REPLAYING or isPointerOverBuilderUI() then
 		local cam = WS.CurrentCamera
 		if cam and lockPart and lockPart.Parent then                          -- click ON the locked enemy's on-screen position (not blind centre)
@@ -123,7 +122,7 @@ local function kDown(kc) if not kc then return end HELD[kc]=true;  pcall(functio
 local function kUp(kc)   if not kc then return end HELD[kc]=nil;   pcall(function() VIM:SendKeyEvent(false, kc, false, game) end) end
 local function mDown(btn) local p=gameClickPos(); HELD[btn==0 and "M1" or "M2"]=p; pcall(function() VIM:SendMouseButtonEvent(p.X,p.Y,btn,true, game,0) end) end
 local function mUp(btn)   local key=btn==0 and "M1" or "M2"; local p=HELD[key] or gameClickPos(); HELD[key]=nil; pcall(function() VIM:SendMouseButtonEvent(p.X,p.Y,btn,false,game,0) end) end
-local function releaseAll()   -- release everything currently held (instant Stop safety)
+function releaseAll()   -- release everything currently held (instant Stop safety)
 	for k,v in pairs(HELD) do
 		if k=="M1" then pcall(function() VIM:SendMouseButtonEvent(v.X,v.Y,0,false,game,0) end)
 		elseif k=="M2" then pcall(function() VIM:SendMouseButtonEvent(v.X,v.Y,1,false,game,0) end)
@@ -134,7 +133,7 @@ end
 -- releaseMovement: HARD-release every movement key (W/A/S/D/Space/Shift + the Run bind) right now.
 -- This is the fix for "the character keeps running like a noob" — after any step/stop we make 100% sure
 -- no directional key is left held down, even if a wait got cancelled mid-press.
-local function releaseMovement()
+function releaseMovement()
 	for _,kc in ipairs({KC.W, KC.A, KC.S, KC.D, KC.Space, KC.LeftShift}) do
 		HELD[kc]=nil; pcall(function() VIM:SendKeyEvent(false, kc, false, game) end)
 	end
@@ -155,9 +154,9 @@ local function waitFor(secs, token)
 end
 -- Combo Speed scales EVERYTHING. gapWait = delays/gaps; holdWait = key/click holds (floored 25ms so a press always registers).
 local function gapWait(ms, token)  return waitFor((ms or 0)/1000  * (CFG.comboSpeed or 1), token) end
-local function holdWait(ms, token) return waitFor(math.max((ms or 35)/1000 * (CFG.comboSpeed or 1), 0.025), token) end
+function holdWait(ms, token) return waitFor(math.max((ms or 35)/1000 * (CFG.comboSpeed or 1), 0.025), token) end
 -- gapWaitFloored: a gap that scales with Combo Speed but never drops below floorMs (so M1 reps can't merge even when sped up)
-local function gapWaitFloored(ms, floorMs, token) return waitFor(math.max((ms or 0)/1000 * (CFG.comboSpeed or 1), (floorMs or 0)/1000), token) end
+function gapWaitFloored(ms, floorMs, token) return waitFor(math.max((ms or 0)/1000 * (CFG.comboSpeed or 1), (floorMs or 0)/1000), token) end
 
 -- ════════ CHARACTER / TARGET HELPERS ════════
 local function myChar() return LP.Character end
@@ -169,7 +168,7 @@ local function partOf(plr)
 	local h=c:FindFirstChildOfClass("Humanoid"); if h and h.Health<=0 then return nil end
 	return c:FindFirstChild("HumanoidRootPart") or c:FindFirstChild("Torso") or c:FindFirstChild("UpperTorso") or c:FindFirstChildWhichIsA("BasePart")
 end
-local function nearestEnemy()   -- nearest living enemy player within lockRange
+function nearestEnemy()   -- nearest living enemy player within lockRange
 	local me=myHRP(); if not me then return nil end
 	local best, bestPart, bd
 	for _,plr in ipairs(Players:GetPlayers()) do
@@ -186,14 +185,13 @@ local seq = {}
 local STATE, curToken = "idle", nil     -- state machine: idle | running | recording | stopped
 local runHeld, lastRunStart, lastTrig = false, 0, 0  -- run-key: Hold-mode flag, run-start time, trigger debounce
 local nearestDummyPart  -- fwd: lock-on reuses it so it also locks training dummies (lobby practice)
-local awaitCustom, awaitGen = false, 0
-local rebuildSteps, refreshCombos, refreshPresets, cloneInto, onLockChanged, onRunDone  -- fwd (assigned by GUI)
+local rebuildSteps, onLockChanged, onRunDone  -- fwd (assigned by GUI)
 local statusSet, reportSet, setRunRow, logSet  -- fwd (assigned by GUI); logSet = Debug input-log render
 local lastReport = {}                    -- per-step results of the most recent run (row/label/status/reason)
 local lastStatusByRow = {}               -- row index -> "ok"/"fail"/"err" so step rows tint after a run
 local inputLog = {}                       -- detailed per-step input log for the Debug tab
-local function setStatus(t,c) if statusSet then statusSet(t,c) end end
-local function setState(st)
+function setStatus(t,c) if statusSet then statusSet(t,c) end end
+function setState(st)
 	STATE = st
 	if st=="running" then setStatus("RUNNING", T.Good)
 	elseif st=="recording" then setStatus("REC", T.Bad)
@@ -202,14 +200,14 @@ local function setState(st)
 end
 
 -- ════════ LOCK-ON  (0 = instant, higher = smoother/slower) ════════
-local function refreshLock()    -- nearest enemy PLAYER, else nearest training DUMMY (so lock-on works in the lobby too)
+function refreshLock()    -- nearest enemy PLAYER, else nearest training DUMMY (so lock-on works in the lobby too)
 	local plr,p = nearestEnemy()
 	if p then lockTarget, lockPart = plr, p
 	else lockTarget, lockPart = nil, (nearestDummyPart and nearestDummyPart() or nil) end
 end
 -- on-screen LOCK RETICLE: TSB-style clean WHITE targeting reticle (thin ring + 4 cardinal ticks + center dot)
 local lockGui
-local function buildLockIcon()
+function buildLockIcon()
 	local sg=Instance.new("BillboardGui"); sg.Name="TSB_Lock"; sg.Size=UDim2.fromOffset(64,64); sg.AlwaysOnTop=true; sg.LightInfluence=0; sg.MaxDistance=2200; sg.Enabled=false
 	pcall(function() sg.Parent=(gethui and gethui()) or game:GetService("CoreGui") end)
 	if not sg.Parent then pcall(function() sg.Parent=LP:FindFirstChildOfClass("PlayerGui") end) end
@@ -275,13 +273,13 @@ nearestDummyPart = function()   -- cached ~1s so we don't scan the map every das
 	end
 	dummyCache=nil; return nil
 end
-local function currentTargetPart()  -- lock target → nearest enemy player → nearest training dummy
+function currentTargetPart()  -- lock target → nearest enemy player → nearest training dummy
 	if CFG.lockOn and lockPart and lockPart.Parent then return lockPart end          -- LOCKED: every dash/aim uses the ONE locked target (no second target)
 	if lockTarget then local p=partOf(lockTarget); if p then return p end end
 	local _,p = nearestEnemy(); if p then return p end
 	return nearestDummyPart()
 end
-local function faceTarget()         -- snap the camera to look at the target (one-shot); returns true if it aimed
+function faceTarget()         -- snap the camera to look at the target (one-shot); returns true if it aimed
 	local cam=WS.CurrentCamera; local part=currentTargetPart()
 	if not cam or not part then return false end
 	local camPos=cam.CFrame.Position
@@ -299,11 +297,11 @@ local function hbApply(p, s)
 	if not hbOrig[p] then hbOrig[p] = {size=p.Size, cc=p.CanCollide} end
 	if p.Size.X ~= s then pcall(function() p.Size = Vector3.new(s, s, s); p.CanCollide = false end) end
 end
-local function hbRestore()
+function hbRestore()
 	for p,d in pairs(hbOrig) do pcall(function() if p and p.Parent then p.Size=d.size; p.CanCollide=d.cc end end) end
 	hbOrig = setmetatable({}, {__mode="k"})
 end
-local function setHitbox(on)
+function setHitbox(on)
 	CFG.hitbox = on and true or false; pcall(saveCfg)
 	if not CFG.hitbox then hbRestore(); return end
 	if hbConn then return end
@@ -333,7 +331,7 @@ local function bindKC(name)
 end
 local function badBind(name) setStatus("bad bind: "..tostring(name), T.Bad); if CFG.debug then warn("[TSB] invalid bind for "..tostring(name)) end return false end
 -- one timed press of a resolved input (mouse or key); held for holdMs (scaled, floored)
-local function pressResolved(res, holdMs, token)
+function pressResolved(res, holdMs, token)
 	if res=="M1" then mDown(0); holdWait(holdMs, token); mUp(0)
 	elseif res=="M2" then mDown(1); holdWait(holdMs, token); mUp(1)
 	elseif res then kDown(res); holdWait(holdMs, token); kUp(res)
@@ -361,7 +359,7 @@ local function tapKey(kc, holdMs, token)
 	return not (token and token.cancel)
 end
 -- doAction: run ONE instance of a step's action (the rep loop in runStep calls this). Returns true on success.
-local function doAction(s, token)
+function doAction(s, token)
 	local a=s.act
 	if a=="m1"   then local r=bindKC("M1");   if not r then return badBind("M1")   end return pressResolved(r, s.hold or 35, token)
 	elseif a=="m1hold" then  -- HOLD M1 = TSB auto-chains the punch combo; the game paces the hits so none get dropped (most reliable multi-M1)
@@ -480,17 +478,15 @@ local ACTS = {
 	wait     = {label="Wait",     cat="wait",     reps=false, dir=false, min={}},
 }
 local actName = {}; for k,v in pairs(ACTS) do actName[k]=v.label end
-local CAT_COLOR = { attack=Color3.fromRGB(236,86,86), movement=Color3.fromRGB(64,160,255),
-                    defense=Color3.fromRGB(120,200,120), skill=Color3.fromRGB(190,140,255), wait=Color3.fromRGB(150,150,162) }
-local function validKCName(v) return v=="MouseButton1" or v=="MouseButton2" or (type(v)=="string" and KC[v]~=nil) end
+function validKCName(v) return v=="MouseButton1" or v=="MouseButton2" or (type(v)=="string" and KC[v]~=nil) end
 -- clampMins: raise any timing field that's below its action's safe minimum (stops M1 merge / unregistered presses)
-local function clampMins(s)
+function clampMins(s)
 	local A=ACTS[s.act]; if A and A.min then for f,mn in pairs(A.min) do if type(s[f])=="number" and s[f]<mn then s[f]=mn end end end
 	return s
 end
-local function copyStep(s) local t={}; for k,v in pairs(s) do t[k]=v end; return t end
+function copyStep(s) local t={}; for k,v in pairs(s) do t[k]=v end; return t end
 -- migrateStep: bring any step (old or new) up to the v3 format. Returns nil for an invalid step (it gets skipped).
-local function migrateStep(s)
+function migrateStep(s)
 	if type(s)~="table" or type(s.act)~="string" then return nil end
 	-- OLD format used `delay` = the gap AFTER the step. Convert → postDelay, and seed repeatGap from it.
 	if s.preDelay==nil and s.postDelay==nil and s.delay~=nil then
@@ -515,7 +511,7 @@ local function migrateStep(s)
 end
 
 -- validateSeq: scan every step BEFORE running and return a list of {row, msg, status}. Run is blocked if any exist.
-local function validateSeq()
+function validateSeq()
 	local errs = {}
 	for i,s in ipairs(seq) do
 		local function err(m) errs[#errs+1]={row=i, text=m, status="err"} end
@@ -619,19 +615,6 @@ local function validateSeq()
 	end
 	return errs
 end
--- comboScore: Safe / Risky / Too Fast (+ ping-friendliness), from the validator's warning count
-local function comboScore()
-	local e=validateSeq(); local hard,warn=0,0
-	for _,x in ipairs(e) do if x.status=="warn" then warn=warn+1 else hard=hard+1 end end
-	-- ping-friendly = no M1 step below a 360ms gap
-	local pingOk=true; for _,s in ipairs(seq) do if s.act=="m1" and (s.repeatGap or 360)*(CFG.comboSpeed or 1)<360 then pingOk=false; break end end  -- scale by Combo Speed
-	local ping = pingOk and " · High-ping OK" or " · NOT high-ping"
-	if hard>0 then return hard.." error"..ping, T.Bad end
-	if #seq==0 then return "empty", T.Dim end
-	if warn==0 then return "Safe"..ping, T.Good end
-	if warn<=2 then return "Risky"..ping, Color3.fromRGB(232,190,70) end
-	return "Too fast/risky"..ping, T.Bad
-end
 
 -- ════════ DEBUG + RUN ENGINE ════════
 local function dbg(num,total,s,rep,reps,ok)
@@ -643,37 +626,31 @@ end
 -- ════════ SMART COMBAT — never swing/dash into empty air ════════
 -- A move only lands if the target is actually in reach & in front. These let the run loop close the gap on a
 -- far target, catch a ragdolled one on its get-up, and (when locked) skip a swing when there is genuinely no one.
-local function targetHumanoid()
+function targetHumanoid()
 	local p = lockPart or currentTargetPart()
 	if p and p.Parent then return p.Parent:FindFirstChildOfClass("Humanoid"), p end
 	return nil
 end
-local function targetDown()   -- is the locked target ragdolled / knocked down / getting up?
+function targetDown()   -- is the locked target ragdolled / knocked down / getting up?
 	local hum = targetHumanoid(); if not hum then return false end
 	local ok, st = pcall(function() return hum:GetState() end); if not ok then return false end
 	return st==Enum.HumanoidStateType.Physics or st==Enum.HumanoidStateType.FallingDown
 		or st==Enum.HumanoidStateType.Ragdoll or st==Enum.HumanoidStateType.GettingUp
 end
-local function distToTarget(p)
+function distToTarget(p)
 	local me = myHRP(); if not (me and p and p.Parent) then return math.huge end
 	return (me.Position - p.Position).Magnitude
 end
-local function dashCatch(token)   -- face + front-dash toward the target, OR walk in if the dash is on cooldown (no spam)
+function dashCatch(token)   -- face + front-dash toward the target, OR walk in if the dash is on cooldown (no spam)
 	faceTarget(); local dk = bindKC("Dash"); local w = KC.W
 	if not w then return end
 	if dk and (os.clock()-lastFwd >= 4.8) then kDown(w); waitFor(0.05, token); pressResolved(dk, 55, token); lastFwd=os.clock(); waitFor(0.04, token); kUp(w)
 	else kDown(w); waitFor(0.20, token); kUp(w) end   -- dash on cooldown -> walk forward instead of firing an ignored dash
 end
-local function approachTargetClose(token)   -- dash IN until within meleeRange (bounded + cancellable) so the next hit connects
-	local p = currentTargetPart(); local tries = 0
-	while p and not token.cancel and distToTarget(p) > (CFG.meleeRange or 16) and tries < 4 do
-		dashCatch(token); waitFor(0.07, token); p = currentTargetPart(); tries = tries + 1
-	end
-end
 -- reachTarget: PAUSE the combo and dash/walk IN until the target is within melee range, THEN let the rest run.
 -- returns true = in range now (finish the rest), false = target GONE or unreachable (stop the combo, don't swing at air).
 -- Bounded by CFG.chaseSecs so it can't run off across the map like a noob.
-local function reachTarget(token)
+function reachTarget(token)
 	if not CFG.chase then return false end   -- chase OFF: never walk after a far target (combo runs in place)
 	local t0 = os.clock()
 	local window = math.max(0.4, CFG.chaseSecs or 1.4)
@@ -690,13 +667,13 @@ end
 -- SWEAT TECH (researched): flick shift-lock (LeftShift toggle) so M1s auto-face the target, and side-dash
 -- (A/D + Q TOGETHER, bypassing dashToTarget) BETWEEN M1s to orbit the enemy. Gated to Sweaty+ combos (CFG.sweat).
 local shiftLockState = false
-local function flickShiftLock(on)
+function flickShiftLock(on)
 	if on==shiftLockState then return end
 	local sk = KC.LeftShift
 	if sk then kDown(sk); holdWait(35, {cancel=false}); kUp(sk); shiftLockState = on end   -- LeftShift toggles shift-lock in TSB
 end
 local sweatLeft = false
-local function sweatSideDash(token)
+function sweatSideDash(token)
 	if (os.clock()-lastSide) < 2.0 then return end                 -- respect the ~2s side-dash CD (never fire a dead dash)
 	local dk = bindKC("Dash"); if not dk then return end
 	sweatLeft = not sweatLeft
@@ -710,7 +687,7 @@ end
 -- Spiraling Storm, Split Second). They freeze the user in a stance + grant i-frames. Detect via (a) a ForceField
 -- / invuln on the enemy and (b) their playing animation matching a counter-stance keyword. Plain F-blocks are
 -- intentionally NOT matched (blocking is safe to pressure; only the counter STANCE must stop us).
-local function targetCountering()
+function targetCountering()
 	local hum = targetHumanoid(); if not hum then return false end
 	local char = hum.Parent
 	if char and char:FindFirstChildOfClass("ForceField") then return true end                       -- i-frames / hyperarmor window
@@ -730,7 +707,7 @@ end
 -- (Humanoid PlatformStand, the Physics/FallingDown/Ragdoll/GettingUp Humanoid states, OR a Ragdoll/Stunned attribute).
 local EVADE_KEY = {Left=KC.A, Right=KC.D, Forward=KC.W, Back=KC.S}
 local evadeToken = nil   -- module-level so STOP/unload can abort an in-flight evade dash
-local function evadeDash()
+function evadeDash()
 	local dk = bindKC("Dash"); if not dk then if CFG.debug then setStatus("auto-evade: no Dash bind", T.Bad) end return end
 	local mode = CFG.evadeDir or "Right"
 	if mode=="ToTarget" then pcall(faceTarget) end                          -- angle the dash AT the locked target...
@@ -739,7 +716,7 @@ local function evadeDash()
 	if (fwd and now-lastFwd<4.8) or ((not fwd) and now-lastSide<2.0) then return end   -- dash on COOLDOWN: don't fire an ignored dash (wastes the escape)
 	task.spawn(function() local tk={cancel=false}; evadeToken=tk; kDown(dir); waitFor(0.05,tk); pressResolved(dk,55,tk); waitFor(0.05,tk); kUp(dir); if fwd then lastFwd=os.clock() else lastSide=os.clock() end end)
 end
-local function isIncapacitated(hum, char)
+function isIncapacitated(hum, char)
 	if not hum then return false end
 	if hum.PlatformStand then return true end
 	local ok, st = pcall(function() return hum:GetState() end)
@@ -884,21 +861,8 @@ local function runSeq()
 		if not ranOk and CFG.debug then warn("[TSB] run error (recovered): "..tostring(runErr)) end
 	end)
 end
--- testStep: run ONE step on its own (the per-step ▶ Test button) without entering the normal run state
-local function testStep(s)
-	if STATE=="running" or STATE=="recording" then setStatus("stop the run first", T.Bad); return end
-	setStatus("testing step…", T.Accent)
-	task.spawn(function()
-		REPLAYING = true
-		local tok={cancel=false}
-		if CFG.lockOn then refreshLock() end
-		local pok, _, anyFail = pcall(runStep, s, tok, 1, 1)
-		releaseAll(); releaseMovement(); REPLAYING = false
-		setStatus((pok and not anyFail) and "step ok" or "step failed", (pok and not anyFail) and T.Good or T.Bad)
-	end)
-end
 -- run-key trigger/release factored out so it works for a keyboard OR a mouse-bound run key (Hold mode resets either way)
-local function triggerRun()
+function triggerRun()
 	if STATE=="recording" then return end
 	if os.clock()-lastTrig < 0.12 then return end          -- debounce: one tap = one action
 	lastTrig = os.clock()
@@ -908,14 +872,13 @@ local function triggerRun()
 		runHeld=true; runSeq()                             -- IDLE → press = run
 	end
 end
-local function releaseRun() runHeld=false end
 
 -- ════════ MOBILE BUTTON BAR ════════
 -- Keyboard-less / touch players get on-screen Run/Stop/Lock + Jump/Dash buttons (built independently of Rayfield so
 -- it works even if the menu fails). HONEST: VirtualInputManager may not drive a phone character on every touch
 -- executor, so Jump/Dash are best-effort; Run/Stop/Lock control the script reliably.
 local mobileSG
-local function buildMobileBar()
+function buildMobileBar()
 	pcall(function() local g=(gethui and gethui()) or game:GetService("CoreGui"); local old=g:FindFirstChild("Vaultix_Mobile"); if old then old:Destroy() end end)
 	local sg=Instance.new("ScreenGui"); sg.Name="Vaultix_Mobile"; sg.ResetOnSpawn=false; sg.IgnoreGuiInset=true; sg.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 	pcall(function() sg.Parent=(gethui and gethui()) or game:GetService("CoreGui") end)
@@ -942,7 +905,7 @@ if (UIS.TouchEnabled and not UIS.KeyboardEnabled) or CFG.mobileBar then pcall(bu
 -- ════════ DIAGNOSTIC — prove inputs actually reach the game ════════
 -- The ONE thing that can't be verified outside Roblox: whether VirtualInputManager drives THIS game on THIS executor.
 -- This fires a tiny scripted burst after a 3s countdown so you can tab in and watch your character + read the console.
-local function runDiagnostic()
+function runDiagnostic()
 	if STATE=="running" then return end
 	task.spawn(function()
 		for i=3,1,-1 do setStatus("TEST in "..i.."… (tab into game)", T.Accent); print("[TSB TEST] starting in "..i.." — switch to the Roblox window now"); task.wait(1) end
@@ -960,22 +923,12 @@ local function runDiagnostic()
 	end)
 end
 
--- ════════ TARGET HELPER (nearest enemy player — used by Debug readout + target-relative aim) ════════
-local function nearestPlayerPart()
-	local me=myHRP(); if not me then return nil end
-	local best,bd
-	for _,plr in ipairs(Players:GetPlayers()) do if plr~=LP then local p=partOf(plr)
-		if p then local d=(p.Position-me.Position).Magnitude; if not bd or d<bd then best,bd=p,d end end end end
-	return best
-end
-
 -- ════════ PRESETS — honest practice techs, each with metadata {cat,char,diff,purpose,steps} ════════
 local function M1(reps,gap)  return {act="m1",   reps=reps or 1, hold=48, repeatGap=gap or 250, preDelay=0, postDelay=(reps and reps>1) and 70 or 50, label="M1"..((reps or 1)>1 and " x"..reps or "")} end
 local function SK(n,post)    return {act="skill"..n, hold=30, preDelay=0, postDelay=post or 140, label="Skill "..n} end
 local function DASH(dir)     return {act="dash", dirName=dir, dirLead=90, hold=55, releaseDelay=45, preDelay=0, postDelay=70, label="Dash "..(({W="Fwd",S="Back",A="Left",D="Right"})[dir] or "")} end
 local function UPC()         return {act="uppercut", jumpLead=80, m1Hold=50, jumpReleaseDelay=40, preDelay=0, postDelay=110, label="Uppercut"} end
 local function DS()          return {act="downslam", airDelay=280, m1Hold=45, hold=35, preDelay=0, postDelay=140, label="Downslam"} end
-local function MOV(dir,ms)   return {act="move", dirName=dir, dur=ms or 250, preDelay=0, postDelay=30, label="Move "..dir.." "..(ms or 250).."ms"} end
 local function M1H(ms)       return {act="m1hold", dur=ms or 1100, preDelay=0, postDelay=80, label="M1 Hold"} end
 local function WAIT(ms)      return {act="wait", preDelay=0, postDelay=ms or 120, label="Wait "..(ms or 120).."ms"} end
 local function RLK()         return {act="relock", preDelay=0, postDelay=60, label="Re-Lock"} end
@@ -1061,9 +1014,6 @@ local PRESET_ORDER = {
 	"Uppercut Air Skill","Downslam Skill Finish","Strafe Right Launch","Double Side-Dash String","Engage Skill Burst",
 	"Sonic: Sound-Speed Rush","Tank-Top: Power String","Metal Bat: Fighting Spirit",
 	"Full Sweat Combo","Full Skill Bind Test"}
-local PRESET_CATS  = {"All","Basic","Defense","Movement","Cancels","Mix-Up","Air Tech","Downslam","Wall Combo","Character","Skill Extender","Finisher","Sweat","Utility","Debug/Test"}
-local PRESET_DIFFS = {"All","Beginner","Normal","Hard","Insane","Testing"}
-local TIER = {Beginner="Casual", Normal="Sweaty", Hard="Tryhard", Insane="Insane", Testing="Test"}
 
 -- ════════ SAVE / LOAD  (versioned + migration) ════════
 local function loadSeq(steps)
@@ -1076,17 +1026,16 @@ local function loadSeq(steps)
 	if #skipped>0 then setStatus("loaded · skipped "..#skipped.." bad step(s)", T.Bad); if CFG.debug then warn("[TSB] skipped invalid step(s) at index: "..table.concat(skipped,", ")) end end
 	if rebuildSteps then rebuildSteps() end
 end
-local function sanitizeName(nm)   -- strip anything that could break a file path; cap length
+function sanitizeName(nm)   -- strip anything that could break a file path; cap length
 	nm = tostring(nm or ""):gsub("[^%w _%-]",""):gsub("^%s+",""):gsub("%s+$","")
 	return nm:sub(1,40)
 end
-local function techExists(name) return f_is(PREFIX..name..".json") end
-local function saveTech(name)     -- returns true on success so the UI can report failures
+function saveTech(name)     -- returns true on success so the UI can report failures
 	if not name or name=="" then return false end
 	if not HAS_IO then return false end   -- no real file access on this executor → report failure (don't pretend it saved)
 	return (pcall(function() f_write(PREFIX..name..".json", Http:JSONEncode({version=STEP_VERSION, steps=seq})) end))
 end
-local function loadTechFile(name)        -- returns true ONLY if a valid save was actually loaded (so the UI can't say "Loaded" on a corrupt/missing file)
+function loadTechFile(name)        -- returns true ONLY if a valid save was actually loaded (so the UI can't say "Loaded" on a corrupt/missing file)
 	if not HAS_IO then return false end
 	if not f_is(PREFIX..name..".json") then return false end
 	local ok, t = pcall(function() return Http:JSONDecode(f_read(PREFIX..name..".json")) end)
@@ -1095,8 +1044,8 @@ local function loadTechFile(name)        -- returns true ONLY if a valid save wa
 	if type(steps)~="table" then return false end
 	loadSeq(steps); return true
 end
-local function deleteTech(name) pcall(function() if f_del and f_is(PREFIX..name..".json") then f_del(PREFIX..name..".json") elseif f_is(PREFIX..name..".json") then f_write(PREFIX..name..".json","[]") end end) end
-local function listTechs()
+function deleteTech(name) pcall(function() if f_del and f_is(PREFIX..name..".json") then f_del(PREFIX..name..".json") elseif f_is(PREFIX..name..".json") then f_write(PREFIX..name..".json","[]") end end) end
+function listTechs()
 	local out={}
 	pcall(function() for _,p in ipairs(f_list()) do local fn=tostring(p):match("([^/\\]+)%.json$"); if fn and fn:sub(1,#PREFIX)==PREFIX then out[#out+1]=fn:sub(#PREFIX+1) end end end)
 	return out
@@ -1110,14 +1059,14 @@ local recConsumed = {}  -- a direction "used up" by a dash → its release must 
 local recSyncUI         -- fwd: keeps the Record button text/colour in sync with the real STATE (no desync)
 local DIRSET  = {W=true, A=true, S=true, D=true}
 local DIRNAME = {W="Fwd", S="Back", A="Left", D="Right"}
-local function stopRecord()
+function stopRecord()
 	if recBeganConn then recBeganConn:Disconnect(); recBeganConn=nil end
 	if recEndedConn then recEndedConn:Disconnect(); recEndedConn=nil end
 	recPress = {}; recHeldDir = {}; recConsumed = {}
 	if STATE=="recording" then setState("idle") end
 	if recSyncUI then recSyncUI() end
 end
-local function mapRecord(key, hold, pre)   -- non-dash keys → a v3 step (dash is handled specially below)
+function mapRecord(key, hold, pre)   -- non-dash keys → a v3 step (dash is handled specially below)
 	if key=="M1" then return {act="m1", hold=math.clamp(hold,40,200), repeatGap=360, preDelay=pre, postDelay=90, label="M1"} end
 	local matched; for act,bk in pairs(CFG.binds) do if bk==key then matched=act break end end
 	if matched=="Block" then return {act="block", dur=hold, preDelay=pre, postDelay=40, label="Block "..hold.."ms"} end
@@ -1127,7 +1076,7 @@ local function mapRecord(key, hold, pre)   -- non-dash keys → a v3 step (dash 
 	if DIRSET[key] then return {act="move", dirName=key, dur=math.clamp(hold,40,4000), preDelay=pre, postDelay=40, label="Move "..key.." "..hold.."ms"} end
 	return {act="key", keyName=key, hold=math.clamp(hold,20,200), preDelay=pre, postDelay=100, label="Key "..key}
 end
-local function startRecord()
+function startRecord()
 	if STATE=="running" then stopSeq() end
 	setState("recording"); recLast=tick(); recPress={}; recHeldDir={}; recConsumed={}
 	if recSyncUI then recSyncUI() end
@@ -1175,7 +1124,7 @@ local function addStep(s)
 		seq[#seq+1]=migrateStep(s); if rebuildSteps then rebuildSteps() end
 	end
 end
-local function clearSeq() while #seq>0 do table.remove(seq) end if rebuildSteps then rebuildSteps() end end
+function clearSeq() while #seq>0 do table.remove(seq) end if rebuildSteps then rebuildSteps() end end
 local function JUMP() return {act="jump", hold=60, preDelay=0, postDelay=90, label="Jump"} end
 local function ULT()  return {act="ultimate", hold=35, preDelay=0, postDelay=200, label="Ultimate"} end
 local function BLK(ms) return {act="block", dur=ms or 320, preDelay=0, postDelay=70, label="Block"} end
@@ -1184,7 +1133,7 @@ statusSet = function(t,_) print("[Vaultix] "..tostring(t)) end
 logSet    = function(lg) if lg and #lg>0 then print("[Vaultix log] "..tostring(lg[#lg])) end end                                   -- live per-step input log -> F9
 reportSet = function(r) for _,e in ipairs(r or {}) do print("[Vaultix report] "..((e.row and e.row>0 and ("#"..e.row.." ") or "")..tostring(e.status or "").." "..tostring(e.text))) end end   -- per-step results + terminal reasons
 
-local function printCombo()
+function printCombo()
 	if #seq==0 then print("[Vaultix] combo is empty"); return end
 	local t={}; for i,s in ipairs(seq) do t[#t+1]=i..". "..(s.label or s.act or "?") end
 	print("[Vaultix] combo ("..#seq.." steps):\n"..table.concat(t,"\n"))
@@ -1404,7 +1353,7 @@ local DETECT_TOKENS = {
 	["Tech Prodigy"]={"tech prodigy","child emperor","prodigy"},
 	["Undying Hero"]={"undying hero","zombieman","undying"},
 }
-local function detectCharacter()
+function detectCharacter()
 	local hit
 	local function test(s)
 		if hit or s==nil then return end
@@ -1419,7 +1368,7 @@ local function detectCharacter()
 	end)
 	return hit
 end
-local function scanCharacter()
+function scanCharacter()
 	print("[Vaultix] ───── character scan (send me this) ─────")
 	pcall(function()
 		local c = LP_.Character
@@ -1490,24 +1439,20 @@ local Window = Rayfield:CreateWindow({
 
 local comboBtn, lockToggle, selChar
 onLockChanged = function(v) if lockToggle then pcall(function() lockToggle:Set(v) end) end end
-local function stopEverything(alsoLock)
-	stopSeq()
-	if alsoLock then CFG.lockOn=false; lockTarget=nil; saveCfg(); if lockToggle then pcall(function() lockToggle:Set(false) end) end end
-end
-local function comboText()
+function comboText()
 	if #seq==0 then return "Combo is empty — add moves below" end
 	local parts={}; for _,s in ipairs(seq) do parts[#parts+1]=(s.label or s.act or "?") end
 	return "["..#seq.."]  "..table.concat(parts, "  >  ")
 end
-local function refreshCombo() if comboBtn then pcall(function() comboBtn:Set(comboText()) end) end end
+function refreshCombo() if comboBtn then pcall(function() comboBtn:Set(comboText()) end) end end
 rebuildSteps = refreshCombo
-local function loadPreset(name, alsoRun)
+function loadPreset(name, alsoRun)
 	local p = name and PRESETS[name]
 	if not (p and p.steps) then notify("No combo", tostring(name), 3); return end
 	loadSeq(p.steps); if alsoRun then task.wait(0.15); runSeq() else notify("Loaded", name, 3) end
 end
 -- AUTO-COMBO: after a tech finishes, load + run a RANDOM combo for the selected character
-local function autoNext()
+function autoNext()
 	local c = CHARS[selChar or "Generic / Other"]
 	if not (c and c.combos and #c.combos>0) then return end
 	local cb = c.combos[math.random(1, #c.combos)]
