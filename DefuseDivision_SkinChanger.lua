@@ -271,6 +271,53 @@ local function modelMeshes(model)
     return out
 end
 
+-- ── KNIFE MODEL OPTIONS (build a big list of selectable models) ───────────────
+-- Pulls from THREE sources so you actually have lots to choose from:
+--   1) every knife model in the Weapons folder
+--   2) every OTHER weapon model that has a mesh (so you can put any model in hand)
+--   3) every knife SKIN folder that ships its own mesh (distinct skin-models)
+local KnifeModelMap = {}            -- displayName -> source Instance (model or skin folder)
+local function addKnifeOption(list, name, src)
+    if name and src and not KnifeModelMap[name] then KnifeModelMap[name] = src; list[#list+1] = name end
+end
+local function knifeModelOptions()
+    local list = {}
+    KnifeModelMap = {}
+    for _, w in ipairs(knifeWeapons()) do addKnifeOption(list, w.Name, w) end                       -- 1) knife models
+    for _, w in ipairs(WeaponsFolder:GetChildren()) do                                              -- 2) all other weapon models w/ a mesh
+        if not KnifeModelMap[w.Name] and #modelMeshes(w) > 0 then addKnifeOption(list, w.Name, w) end
+    end
+    for _, cat in ipairs(SkinsFolder:GetChildren()) do                                              -- 3) knife skin meshes
+        if looksKnife(cat.Name) then
+            for _, skin in ipairs(cat:GetChildren()) do
+                if #modelMeshes(skin) > 0 then addKnifeOption(list, "Skin · "..skin.Name, skin) end
+            end
+        end
+    end
+    table.sort(list)
+    return list
+end
+
+-- ── GRIP HANDLE: the part the knife is actually held by = Camera.Arms.Handle ───
+-- Anchoring the swapped model to THIS (not the blade mesh) is what puts it in-hand.
+local function findGripHandle()
+    local cam = workspace.CurrentCamera; if not cam then return nil end
+    local arms = cam:FindFirstChild("Arms")
+    if arms then
+        local h = arms:FindFirstChild("Handle")
+        if h and h:IsA("BasePart") and not inSwapClone(h) then return h end
+        for _, d in ipairs(arms:GetDescendants()) do
+            if d:IsA("BasePart") and string.lower(d.Name) == "handle" and not inSwapClone(d) then return d end
+        end
+    end
+    for _, root in ipairs(viewmodelRoots()) do                                                       -- fallback: any viewmodel Handle
+        for _, d in ipairs(root:GetDescendants()) do
+            if d:IsA("BasePart") and string.lower(d.Name) == "handle" and not inSwapClone(d) then return d end
+        end
+    end
+    return nil
+end
+
 -- Persistent follower: build the clone ONCE under the Camera (survives the game's
 -- constant viewmodel rebuilds), then every frame snap it onto the live knife and
 -- hide the real one via LocalTransparencyModifier (which also survives rebuilds).
@@ -327,39 +374,49 @@ local function buildKnifeClone(template)
     knifeClone, knifeCloneModel = holder, SelectedKnifeModel
 end
 
-local function applyKnifeModelSwap()      -- GUI calls this on select
-    if not SelectedKnifeModel then return end
-    local template = WeaponsFolder:FindFirstChild(SelectedKnifeModel)
+local function knifeTemplate()             -- resolve the chosen option to a source instance
+    if not SelectedKnifeModel then return nil end
+    return KnifeModelMap[SelectedKnifeModel] or WeaponsFolder:FindFirstChild(SelectedKnifeModel)
+end
+local function applyKnifeModelSwap()       -- GUI calls this on select
+    local template = knifeTemplate()
     if template then buildKnifeClone(template) end
 end
 
 RunService.RenderStepped:Connect(function()
     if not SelectedKnifeModel then return end
-    local template = WeaponsFolder:FindFirstChild(SelectedKnifeModel); if not template then return end
+    local template = knifeTemplate(); if not template then return end
     if not knifeClone or knifeClone.Parent == nil or knifeCloneModel ~= SelectedKnifeModel then
         buildKnifeClone(template)
     end
     if not knifeClone then return end
+
+    -- GRIP: anchor to the actual hand handle (Camera.Arms.Handle); fall back to the biggest knife mesh.
+    local handle = findGripHandle()
     local eq = equippedKnifeParts()
-    if #eq == 0 then
+    local anchor = handle
+    if not anchor and #eq > 0 then
+        anchor = eq[1]
+        for _, p in ipairs(eq) do if p.Size.Magnitude > anchor.Size.Magnitude then anchor = p end end
+    end
+    if not anchor then        -- nothing to grip onto yet (knife not out) -> hide our clone
         for _, c in ipairs(knifeClone:GetDescendants()) do if c:IsA("MeshPart") then setHidden(c, true) end end
         return
     end
-    local anchor = eq[1]
-    for _, p in ipairs(eq) do if p.Size.Magnitude > anchor.Size.Magnitude then anchor = p end end
-    -- hide the WHOLE equipped knife model so the original never peeks through (no double knife)
-    local model = anchor.Parent
+
+    -- Hide ONLY the original knife meshes (NEVER the whole Arms model, or your hands vanish).
     knifeHidden = {}
-    if model then
-        for _, d in ipairs(model:GetDescendants()) do
-            if d:IsA("MeshPart") and not inSwapClone(d) then setHidden(d, true); knifeHidden[#knifeHidden+1] = d end
+    local function hidePart(p) setHidden(p, true); knifeHidden[#knifeHidden+1] = p end
+    for _, p in ipairs(eq) do hidePart(p) end
+    local km = eq[1] and eq[1].Parent
+    if km and km:IsA("Model") and looksKnife(km.Name) then        -- also hide blade+guard siblings inside the knife MODEL
+        for _, d in ipairs(km:GetDescendants()) do
+            if d:IsA("MeshPart") and not inSwapClone(d) then hidePart(d) end
         end
-    else
-        knifeHidden = eq
-        for _, p in ipairs(eq) do setHidden(p, true) end
     end
+
     for _, c in ipairs(knifeClone:GetDescendants()) do if c:IsA("MeshPart") then setHidden(c, false) end end
-    pcall(function() knifeClone:PivotTo(anchor.CFrame * knifeOffset) end)              -- snap onto the hand
+    pcall(function() knifeClone:PivotTo(anchor.CFrame * knifeOffset) end)              -- snap onto the hand handle
 end)
 
 -- re-skin what you SEE: Camera.Arms viewmodel + your character.
@@ -448,11 +505,14 @@ TabWeapons:CreateButton({
 
 TabWeapons:CreateSection("Knife Model")
 do
-    local opts = {"TKnife (Default)"}
-    for _, w in ipairs(knifeWeapons()) do opts[#opts+1] = w.Name end
-    TabWeapons:CreateDropdown({
+    local function buildOpts()
+        local opts = {"TKnife (Default)"}
+        for _, name in ipairs(knifeModelOptions()) do opts[#opts+1] = name end
+        return opts
+    end
+    local knifeDrop = TabWeapons:CreateDropdown({
         Name = "Swap Knife To",
-        Options = opts,
+        Options = buildOpts(),
         CurrentOption = {"TKnife (Default)"},
         MultipleOptions = false,
         Callback = function(sel)
@@ -462,6 +522,14 @@ do
             else
                 SelectedKnifeModel = choice; pcall(applyKnifeModelSwap)
             end
+        end,
+    })
+    TabWeapons:CreateButton({
+        Name = "Refresh model list",                  -- re-scan Weapons + Skins for new models
+        Callback = function()
+            local opts = buildOpts()
+            pcall(function() knifeDrop:Refresh(opts, false) end)
+            Rayfield:Notify({Title="Knife Models", Content=("Found %d models."):format(#opts-1), Duration=4})
         end,
     })
 end
