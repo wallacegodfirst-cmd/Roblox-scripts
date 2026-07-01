@@ -1773,6 +1773,9 @@ track(RunSvc.RenderStepped:Connect(function(dt)
 	pcall(function() r.AssemblyLinearVelocity=Vector3.zero; if d.Magnitude>0 then r.CFrame=r.CFrame+d.Unit*PX.flySpd*dt end end)
 end))
 local pxFlyTrack
+local function pxFlyAnimPrio()
+	return (Enum.AnimationPriority.Action4) or Enum.AnimationPriority.Action     -- highest so nothing overrides it
+end
 function pxSetFly(v)
 	PX.fly=v
 	local h=myHum()
@@ -1780,13 +1783,24 @@ function pxSetFly(v)
 		if h then pcall(function()
 			local a=Instance.new("Animation"); a.AnimationId="rbxassetid://17860467628"      -- flight pose animation
 			local animr=h:FindFirstChildOfClass("Animator") or h
-			pxFlyTrack=animr:LoadAnimation(a); pxFlyTrack.Looped=true; pxFlyTrack.Priority=Enum.AnimationPriority.Action; pxFlyTrack:Play()
+			pxFlyTrack=animr:LoadAnimation(a); pxFlyTrack.Looped=true; pxFlyTrack.Priority=pxFlyAnimPrio(); pxFlyTrack:Play(0.15)
 		end) end
 	else
-		if pxFlyTrack then pcall(function() pxFlyTrack:Stop() end); pxFlyTrack=nil end
+		if pxFlyTrack then pcall(function() pxFlyTrack:Stop(0.15) end); pxFlyTrack=nil end
 		if h then pcall(function() h.PlatformStand=false; h:ChangeState(Enum.HumanoidStateType.GettingUp) end) end
 	end
 end
+-- keep ONLY the flight animation showing while flying (stop walk/idle, re-play if it drops), loop it
+track(RunSvc.Heartbeat:Connect(function()
+	if not PX.fly then return end
+	local h=myHum(); if not h then return end
+	local a=h:FindFirstChildOfClass("Animator"); if not a then return end
+	if not (pxFlyTrack and pxFlyTrack.IsPlaying) then pcall(function()
+		local an=Instance.new("Animation"); an.AnimationId="rbxassetid://17860467628"
+		pxFlyTrack=a:LoadAnimation(an); pxFlyTrack.Looped=true; pxFlyTrack.Priority=pxFlyAnimPrio(); pxFlyTrack:Play(0.1)
+	end) end
+	for _,t in ipairs(a:GetPlayingAnimationTracks()) do if t~=pxFlyTrack then pcall(function() t:Stop(0) end) end end   -- kill everything else
+end))
 
 -- ── noclip / ghost ──
 track(RunSvc.Stepped:Connect(function()
@@ -1949,29 +1963,51 @@ function pxThrowAllTrash(targetName)
 	end)
 end
 
--- ── aimlock ──
+-- ── AIMLOCK (sticky: locks ONE enemy, aims at their head, keeps it until they die/leave range) ──
 local function pxNearest(rng) local me=myHRP(); if not me then return nil end local bp,bd
 	for _,p in ipairs(Players:GetPlayers()) do if p~=LP then local pt=partOf(p) if pt then local d=(pt.Position-me.Position).Magnitude; if d<=(rng or 1e9) and (not bd or d<bd) then bp,bd=pt,d end end end end
 	return bp end
+local function pxNearestPlr(rng) local me=myHRP(); if not me then return nil end local bp,bd
+	for _,p in ipairs(Players:GetPlayers()) do if p~=LP then local pt=partOf(p) if pt then local d=(pt.Position-me.Position).Magnitude; if d<=(rng or 1e9) and (not bd or d<bd) then bp,bd=p,d end end end end
+	return bp end
+local pxAimTarget
 track(RunSvc.RenderStepped:Connect(function()
-	if not PX.aimlock then return end
-	local cam=WS.CurrentCamera; local pt=pxNearest(PX.aimRange)
-	if cam and pt then pcall(function() cam.CFrame=CFrame.lookAt(cam.CFrame.Position, pt.Position) end) end
+	if not PX.aimlock then pxAimTarget=nil; return end
+	local cam=WS.CurrentCamera; local me=myHRP(); if not (cam and me) then return end
+	if pxAimTarget then                                                       -- drop the lock if the target died / left range
+		local pt=partOf(pxAimTarget)
+		if not pt or (pt.Position-me.Position).Magnitude>PX.aimRange then pxAimTarget=nil end
+	end
+	if not pxAimTarget then pxAimTarget=pxNearestPlr(PX.aimRange) end          -- acquire the nearest, then STICK to it
+	if pxAimTarget then
+		local c=pxAimTarget.Character
+		local aim=c and (c:FindFirstChild("Head") or partOf(pxAimTarget))
+		if aim then pcall(function() cam.CFrame=CFrame.lookAt(cam.CFrame.Position, aim.Position) end) end
+	end
 end))
 
 -- ── streak notifier ──
--- ── STREAK NOTIFIER (reads workspace.Cutscenes.Billboard.Killstreak) ──
-local function pxStreakText()
-	local cs=WS:FindFirstChild("Cutscenes"); local bb=cs and cs:FindFirstChild("Billboard"); local ks=bb and bb:FindFirstChild("Killstreak")
-	if not ks then return nil end
-	if ks:IsA("ValueBase") then return tostring(ks.Value) end
-	for _,d in ipairs(ks:GetDescendants()) do if d:IsA("TextLabel") and tostring(d.Text)~="" then return d.Text end end
-	return ks.Name
+-- ── STREAK NOTIFIER — pull the killstreak NUMBER from the Cutscenes.Billboard (the "🔥 N" tag) ──
+local function pxStreakText()   -- returns the streak number as a string, or nil
+	local best
+	local function scan(root) if not root then return end
+		for _,d in ipairs(root:GetDescendants()) do
+			if (d:IsA("TextLabel") or d:IsA("TextButton")) then local n=tostring(d.Text):match("(%d+)"); if n then n=tonumber(n); if not best or n>best then best=n end end
+			elseif d:IsA("ValueBase") and type(d.Value)=="number" then if not best or d.Value>best then best=d.Value end end
+		end
+	end
+	local cs=WS:FindFirstChild("Cutscenes"); local bb=cs and cs:FindFirstChild("Billboard")
+	scan(bb)
+	if not best then   -- fallback: any object named Killstreak/Streak anywhere in workspace
+		for _,o in ipairs(WS:GetDescendants()) do local ln=string.lower(o.Name); if ln:find("killstreak") or ln:find("streak") then scan(o.Parent or o); break end end
+	end
+	return best and tostring(best) or nil
 end
 track(RunSvc.Heartbeat:Connect(function()
 	if not PX.streak then return end
 	local s=pxStreakText(); if not s then return end
-	if PX.lastStreak~=nil and s~=PX.lastStreak then notify("Killstreak", s, 3) end
+	local n=tonumber(s); local ln=tonumber(PX.lastStreak)
+	if ln and n and n>ln then notify("Killstreak", "🔥 "..n.." streak!", 3) end   -- only announce when it goes UP
 	PX.lastStreak=s
 end))
 
