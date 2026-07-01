@@ -1887,15 +1887,19 @@ local function trashTargets(targetName)
 	else local p=Players:FindFirstChild(targetName); if p then t[1]=p end end
 	return t
 end
--- ONE cycle: grab the NEAREST can, THEN go to the target and throw. tok.c aborts at every step.
-local function grabThenThrow(targetPlr, tok)
-	local can=nearestCan(); if not can then return false end
-	pxTP(can.CFrame*CFrame.new(0,0,3.5), 0.4); RunSvc.Heartbeat:Wait()                 -- 1) walk to the can
+-- grab ONE specific can (TP to it, M1 to pick up)
+local function grabCan(can, tok)
+	if not (can and can.Parent) then return false end
+	pxTP(can.CFrame*CFrame.new(0,0,3.5), 0.4); RunSvc.Heartbeat:Wait()
 	if tok.c then return false end
 	faceAt(can.Position); task.wait(0.15)
 	REPLAYING=true; clickGame(0.06); REPLAYING=false                                    -- M1 = pick it up
-	task.wait(0.3); if tok.c then return false end
-	local pt=partOf(targetPlr); if not pt then return false end                         -- 2) go to the target + throw (once)
+	task.wait(0.3)
+	return not tok.c
+end
+-- throw whatever you're holding at a target (TP to them, M1)
+local function throwAt(targetPlr, tok)
+	local pt=partOf(targetPlr); if not pt then return false end
 	pxTP(pt.CFrame*CFrame.new(0,0,12), 0.5); RunSvc.Heartbeat:Wait()
 	if tok.c then return false end
 	faceAt(pt.Position); task.wait(0.15)
@@ -1903,27 +1907,31 @@ local function grabThenThrow(targetPlr, tok)
 	task.wait(0.2)
 	return true
 end
--- SINGLE: pick up ONE trash, teleport to the target, throw, then STOP (what you asked for).
+-- SINGLE: pick up the nearest trash, teleport to the target, throw, then STOP.
 function pxThrowTrash(targetName)
 	pxStopTrash()
 	local tg=trashTargets(targetName); if #tg==0 then notify("Trash","no target",2); return end
-	if not nearestCan() then notify("Trash","no trash cans in Map.Trash",3); return end
+	local can=nearestCan(); if not can then notify("Trash","no trash cans in Map.Trash",3); return end
 	local tok={c=false}; pxTrashTok=tok
-	task.spawn(function() grabThenThrow(tg[1], tok); if pxTrashTok==tok then pxTrashTok=nil end; notify("Trash","thrown",2) end)
+	task.spawn(function() if grabCan(can, tok) then throwAt(tg[1], tok) end; if pxTrashTok==tok then pxTrashTok=nil end; notify("Trash","thrown",2) end)
 end
--- ALL: loop grab->throw at the target(s) until you hit Stop or run out of cans.
+-- ALL: iterate EVERY can in Map.Trash — grab each one and throw it at the target(s). Only Stop aborts;
+-- a single failed pickup (players nearby) just moves on to the next can (so it clears them all).
 function pxThrowAllTrash(targetName)
 	pxStopTrash()
 	local tg=trashTargets(targetName); if #tg==0 then notify("Trash","no target",2); return end
+	local cans=allTrashParts(); if #cans==0 then notify("Trash","no trash cans in Map.Trash",3); return end
 	local tok={c=false}; pxTrashTok=tok
 	task.spawn(function()
-		local ti=1
-		while not tok.c do
-			if not nearestCan() then break end
-			local ok=grabThenThrow(tg[ti], tok); if not ok then break end
-			ti=ti%#tg+1
+		local ti, thrown = 1, 0
+		for _,can in ipairs(cans) do
+			if tok.c then break end
+			if grabCan(can, tok) then
+				if tok.c then break end
+				if throwAt(tg[ti], tok) then thrown=thrown+1; ti=ti%#tg+1 end
+			end
 		end
-		if pxTrashTok==tok then pxTrashTok=nil end; notify("Trash","done",2)
+		if pxTrashTok==tok then pxTrashTok=nil end; notify("Trash","threw "..thrown.."/"..#cans.." cans",3)
 	end)
 end
 
@@ -2027,17 +2035,18 @@ local function pxJumpOnHead(plr, pt)
 		pxChat("EZ BOY")
 	end)
 end
--- ROBUST counter detection: any counter anim id OR a ForceField (i-frames) OR a counter attribute OR a
--- counter-named animation track. TSB counters freeze the user in a stance with hyperarmor, so this catches them.
+-- Counter detection: match ONLY the real counter animation ids you gave, a counter-named track, or a
+-- specific counter attribute. (ForceField is intentionally NOT used — spawn protection is a ForceField too.)
 local COUNTER_IDS = { ANIM_COUNTER.garou, ANIM_COUNTER.deathblow, ANIM_COUNTER.split, "11343318134" }
 local function isCounterStance(plr, tr)
 	local char=plr.Character; if not char then return false end
-	if char:FindFirstChildOfClass("ForceField") then return true end
-	for _,att in ipairs({"Countering","Counter","Parry","Reversal"}) do if char:GetAttribute(att) then return true end end
+	-- NOTE: do NOT use ForceField — spawn protection is also a ForceField and caused false jump-on-spawners.
+	-- Match ONLY the actual counter animations (the ids you gave) or a counter-named track/attribute.
+	for _,att in ipairs({"Countering","Parry","Reversal"}) do if char:GetAttribute(att) then return true end end
 	for _,t in ipairs(tr) do
 		if trackMatches(t, COUNTER_IDS) then return true end
 		local nm=((t.Name or "")..((t.Animation and t.Animation.Name) or "")):lower()
-		if nm:find("counter") or nm:find("parry") or nm:find("reversal") or nm:find("deathblow") or nm:find("splitsecond") or nm:find("prey") then return true end
+		if nm:find("counter") or nm:find("parry") or nm:find("reversal") or nm:find("deathblow") or nm:find("splitsecond") then return true end
 	end
 	return false
 end
