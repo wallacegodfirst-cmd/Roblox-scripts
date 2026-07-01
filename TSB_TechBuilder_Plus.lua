@@ -1513,7 +1513,6 @@ do
 	tab:CreateSlider({ Name = "M1 Reach size", Range = {4,60}, Increment = 1, Suffix = " studs", CurrentValue = CFG.hitboxSize or 12, Callback = function(v) CFG.hitboxSize = v; saveCfg() end })
 	tab:CreateSlider({ Name = "Combo speed (lower = faster)", Range = {10,200}, Increment = 5, Suffix = "%", CurrentValue = math.floor((CFG.comboSpeed or 1)*100), Callback = function(v) CFG.comboSpeed = v/100; saveCfg() end })
 	tab:CreateSection("Defense")
-	tab:CreateToggle({ Name = "Auto-block (taps Block when an enemy swings near you)", CurrentValue = CFG.autoBlock and true or false, Callback = function(v) CFG.autoBlock = v; notify("Auto-block", v and "ON" or "OFF", 2) end })
 	tab:CreateToggle({ Name = "Auto-evade (dash out the moment you recover from a knockdown)", CurrentValue = CFG.autoEvade and true or false, Callback = function(v) CFG.autoEvade = v; saveCfg(); notify("Auto-evade", v and "ON" or "OFF", 2) end })
 	tab:CreateSection("Aim")
 	lockToggle = tab:CreateToggle({ Name = "Lock-On (console-style: enemy centered)", CurrentValue = CFG.lockOn and true or false, Callback = function(v) CFG.lockOn = v; if not v then lockTarget=nil end; saveCfg() end })
@@ -1734,7 +1733,8 @@ local TweenS = game:GetService("TweenService")
 local Light  = game:GetService("Lighting")
 local PX = { wsOn=false, ws=16, fly=false, flySpd=60, noclip=false, invis=false, ghost=false,
 	freeze=false, fling=false, walkFling=false, noAnim=false, upside=false, noCD=false,
-	infJump=false, jumpPow=50, antiRagdoll=false, antiVoid=false, autoBlock=false, lastSafe=nil,
+	infJump=false, jumpPow=50, antiRagdoll=false, antiVoid=false, lastSafe=nil,
+	autoUpper=false, autoDownslam=false, aura=false, auraName="Goku",
 	aimlock=false, aimRange=250, streak=false, lastKills=nil, lastStreak=nil,
 	antiTableFlip=false, antiSerious=false, antiOmni=false, antiGarou=false, antiIncin=false, antiDeath=false, antiDC=false, ultAlert=false, jumpOnCounter=false,
 	gojoSel="Repulse", disgName="", disgOn=false, idleId="", walkId="", fps=false, fpsSaved=nil, spots={}, flingBV=nil, nameTag=nil }
@@ -2088,87 +2088,188 @@ function pxTPNearest() local me=myHRP(); if not me then return end local bp,bd
 function pxTPSky() local r=myHRP(); if r then pxTP(CFrame.new(r.Position.X,r.Position.Y+300,r.Position.Z),0.9) end end
 function pxTPSpawn() local sp=WS:FindFirstChildWhichIsA("SpawnLocation",true); if sp then pxTP(sp.CFrame*CFrame.new(0,4,0),0.6); notify("Teleport","spawn",2) else notify("Teleport","no SpawnLocation found",2) end end
 
-function pxCleanup() pcall(pxStopFling); pcall(function() if PX.nameTag then PX.nameTag:Destroy() end end); pcall(function() local r=myHRP(); if r then r.Anchored=false end end); pcall(function() if PX.fps then pxSetFPS(false) end end) end
+-- ── AUTO UPPERCUT / DOWNSLAM (VIM jump+M1; your real move anim ids confirm it fired) ──
+local MYUP, MYDS = "10503381238", "10470104242"
+local function pxSelfPlaying(id) local h=myHum(); if not h then return false end local a=h:FindFirstChildOfClass("Animator"); if not a then return false end
+	local ok,tr=pcall(function() return a:GetPlayingAnimationTracks() end); if ok and tr then for _,t in ipairs(tr) do local aid=t.Animation and t.Animation.AnimationId; if aid and tostring(aid):find(id,1,true) then return true end end end return false end
+local function pxCenter() local cam=WS.CurrentCamera; local vp=(cam and cam.ViewportSize) or Vector2.new(1280,720); return vp.X*0.5, vp.Y*0.5 end
+local function pxClickM1(hold) local x,y=pxCenter(); pcall(function() VIM:SendMouseButtonEvent(x,y,0,true,game,0) end); task.wait(hold or 0.05); pcall(function() VIM:SendMouseButtonEvent(x,y,0,false,game,0) end) end
+local function pxTapSpace() pcall(function() VIM:SendKeyEvent(true,KC.Space,false,game) end); task.wait(0.03); pcall(function() VIM:SendKeyEvent(false,KC.Space,false,game) end) end
+local function pxFaceNearest(rng) local cam=WS.CurrentCamera; local pt=pxNearest(rng or 60); if cam and pt then pcall(function() cam.CFrame=CFrame.lookAt(cam.CFrame.Position, pt.Position) end) end return pt end
+local pxAutoTok
+function pxSetAutoMoves()
+	if pxAutoTok then pxAutoTok.c=true; pxAutoTok=nil end
+	if not (PX.autoUpper or PX.autoDownslam) then return end
+	local tok={c=false}; pxAutoTok=tok
+	task.spawn(function()
+		while not tok.c and (PX.autoUpper or PX.autoDownslam) do
+			local pt=pxNearest(16)
+			if pt then
+				pxFaceNearest(16)
+				if PX.autoUpper and not pxSelfPlaying(MYUP) then
+					pxTapSpace(); task.wait(0.08); pxClickM1(0.05); task.wait(0.45)
+				elseif PX.autoDownslam and not pxSelfPlaying(MYDS) then
+					pxTapSpace(); task.wait(0.28); pxClickM1(0.05); task.wait(0.45)
+				end
+			end
+			task.wait(0.22)
+		end
+	end)
+end
+
+-- ── CLIENT AURAS (character-themed VFX: particles + light + spinning halos + pillars) ──
+local AURA = {
+	Goku            = {c1=Color3.fromRGB(255,225,90),  c2=Color3.fromRGB(255,255,255), rings=true,  beams=true,  li=Color3.fromRGB(255,220,120)},
+	Gojo            = {c1=Color3.fromRGB(80,140,255),  c2=Color3.fromRGB(170,90,255),  rings=true,  beams=true,  li=Color3.fromRGB(120,150,255)},
+	Luffy           = {c1=Color3.fromRGB(235,60,60),   c2=Color3.fromRGB(255,255,255), rings=true,  beams=false, li=Color3.fromRGB(255,120,120)},
+	Naruto          = {c1=Color3.fromRGB(255,150,40),  c2=Color3.fromRGB(255,220,80),  rings=true,  beams=true,  li=Color3.fromRGB(255,170,60)},
+	["Sung Jin Woo"]= {c1=Color3.fromRGB(120,50,220),  c2=Color3.fromRGB(25,20,40),    rings=true,  beams=true,  li=Color3.fromRGB(140,70,255)},
+	Reimu           = {c1=Color3.fromRGB(230,50,80),   c2=Color3.fromRGB(255,255,255), rings=true,  beams=false, li=Color3.fromRGB(255,120,150)},
+	Vegeta          = {c1=Color3.fromRGB(90,150,255),  c2=Color3.fromRGB(200,140,255), rings=true,  beams=true,  li=Color3.fromRGB(120,170,255)},
+	Sukuna          = {c1=Color3.fromRGB(215,40,40),   c2=Color3.fromRGB(35,10,10),    rings=true,  beams=true,  li=Color3.fromRGB(255,60,60)},
+	Ichigo          = {c1=Color3.fromRGB(35,35,40),    c2=Color3.fromRGB(220,40,60),   rings=true,  beams=true,  li=Color3.fromRGB(210,40,60)},
+	Escanor         = {c1=Color3.fromRGB(255,205,60),  c2=Color3.fromRGB(255,120,20),  rings=true,  beams=true,  li=Color3.fromRGB(255,190,80)},
+	Madara          = {c1=Color3.fromRGB(150,90,255),  c2=Color3.fromRGB(60,20,120),   rings=true,  beams=true,  li=Color3.fromRGB(170,110,255)},
+	["Ultra Instinct"]={c1=Color3.fromRGB(210,220,255),c2=Color3.fromRGB(160,120,255), rings=true,  beams=true,  li=Color3.fromRGB(200,210,255)},
+	Saitama         = {c1=Color3.fromRGB(255,240,180), c2=Color3.fromRGB(255,205,120), rings=false, beams=true,  li=Color3.fromRGB(255,235,180)},
+}
+local AURA_ORDER = {"Goku","Gojo","Luffy","Naruto","Sung Jin Woo","Reimu","Vegeta","Sukuna","Ichigo","Escanor","Madara","Ultra Instinct","Saitama"}
+local auraObjs, auraRings = {}, {}
+local function auraMount() local c=myChar(); return c and (c:FindFirstChild("HumanoidRootPart") or myHRP()) end
+local function clearAura()
+	for _,o in ipairs(auraObjs) do pcall(function() o:Destroy() end) end
+	for _,o in ipairs(auraRings) do pcall(function() o:Destroy() end) end
+	auraObjs, auraRings = {}, {}
+end
+local function applyAura()
+	clearAura()
+	local m=auraMount(); if not m then return end
+	local t=AURA[PX.auraName] or AURA.Goku
+	local att=Instance.new("Attachment"); att.Parent=m; auraObjs[#auraObjs+1]=att
+	local pe=Instance.new("ParticleEmitter"); pe.Parent=att
+	pe.Color=ColorSequence.new(t.c1,t.c2); pe.LightEmission=1; pe.LightInfluence=0
+	pe.Texture="rbxasset://textures/particles/sparkles_main.dds"
+	pe.Rate=90; pe.Lifetime=NumberRange.new(0.6,1.1); pe.Speed=NumberRange.new(7,13)
+	pe.SpreadAngle=Vector2.new(22,22); pe.Size=NumberSequence.new(1.3); pe.Acceleration=Vector3.new(0,16,0); pe.Rotation=NumberRange.new(0,360)
+	auraObjs[#auraObjs+1]=pe
+	local li=Instance.new("PointLight"); li.Color=t.li or t.c1; li.Range=18; li.Brightness=3.2; li.Parent=m; auraObjs[#auraObjs+1]=li
+	if t.rings then for i=1,2 do
+		local ring=Instance.new("Part"); ring.Shape=Enum.PartType.Cylinder; ring.Size=Vector3.new(0.3,7.5,7.5)
+		ring.Material=Enum.Material.Neon; ring.Color=(i==1 and t.c1 or t.c2); ring.Transparency=0.35
+		ring.CanCollide=false; ring.CanQuery=false; ring.Anchored=true; ring.Parent=WS
+		auraRings[#auraRings+1]=ring
+	end end
+	if t.beams then for i=-1,1,2 do
+		local p=Instance.new("Part"); p.Size=Vector3.new(0.45,11,0.45); p.Material=Enum.Material.Neon; p.Color=t.c2; p.Transparency=0.4
+		p.CanCollide=false; p.CanQuery=false; p.Anchored=true; p.Parent=WS; p:SetAttribute("side", i)
+		auraRings[#auraRings+1]=p
+	end end
+end
+function pxSetAura(v) PX.aura=v; if v then applyAura() else clearAura() end end
+local auraTick=0
+track(RunSvc.RenderStepped:Connect(function(dt)
+	if not PX.aura then return end
+	local m=auraMount(); if not m then return end
+	if not (auraObjs[1] and auraObjs[1].Parent) then applyAura(); return end
+	auraTick=auraTick+dt
+	for i,ring in ipairs(auraRings) do pcall(function()
+		if ring.Shape==Enum.PartType.Cylinder then
+			ring.CFrame = m.CFrame * CFrame.new(0,-1.2,0) * CFrame.Angles(0, auraTick*(3+i), 0) * CFrame.Angles(0,0,math.pi/2)  -- flat spinning halo
+		else
+			local side=ring:GetAttribute("side") or 1
+			ring.CFrame = m.CFrame * CFrame.Angles(0, auraTick*2, 0) * CFrame.new(side*2.2,0,0)  -- orbiting pillar
+		end
+	end) end
+end))
+track(LP.CharacterAdded:Connect(function() task.wait(0.7); if PX.aura then applyAura() end end))
+
+function pxCleanup() pcall(pxStopFling); pcall(clearAura); pcall(function() if PX.nameTag then PX.nameTag:Destroy() end end); pcall(function() local r=myHRP(); if r then r.Anchored=false end end); pcall(function() if PX.fps then pxSetFPS(false) end end) end
 track(LP.CharacterAdded:Connect(function() task.wait(0.6); if PX.disgOn then pxSetName(true) end; if PX.fps then pxSetFPS(true) end end))
 
 -- ════════ PLUS TABS ════════
 do
 	local tab = Window:CreateTab("Player", 4483362458)
-	tab:CreateSection("Movement (all reliable client-side)")
+	tab:CreateSection("Movement")
 	tab:CreateToggle({ Name="Loop WalkSpeed", CurrentValue=false, Callback=function(v) PX.wsOn=v; if not v then local h=myHum(); if h then pcall(function() h.WalkSpeed=16 end) end end end })
 	tab:CreateSlider({ Name="WalkSpeed", Range={16,250}, Increment=2, Suffix="", CurrentValue=16, Callback=function(v) PX.ws=v end })
-	tab:CreateToggle({ Name="Fly  (WASD + Space/Ctrl)", CurrentValue=false, Callback=function(v) pxSetFly(v) end })
-	tab:CreateSlider({ Name="Fly speed", Range={20,300}, Increment=10, Suffix="", CurrentValue=60, Callback=function(v) PX.flySpd=v end })
-	tab:CreateToggle({ Name="Noclip  (walk through walls)", CurrentValue=false, Callback=function(v) pxSetNoclip(v) end })
+	tab:CreateToggle({ Name="Fly", CurrentValue=false, Callback=function(v) pxSetFly(v) end })
+	tab:CreateSlider({ Name="Fly Speed", Range={20,300}, Increment=10, Suffix="", CurrentValue=60, Callback=function(v) PX.flySpd=v end })
+	tab:CreateToggle({ Name="Noclip", CurrentValue=false, Callback=function(v) pxSetNoclip(v) end })
 	tab:CreateToggle({ Name="Infinite Jump", CurrentValue=false, Callback=function(v) PX.infJump=v end })
 	tab:CreateSlider({ Name="Jump Power", Range={50,300}, Increment=5, Suffix="", CurrentValue=50, Callback=function(v) PX.jumpPow=v end })
-	tab:CreateSection("Survival (defensive — these genuinely help in a fight)")
-	tab:CreateToggle({ Name="Anti-Ragdoll / Auto Get-Up (recover from stuns fast)", CurrentValue=false, Callback=function(v) PX.antiRagdoll=v; notify("Anti-Ragdoll", v and "ON" or "OFF",2) end })
-	tab:CreateToggle({ Name="Anti-Void (yank back up if you ring-out off the map)", CurrentValue=false, Callback=function(v) PX.antiVoid=v; notify("Anti-Void", v and "ON" or "OFF",2) end })
-	tab:CreateSection("Body / visual")
-	tab:CreateToggle({ Name="Invisibility (local render)", CurrentValue=false, Callback=function(v) pxSetInvis(v) end })
+	tab:CreateSection("Combat")
+	tab:CreateToggle({ Name="Auto Uppercut", CurrentValue=false, Callback=function(v) PX.autoUpper=v; if v then PX.autoDownslam=false end; pxSetAutoMoves() end })
+	tab:CreateToggle({ Name="Auto Downslam", CurrentValue=false, Callback=function(v) PX.autoDownslam=v; if v then PX.autoUpper=false end; pxSetAutoMoves() end })
+	tab:CreateSection("Survival")
+	tab:CreateToggle({ Name="Anti-Ragdoll", CurrentValue=false, Callback=function(v) PX.antiRagdoll=v end })
+	tab:CreateToggle({ Name="Anti-Void", CurrentValue=false, Callback=function(v) PX.antiVoid=v end })
+	tab:CreateSection("Body")
+	tab:CreateToggle({ Name="Invisibility", CurrentValue=false, Callback=function(v) pxSetInvis(v) end })
 	tab:CreateToggle({ Name="No Animations", CurrentValue=false, Callback=function(v) PX.noAnim=v end })
 	tab:CreateToggle({ Name="Upside Down", CurrentValue=false, Callback=function(v) pxSetUpside(v) end })
-	tab:CreateToggle({ Name="No Dash CD / Endlag / Fatigue (best-effort attr)", CurrentValue=false, Callback=function(v) PX.noCD=v end })
+	tab:CreateToggle({ Name="No Cooldowns", CurrentValue=false, Callback=function(v) PX.noCD=v end })
 	tab:CreateSection("Fling")
-	tab:CreateToggle({ Name="Flinging (spin — flings whoever touches you)", CurrentValue=false, Callback=function(v) pxSetFling(v) end })
+	tab:CreateToggle({ Name="Flinging", CurrentValue=false, Callback=function(v) pxSetFling(v) end })
 	tab:CreateToggle({ Name="Walk Fling", CurrentValue=false, Callback=function(v) pxSetWalkFling(v) end })
-	tab:CreateButton({ Name="Fling All (sweep every enemy)", Callback=function() pxFlingAll() end })
-	tab:CreateSection("Aim / streak")
-	tab:CreateToggle({ Name="Aimlock (camera to nearest)", CurrentValue=false, Callback=function(v) PX.aimlock=v end })
-	tab:CreateSlider({ Name="Aimlock range", Range={50,400}, Increment=10, Suffix=" studs", CurrentValue=250, Callback=function(v) PX.aimRange=v end })
-	tab:CreateToggle({ Name="Streak Notifier (reads Cutscenes.Billboard.Killstreak)", CurrentValue=false, Callback=function(v) PX.streak=v; if v then PX.lastStreak=pxStreakText() end end })
+	tab:CreateButton({ Name="Fling All", Callback=function() pxFlingAll() end })
+	tab:CreateSection("Aim")
+	tab:CreateToggle({ Name="Aimlock", CurrentValue=false, Callback=function(v) PX.aimlock=v end })
+	tab:CreateSlider({ Name="Aimlock Range", Range={50,400}, Increment=10, Suffix="", CurrentValue=250, Callback=function(v) PX.aimRange=v end })
+	tab:CreateToggle({ Name="Streak Notifier", CurrentValue=false, Callback=function(v) PX.streak=v; if v then PX.lastStreak=pxStreakText() end end })
+end
+
+do
+	local tab = Window:CreateTab("Auras", 4483362458)
+	tab:CreateSection("Client Aura")
+	tab:CreateToggle({ Name="Enable Aura", CurrentValue=false, Callback=function(v) pxSetAura(v) end })
+	tab:CreateDropdown({ Name="Aura", Options=AURA_ORDER, CurrentOption="Goku", Callback=function(o) PX.auraName=(type(o)=="table") and o[1] or o; if PX.aura then applyAura() end end })
 end
 
 do
 	local tab = Window:CreateTab("Keybinds", 4483362458)
-	tab:CreateSection("Bind a key to each")
-	tab:CreateKeybind({ Name="Anime Teleportation (behind enemy)", CurrentKeybind="V", HoldToInteract=false, Callback=function() pxAnimeTP() end })
-	tab:CreateToggle({ Name="Ghost Mode (noclip + see-through)", CurrentValue=false, Callback=function(v) pxSetGhost(v) end })
-	tab:CreateToggle({ Name="HRP Freeze (anchor in place)", CurrentValue=false, Callback=function(v) pxSetFreeze(v) end })
-	tab:CreateKeybind({ Name="HRP Freeze (toggle key)", CurrentKeybind="H", HoldToInteract=false, Callback=function() pxSetFreeze(not PX.freeze) end })
-	tab:CreateSection("Gojo animation")
-	tab:CreateDropdown({ Name="Gojo move", Options={"Repulse","Erase","Attract"}, CurrentOption="Repulse", Callback=function(o) PX.gojoSel=(type(o)=="table") and o[1] or o end })
-	tab:CreateKeybind({ Name="Gojo Animation (play)", CurrentKeybind="G", HoldToInteract=false, Callback=function() pxGojo() end })
+	tab:CreateSection("Keybinds")
+	tab:CreateKeybind({ Name="Anime Teleport", CurrentKeybind="V", HoldToInteract=false, Callback=function() pxAnimeTP() end })
+	tab:CreateToggle({ Name="Ghost Mode", CurrentValue=false, Callback=function(v) pxSetGhost(v) end })
+	tab:CreateToggle({ Name="HRP Freeze", CurrentValue=false, Callback=function(v) pxSetFreeze(v) end })
+	tab:CreateKeybind({ Name="HRP Freeze Key", CurrentKeybind="H", HoldToInteract=false, Callback=function() pxSetFreeze(not PX.freeze) end })
+	tab:CreateSection("Gojo")
+	tab:CreateDropdown({ Name="Move", Options={"Repulse","Erase","Attract"}, CurrentOption="Repulse", Callback=function(o) PX.gojoSel=(type(o)=="table") and o[1] or o end })
+	tab:CreateKeybind({ Name="Play", CurrentKeybind="G", HoldToInteract=false, Callback=function() pxGojo() end })
 end
 
 do
 	local tab = Window:CreateTab("Teleports", 4483362458)
-	tab:CreateSection("Reliable (map-independent — TSB maps rotate, so these always work)")
-	tab:CreateButton({ Name="TP to nearest player", Callback=function() pxTPNearest() end })
+	tab:CreateSection("Teleport")
+	tab:CreateButton({ Name="Nearest Player", Callback=function() pxTPNearest() end })
 	local who="(no players)"
-	local pdrop = tab:CreateDropdown({ Name="Pick a player", Options=pxPlayerNames(), CurrentOption=pxPlayerNames()[1], Callback=function(o) who=(type(o)=="table") and o[1] or o end })
-	tab:CreateButton({ Name="Refresh player list", Callback=function() pcall(function() pdrop:Refresh(pxPlayerNames(), false) end) end })
-	tab:CreateButton({ Name="TP to picked player", Callback=function() pxTPToPlayer(who) end })
-	tab:CreateButton({ Name="TP up (Sky, +300)", Callback=function() pxTPSky() end })
-	tab:CreateButton({ Name="TP to Spawn", Callback=function() pxTPSpawn() end })
-	tab:CreateSection("Saved spots (for this map)")
+	local pdrop = tab:CreateDropdown({ Name="Player", Options=pxPlayerNames(), CurrentOption=pxPlayerNames()[1], Callback=function(o) who=(type(o)=="table") and o[1] or o end })
+	tab:CreateButton({ Name="Refresh", Callback=function() pcall(function() pdrop:Refresh(pxPlayerNames(), false) end) end })
+	tab:CreateButton({ Name="To Player", Callback=function() pxTPToPlayer(who) end })
+	tab:CreateButton({ Name="Sky", Callback=function() pxTPSky() end })
+	tab:CreateButton({ Name="Spawn", Callback=function() pxTPSpawn() end })
+	tab:CreateSection("Saved Spots")
 	local slot="Spot 1"
-	tab:CreateDropdown({ Name="Slot", Options={"Spot 1","Spot 2","Spot 3","DC Room","Sky Camp","Corner"}, CurrentOption="Spot 1", Callback=function(o) slot=(type(o)=="table") and o[1] or o end })
-	tab:CreateButton({ Name="Save current position to slot", Callback=function() pxSaveSpot(slot) end })
-	tab:CreateButton({ Name="TP to saved slot", Callback=function() if PX.spots[slot] then pxTP(PX.spots[slot],0.6); notify("Teleport",slot,2) else notify("Teleport","slot empty — Save first",3) end end })
-	tab:CreateParagraph({ Title="Why saved-spots", Content="TSB cycles maps, so hard-coded room coords drift between rounds. Stand on the spot you want (e.g. a DC room), hit Save, then TP to it any time on that map. The player/sky/spawn buttons need no coords and work on every map."})
+	tab:CreateDropdown({ Name="Slot", Options={"Spot 1","Spot 2","Spot 3","Spot 4","Spot 5","Spot 6"}, CurrentOption="Spot 1", Callback=function(o) slot=(type(o)=="table") and o[1] or o end })
+	tab:CreateButton({ Name="Save", Callback=function() pxSaveSpot(slot) end })
+	tab:CreateButton({ Name="Go", Callback=function() if PX.spots[slot] then pxTP(PX.spots[slot],0.6); notify("Teleport",slot,2) else notify("Teleport","empty",2) end end })
 end
 
 do
 	local tab = Window:CreateTab("Exploits", 4483362458)
-	tab:CreateSection("Defensive exploits (client-side — these WORK)")
-	tab:CreateToggle({ Name="Auto-Block (taps Block when an enemy swings near you)", CurrentValue=false, Callback=function(v) CFG.autoBlock=v; notify("Auto-Block", v and "ON" or "OFF",2) end })
-	tab:CreateToggle({ Name="Anti-Ragdoll / Auto Get-Up", CurrentValue=false, Callback=function(v) PX.antiRagdoll=v; notify("Anti-Ragdoll", v and "ON" or "OFF",2) end })
-	tab:CreateToggle({ Name="Anti-Void (no ring-outs)", CurrentValue=false, Callback=function(v) PX.antiVoid=v; notify("Anti-Void", v and "ON" or "OFF",2) end })
-	tab:CreateSection("Anti-move auto-dodge (reads enemy animations, back-dashes)")
+	tab:CreateSection("Defense")
+	tab:CreateToggle({ Name="Anti-Ragdoll", CurrentValue=false, Callback=function(v) PX.antiRagdoll=v end })
+	tab:CreateToggle({ Name="Anti-Void", CurrentValue=false, Callback=function(v) PX.antiVoid=v end })
+	tab:CreateSection("Anti-Move")
 	tab:CreateToggle({ Name="Anti Table Flip", CurrentValue=false, Callback=function(v) PX.antiTableFlip=v end })
 	tab:CreateToggle({ Name="Anti Serious Punch", CurrentValue=false, Callback=function(v) PX.antiSerious=v end })
-	tab:CreateToggle({ Name="Anti Omnidirectional Punch", CurrentValue=false, Callback=function(v) PX.antiOmni=v end })
-	tab:CreateToggle({ Name="Anti Garou Ultimate Moves", CurrentValue=false, Callback=function(v) PX.antiGarou=v end })
+	tab:CreateToggle({ Name="Anti Omni Punch", CurrentValue=false, Callback=function(v) PX.antiOmni=v end })
+	tab:CreateToggle({ Name="Anti Garou Ult", CurrentValue=false, Callback=function(v) PX.antiGarou=v end })
 	tab:CreateToggle({ Name="Anti Incinerate", CurrentValue=false, Callback=function(v) PX.antiIncin=v end })
 	tab:CreateToggle({ Name="Anti Death Blow", CurrentValue=false, Callback=function(v) PX.antiDeath=v end })
 	tab:CreateToggle({ Name="Anti Death Counter", CurrentValue=false, Callback=function(v) PX.antiDC=v end })
-	tab:CreateSection("Counters (Garou / Death Blow / Split Second)")
-	tab:CreateToggle({ Name="Ultimate Alert (notify when an enemy starts a counter)", CurrentValue=false, Callback=function(v) PX.ultAlert=v end })
-	tab:CreateToggle({ Name="Jump on their head when they counter (bait it — counters only hit in front)", CurrentValue=false, Callback=function(v) PX.jumpOnCounter=v; notify("Jump-on-Counter", v and "ON" or "OFF",2) end })
-	tab:CreateSection("Server-side moves")
-	tab:CreateParagraph({ Title="Researched & honest", Content="TSB validates combat/damage SERVER-SIDE, so 'fire a Saitama move / void-kill' isn't reliably scriptable — those remotes are sanity-checked. Everything in THIS tab is client-side and actually works. If you DO know a move remote, run Utility ▸ Scan Remotes and send it and I'll wire it."})
+	tab:CreateSection("Counter")
+	tab:CreateToggle({ Name="Ultimate Alert", CurrentValue=false, Callback=function(v) PX.ultAlert=v end })
+	tab:CreateToggle({ Name="Jump On Counter", CurrentValue=false, Callback=function(v) PX.jumpOnCounter=v end })
 end
 
 do
@@ -2176,28 +2277,27 @@ do
 	tab:CreateSection("Tools")
 	tab:CreateButton({ Name="DEX Explorer", Callback=function() pxDex() end })
 	tab:CreateToggle({ Name="FPS Booster", CurrentValue=false, Callback=function(v) pxSetFPS(v) end })
-	tab:CreateButton({ Name="Scan Remotes (send me the output)", Callback=function() pxScanRemotes() end })
-	tab:CreateSection("Disguise (custom display name)")
-	tab:CreateInput({ Name="Display name", PlaceholderText="type a name", RemoveTextAfterFocusLost=false, Callback=function(x) PX.disgName=x or ""; if PX.disgOn then pxSetName(true) end end })
-	tab:CreateToggle({ Name="Show custom name over my head", CurrentValue=false, Callback=function(v) pxSetName(v) end })
-	tab:CreateSection("Custom animations (client-side)")
-	tab:CreateInput({ Name="Idle animation id", PlaceholderText="rbxassetid or number", RemoveTextAfterFocusLost=false, Callback=function(x) PX.idleId=x or "" end })
-	tab:CreateButton({ Name="Apply idle animation", Callback=function() if PX.idleId~="" then pxSetAnim("idle",PX.idleId); notify("Animation","idle applied",2) end end })
-	tab:CreateInput({ Name="Walk animation id", PlaceholderText="rbxassetid or number", RemoveTextAfterFocusLost=false, Callback=function(x) PX.walkId=x or "" end })
-	tab:CreateButton({ Name="Apply walk animation", Callback=function() if PX.walkId~="" then pxSetAnim("walk",PX.walkId); notify("Animation","walk applied",2) end end })
-	tab:CreateSection("Hotbar customization  (PlayerGui.Hotbar)")
+	tab:CreateButton({ Name="Scan Remotes", Callback=function() pxScanRemotes() end })
+	tab:CreateSection("Disguise")
+	tab:CreateInput({ Name="Display Name", PlaceholderText="name", RemoveTextAfterFocusLost=false, Callback=function(x) PX.disgName=x or ""; if PX.disgOn then pxSetName(true) end end })
+	tab:CreateToggle({ Name="Show Name", CurrentValue=false, Callback=function(v) pxSetName(v) end })
+	tab:CreateSection("Animations")
+	tab:CreateInput({ Name="Idle Id", PlaceholderText="id", RemoveTextAfterFocusLost=false, Callback=function(x) PX.idleId=x or "" end })
+	tab:CreateButton({ Name="Apply Idle", Callback=function() if PX.idleId~="" then pxSetAnim("idle",PX.idleId); notify("Animation","idle",2) end end })
+	tab:CreateInput({ Name="Walk Id", PlaceholderText="id", RemoveTextAfterFocusLost=false, Callback=function(x) PX.walkId=x or "" end })
+	tab:CreateButton({ Name="Apply Walk", Callback=function() if PX.walkId~="" then pxSetAnim("walk",PX.walkId); notify("Animation","walk",2) end end })
+	tab:CreateSection("Hotbar")
 	local mvSlot, mvName = "1", ""
-	tab:CreateDropdown({ Name="Move slot", Options={"1","2","3","4"}, CurrentOption="1", Callback=function(o) mvSlot=(type(o)=="table") and o[1] or o end })
-	tab:CreateInput({ Name="New move name", PlaceholderText="e.g. ONE PUNCH", RemoveTextAfterFocusLost=false, Callback=function(x) mvName=x or "" end })
-	tab:CreateButton({ Name="Rename move 1-4", Callback=function()
-		if mvName=="" then notify("Hotbar","type a name",2); return end
-		notify("Hotbar", pxRenameSlot(mvSlot, mvName) and ("slot "..mvSlot.." renamed") or "slot label not found — try Rename-by-text", 3)
+	tab:CreateDropdown({ Name="Slot", Options={"1","2","3","4"}, CurrentOption="1", Callback=function(o) mvSlot=(type(o)=="table") and o[1] or o end })
+	tab:CreateInput({ Name="New Name", PlaceholderText="name", RemoveTextAfterFocusLost=false, Callback=function(x) mvName=x or "" end })
+	tab:CreateButton({ Name="Rename Move", Callback=function()
+		if mvName=="" then return end
+		notify("Hotbar", pxRenameSlot(mvSlot, mvName) and "done" or "not found", 3)
 	end })
-	tab:CreateSection("Hotbar (fallback: rename by exact current text)")
 	local oh,nh="",""
-	tab:CreateInput({ Name="Current label text", PlaceholderText="e.g. Shove", RemoveTextAfterFocusLost=false, Callback=function(x) oh=x or "" end })
-	tab:CreateInput({ Name="New name", PlaceholderText="new text", RemoveTextAfterFocusLost=false, Callback=function(x) nh=x or "" end })
-	tab:CreateButton({ Name="Rename by text", Callback=function() if oh~="" and nh~="" then notify("Hotbar", pxRenameByText(oh,nh) and "renamed" or "label not found",3) end end })
+	tab:CreateInput({ Name="Old Text", PlaceholderText="current", RemoveTextAfterFocusLost=false, Callback=function(x) oh=x or "" end })
+	tab:CreateInput({ Name="New Text", PlaceholderText="new", RemoveTextAfterFocusLost=false, Callback=function(x) nh=x or "" end })
+	tab:CreateButton({ Name="Rename By Text", Callback=function() if oh~="" and nh~="" then notify("Hotbar", pxRenameByText(oh,nh) and "done" or "not found",3) end end })
 end
 
 
@@ -2217,5 +2317,5 @@ local function unload()
 end
 do local gg=(getgenv and getgenv()) or _G; gg.__TSB_UNLOAD=unload end
 
-notify("Vaultix Hub PLUS v3.0", "Full Tech Builder + Player / Keybinds / Teleports / Exploits / Utility tabs.", 7)
-print("[Vaultix] v3.0 loaded — reworked: Fight tab, chase-on default, auto-block, jump-tap launchers.")
+notify("Vaultix Hub PLUS", "Loaded.", 4)
+print("[Vaultix] loaded.")
