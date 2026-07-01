@@ -1873,37 +1873,57 @@ local function clickGame(hold)
 	local x,y=vp.X*0.5, vp.Y*0.5
 	pcall(function() VIM:SendMouseButtonEvent(x,y,0,true,game,0) end); task.wait(hold or 0.06); pcall(function() VIM:SendMouseButtonEvent(x,y,0,false,game,0) end)
 end
-local function grabAndThrow(part, targetPlr)
-	local me=myHRP(); if not (me and part and part.Parent) then return end
-	pxTP(part.CFrame*CFrame.new(0,0,3.5), 0.4); RunSvc.Heartbeat:Wait()                -- walk up to the can
-	faceAt(part.Position); task.wait(0.12)
-	REPLAYING=true; clickGame(0.06); REPLAYING=false                                    -- M1 = pick it up
-	task.wait(0.28)
-	local pt=partOf(targetPlr)
-	if pt then
-		pxTP(pt.CFrame*CFrame.new(0,0,12), 0.4); RunSvc.Heartbeat:Wait()                -- run to the target
-		faceAt(pt.Position); task.wait(0.12)
-		REPLAYING=true; clickGame(0.06); REPLAYING=false                                -- M1 = throw it at them
-	end
-	task.wait(0.2)
+local pxTrashTok = nil
+function pxStopTrash() if pxTrashTok then pxTrashTok.c=true; pxTrashTok=nil; notify("Trash","stopped",2) end end
+local function nearestCan()
+	local me=myHRP(); if not me then return nil end
+	local best,bd
+	for _,c in ipairs(allTrashParts()) do if c.Parent then local d=(c.Position-me.Position).Magnitude; if not bd or d<bd then best,bd=c,d end end end
+	return best
 end
+local function trashTargets(targetName)
+	local t={}
+	if targetName=="All" then for _,p in ipairs(Players:GetPlayers()) do if p~=LP then t[#t+1]=p end end
+	else local p=Players:FindFirstChild(targetName); if p then t[1]=p end end
+	return t
+end
+-- ONE cycle: grab the NEAREST can, THEN go to the target and throw. tok.c aborts at every step.
+local function grabThenThrow(targetPlr, tok)
+	local can=nearestCan(); if not can then return false end
+	pxTP(can.CFrame*CFrame.new(0,0,3.5), 0.4); RunSvc.Heartbeat:Wait()                 -- 1) walk to the can
+	if tok.c then return false end
+	faceAt(can.Position); task.wait(0.15)
+	REPLAYING=true; clickGame(0.06); REPLAYING=false                                    -- M1 = pick it up
+	task.wait(0.3); if tok.c then return false end
+	local pt=partOf(targetPlr); if not pt then return false end                         -- 2) go to the target + throw (once)
+	pxTP(pt.CFrame*CFrame.new(0,0,12), 0.5); RunSvc.Heartbeat:Wait()
+	if tok.c then return false end
+	faceAt(pt.Position); task.wait(0.15)
+	REPLAYING=true; clickGame(0.06); REPLAYING=false                                    -- M1 = throw at them
+	task.wait(0.2)
+	return true
+end
+-- SINGLE: pick up ONE trash, teleport to the target, throw, then STOP (what you asked for).
+function pxThrowTrash(targetName)
+	pxStopTrash()
+	local tg=trashTargets(targetName); if #tg==0 then notify("Trash","no target",2); return end
+	if not nearestCan() then notify("Trash","no trash cans in Map.Trash",3); return end
+	local tok={c=false}; pxTrashTok=tok
+	task.spawn(function() grabThenThrow(tg[1], tok); if pxTrashTok==tok then pxTrashTok=nil end; notify("Trash","thrown",2) end)
+end
+-- ALL: loop grab->throw at the target(s) until you hit Stop or run out of cans.
 function pxThrowAllTrash(targetName)
-	local me=myHRP(); if not me then return end
-	local cans=allTrashParts()
-	if #cans==0 then notify("Trash","no trash cans in Map.Trash",3); return end
-	local targets={}
-	if targetName=="All" then for _,p in ipairs(Players:GetPlayers()) do if p~=LP then targets[#targets+1]=p end end
-	else local p=Players:FindFirstChild(targetName); if p then targets[1]=p end end
-	if #targets==0 then notify("Trash","no target players",2); return end
+	pxStopTrash()
+	local tg=trashTargets(targetName); if #tg==0 then notify("Trash","no target",2); return end
+	local tok={c=false}; pxTrashTok=tok
 	task.spawn(function()
 		local ti=1
-		for _,part in ipairs(cans) do
-			if part and part.Parent then
-				local tp=targets[ti]; ti=ti%#targets+1
-				if tp and tp.Character then grabAndThrow(part, tp) end
-			end
+		while not tok.c do
+			if not nearestCan() then break end
+			local ok=grabThenThrow(tg[ti], tok); if not ok then break end
+			ti=ti%#tg+1
 		end
-		notify("Trash","picked up + threw "..#cans.." cans",3)
+		if pxTrashTok==tok then pxTrashTok=nil end; notify("Trash","done",2)
 	end)
 end
 
@@ -2007,6 +2027,20 @@ local function pxJumpOnHead(plr, pt)
 		pxChat("EZ BOY")
 	end)
 end
+-- ROBUST counter detection: any counter anim id OR a ForceField (i-frames) OR a counter attribute OR a
+-- counter-named animation track. TSB counters freeze the user in a stance with hyperarmor, so this catches them.
+local COUNTER_IDS = { ANIM_COUNTER.garou, ANIM_COUNTER.deathblow, ANIM_COUNTER.split, "11343318134" }
+local function isCounterStance(plr, tr)
+	local char=plr.Character; if not char then return false end
+	if char:FindFirstChildOfClass("ForceField") then return true end
+	for _,att in ipairs({"Countering","Counter","Parry","Reversal"}) do if char:GetAttribute(att) then return true end end
+	for _,t in ipairs(tr) do
+		if trackMatches(t, COUNTER_IDS) then return true end
+		local nm=((t.Name or "")..((t.Animation and t.Animation.Name) or "")):lower()
+		if nm:find("counter") or nm:find("parry") or nm:find("reversal") or nm:find("deathblow") or nm:find("splitsecond") or nm:find("prey") then return true end
+	end
+	return false
+end
 track(RunSvc.Heartbeat:Connect(function()
 	local anyDodge=false; for _,e in ipairs(PX_ANTI) do if PX[e.f] then anyDodge=true break end end
 	local wantCounter = PX.jumpOnCounter or PX.ultAlert
@@ -2021,15 +2055,10 @@ track(RunSvc.Heartbeat:Connect(function()
 			if a then local ok,tr=pcall(function() return a:GetPlayingAnimationTracks() end)
 				if ok and tr then
 					-- 1) counter stance? -> alert / smooth jump-on-head + "EZ BOY"
-					if wantCounter and lockOK then
-						for _,t in ipairs(tr) do
-							if trackMatches(t,{ANIM_COUNTER.garou}) or trackMatches(t,{ANIM_COUNTER.deathblow}) or trackMatches(t,{ANIM_COUNTER.split}) then
-								if PX.ultAlert then notify("COUNTER", plr.Name.." is countering!", 2) end
-								if PX.jumpOnCounter and os.clock()-pxLastHead>1.0 then
-									pxLastHead=os.clock(); pxJumpOnHead(plr, pt)
-								end
-								break
-							end
+					if wantCounter and lockOK and isCounterStance(plr, tr) then
+						if PX.ultAlert then notify("COUNTER", plr.Name.." is countering!", 2) end
+						if PX.jumpOnCounter and os.clock()-pxLastHead>1.0 then
+							pxLastHead=os.clock(); pxJumpOnHead(plr, pt)
 						end
 					end
 					-- 2) flagged offensive move? -> ranged = TELEPORT dodge, melee = back-dash (respects lock-on-only)
@@ -2182,105 +2211,95 @@ function pxSetAutoMoves()
 	end)
 end
 
--- ── CLIENT AURAS (ported straight from Ability Arena's VFX: core shape + particles + light +
---    spinning neon ring-discs + orbiting pillars + trail, with a rainbow hue cycle) ──
-local VFX_TEX = { Sparkles="rbxasset://textures/particles/sparkles_main.dds", Fire="rbxasset://textures/particles/fire_main.dds", Smoke="rbxasset://textures/particles/smoke_main.dds", Square="" }
+-- ── CLIENT AURAS (polished flowing anime energy: glowing rising particles + swirling upward BEAMS that
+--    stream high + a spinning ground ring + light. No blocky neon balls/bars.) ──
+local A_SMOKE="rbxasset://textures/particles/smoke_main.dds"
+local A_FIRE="rbxasset://textures/particles/fire_main.dds"
+local A_SPARK="rbxasset://textures/particles/sparkles_main.dds"
+local WHITE=Color3.new(1,1,1)
+local function rgb(r,g,b) return Color3.fromRGB(r,g,b) end
 local AURA = {
-	Fire      = {Shape="Ball",Color=Color3.fromRGB(255,90,0),Color2=Color3.fromRGB(255,210,0),Texture="Fire",Rate=140,Speed=11,Spread=45,Light=true,Brightness=7,Rings=false,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=5,Transp=0.5},
-	Ice       = {Shape="Ball",Color=Color3.fromRGB(120,220,255),Color2=Color3.fromRGB(225,250,255),Texture="Sparkles",Rate=90,Speed=4,Spread=160,Light=true,Brightness=4,Rings=true,RingCount=2,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=5,Transp=0.5},
-	Lightning = {Shape="Ball",Color=Color3.fromRGB(120,180,255),Color2=Color3.fromRGB(255,255,255),Texture="Sparkles",Rate=170,Speed=16,Spread=180,Light=true,Brightness=9,Rings=false,Beams=true,Trail=false,Rainbow=false,ShapeOn=false,Size=4,Transp=0.5},
-	Galaxy    = {Shape="Ball",Color=Color3.fromRGB(150,60,255),Color2=Color3.fromRGB(60,160,255),Texture="Sparkles",Rate=110,Speed=3,Spread=200,Light=true,Brightness=5,Rings=true,RingCount=3,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=6,Transp=0.6},
-	Shadow    = {Shape="Ball",Color=Color3.fromRGB(70,0,100),Color2=Color3.fromRGB(20,20,30),Texture="Smoke",Rate=90,Speed=3,Spread=180,Light=true,Brightness=3,Rings=false,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=6,Transp=0.5},
-	Holy      = {Shape="Ball",Color=Color3.fromRGB(255,240,150),Color2=Color3.fromRGB(255,255,255),Texture="Sparkles",Rate=120,Speed=5,Spread=160,Light=true,Brightness=9,Rings=true,RingCount=2,Beams=true,Trail=false,Rainbow=false,ShapeOn=true,Size=5,Transp=0.6},
-	Toxic     = {Shape="Ball",Color=Color3.fromRGB(120,255,40),Color2=Color3.fromRGB(40,160,0),Texture="Smoke",Rate=90,Speed=4,Spread=170,Light=true,Brightness=4,Rings=false,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=5,Transp=0.5},
-	Rainbow   = {Shape="Ball",Texture="Sparkles",Rate=140,Speed=6,Spread=180,Light=true,Brightness=6,Rings=true,RingCount=3,Beams=false,Trail=true,Rainbow=true,ShapeOn=true,Size=5,Transp=0.4},
-	Void      = {Shape="Ball",Color=Color3.fromRGB(25,0,35),Color2=Color3.fromRGB(150,0,210),Texture="Smoke",Rate=110,Speed=2,Spread=200,Light=true,Brightness=4,Rings=true,RingCount=2,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=7,Transp=0.4},
-	Sakura    = {Shape="Ball",Color=Color3.fromRGB(255,150,200),Color2=Color3.fromRGB(255,215,235),Texture="Sparkles",Rate=80,Speed=3,Spread=200,Light=true,Brightness=3,Rings=false,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=5,Transp=0.6},
-	Nuke      = {Shape="Ball",Color=Color3.fromRGB(255,150,0),Color2=Color3.fromRGB(255,40,0),Texture="Fire",Rate=110,Speed=14,Spread=200,Light=true,Brightness=10,Rings=true,RingCount=2,Beams=true,Trail=false,Rainbow=false,ShapeOn=true,Size=8,Transp=0.3},
+	Fire      = {c1=rgb(255,120,20),  c2=rgb(255,40,10),   li=rgb(255,120,40),  tex="fire"},
+	Inferno   = {c1=rgb(255,70,10),   c2=rgb(110,0,0),     li=rgb(255,80,30),   tex="fire"},
+	Ice       = {c1=rgb(120,220,255), c2=rgb(230,250,255), li=rgb(150,220,255), tex="smoke"},
+	Void      = {c1=rgb(160,50,235),  c2=rgb(30,0,45),     li=rgb(160,60,235),  tex="smoke"},
+	Shadow    = {c1=rgb(120,40,210),  c2=rgb(14,10,26),    li=rgb(120,40,200),  tex="smoke"},
+	Holy      = {c1=rgb(255,240,150), c2=rgb(255,255,255), li=rgb(255,240,180), tex="spark"},
+	Toxic     = {c1=rgb(120,255,60),  c2=rgb(30,120,20),   li=rgb(140,255,80),  tex="smoke"},
+	Galaxy    = {c1=rgb(90,120,255),  c2=rgb(185,80,255),  li=rgb(130,120,255), tex="smoke"},
+	Lightning = {c1=rgb(255,240,120), c2=rgb(120,180,255), li=rgb(255,245,160), tex="spark"},
+	Blood     = {c1=rgb(225,25,25),   c2=rgb(60,0,0),      li=rgb(255,40,40),   tex="smoke"},
+	Sakura    = {c1=rgb(255,145,205), c2=rgb(255,235,245), li=rgb(255,160,210), tex="spark"},
+	Nuke      = {c1=rgb(255,150,0),   c2=rgb(255,40,0),    li=rgb(255,120,0),   tex="fire"},
+	Rainbow   = {c1=rgb(255,80,80),   c2=rgb(120,120,255), li=WHITE,            tex="smoke", rainbow=true},
 }
-local AURA_ORDER = {"Fire","Ice","Lightning","Galaxy","Shadow","Holy","Toxic","Rainbow","Void","Sakura","Nuke"}
-local vfxObjs, vfxRings, vfxChar = {}, {}, nil
+local AURA_ORDER = {"Fire","Inferno","Ice","Void","Shadow","Holy","Toxic","Galaxy","Lightning","Blood","Sakura","Nuke","Rainbow"}
+local vfxObjs, vfxBeams, vfxEmitters, vfxGround, vfxLight, vfxChar = {}, {}, {}, nil, nil, nil
 local function auraMount() local c=myChar(); if not c then return nil end
 	return c:FindFirstChild("Torso") or c:FindFirstChild("UpperTorso") or c:FindFirstChild("HumanoidRootPart") or myHRP() end
-local function clearAura() for _,o in ipairs(vfxObjs) do pcall(function() o:Destroy() end) end vfxObjs, vfxRings = {}, {} end
-local function auraColorSeq(t, rainbow)
-	if (not rainbow) and t.Color2 then return ColorSequence.new({ColorSequenceKeypoint.new(0,t.Color or Color3.new(1,1,1)), ColorSequenceKeypoint.new(1,t.Color2)}) end
-	return ColorSequence.new(t.Color or Color3.new(1,1,1))
+local function clearAura()
+	for _,o in ipairs(vfxObjs) do pcall(function() o:Destroy() end) end
+	vfxObjs, vfxBeams, vfxEmitters, vfxGround, vfxLight = {}, {}, {}, nil, nil
 end
 local function applyAura()
 	clearAura()
 	local mount=auraMount(); if not mount then return end
 	vfxChar=myChar()
 	local t=AURA[PX.auraName] or AURA.Fire
-	local col=t.Color or Color3.fromRGB(255,255,255)
-	local size=t.Size or 5
-	local rb = PX.auraRainbow or t.Rainbow
-	if t.ShapeOn~=false then                                                     -- core glowing shape
-		local part=Instance.new("Part"); part.Shape=(t.Shape=="Cylinder" and Enum.PartType.Cylinder) or Enum.PartType.Ball
-		part.Size=Vector3.new(size,size,size); part.Color=col; part.Material=Enum.Material.Neon; part.Transparency=t.Transp or 0.5
-		part.CanCollide=false; part.CanQuery=false; part.Massless=true; part.Anchored=false; pcall(function() part.CFrame=mount.CFrame end); part.Parent=mount
-		local w=Instance.new("WeldConstraint"); w.Part0=mount; w.Part1=part; w.Parent=part; vfxObjs[#vfxObjs+1]=part
+	local c1,c2 = t.c1, t.c2 or t.c1
+	local bodyTex = (t.tex=="fire" and A_FIRE) or (t.tex=="spark" and A_SPARK) or A_SMOKE
+
+	local att=Instance.new("Attachment",mount); att.Position=Vector3.new(0,-1.4,0); vfxObjs[#vfxObjs+1]=att
+	local e1=Instance.new("ParticleEmitter",att)                                      -- rising energy body (soft, tall)
+	e1.Texture=bodyTex; e1.Color=ColorSequence.new(c1,c2); e1.LightEmission=1; e1.LightInfluence=0
+	e1.Rate=105; e1.Lifetime=NumberRange.new(1.2,2.0); e1.Speed=NumberRange.new(24,42); e1.SpreadAngle=Vector2.new(6,6); e1.Drag=1.2
+	e1.Size=NumberSequence.new({NumberSequenceKeypoint.new(0,5), NumberSequenceKeypoint.new(0.35,3.5), NumberSequenceKeypoint.new(1,0)})
+	e1.Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.2), NumberSequenceKeypoint.new(1,1)})
+	e1.Acceleration=Vector3.new(0,26,0); e1.Rotation=NumberRange.new(0,360); e1.RotSpeed=NumberRange.new(-60,60)
+	vfxObjs[#vfxObjs+1]=e1; vfxEmitters[#vfxEmitters+1]=e1
+	local e2=Instance.new("ParticleEmitter",att)                                      -- rising glints
+	e2.Texture=A_SPARK; e2.Color=ColorSequence.new(c2,WHITE); e2.LightEmission=1; e2.LightInfluence=0
+	e2.Rate=120; e2.Lifetime=NumberRange.new(0.8,1.6); e2.Speed=NumberRange.new(16,30); e2.SpreadAngle=Vector2.new(14,14)
+	e2.Size=NumberSequence.new({NumberSequenceKeypoint.new(0,1.4), NumberSequenceKeypoint.new(1,0)}); e2.Acceleration=Vector3.new(0,24,0); e2.Rotation=NumberRange.new(0,360)
+	vfxObjs[#vfxObjs+1]=e2; vfxEmitters[#vfxEmitters+1]=e2
+
+	for i=1,6 do                                                                       -- swirling upward energy beams (reach high, glowing, tapered)
+		local b0=Instance.new("Attachment",mount); vfxObjs[#vfxObjs+1]=b0
+		local b1=Instance.new("Attachment",mount); vfxObjs[#vfxObjs+1]=b1
+		local beam=Instance.new("Beam",mount); beam.Attachment0=b0; beam.Attachment1=b1
+		beam.Color=ColorSequence.new(c1,c2); beam.LightEmission=1; beam.FaceCamera=true; beam.Segments=18
+		beam.Width0=2.3; beam.Width1=0.08
+		beam.Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.05), NumberSequenceKeypoint.new(0.7,0.4), NumberSequenceKeypoint.new(1,1)})
+		beam.CurveSize0=3; beam.CurveSize1=-3
+		vfxObjs[#vfxObjs+1]=beam; vfxBeams[#vfxBeams+1]={beam=beam, b0=b0, b1=b1, idx=i}
 	end
-	local att=Instance.new("Attachment",mount); vfxObjs[#vfxObjs+1]=att                           -- particles
-	local pe=Instance.new("ParticleEmitter",att)
-	pe.Texture=VFX_TEX[t.Texture] or VFX_TEX.Sparkles; pe.Color=auraColorSeq(t, rb)
-	pe.Rate=t.Rate or 120; pe.Lifetime=NumberRange.new(0.5, math.max(0.6, size/3))
-	pe.Speed=NumberRange.new((t.Speed or 6)*0.4, t.Speed or 6); pe.SpreadAngle=Vector2.new(t.Spread or 180, t.Spread or 180)
-	pe.Size=NumberSequence.new({NumberSequenceKeypoint.new(0,size*0.5), NumberSequenceKeypoint.new(1,0)})
-	pe.Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.15), NumberSequenceKeypoint.new(1,1)})
-	pe.LightEmission=0.9; pe.LightInfluence=0; pe.Rotation=NumberRange.new(0,360); pe.RotSpeed=NumberRange.new(-120,120)
-	vfxObjs[#vfxObjs+1]=pe
-	if t.Light~=false then                                                        -- light
-		local lp=Instance.new("PointLight",mount); lp.Color=col; lp.Brightness=t.Brightness or 5; lp.Range=math.max(8,size*2); vfxObjs[#vfxObjs+1]=lp
-	end
-	if t.Rings then                                                              -- spinning ring discs
-		for i=1,math.max(1,t.RingCount or 2) do
-			local ring=Instance.new("Part"); ring.Shape=Enum.PartType.Cylinder; ring.Size=Vector3.new(0.25,size*1.7,size*1.7)
-			ring.Color=(t.Color2 and i%2==0) and t.Color2 or col; ring.Material=Enum.Material.Neon; ring.Transparency=0.35
-			ring.CanCollide=false; ring.CanQuery=false; ring.Massless=true; ring.Anchored=true; ring.Parent=WS
-			vfxObjs[#vfxObjs+1]=ring; vfxRings[#vfxRings+1]={part=ring, phase=(i/(t.RingCount or 2))*math.pi*2, tilt=i*35}
-		end
-	end
-	if t.Beams then                                                             -- orbiting pillars
-		for i=1,6 do
-			local b=Instance.new("Part"); b.Shape=Enum.PartType.Cylinder; b.Size=Vector3.new(size*1.6,0.35,0.35)
-			b.Color=(t.Color2 and i%2==0) and t.Color2 or col; b.Material=Enum.Material.Neon; b.Transparency=0.35
-			b.CanCollide=false; b.CanQuery=false; b.Massless=true; b.Anchored=true; b.Parent=WS
-			vfxObjs[#vfxObjs+1]=b; vfxRings[#vfxRings+1]={part=b, phase=(i/6)*math.pi*2, beam=true}
-		end
-	end
-	if t.Trail then                                                             -- trail
-		local a0=Instance.new("Attachment",mount); a0.Position=Vector3.new(0,-1.6,0)
-		local a1=Instance.new("Attachment",mount); a1.Position=Vector3.new(0,1.6,0)
-		local tr=Instance.new("Trail",mount); tr.Attachment0=a0; tr.Attachment1=a1; tr.Lifetime=0.6; tr.LightEmission=0.85
-		tr.WidthScale=NumberSequence.new({NumberSequenceKeypoint.new(0,1), NumberSequenceKeypoint.new(1,0)}); tr.Color=auraColorSeq(t, rb)
-		vfxObjs[#vfxObjs+1]=a0; vfxObjs[#vfxObjs+1]=a1; vfxObjs[#vfxObjs+1]=tr
-	end
+
+	local ring=Instance.new("Part"); ring.Shape=Enum.PartType.Cylinder; ring.Size=Vector3.new(0.4,15,15)   -- ground ring
+	ring.Material=Enum.Material.Neon; ring.Color=c1; ring.Transparency=0.3
+	ring.CanCollide=false; ring.CanQuery=false; ring.Anchored=true; ring.CastShadow=false; ring.Parent=WS
+	vfxObjs[#vfxObjs+1]=ring; vfxGround=ring
+
+	local lp=Instance.new("PointLight",mount); lp.Color=t.li or c1; lp.Brightness=6; lp.Range=26; vfxObjs[#vfxObjs+1]=lp; vfxLight=lp
 end
 function pxSetAura(v) PX.aura=v; if v then applyAura() else clearAura() end end
-track(RunSvc.RenderStepped:Connect(function()
+local auraT=0
+track(RunSvc.RenderStepped:Connect(function(dt)
 	if not PX.aura then return end
+	local mount=auraMount(); if not mount then return end
+	if not (vfxObjs[1] and vfxObjs[1].Parent) then applyAura(); return end
+	auraT=auraT+dt
 	local t=AURA[PX.auraName]
-	local rb = PX.auraRainbow or (t and t.Rainbow)
-	if rb then
-		local col=Color3.fromHSV((tick()*0.2)%1, 1, 1)
-		for _,o in ipairs(vfxObjs) do
-			if o:IsA("ParticleEmitter") or o:IsA("Trail") then o.Color=ColorSequence.new(col)
-			elseif o:IsA("PointLight") then o.Color=col
-			elseif o:IsA("BasePart") then o.Color=col end
-		end
-	end
-	local mount=auraMount()
-	if mount and #vfxRings>0 then
-		local sz=(t and t.Size) or 5; local tt=tick()*2
-		for _,r in ipairs(vfxRings) do if r.part and r.part.Parent then
-			if r.beam then
-				local ang=r.phase+tt; local off=Vector3.new(math.cos(ang)*sz,0,math.sin(ang)*sz)
-				r.part.CFrame=mount.CFrame*CFrame.new(off)*CFrame.Angles(0,0,math.rad(90))
-			else
-				r.part.CFrame=mount.CFrame*CFrame.Angles(math.rad(r.tilt), r.phase+tt, 0)*CFrame.Angles(0,0,math.rad(90))
-			end
-		end end
+	local col = (PX.auraRainbow or (t and t.rainbow)) and Color3.fromHSV((auraT*0.18)%1, 1, 1) or nil
+	for _,b in ipairs(vfxBeams) do pcall(function()
+		local ang=auraT*2.2 + (b.idx-1)*(math.pi/3); local r=1.8
+		b.b0.Position=Vector3.new(math.cos(ang)*r, -2.6, math.sin(ang)*r)                          -- feet, swirling
+		b.b1.Position=Vector3.new(math.cos(ang+1.3)*r*0.2, 34, math.sin(ang+1.3)*r*0.2)            -- reach high + twist inward
+		if col then b.beam.Color=ColorSequence.new(col) end
+	end) end
+	if vfxGround then pcall(function() vfxGround.CFrame=CFrame.new(mount.Position - Vector3.new(0,3,0)) * CFrame.Angles(0, auraT*1.4, 0) * CFrame.Angles(0,0,math.pi/2); if col then vfxGround.Color=col end end) end
+	if col then
+		if vfxLight then vfxLight.Color=col end
+		for _,e in ipairs(vfxEmitters) do pcall(function() e.Color=ColorSequence.new(col) end) end
 	end
 end))
 track(LP.CharacterAdded:Connect(function() task.wait(0.7); if PX.aura then applyAura() end end))
@@ -2315,7 +2334,9 @@ do
 	local trashTgt="All"
 	local ttdrop = tab:CreateDropdown({ Name="Target", Options=pxTrashTargets(), CurrentOption="All", Callback=function(o) trashTgt=(type(o)=="table") and o[1] or o end })
 	tab:CreateButton({ Name="Refresh Targets", Callback=function() pcall(function() ttdrop:Refresh(pxTrashTargets(), false) end) end })
+	tab:CreateButton({ Name="Throw Trash (one)", Callback=function() pxThrowTrash(trashTgt) end })
 	tab:CreateButton({ Name="Throw ALL Trash", Callback=function() pxThrowAllTrash(trashTgt) end })
+	tab:CreateButton({ Name="STOP Trash", Callback=function() pxStopTrash() end })
 	tab:CreateSection("Aim")
 	tab:CreateToggle({ Name="Aimlock", CurrentValue=false, Callback=function(v) PX.aimlock=v end })
 	tab:CreateSlider({ Name="Aimlock Range", Range={50,400}, Increment=10, Suffix="", CurrentValue=250, Callback=function(v) PX.aimRange=v end })
