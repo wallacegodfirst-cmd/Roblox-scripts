@@ -1737,7 +1737,7 @@ local PX = { wsOn=false, ws=16, fly=false, flySpd=60, noclip=false, invis=false,
 	autoUpper=false, autoDownslam=false, aura=false, auraName="Fire", auraRainbow=false,
 	aimlock=false, aimRange=250, streak=false, lastKills=nil, lastStreak=nil,
 	antiTableFlip=false, antiSerious=false, antiOmni=false, antiGarou=false, antiIncin=false, antiDeath=false, antiDC=false, ultAlert=false,
-	jumpOnCounter=false, emoteOnCounter=false, emoteSel="Dance2", emoteId="", counterLockOnly=false,
+	jumpOnCounter=false, counterLockOnly=false,
 	gojoSel="Repulse", disgName="", disgOn=false, idleId="", walkId="", fps=false, fpsSaved=nil, spots={}, flingBV=nil, nameTag=nil }
 
 -- ── anti-send-back teleport ──
@@ -1851,56 +1851,55 @@ track(RunSvc.Heartbeat:Connect(function()
 		local st=c:GetAttribute("Stamina"); if type(st)=="number" then c:SetAttribute("Stamina",100) end end)
 end))
 
--- ── TRASH CAN THROW (pick a trash can, TP to each player, hurl it at them) ──
-local PX_TRASH = {}
-function pxTrashList()
-	local out, seen = {}, {}
-	for _,o in ipairs(WS:GetDescendants()) do
-		local n=string.lower(o.Name)
-		if (o:IsA("Model") or o:IsA("BasePart")) and (n:find("trash") or n:find("garbage") or n:find("bin") or n:find("trashcan") or n=="can") then
-			if not seen[o.Name] then seen[o.Name]=true; out[#out+1]=o.Name; PX_TRASH[o.Name]=o end
-		end
+-- ── TRASH CAN THROW — grab EVERY trash can in Map.Trash and hurl them at a picked player (or All) ──
+local function allTrashParts()
+	local out={}
+	local root=WS:FindFirstChild("Map"); root=(root and root:FindFirstChild("Trash")) or WS
+	for _,o in ipairs(root:GetDescendants()) do
+		if o:IsA("BasePart") and string.lower(o.Name):find("trash") then out[#out+1]=o end
 	end
-	if #out==0 then out[1]="(none found)" end
 	return out
 end
-local function trashPart(inst)
-	if not inst then return nil end
-	if inst:IsA("BasePart") then return inst end
-	return inst.PrimaryPart or inst:FindFirstChildWhichIsA("BasePart")
+function pxTrashTargets()   -- dropdown options: All + every enemy
+	local o={"All"}; for _,p in ipairs(Players:GetPlayers()) do if p~=LP then o[#o+1]=p.Name end end
+	return o
 end
--- auto-pick: prefer the named one, else the NEAREST trash can in Map.Trash (the real path from the explorer)
-local function autoTrashPart(name)
-	local part = trashPart(PX_TRASH[name])
-	if part and part.Parent then return part end
-	local me=myHRP()
-	local root = WS:FindFirstChild("Map"); root = (root and root:FindFirstChild("Trash")) or WS
-	local best, bd
-	for _,o in ipairs(root:GetDescendants()) do
-		if o:IsA("BasePart") and string.lower(o.Name):find("trash") then
-			if me then local d=(o.Position-me.Position).Magnitude; if not bd or d<bd then best,bd=o,d end else best=o; break end
-		end
-	end
-	return best
+local function hurlCan(part, targetPart, me)
+	pcall(function()
+		part.CanCollide=true; part.Anchored=false
+		part.CFrame = me.CFrame*CFrame.new(0,2.5,-2)                        -- yank it to your hands (claims network ownership)
+		part.AssemblyLinearVelocity=Vector3.zero
+	end)
+	RunSvc.Heartbeat:Wait()
+	pcall(function()
+		local dir=(targetPart.Position - part.Position)
+		part.AssemblyLinearVelocity=(dir.Magnitude>0 and dir.Unit or me.CFrame.LookVector)*260 + Vector3.new(0,55,0)  -- throw at them
+	end)
 end
-function pxThrowTrashAll(name)
+function pxThrowAllTrash(targetName)
 	local me=myHRP(); if not me then return end
+	local cans=allTrashParts()
+	if #cans==0 then notify("Trash","no trash cans in Map.Trash",3); return end
 	task.spawn(function()
-		for _,p in ipairs(Players:GetPlayers()) do if p~=LP then local pt=partOf(p)
-			if pt then
-				local part=autoTrashPart(name); if not part then notify("Trash","no trash can found",2); break end
-				pxTP(pt.CFrame*CFrame.new(0,0,7), 0.5)                                          -- teleport to the target
-				task.wait(0.12)
-				pcall(function()
-					part.CFrame = me.CFrame*CFrame.new(0,2,-2)                                   -- grab it (claims network ownership)
-					RunSvc.Heartbeat:Wait()
-					local dir=(pt.Position - part.Position)
-					part.AssemblyLinearVelocity = (dir.Magnitude>0 and dir.Unit or me.CFrame.LookVector)*220 + Vector3.new(0,45,0)  -- hurl it
-				end)
-				task.wait(0.3)
+		if targetName=="All" then
+			local enemies={}; for _,p in ipairs(Players:GetPlayers()) do if p~=LP then enemies[#enemies+1]=p end end
+			if #enemies==0 then notify("Trash","no players",2); return end
+			local i=1
+			for _,part in ipairs(cans) do
+				local pt=partOf(enemies[i]); if pt then pxTP(pt.CFrame*CFrame.new(0,0,7),0.4); RunSvc.Heartbeat:Wait(); hurlCan(part, pt, me) end
+				i=i%#enemies+1; task.wait(0.05)
 			end
-		end end
-		notify("Trash Can All","thrown at everyone",2)
+			notify("Trash","thrown "..#cans.." cans at everyone",3)
+		else
+			local p=Players:FindFirstChild(targetName); local pt=p and partOf(p)
+			if not pt then notify("Trash","target not found",2); return end
+			pxTP(pt.CFrame*CFrame.new(0,0,8), 0.6)                           -- go to the target once
+			for _,part in ipairs(cans) do
+				pt=partOf(p); if not pt then break end
+				hurlCan(part, pt, me); task.wait(0.05)
+			end
+			notify("Trash","dumped "..#cans.." cans on "..targetName,3)
+		end
 	end)
 end
 
@@ -1956,7 +1955,7 @@ local function trackMatches(track, ids)
 	for _,id in ipairs(ids) do if aid:find(id, 1, true) then return true end end
 	return false
 end
-local pxLastDodge, pxLastHead, pxLastEmote = 0, 0, 0
+local pxLastDodge, pxLastHead = 0, 0
 local function pxBackDash()
 	pcall(function()
 		VIM:SendKeyEvent(true,KC.S,false,game)
@@ -1964,22 +1963,41 @@ local function pxBackDash()
 		VIM:SendKeyEvent(false,KC.S,false,game)
 	end)
 end
--- Roblox DEFAULT R15 emotes — Roblox-owned so they load in ANY game (unlike catalog-bundle ids that fail).
-local EMOTES = { Dance="507771019", Dance2="507776043", Dance3="507777268", Laugh="507770818", Wave="507770239", Point="507770453", Cheer="507770677" }
-local EMOTE_ORDER = {"Dance2","Dance","Dance3","Laugh","Wave","Point","Cheer"}
-local function pxPlayEmote()   -- plays a default emote as a taunt (loads via the Animator so it actually plays)
-	local h=myHum(); if not h then return end
-	local id = (PX.emoteId~="" and PX.emoteId) or EMOTES[PX.emoteSel or "Dance2"] or "507776043"
-	id=tostring(id); if id:match("^%d+$") then id="rbxassetid://"..id end
+-- send a chat message (works on both the new TextChatService and the legacy chat system)
+local function pxChat(msg)
 	pcall(function()
-		local anim=Instance.new("Animation"); anim.AnimationId=id
-		local animr=h:FindFirstChildOfClass("Animator") or h
-		local tr=animr:LoadAnimation(anim); tr.Priority=Enum.AnimationPriority.Action; tr:Play()
+		local TCS=game:GetService("TextChatService")
+		if TCS.ChatVersion==Enum.ChatVersion.TextChatService then
+			local ch=TCS:FindFirstChild("TextChannels") and (TCS.TextChannels:FindFirstChild("RBXGeneral") or TCS.TextChannels:FindFirstChildWhichIsA("TextChannel"))
+			if ch then ch:SendAsync(msg); return end
+		end
+		local ev=game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
+		local say=ev and ev:FindFirstChild("SayMessageRequest")
+		if say then say:FireServer(msg,"All") end
+	end)
+end
+-- SMOOTH jump-on-head: glide to the enemy over ~0.35s (anti-send-back held), land on their head, jump, chat.
+local function pxJumpOnHead(plr, pt)
+	local me=myHRP(); if not (me and pt) then return end
+	local head=plr.Character:FindFirstChild("Head") or pt
+	task.spawn(function()
+		local t0=os.clock(); local from=me.CFrame
+		while os.clock()-t0 < 0.35 do
+			local r=myHRP(); local h2=plr.Character:FindFirstChild("Head"); if not (r and h2) then break end
+			local a=(os.clock()-t0)/0.35
+			local goal=CFrame.new(h2.Position + Vector3.new(0, 3.6, 0))
+			pcall(function() r.CFrame=from:Lerp(goal, a); r.AssemblyLinearVelocity=Vector3.zero end)
+			RunSvc.Heartbeat:Wait()
+		end
+		local r=myHRP(); local h2=plr.Character:FindFirstChild("Head") or pt
+		if r and h2 then pcall(function() r.CFrame=CFrame.new(h2.Position + Vector3.new(0,3.6,0)) end) end
+		local hum=myHum(); if hum then pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end) end   -- hop on their head
+		pxChat("EZ BOY")
 	end)
 end
 track(RunSvc.Heartbeat:Connect(function()
 	local anyDodge=false; for _,e in ipairs(PX_ANTI) do if PX[e.f] then anyDodge=true break end end
-	local wantCounter = PX.jumpOnCounter or PX.ultAlert or PX.emoteOnCounter
+	local wantCounter = PX.jumpOnCounter or PX.ultAlert
 	if not (anyDodge or wantCounter) then return end
 	local me=myHRP(); if not me then return end
 	for _,plr in ipairs(Players:GetPlayers()) do if plr~=LP and plr.Character then
@@ -1990,18 +2008,13 @@ track(RunSvc.Heartbeat:Connect(function()
 			local a=h:FindFirstChildOfClass("Animator")
 			if a then local ok,tr=pcall(function() return a:GetPlayingAnimationTracks() end)
 				if ok and tr then
-					-- 1) counter stance? -> alert / jump-on-head / emote taunt
+					-- 1) counter stance? -> alert / smooth jump-on-head + "EZ BOY"
 					if wantCounter and lockOK then
 						for _,t in ipairs(tr) do
 							if trackMatches(t,{ANIM_COUNTER.garou}) or trackMatches(t,{ANIM_COUNTER.deathblow}) or trackMatches(t,{ANIM_COUNTER.split}) then
 								if PX.ultAlert then notify("COUNTER", plr.Name.." is countering!", 2) end
-								if PX.jumpOnCounter and os.clock()-pxLastHead>0.7 then
-									pxLastHead=os.clock()
-									local head=plr.Character:FindFirstChild("Head") or pt
-									pxTP(CFrame.new(head.Position + Vector3.new(0, 3.5, 0)), 0.5)   -- land on their head
-								end
-								if PX.emoteOnCounter and os.clock()-pxLastEmote>1.2 then
-									pxLastEmote=os.clock(); pxPlayEmote()                              -- taunt them with your emote
+								if PX.jumpOnCounter and os.clock()-pxLastHead>1.0 then
+									pxLastHead=os.clock(); pxJumpOnHead(plr, pt)
 								end
 								break
 							end
@@ -2126,32 +2139,27 @@ function pxTPNearest() local me=myHRP(); if not me then return end local bp,bd
 function pxTPSky() local r=myHRP(); if r then pxTP(CFrame.new(r.Position.X,r.Position.Y+300,r.Position.Z),0.9) end end
 function pxTPSpawn() local sp=WS:FindFirstChildWhichIsA("SpawnLocation",true); if sp then pxTP(sp.CFrame*CFrame.new(0,4,0),0.6); notify("Teleport","spawn",2) else notify("Teleport","no SpawnLocation found",2) end end
 
--- ── AUTO UPPERCUT / DOWNSLAM (VIM jump+M1; your real move anim ids confirm it fired) ──
-local MYUP, MYDS = "10503381238", "10470104242"
-local function pxSelfPlaying(id) local h=myHum(); if not h then return false end local a=h:FindFirstChildOfClass("Animator"); if not a then return false end
-	local ok,tr=pcall(function() return a:GetPlayingAnimationTracks() end); if ok and tr then for _,t in ipairs(tr) do local aid=t.Animation and t.Animation.AnimationId; if aid and tostring(aid):find(id,1,true) then return true end end end return false end
-local function pxCenter() local cam=WS.CurrentCamera; local vp=(cam and cam.ViewportSize) or Vector2.new(1280,720); return vp.X*0.5, vp.Y*0.5 end
-local function pxClickM1(hold) local x,y=pxCenter(); pcall(function() VIM:SendMouseButtonEvent(x,y,0,true,game,0) end); task.wait(hold or 0.05); pcall(function() VIM:SendMouseButtonEvent(x,y,0,false,game,0) end) end
-local function pxTapSpace() pcall(function() VIM:SendKeyEvent(true,KC.Space,false,game) end); task.wait(0.03); pcall(function() VIM:SendKeyEvent(false,KC.Space,false,game) end) end
-local function pxFaceNearest(rng) local cam=WS.CurrentCamera; local pt=pxNearest(rng or 60); if cam and pt then pcall(function() cam.CFrame=CFrame.lookAt(cam.CFrame.Position, pt.Position) end) end return pt end
+-- ── AUTO UPPERCUT / DOWNSLAM — routed through the BASE engine's doAction (same reliable input path the
+--    tech builder uses: REPLAYING flag redirects the M1 click into the game, faces the target, tap-jump). ──
 local pxAutoTok
 function pxSetAutoMoves()
 	if pxAutoTok then pxAutoTok.c=true; pxAutoTok=nil end
 	if not (PX.autoUpper or PX.autoDownslam) then return end
 	local tok={c=false}; pxAutoTok=tok
 	task.spawn(function()
+		local rtok={cancel=false}
 		while not tok.c and (PX.autoUpper or PX.autoDownslam) do
-			local pt=pxNearest(16)
+			local pt=pxNearest(18)
 			if pt then
-				pxFaceNearest(16)
-				if PX.autoUpper and not pxSelfPlaying(MYUP) then
-					pxTapSpace(); task.wait(0.08); pxClickM1(0.05); task.wait(0.45)
-				elseif PX.autoDownslam and not pxSelfPlaying(MYDS) then
-					pxTapSpace(); task.wait(0.28); pxClickM1(0.05); task.wait(0.45)
-				end
-			end
-			task.wait(0.22)
+				pcall(faceTarget)                                        -- base camera-aim onto the target
+				REPLAYING=true                                           -- send M1 into the GAME, not the UI
+				if PX.autoUpper then pcall(doAction, {act="uppercut", jumpLead=80, m1Hold=50, jumpReleaseDelay=40}, rtok)
+				elseif PX.autoDownslam then pcall(doAction, {act="downslam", airDelay=280, m1Hold=45}, rtok) end
+				REPLAYING=false
+				task.wait(0.5)
+			else task.wait(0.2) end
 		end
+		REPLAYING=false
 	end)
 end
 
@@ -2285,10 +2293,10 @@ do
 	tab:CreateToggle({ Name="Upside Down", CurrentValue=false, Callback=function(v) pxSetUpside(v) end })
 	tab:CreateToggle({ Name="No Cooldowns", CurrentValue=false, Callback=function(v) PX.noCD=v end })
 	tab:CreateSection("Trash Can")
-	local trashSel="(none found)"
-	local tdrop = tab:CreateDropdown({ Name="Trash Can", Options=pxTrashList(), CurrentOption=pxTrashList()[1], Callback=function(o) trashSel=(type(o)=="table") and o[1] or o end })
-	tab:CreateButton({ Name="Refresh", Callback=function() pcall(function() tdrop:Refresh(pxTrashList(), false) end) end })
-	tab:CreateButton({ Name="Trash Can All", Callback=function() pxThrowTrashAll(trashSel) end })
+	local trashTgt="All"
+	local ttdrop = tab:CreateDropdown({ Name="Target", Options=pxTrashTargets(), CurrentOption="All", Callback=function(o) trashTgt=(type(o)=="table") and o[1] or o end })
+	tab:CreateButton({ Name="Refresh Targets", Callback=function() pcall(function() ttdrop:Refresh(pxTrashTargets(), false) end) end })
+	tab:CreateButton({ Name="Throw ALL Trash", Callback=function() pxThrowAllTrash(trashTgt) end })
 	tab:CreateSection("Aim")
 	tab:CreateToggle({ Name="Aimlock", CurrentValue=false, Callback=function(v) PX.aimlock=v end })
 	tab:CreateSlider({ Name="Aimlock Range", Range={50,400}, Increment=10, Suffix="", CurrentValue=250, Callback=function(v) PX.aimRange=v end })
@@ -2351,10 +2359,7 @@ do
 	tab:CreateSection("Counter")
 	tab:CreateToggle({ Name="Lock-On Target Only", CurrentValue=false, Callback=function(v) PX.counterLockOnly=v end })
 	tab:CreateToggle({ Name="Ultimate Alert", CurrentValue=false, Callback=function(v) PX.ultAlert=v end })
-	tab:CreateToggle({ Name="Jump On Counter", CurrentValue=false, Callback=function(v) PX.jumpOnCounter=v end })
-	tab:CreateToggle({ Name="Emote On Counter", CurrentValue=false, Callback=function(v) PX.emoteOnCounter=v end })
-	tab:CreateDropdown({ Name="Emote", Options=EMOTE_ORDER, CurrentOption="Dance2", Callback=function(o) PX.emoteSel=(type(o)=="table") and o[1] or o; PX.emoteId="" end })
-	tab:CreateButton({ Name="Test Emote", Callback=function() pxPlayEmote() end })
+	tab:CreateToggle({ Name="Jump On Counter (walk on head + 'EZ BOY')", CurrentValue=false, Callback=function(v) PX.jumpOnCounter=v end })
 end
 
 do
