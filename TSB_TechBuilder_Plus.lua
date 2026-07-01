@@ -426,25 +426,26 @@ function doAction(s, token)
 		gapWait(50, token); if token.cancel then return false end
 		kDown(rk); holdWait(40, token); kUp(rk); return true                    -- double-tap to sprint
 	elseif a=="uppercut" then
-		-- UPPERCUT (launcher): in TSB the launch comes from an AIRBORNE M1 off a quick jump. A real jump TAP
-		-- (not a long space-hold) gets you off the ground; M1 on the way up = the uppercut. Then release.
+		-- UPPERCUT (researched, TSB wiki): HOLD Space and click M1 while STILL GROUNDED — the M1 becomes an
+		-- uppercut. Pressing space too early = a jump instead, so M1 fires almost immediately after space-down.
 		local jk=bindKC("Jump"); local mk=bindKC("M1")
 		if not mk then return badBind("M1") end
 		local jumping = jk and jk~="M1" and jk~="M2"
-		if jumping then tapKey(jk, 30, token) end                               -- 1) JUMP TAP (leaves the ground)
-		if not gapWait(s.jumpLead or 80, token) then return false end           -- 2) short rise so the M1 lands airborne
-		pressResolved(mk, s.m1Hold or 45, token)                                -- 3) M1 while rising = launch
+		if jumping then kDown(jk) end                                           -- HOLD space (do NOT tap/leave the ground yet)
+		gapWait(s.jumpLead or 20, token)                                        -- tiny lead so space registers first
+		pressResolved(mk, s.m1Hold or 45, token)                                -- M1 while space is held + grounded = uppercut
+		if jumping then kUp(jk) end                                             -- release space
 		gapWait(s.jumpReleaseDelay or 40, token)
 		return true
 	elseif a=="downslam" then
-		-- DOWNSLAM: jump TAP, wait until you're up near the apex, then M1 in the air = slam. (Holding space the
-		-- whole time never made you leave the ground, so the M1 fired on the GROUND and whiffed — fixed.)
+		-- DOWNSLAM (researched): HOLD Space to rise into the air, then M1 WHILE AIRBORNE = downslam.
 		local jk=bindKC("Jump"); local mk=bindKC("M1")
 		if not mk then return badBind("M1") end
 		local jumping = jk and jk~="M1" and jk~="M2"
-		if jumping then tapKey(jk, 35, token) end                                        -- 1) JUMP TAP (actually leaves the ground)
-		if not gapWait(s.airDelay or 280, token) then return false end                   -- 2) rise to ~apex
-		pressResolved(mk, s.m1Hold or 45, token); return true                            -- 3) M1 in the air = downslam
+		if jumping then kDown(jk) end                                                    -- HOLD space to go up
+		if not gapWait(s.airDelay or 260, token) then if jumping then kUp(jk) end return false end   -- rise airborne
+		if jumping then kUp(jk) end                                                      -- release space
+		pressResolved(mk, s.m1Hold or 45, token); return true                            -- M1 in the air = downslam
 	elseif a=="key" then
 		if s.keyName and KC[s.keyName] then return pressResolved(KC[s.keyName], s.hold or 35, token) end
 		return badBind(s.keyName or "key")
@@ -1864,42 +1865,45 @@ function pxTrashTargets()   -- dropdown options: All + every enemy
 	local o={"All"}; for _,p in ipairs(Players:GetPlayers()) do if p~=LP then o[#o+1]=p.Name end end
 	return o
 end
-local function hurlCan(part, targetPart, me)
-	pcall(function()
-		part.CanCollide=true; part.Anchored=false
-		part.CFrame = me.CFrame*CFrame.new(0,2.5,-2)                        -- yank it to your hands (claims network ownership)
-		part.AssemblyLinearVelocity=Vector3.zero
-	end)
-	RunSvc.Heartbeat:Wait()
-	pcall(function()
-		local dir=(targetPart.Position - part.Position)
-		part.AssemblyLinearVelocity=(dir.Magnitude>0 and dir.Unit or me.CFrame.LookVector)*260 + Vector3.new(0,55,0)  -- throw at them
-	end)
+-- REAL trash mechanic (TSB wiki): walk to a can + M1 = PICK IT UP; then M1 while aiming = THROW it (20% dmg).
+-- Physics velocity does nothing (server-owned), so we drive the game's own grab/throw via M1 clicks.
+local function faceAt(pos) local cam=WS.CurrentCamera; if cam then pcall(function() cam.CFrame=CFrame.lookAt(cam.CFrame.Position, pos) end) end end
+local function clickGame(hold)
+	local cam=WS.CurrentCamera; local vp=(cam and cam.ViewportSize) or Vector2.new(1280,720)
+	local x,y=vp.X*0.5, vp.Y*0.5
+	pcall(function() VIM:SendMouseButtonEvent(x,y,0,true,game,0) end); task.wait(hold or 0.06); pcall(function() VIM:SendMouseButtonEvent(x,y,0,false,game,0) end)
+end
+local function grabAndThrow(part, targetPlr)
+	local me=myHRP(); if not (me and part and part.Parent) then return end
+	pxTP(part.CFrame*CFrame.new(0,0,3.5), 0.4); RunSvc.Heartbeat:Wait()                -- walk up to the can
+	faceAt(part.Position); task.wait(0.12)
+	REPLAYING=true; clickGame(0.06); REPLAYING=false                                    -- M1 = pick it up
+	task.wait(0.28)
+	local pt=partOf(targetPlr)
+	if pt then
+		pxTP(pt.CFrame*CFrame.new(0,0,12), 0.4); RunSvc.Heartbeat:Wait()                -- run to the target
+		faceAt(pt.Position); task.wait(0.12)
+		REPLAYING=true; clickGame(0.06); REPLAYING=false                                -- M1 = throw it at them
+	end
+	task.wait(0.2)
 end
 function pxThrowAllTrash(targetName)
 	local me=myHRP(); if not me then return end
 	local cans=allTrashParts()
 	if #cans==0 then notify("Trash","no trash cans in Map.Trash",3); return end
+	local targets={}
+	if targetName=="All" then for _,p in ipairs(Players:GetPlayers()) do if p~=LP then targets[#targets+1]=p end end
+	else local p=Players:FindFirstChild(targetName); if p then targets[1]=p end end
+	if #targets==0 then notify("Trash","no target players",2); return end
 	task.spawn(function()
-		if targetName=="All" then
-			local enemies={}; for _,p in ipairs(Players:GetPlayers()) do if p~=LP then enemies[#enemies+1]=p end end
-			if #enemies==0 then notify("Trash","no players",2); return end
-			local i=1
-			for _,part in ipairs(cans) do
-				local pt=partOf(enemies[i]); if pt then pxTP(pt.CFrame*CFrame.new(0,0,7),0.4); RunSvc.Heartbeat:Wait(); hurlCan(part, pt, me) end
-				i=i%#enemies+1; task.wait(0.05)
+		local ti=1
+		for _,part in ipairs(cans) do
+			if part and part.Parent then
+				local tp=targets[ti]; ti=ti%#targets+1
+				if tp and tp.Character then grabAndThrow(part, tp) end
 			end
-			notify("Trash","thrown "..#cans.." cans at everyone",3)
-		else
-			local p=Players:FindFirstChild(targetName); local pt=p and partOf(p)
-			if not pt then notify("Trash","target not found",2); return end
-			pxTP(pt.CFrame*CFrame.new(0,0,8), 0.6)                           -- go to the target once
-			for _,part in ipairs(cans) do
-				pt=partOf(p); if not pt then break end
-				hurlCan(part, pt, me); task.wait(0.05)
-			end
-			notify("Trash","dumped "..#cans.." cans on "..targetName,3)
 		end
+		notify("Trash","picked up + threw "..#cans.." cans",3)
 	end)
 end
 
@@ -1940,12 +1944,13 @@ local ANIM = {
 }
 -- COUNTER stances (used by Anti-Counter dodge + Jump-On-Head)
 local ANIM_COUNTER = { garou="12351854556", deathblow="15128849047", split="15311685628" }
-local PX_ANTI = {   -- toggle flag -> which id-set it dodges
+-- ranged/beam moves (Incinerate, Garou ults) can't be out-dashed -> tp=true = big sideways TELEPORT dodge.
+local PX_ANTI = {   -- toggle flag -> which id-set it dodges (tp = ranged, teleport away instead of back-dash)
 	{f="antiTableFlip", ids=ANIM.tableflip},
 	{f="antiSerious",   ids=ANIM.serious},
 	{f="antiOmni",      ids=ANIM.omni},
-	{f="antiGarou",     ids=ANIM.garouUlt},
-	{f="antiIncin",     ids=ANIM.incin},
+	{f="antiGarou",     ids=ANIM.garouUlt, tp=true},
+	{f="antiIncin",     ids=ANIM.incin,    tp=true},
 	{f="antiDeath",     ids={ANIM_COUNTER.deathblow}},              -- Anti Death Blow
 	{f="antiDC",        ids=ANIM.deathCtr},                         -- Anti Death Counter
 }
@@ -1962,6 +1967,13 @@ local function pxBackDash()
 		local dk=bindKC("Dash"); if dk and dk~="M1" and dk~="M2" then VIM:SendKeyEvent(true,dk,false,game); task.wait(0.06); VIM:SendKeyEvent(false,dk,false,game) end
 		VIM:SendKeyEvent(false,KC.S,false,game)
 	end)
+end
+-- teleport dodge: jump ~55 studs PERPENDICULAR to the beam (out of a straight-line ranged attack)
+local function pxDodgeTP(enemyPos)
+	local me=myHRP(); if not me then return end
+	local dir=me.Position-enemyPos; dir=Vector3.new(dir.X,0,dir.Z); if dir.Magnitude<0.1 then dir=me.CFrame.LookVector end
+	local perp=Vector3.new(-dir.Z,0,dir.X).Unit
+	pxTP(CFrame.new(me.Position + perp*55 + Vector3.new(0,3,0)), 0.5)
 end
 -- send a chat message (works on both the new TextChatService and the legacy chat system)
 local function pxChat(msg)
@@ -2004,7 +2016,7 @@ track(RunSvc.Heartbeat:Connect(function()
 		-- LOCK-ON ONLY: when set, only react to the player you're locked onto
 		local lockOK = (not PX.counterLockOnly) or (lockTarget and plr==lockTarget)
 		local pt=plr.Character:FindFirstChild("HumanoidRootPart"); local h=plr.Character:FindFirstChildOfClass("Humanoid")
-		if pt and h and (pt.Position-me.Position).Magnitude<40 then
+		if pt and h and (pt.Position-me.Position).Magnitude<160 then                          -- 160: ranged moves (incinerate/beams) hit from far
 			local a=h:FindFirstChildOfClass("Animator")
 			if a then local ok,tr=pcall(function() return a:GetPlayingAnimationTracks() end)
 				if ok and tr then
@@ -2020,11 +2032,13 @@ track(RunSvc.Heartbeat:Connect(function()
 							end
 						end
 					end
-					-- 2) flagged offensive move? -> back-dash out (also respects lock-on-only)
+					-- 2) flagged offensive move? -> ranged = TELEPORT dodge, melee = back-dash (respects lock-on-only)
 					if anyDodge and lockOK and os.clock()-pxLastDodge>0.8 then
 						for _,t in ipairs(tr) do
 							for _,e in ipairs(PX_ANTI) do if PX[e.f] and trackMatches(t, e.ids) then
-								pxLastDodge=os.clock(); pxBackDash(); return
+								pxLastDodge=os.clock()
+								if e.tp then pxDodgeTP(pt.Position) else pxBackDash() end
+								return
 							end end
 						end
 					end
@@ -2153,10 +2167,15 @@ function pxSetAutoMoves()
 			if pt then
 				pcall(faceTarget)                                        -- base camera-aim onto the target
 				REPLAYING=true                                           -- send M1 into the GAME, not the UI
-				if PX.autoUpper then pcall(doAction, {act="uppercut", jumpLead=80, m1Hold=50, jumpReleaseDelay=40}, rtok)
-				elseif PX.autoDownslam then pcall(doAction, {act="downslam", airDelay=280, m1Hold=45}, rtok) end
+				-- throw M1s first (the launcher only connects during an M1 combo), then the finisher
+				local m1s = PX.autoDownslam and 3 or 2
+				for i=1,m1s do if tok.c then break end pcall(doAction, {act="m1", hold=45}, rtok); task.wait(0.14) end
+				if not tok.c then
+					if PX.autoUpper then pcall(doAction, {act="uppercut", jumpLead=20, m1Hold=45, jumpReleaseDelay=40}, rtok)
+					elseif PX.autoDownslam then pcall(doAction, {act="downslam", airDelay=260, m1Hold=45}, rtok) end
+				end
 				REPLAYING=false
-				task.wait(0.5)
+				task.wait(0.45)
 			else task.wait(0.2) end
 		end
 		REPLAYING=false
