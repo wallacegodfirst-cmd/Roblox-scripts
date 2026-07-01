@@ -1735,9 +1735,9 @@ local Light  = game:GetService("Lighting")
 local PX = { wsOn=false, ws=16, fly=false, flySpd=60, noclip=false, invis=false, ghost=false,
 	freeze=false, fling=false, walkFling=false, noAnim=false, upside=false, noCD=false,
 	infJump=false, jumpPow=50, antiRagdoll=false, antiVoid=false, autoBlock=false, lastSafe=nil,
-	aimlock=false, aimRange=250, streak=false, lastKills=nil,
-	antiTableFlip=false, antiSerious=false, antiOmni=false, antiGarou=false, antiIncin=false, antiDeath=false, antiDC=false, ultAlert=false,
-	gojoId="", disgName="", disgOn=false, idleId="", walkId="", fps=false, fpsSaved=nil, spots={}, flingBV=nil, nameTag=nil }
+	aimlock=false, aimRange=250, streak=false, lastKills=nil, lastStreak=nil,
+	antiTableFlip=false, antiSerious=false, antiOmni=false, antiGarou=false, antiIncin=false, antiDeath=false, antiDC=false, ultAlert=false, jumpOnCounter=false,
+	gojoSel="Repulse", disgName="", disgOn=false, idleId="", walkId="", fps=false, fpsSaved=nil, spots={}, flingBV=nil, nameTag=nil }
 
 -- ── anti-send-back teleport ──
 local pxHoldCF, pxHoldUntil = nil, 0
@@ -1798,8 +1798,16 @@ track(RunSvc.Heartbeat:Connect(function()
 	for _,t in ipairs(tr) do pcall(function() t:Stop(0) end) end
 end))
 
--- ── upside down ──
-function pxSetUpside(v) PX.upside=v; local r=myHRP(); if r then pcall(function() r.CFrame = r.CFrame * CFrame.Angles(0,0, math.pi) end) end end
+-- ── upside down (FIXED: reapply the flip EVERY frame, else the humanoid re-levels you instantly) ──
+function pxSetUpside(v) PX.upside=v; if not v then local h=myHum(); if h then pcall(function() h.AutoRotate=true end) end end end
+track(RunSvc.RenderStepped:Connect(function()
+	if not PX.upside then return end
+	local r=myHRP(); local h=myHum(); if not r then return end
+	if h then pcall(function() h.AutoRotate=false end) end                      -- stop the humanoid fighting the flip
+	local look = r.CFrame.LookVector; local pos = r.Position
+	local flat = Vector3.new(look.X, 0, look.Z); if flat.Magnitude<0.01 then flat=Vector3.new(0,0,-1) end
+	pcall(function() r.CFrame = CFrame.lookAt(pos, pos+flat) * CFrame.Angles(0,0,math.pi) end)   -- flipped 180° on roll, every frame
+end))
 
 -- ── infinite jump + jump power (client-side, reliable) ──
 track(UIS.JumpRequest:Connect(function()
@@ -1844,9 +1852,24 @@ end))
 
 -- ── fling ──
 function pxStopFling() if PX.flingBV then pcall(function() PX.flingBV:Destroy() end); PX.flingBV=nil end end
-function pxStartFling() local r=myHRP(); if not r then return end pxStopFling()
-	local b=Instance.new("BodyAngularVelocity"); b.MaxTorque=Vector3.new(1,1,1)*math.huge; b.AngularVelocity=Vector3.new(0,90000,0); b.P=math.huge; b.Parent=r; PX.flingBV=b end
+function pxStartFling()
+	local r=myHRP(); if not r then return end
+	pxStopFling()
+	-- FIX: math.huge for MaxTorque/P makes the solver NaN out (no spin, no fling). Use finite LARGE values.
+	local b=Instance.new("BodyAngularVelocity")
+	b.MaxTorque=Vector3.new(1,1,1)*4e5
+	b.AngularVelocity=Vector3.new(0, 1e5, 0)
+	b.P=1e5
+	b.Parent=r; PX.flingBV=b
+end
 function pxSetFling(v) PX.fling=v; if v then pxStartFling() else pxStopFling() end end
+-- keep the spin asserted every frame (the humanoid otherwise damps it -> weak/no fling)
+track(RunSvc.Heartbeat:Connect(function()
+	if not PX.fling then return end
+	local r=myHRP(); if not r then return end
+	if not (PX.flingBV and PX.flingBV.Parent) then pxStartFling() end
+	pcall(function() r.AssemblyAngularVelocity=Vector3.new(0, 1e5, 0) end)
+end))
 local pxWFTok
 function pxSetWalkFling(v) PX.walkFling=v; if pxWFTok then pxWFTok.c=true; pxWFTok=nil end
 	if not v then return end
@@ -1872,38 +1895,90 @@ track(RunSvc.RenderStepped:Connect(function()
 end))
 
 -- ── streak notifier ──
-local function pxReadKills() local ls=LP:FindFirstChild("leaderstats"); if not ls then return nil end
-	for _,n in ipairs({"KOs","Kills","KO","Wins","Streak"}) do local v=ls:FindFirstChild(n); if v and v:IsA("ValueBase") then return v.Value end end return nil end
+-- ── STREAK NOTIFIER (reads workspace.Cutscenes.Billboard.Killstreak) ──
+local function pxStreakText()
+	local cs=WS:FindFirstChild("Cutscenes"); local bb=cs and cs:FindFirstChild("Billboard"); local ks=bb and bb:FindFirstChild("Killstreak")
+	if not ks then return nil end
+	if ks:IsA("ValueBase") then return tostring(ks.Value) end
+	for _,d in ipairs(ks:GetDescendants()) do if d:IsA("TextLabel") and tostring(d.Text)~="" then return d.Text end end
+	return ks.Name
+end
 track(RunSvc.Heartbeat:Connect(function()
 	if not PX.streak then return end
-	local k=pxReadKills(); if k==nil then return end
-	if PX.lastKills~=nil and k>PX.lastKills then notify("Streak", "Kill! Total: "..k, 2) end
-	PX.lastKills=k
+	local s=pxStreakText(); if not s then return end
+	if PX.lastStreak~=nil and s~=PX.lastStreak then notify("Killstreak", s, 3) end
+	PX.lastStreak=s
 end))
 
--- ── anti-moves auto-dodge (best-effort: back-dash on a flagged enemy move) ──
-local pxLastDodge=0
-local PX_ANTI={ {f="antiTableFlip",w={"tableflip","table flip"}}, {f="antiSerious",w={"seriouspunch","serious"}},
-	{f="antiOmni",w={"omnidirectional","omni"}}, {f="antiGarou",w={"garou","whirlwind","flowing"}},
-	{f="antiIncin",w={"incinerate"}}, {f="antiDeath",w={"deathblow","death blow"}}, {f="antiDC",w={"deathcounter","death counter","counter"}} }
+-- ── ANTI-MOVES + COUNTERS matched by ANIMATION ID (accurate, from real TSB anim ids) ──
+local ANIM = {
+	tableflip = {"11365563255"},
+	serious   = {"12983333733"},
+	omni      = {"13927612951"},
+	garouUlt  = {"12460977270","12463072679","14057231976","13630786846"},
+	incin     = {"13146710762"},
+	deathCtr  = {"11343318134"},                                   -- Death Counter (the counter move)
+}
+-- COUNTER stances (used by Anti-Counter dodge + Jump-On-Head)
+local ANIM_COUNTER = { garou="12351854556", deathblow="15128849047", split="15311685628" }
+local PX_ANTI = {   -- toggle flag -> which id-set it dodges
+	{f="antiTableFlip", ids=ANIM.tableflip},
+	{f="antiSerious",   ids=ANIM.serious},
+	{f="antiOmni",      ids=ANIM.omni},
+	{f="antiGarou",     ids=ANIM.garouUlt},
+	{f="antiIncin",     ids=ANIM.incin},
+	{f="antiDeath",     ids={ANIM_COUNTER.deathblow}},              -- Anti Death Blow
+	{f="antiDC",        ids=ANIM.deathCtr},                         -- Anti Death Counter
+}
+local function trackMatches(track, ids)
+	local aid = track and track.Animation and track.Animation.AnimationId; if not aid then return false end
+	aid = tostring(aid)
+	for _,id in ipairs(ids) do if aid:find(id, 1, true) then return true end end
+	return false
+end
+local pxLastDodge, pxLastHead = 0, 0
+local function pxBackDash()
+	pcall(function()
+		VIM:SendKeyEvent(true,KC.S,false,game)
+		local dk=bindKC("Dash"); if dk and dk~="M1" and dk~="M2" then VIM:SendKeyEvent(true,dk,false,game); task.wait(0.06); VIM:SendKeyEvent(false,dk,false,game) end
+		VIM:SendKeyEvent(false,KC.S,false,game)
+	end)
+end
 track(RunSvc.Heartbeat:Connect(function()
-	local on=false; for _,e in ipairs(PX_ANTI) do if PX[e.f] then on=true break end end
-	if not on then return end
-	if os.clock()-pxLastDodge<0.8 then return end
+	local anyDodge=false; for _,e in ipairs(PX_ANTI) do if PX[e.f] then anyDodge=true break end end
+	local wantHead = PX.jumpOnCounter or PX.ultAlert
+	if not (anyDodge or wantHead) then return end
 	local me=myHRP(); if not me then return end
 	for _,plr in ipairs(Players:GetPlayers()) do if plr~=LP and plr.Character then
 		local pt=plr.Character:FindFirstChild("HumanoidRootPart"); local h=plr.Character:FindFirstChildOfClass("Humanoid")
 		if pt and h and (pt.Position-me.Position).Magnitude<40 then
 			local a=h:FindFirstChildOfClass("Animator")
 			if a then local ok,tr=pcall(function() return a:GetPlayingAnimationTracks() end)
-				if ok then for _,t in ipairs(tr) do local nm=((t.Name or "")..((t.Animation and t.Animation.Name) or "")):lower()
-					for _,e in ipairs(PX_ANTI) do if PX[e.f] then for _,w in ipairs(e.w) do if nm:find(w) then
-						if e.f=="antiDC" and PX.ultAlert then notify("ALERT", plr.Name.." countering!", 2) end
-						pxLastDodge=os.clock()
-						pcall(function() VIM:SendKeyEvent(true,KC.S,false,game); local dk=bindKC("Dash"); if dk and dk~="M1" and dk~="M2" then VIM:SendKeyEvent(true,dk,false,game); task.wait(0.06); VIM:SendKeyEvent(false,dk,false,game) end; VIM:SendKeyEvent(false,KC.S,false,game) end)
-						return
-					end end end end
-				end end end
+				if ok and tr then
+					-- 1) counter stance? -> alert / jump on their head (avoids the counter, which hits in front)
+					if wantHead then
+						for _,t in ipairs(tr) do
+							if trackMatches(t,{ANIM_COUNTER.garou}) or trackMatches(t,{ANIM_COUNTER.deathblow}) or trackMatches(t,{ANIM_COUNTER.split}) then
+								if PX.ultAlert then notify("COUNTER", plr.Name.." is countering!", 2) end
+								if PX.jumpOnCounter and os.clock()-pxLastHead>0.7 then
+									pxLastHead=os.clock()
+									local head=plr.Character:FindFirstChild("Head") or pt
+									pxTP(CFrame.new(head.Position + Vector3.new(0, 3.5, 0)), 0.5)   -- land on their head
+								end
+								break
+							end
+						end
+					end
+					-- 2) flagged offensive move? -> back-dash out
+					if anyDodge and os.clock()-pxLastDodge>0.8 then
+						for _,t in ipairs(tr) do
+							for _,e in ipairs(PX_ANTI) do if PX[e.f] and trackMatches(t, e.ids) then
+								pxLastDodge=os.clock(); pxBackDash(); return
+							end end
+						end
+					end
+				end
+			end
 		end
 	end end
 end))
@@ -1911,9 +1986,13 @@ end))
 -- ── anime teleportation (TP behind nearest enemy) ──
 function pxAnimeTP() local pt=pxNearest(300); if not pt then notify("Anime TP","no enemy",2); return end pxTP(pt.CFrame*CFrame.new(0,0,4),0.6); notify("Anime TP","behind enemy",1.5) end
 
--- ── gojo animation ──
-function pxGojo() local h=myHum(); if not (h and PX.gojoId~="") then return end
-	pcall(function() local a=Instance.new("Animation"); a.AnimationId=(PX.gojoId:match("^%d+$") and ("rbxassetid://"..PX.gojoId) or PX.gojoId); h:LoadAnimation(a):Play() end) end
+-- ── GOJO animation (Repulse / Erase / Attract — real ids) ──
+local GOJO = { Repulse="13073745835", Erase="13071982935", Attract="15121659862" }
+function pxGojo()
+	local h=myHum(); if not h then return end
+	local id=GOJO[PX.gojoSel or "Repulse"]; if not id then return end
+	pcall(function() local a=Instance.new("Animation"); a.AnimationId="rbxassetid://"..id; h:LoadAnimation(a):Play() end)
+end
 
 -- ── custom display name ──
 function pxSetName(on) PX.disgOn=on
@@ -2038,7 +2117,7 @@ do
 	tab:CreateSection("Aim / streak")
 	tab:CreateToggle({ Name="Aimlock (camera to nearest)", CurrentValue=false, Callback=function(v) PX.aimlock=v end })
 	tab:CreateSlider({ Name="Aimlock range", Range={50,400}, Increment=10, Suffix=" studs", CurrentValue=250, Callback=function(v) PX.aimRange=v end })
-	tab:CreateToggle({ Name="Streak Notifier", CurrentValue=false, Callback=function(v) PX.streak=v; if v then PX.lastKills=pxReadKills() end end })
+	tab:CreateToggle({ Name="Streak Notifier (reads Cutscenes.Billboard.Killstreak)", CurrentValue=false, Callback=function(v) PX.streak=v; if v then PX.lastStreak=pxStreakText() end end })
 end
 
 do
@@ -2048,7 +2127,8 @@ do
 	tab:CreateToggle({ Name="Ghost Mode (noclip + see-through)", CurrentValue=false, Callback=function(v) pxSetGhost(v) end })
 	tab:CreateToggle({ Name="HRP Freeze (anchor in place)", CurrentValue=false, Callback=function(v) pxSetFreeze(v) end })
 	tab:CreateKeybind({ Name="HRP Freeze (toggle key)", CurrentKeybind="H", HoldToInteract=false, Callback=function() pxSetFreeze(not PX.freeze) end })
-	tab:CreateInput({ Name="Gojo Animation id", PlaceholderText="rbxassetid or number", RemoveTextAfterFocusLost=false, Callback=function(x) PX.gojoId=x or "" end })
+	tab:CreateSection("Gojo animation")
+	tab:CreateDropdown({ Name="Gojo move", Options={"Repulse","Erase","Attract"}, CurrentOption="Repulse", Callback=function(o) PX.gojoSel=(type(o)=="table") and o[1] or o end })
 	tab:CreateKeybind({ Name="Gojo Animation (play)", CurrentKeybind="G", HoldToInteract=false, Callback=function() pxGojo() end })
 end
 
@@ -2084,7 +2164,9 @@ do
 	tab:CreateToggle({ Name="Anti Incinerate", CurrentValue=false, Callback=function(v) PX.antiIncin=v end })
 	tab:CreateToggle({ Name="Anti Death Blow", CurrentValue=false, Callback=function(v) PX.antiDeath=v end })
 	tab:CreateToggle({ Name="Anti Death Counter", CurrentValue=false, Callback=function(v) PX.antiDC=v end })
-	tab:CreateToggle({ Name="Ultimate Alert (notify when enemy counters)", CurrentValue=false, Callback=function(v) PX.ultAlert=v end })
+	tab:CreateSection("Counters (Garou / Death Blow / Split Second)")
+	tab:CreateToggle({ Name="Ultimate Alert (notify when an enemy starts a counter)", CurrentValue=false, Callback=function(v) PX.ultAlert=v end })
+	tab:CreateToggle({ Name="Jump on their head when they counter (bait it — counters only hit in front)", CurrentValue=false, Callback=function(v) PX.jumpOnCounter=v; notify("Jump-on-Counter", v and "ON" or "OFF",2) end })
 	tab:CreateSection("Server-side moves")
 	tab:CreateParagraph({ Title="Researched & honest", Content="TSB validates combat/damage SERVER-SIDE, so 'fire a Saitama move / void-kill' isn't reliably scriptable — those remotes are sanity-checked. Everything in THIS tab is client-side and actually works. If you DO know a move remote, run Utility ▸ Scan Remotes and send it and I'll wire it."})
 end
@@ -2111,9 +2193,6 @@ do
 		if mvName=="" then notify("Hotbar","type a name",2); return end
 		notify("Hotbar", pxRenameSlot(mvSlot, mvName) and ("slot "..mvSlot.." renamed") or "slot label not found — try Rename-by-text", 3)
 	end })
-	local ultName=""
-	tab:CreateInput({ Name="New ultimate name", PlaceholderText="e.g. SERIOUS MODE", RemoveTextAfterFocusLost=false, Callback=function(x) ultName=x or "" end })
-	tab:CreateButton({ Name="Rename Ultimate", Callback=function() if ultName~="" then notify("Hotbar", pxRenameUlt(ultName) and "ultimate renamed" or "ult label not found", 3) end end })
 	tab:CreateSection("Hotbar (fallback: rename by exact current text)")
 	local oh,nh="",""
 	tab:CreateInput({ Name="Current label text", PlaceholderText="e.g. Shove", RemoveTextAfterFocusLost=false, Callback=function(x) oh=x or "" end })
