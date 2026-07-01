@@ -1772,7 +1772,21 @@ track(RunSvc.RenderStepped:Connect(function(dt)
 	if pxFK.Dn then d-=Vector3.yAxis end
 	pcall(function() r.AssemblyLinearVelocity=Vector3.zero; if d.Magnitude>0 then r.CFrame=r.CFrame+d.Unit*PX.flySpd*dt end end)
 end))
-function pxSetFly(v) PX.fly=v; if not v then local h=myHum(); if h then pcall(function() h.PlatformStand=false; h:ChangeState(Enum.HumanoidStateType.GettingUp) end) end end end
+local pxFlyTrack
+function pxSetFly(v)
+	PX.fly=v
+	local h=myHum()
+	if v then
+		if h then pcall(function()
+			local a=Instance.new("Animation"); a.AnimationId="rbxassetid://17860467628"      -- flight pose animation
+			local animr=h:FindFirstChildOfClass("Animator") or h
+			pxFlyTrack=animr:LoadAnimation(a); pxFlyTrack.Looped=true; pxFlyTrack.Priority=Enum.AnimationPriority.Action; pxFlyTrack:Play()
+		end) end
+	else
+		if pxFlyTrack then pcall(function() pxFlyTrack:Stop() end); pxFlyTrack=nil end
+		if h then pcall(function() h.PlatformStand=false; h:ChangeState(Enum.HumanoidStateType.GettingUp) end) end
+	end
+end
 
 -- ── noclip / ghost ──
 track(RunSvc.Stepped:Connect(function()
