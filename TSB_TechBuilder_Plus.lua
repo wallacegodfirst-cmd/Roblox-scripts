@@ -426,26 +426,30 @@ function doAction(s, token)
 		gapWait(50, token); if token.cancel then return false end
 		kDown(rk); holdWait(40, token); kUp(rk); return true                    -- double-tap to sprint
 	elseif a=="uppercut" then
-		-- UPPERCUT (researched, TSB wiki): HOLD Space and click M1 while STILL GROUNDED — the M1 becomes an
-		-- uppercut. Pressing space too early = a jump instead, so M1 fires almost immediately after space-down.
+		-- UPPERCUT (researched, TSB wiki): space must be HELD THROUGH the last M1s of the chain —
+		-- "hold space on the 2nd/3rd M1, the 4th M1 becomes the uppercut". So this step throws ONE M1 with
+		-- space already held, then the LAUNCHER M1, all under one continuous space-hold.
 		local jk=bindKC("Jump"); local mk=bindKC("M1")
 		if not mk then return badBind("M1") end
 		local jumping = jk and jk~="M1" and jk~="M2"
-		if jumping then kDown(jk) end                                           -- HOLD space (do NOT tap/leave the ground yet)
-		gapWait(s.jumpLead or 20, token)                                        -- tiny lead so space registers first
-		pressResolved(mk, s.m1Hold or 45, token)                                -- M1 while space is held + grounded = uppercut
-		if jumping then kUp(jk) end                                             -- release space
+		if jumping then kDown(jk) end                                           -- HOLD space...
+		gapWait(40, token)
+		pressResolved(mk, s.m1Hold or 45, token)                                -- ...M1 with space held (chain hit)
+		if not gapWait(s.jumpLead or 280, token) then if jumping then kUp(jk) end return false end   -- chain cadence gap
+		pressResolved(mk, s.m1Hold or 45, token)                                -- final M1 with space held = UPPERCUT
+		if jumping then kUp(jk) end
 		gapWait(s.jumpReleaseDelay or 40, token)
 		return true
 	elseif a=="downslam" then
-		-- DOWNSLAM (researched): HOLD Space to rise into the air, then M1 WHILE AIRBORNE = downslam.
+		-- DOWNSLAM (researched): hold space AFTER the 3rd M1 to rise, then M1 WHILE AIRBORNE = downslam.
 		local jk=bindKC("Jump"); local mk=bindKC("M1")
 		if not mk then return badBind("M1") end
 		local jumping = jk and jk~="M1" and jk~="M2"
-		if jumping then kDown(jk) end                                                    -- HOLD space to go up
-		if not gapWait(s.airDelay or 260, token) then if jumping then kUp(jk) end return false end   -- rise airborne
-		if jumping then kUp(jk) end                                                      -- release space
-		pressResolved(mk, s.m1Hold or 45, token); return true                            -- M1 in the air = downslam
+		if jumping then kDown(jk) end                                                    -- HOLD space to rise
+		if not gapWait(s.airDelay or 350, token) then if jumping then kUp(jk) end return false end   -- get properly airborne
+		pressResolved(mk, s.m1Hold or 45, token)                                         -- M1 in the air = downslam
+		if jumping then kUp(jk) end
+		return true
 	elseif a=="key" then
 		if s.keyName and KC[s.keyName] then return pressResolved(KC[s.keyName], s.hold or 35, token) end
 		return badBind(s.keyName or "key")
@@ -2079,9 +2083,15 @@ local function pxJumpOnHead(plr, pt)
 			pcall(function() r.CFrame=from:Lerp(goal, a); r.AssemblyLinearVelocity=Vector3.zero end)
 			RunSvc.Heartbeat:Wait()
 		end
-		local r=myHRP(); local h2=plr.Character:FindFirstChild("Head") or pt
-		if r and h2 then pcall(function() r.CFrame=CFrame.new(h2.Position + Vector3.new(0,3.6,0)) end) end
-		local hum=myHum(); if hum then pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end) end   -- hop on their head
+		-- STAY ON THE HEAD: track their head every frame for ~0.8s so you're planted on it (not beside it)
+		local t1=os.clock()
+		while os.clock()-t1 < 0.8 do
+			local r=myHRP(); local h2=plr.Character and plr.Character:FindFirstChild("Head")
+			if not (r and h2) then break end
+			pcall(function() r.CFrame=CFrame.new(h2.Position + Vector3.new(0, 3.2, 0)) * CFrame.Angles(0, select(2, h2.CFrame:ToOrientation()), 0); r.AssemblyLinearVelocity=Vector3.zero end)
+			RunSvc.Heartbeat:Wait()
+		end
+		local hum=myHum(); if hum then pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end) end   -- hop off
 		pxChat("EZ BOY")
 	end)
 end
@@ -2255,15 +2265,15 @@ function pxSetAutoMoves()
 			if pt then
 				pcall(faceTarget)                                        -- base camera-aim onto the target
 				REPLAYING=true                                           -- send M1 into the GAME, not the UI
-				-- throw M1s first (the launcher only connects during an M1 combo), then the finisher
+				-- open the M1 CHAIN first at real punch cadence (~300ms), then the launcher step
 				local m1s = PX.autoDownslam and 3 or 2
-				for i=1,m1s do if tok.c then break end pcall(doAction, {act="m1", hold=45}, rtok); task.wait(0.14) end
+				for i=1,m1s do if tok.c then break end pcall(doAction, {act="m1", hold=45}, rtok); task.wait(0.3) end
 				if not tok.c then
-					if PX.autoUpper then pcall(doAction, {act="uppercut", jumpLead=20, m1Hold=45, jumpReleaseDelay=40}, rtok)
-					elseif PX.autoDownslam then pcall(doAction, {act="downslam", airDelay=260, m1Hold=45}, rtok) end
+					if PX.autoUpper then pcall(doAction, {act="uppercut", jumpLead=280, m1Hold=45, jumpReleaseDelay=40}, rtok)   -- M1 + final M1 under held space = launch
+					elseif PX.autoDownslam then pcall(doAction, {act="downslam", airDelay=350, m1Hold=45}, rtok) end
 				end
 				REPLAYING=false
-				task.wait(0.45)
+				task.wait(0.6)
 			else task.wait(0.2) end
 		end
 		REPLAYING=false
@@ -2293,52 +2303,71 @@ local AURA = {
 	Rainbow   = {c1=rgb(255,80,80),   c2=rgb(120,120,255), li=WHITE,            tex="smoke", rainbow=true},
 }
 local AURA_ORDER = {"Fire","Inferno","Ice","Void","Shadow","Holy","Toxic","Galaxy","Lightning","Blood","Sakura","Nuke","Rainbow"}
-local vfxObjs, vfxBeams, vfxEmitters, vfxGround, vfxLight, vfxChar = {}, {}, {}, nil, nil, nil
+local vfxObjs, vfxEmitters, vfxGround, vfxLight, vfxHighlight, vfxChar = {}, {}, nil, nil, nil, nil
 local function auraMount() local c=myChar(); if not c then return nil end
 	return c:FindFirstChild("Torso") or c:FindFirstChild("UpperTorso") or c:FindFirstChild("HumanoidRootPart") or myHRP() end
 local function clearAura()
 	for _,o in ipairs(vfxObjs) do pcall(function() o:Destroy() end) end
-	vfxObjs, vfxBeams, vfxEmitters, vfxGround, vfxLight = {}, {}, {}, nil, nil
+	vfxObjs, vfxEmitters, vfxGround, vfxLight, vfxHighlight = {}, {}, nil, nil, nil
 end
+-- ANIME AURA: flame energy that WRAPS the body (LockedToPart particles from the feet), a bright inner core,
+-- rising embers, a glowing character OUTLINE (Highlight), a soft ground ring + light. No blocky parts.
 local function applyAura()
 	clearAura()
 	local mount=auraMount(); if not mount then return end
-	vfxChar=myChar()
+	local char=myChar(); vfxChar=char
 	local t=AURA[PX.auraName] or AURA.Fire
 	local c1,c2 = t.c1, t.c2 or t.c1
 	local bodyTex = (t.tex=="fire" and A_FIRE) or (t.tex=="spark" and A_SPARK) or A_SMOKE
 
-	local att=Instance.new("Attachment",mount); att.Position=Vector3.new(0,-1.4,0); vfxObjs[#vfxObjs+1]=att
-	local e1=Instance.new("ParticleEmitter",att)                                      -- rising energy body (soft, tall)
-	e1.Texture=bodyTex; e1.Color=ColorSequence.new(c1,c2); e1.LightEmission=1; e1.LightInfluence=0
-	e1.Rate=105; e1.Lifetime=NumberRange.new(1.2,2.0); e1.Speed=NumberRange.new(24,42); e1.SpreadAngle=Vector2.new(6,6); e1.Drag=1.2
-	e1.Size=NumberSequence.new({NumberSequenceKeypoint.new(0,5), NumberSequenceKeypoint.new(0.35,3.5), NumberSequenceKeypoint.new(1,0)})
-	e1.Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.2), NumberSequenceKeypoint.new(1,1)})
-	e1.Acceleration=Vector3.new(0,26,0); e1.Rotation=NumberRange.new(0,360); e1.RotSpeed=NumberRange.new(-60,60)
+	-- character OUTLINE glow (the anime rim light)
+	local hl=Instance.new("Highlight"); hl.Adornee=char; hl.FillTransparency=1
+	hl.OutlineColor=c1; hl.OutlineTransparency=0.1; hl.DepthMode=Enum.HighlightDepthMode.Occluded; hl.Parent=char
+	vfxObjs[#vfxObjs+1]=hl; vfxHighlight=hl
+
+	local att=Instance.new("Attachment",mount); att.Position=Vector3.new(0,-2.6,0); vfxObjs[#vfxObjs+1]=att
+	-- OUTER FLAME: big fire tongues that stretch up and follow the body (LockedToPart = wraps you like DBZ ki)
+	local e1=Instance.new("ParticleEmitter",att)
+	e1.Texture=A_FIRE; e1.Color=ColorSequence.new(c1,c2); e1.LightEmission=1; e1.LightInfluence=0
+	e1.LockedToPart=true
+	e1.Rate=64; e1.Lifetime=NumberRange.new(0.45,0.7); e1.Speed=NumberRange.new(9,15); e1.SpreadAngle=Vector2.new(24,24)
+	e1.Size=NumberSequence.new({NumberSequenceKeypoint.new(0,4.4), NumberSequenceKeypoint.new(0.5,5.6), NumberSequenceKeypoint.new(1,0.6)})
+	e1.Squash=NumberSequence.new({NumberSequenceKeypoint.new(0,-0.45), NumberSequenceKeypoint.new(1,-0.15)})   -- stretch flames VERTICALLY = anime tongue shape
+	e1.Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.25), NumberSequenceKeypoint.new(0.75,0.55), NumberSequenceKeypoint.new(1,1)})
+	e1.Acceleration=Vector3.new(0,12,0); e1.Rotation=NumberRange.new(-12,12)
 	vfxObjs[#vfxObjs+1]=e1; vfxEmitters[#vfxEmitters+1]=e1
-	local e2=Instance.new("ParticleEmitter",att)                                      -- rising glints
-	e2.Texture=A_SPARK; e2.Color=ColorSequence.new(c2,WHITE); e2.LightEmission=1; e2.LightInfluence=0
-	e2.Rate=120; e2.Lifetime=NumberRange.new(0.8,1.6); e2.Speed=NumberRange.new(16,30); e2.SpreadAngle=Vector2.new(14,14)
-	e2.Size=NumberSequence.new({NumberSequenceKeypoint.new(0,1.4), NumberSequenceKeypoint.new(1,0)}); e2.Acceleration=Vector3.new(0,24,0); e2.Rotation=NumberRange.new(0,360)
+	-- INNER CORE: brighter, hotter, tighter flame inside the outer one
+	local e2=Instance.new("ParticleEmitter",att)
+	e2.Texture=A_FIRE; e2.Color=ColorSequence.new(c2,WHITE); e2.LightEmission=1; e2.LightInfluence=0
+	e2.LockedToPart=true
+	e2.Rate=46; e2.Lifetime=NumberRange.new(0.35,0.55); e2.Speed=NumberRange.new(7,11); e2.SpreadAngle=Vector2.new(14,14)
+	e2.Size=NumberSequence.new({NumberSequenceKeypoint.new(0,2.6), NumberSequenceKeypoint.new(0.5,3.4), NumberSequenceKeypoint.new(1,0.3)})
+	e2.Squash=NumberSequence.new({NumberSequenceKeypoint.new(0,-0.5), NumberSequenceKeypoint.new(1,-0.2)})
+	e2.Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.15), NumberSequenceKeypoint.new(1,1)})
+	e2.Acceleration=Vector3.new(0,10,0)
 	vfxObjs[#vfxObjs+1]=e2; vfxEmitters[#vfxEmitters+1]=e2
+	-- EMBERS: free-rising sparks that break off the aura and float high
+	local e3=Instance.new("ParticleEmitter",att)
+	e3.Texture=A_SPARK; e3.Color=ColorSequence.new(c2,WHITE); e3.LightEmission=1; e3.LightInfluence=0
+	e3.Rate=42; e3.Lifetime=NumberRange.new(1.0,1.8); e3.Speed=NumberRange.new(14,26); e3.SpreadAngle=Vector2.new(18,18)
+	e3.Size=NumberSequence.new({NumberSequenceKeypoint.new(0,1.1), NumberSequenceKeypoint.new(1,0)})
+	e3.Acceleration=Vector3.new(0,20,0); e3.Rotation=NumberRange.new(0,360)
+	vfxObjs[#vfxObjs+1]=e3; vfxEmitters[#vfxEmitters+1]=e3
+	-- HAZE at the feet (soft base so the aura reads as one shape)
+	local e4=Instance.new("ParticleEmitter",att)
+	e4.Texture=bodyTex==A_FIRE and A_SMOKE or bodyTex; e4.Color=ColorSequence.new(c1,c1); e4.LightEmission=0.9; e4.LightInfluence=0
+	e4.LockedToPart=true
+	e4.Rate=26; e4.Lifetime=NumberRange.new(0.5,0.8); e4.Speed=NumberRange.new(2,4); e4.SpreadAngle=Vector2.new(60,60)
+	e4.Size=NumberSequence.new({NumberSequenceKeypoint.new(0,3.4), NumberSequenceKeypoint.new(1,1)})
+	e4.Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.55), NumberSequenceKeypoint.new(1,1)})
+	vfxObjs[#vfxObjs+1]=e4; vfxEmitters[#vfxEmitters+1]=e4
 
-	for i=1,6 do                                                                       -- swirling upward energy beams (reach high, glowing, tapered)
-		local b0=Instance.new("Attachment",mount); vfxObjs[#vfxObjs+1]=b0
-		local b1=Instance.new("Attachment",mount); vfxObjs[#vfxObjs+1]=b1
-		local beam=Instance.new("Beam",mount); beam.Attachment0=b0; beam.Attachment1=b1
-		beam.Color=ColorSequence.new(c1,c2); beam.LightEmission=1; beam.FaceCamera=true; beam.Segments=18
-		beam.Width0=2.3; beam.Width1=0.08
-		beam.Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.05), NumberSequenceKeypoint.new(0.7,0.4), NumberSequenceKeypoint.new(1,1)})
-		beam.CurveSize0=3; beam.CurveSize1=-3
-		vfxObjs[#vfxObjs+1]=beam; vfxBeams[#vfxBeams+1]={beam=beam, b0=b0, b1=b1, idx=i}
-	end
-
-	local ring=Instance.new("Part"); ring.Shape=Enum.PartType.Cylinder; ring.Size=Vector3.new(0.4,15,15)   -- ground ring
-	ring.Material=Enum.Material.Neon; ring.Color=c1; ring.Transparency=0.3
+	local ring=Instance.new("Part"); ring.Shape=Enum.PartType.Cylinder; ring.Size=Vector3.new(0.35,11,11)   -- soft ground ring
+	ring.Material=Enum.Material.Neon; ring.Color=c1; ring.Transparency=0.45
 	ring.CanCollide=false; ring.CanQuery=false; ring.Anchored=true; ring.CastShadow=false; ring.Parent=WS
 	vfxObjs[#vfxObjs+1]=ring; vfxGround=ring
 
-	local lp=Instance.new("PointLight",mount); lp.Color=t.li or c1; lp.Brightness=6; lp.Range=26; vfxObjs[#vfxObjs+1]=lp; vfxLight=lp
+	local lp=Instance.new("PointLight",mount); lp.Color=t.li or c1; lp.Brightness=7; lp.Range=24; vfxObjs[#vfxObjs+1]=lp; vfxLight=lp
 end
 function pxSetAura(v) PX.aura=v; if v then applyAura() else clearAura() end end
 local auraT=0
@@ -2349,11 +2378,10 @@ track(RunSvc.RenderStepped:Connect(function(dt)
 	auraT=auraT+dt
 	local t=AURA[PX.auraName]
 	local col = (PX.auraRainbow or (t and t.rainbow)) and Color3.fromHSV((auraT*0.18)%1, 1, 1) or nil
-	for _,b in ipairs(vfxBeams) do pcall(function()
-		local ang=auraT*2.2 + (b.idx-1)*(math.pi/3); local r=1.8
-		b.b0.Position=Vector3.new(math.cos(ang)*r, -2.6, math.sin(ang)*r)                          -- feet, swirling
-		b.b1.Position=Vector3.new(math.cos(ang+1.3)*r*0.2, 34, math.sin(ang+1.3)*r*0.2)            -- reach high + twist inward
-		if col then b.beam.Color=ColorSequence.new(col) end
+	-- pulse the outline like charged ki
+	if vfxHighlight and vfxHighlight.Parent then pcall(function()
+		vfxHighlight.OutlineTransparency = 0.05 + 0.25*(0.5+0.5*math.sin(auraT*6))
+		if col then vfxHighlight.OutlineColor=col end
 	end) end
 	if vfxGround then pcall(function() vfxGround.CFrame=CFrame.new(mount.Position - Vector3.new(0,3,0)) * CFrame.Angles(0, auraT*1.4, 0) * CFrame.Angles(0,0,math.pi/2); if col then vfxGround.Color=col end end) end
 	if col then

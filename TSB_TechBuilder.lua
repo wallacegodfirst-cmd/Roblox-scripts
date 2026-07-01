@@ -426,25 +426,29 @@ function doAction(s, token)
 		gapWait(50, token); if token.cancel then return false end
 		kDown(rk); holdWait(40, token); kUp(rk); return true                    -- double-tap to sprint
 	elseif a=="uppercut" then
-		-- UPPERCUT (launcher): in TSB the launch comes from an AIRBORNE M1 off a quick jump. A real jump TAP
-		-- (not a long space-hold) gets you off the ground; M1 on the way up = the uppercut. Then release.
+		-- UPPERCUT (researched, TSB wiki): "hold space on the 2nd/3rd M1 — the 4th M1 becomes the uppercut".
+		-- Space is HELD THROUGH the last chain M1 and the launcher M1, in one continuous hold.
 		local jk=bindKC("Jump"); local mk=bindKC("M1")
 		if not mk then return badBind("M1") end
 		local jumping = jk and jk~="M1" and jk~="M2"
-		if jumping then tapKey(jk, 30, token) end                               -- 1) JUMP TAP (leaves the ground)
-		if not gapWait(s.jumpLead or 80, token) then return false end           -- 2) short rise so the M1 lands airborne
-		pressResolved(mk, s.m1Hold or 45, token)                                -- 3) M1 while rising = launch
+		if jumping then kDown(jk) end                                            -- HOLD space...
+		gapWait(40, token)
+		pressResolved(mk, s.m1Hold or 45, token)                                 -- ...chain M1 with space held
+		if not gapWait(s.jumpLead or 280, token) then if jumping then kUp(jk) end return false end   -- punch cadence gap
+		pressResolved(mk, s.m1Hold or 45, token)                                 -- final M1 with space held = UPPERCUT
+		if jumping then kUp(jk) end
 		gapWait(s.jumpReleaseDelay or 40, token)
 		return true
 	elseif a=="downslam" then
-		-- DOWNSLAM: jump TAP, wait until you're up near the apex, then M1 in the air = slam. (Holding space the
-		-- whole time never made you leave the ground, so the M1 fired on the GROUND and whiffed — fixed.)
+		-- DOWNSLAM (researched): hold space AFTER the 3rd M1 to rise, then M1 WHILE AIRBORNE = downslam.
 		local jk=bindKC("Jump"); local mk=bindKC("M1")
 		if not mk then return badBind("M1") end
 		local jumping = jk and jk~="M1" and jk~="M2"
-		if jumping then tapKey(jk, 35, token) end                                        -- 1) JUMP TAP (actually leaves the ground)
-		if not gapWait(s.airDelay or 280, token) then return false end                   -- 2) rise to ~apex
-		pressResolved(mk, s.m1Hold or 45, token); return true                            -- 3) M1 in the air = downslam
+		if jumping then kDown(jk) end                                                     -- HOLD space to rise
+		if not gapWait(s.airDelay or 350, token) then if jumping then kUp(jk) end return false end   -- get properly airborne
+		pressResolved(mk, s.m1Hold or 45, token)                                          -- M1 in the air = downslam
+		if jumping then kUp(jk) end
+		return true
 	elseif a=="key" then
 		if s.keyName and KC[s.keyName] then return pressResolved(KC[s.keyName], s.hold or 35, token) end
 		return badBind(s.keyName or "key")
