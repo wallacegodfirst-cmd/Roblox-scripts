@@ -1737,7 +1737,7 @@ local PX = { wsOn=false, ws=16, fly=false, flySpd=60, noclip=false, invis=false,
 	autoUpper=false, autoDownslam=false, aura=false, auraName="Fire", auraRainbow=false,
 	aimlock=false, aimRange=250, streak=false, lastKills=nil, lastStreak=nil,
 	antiTableFlip=false, antiSerious=false, antiOmni=false, antiGarou=false, antiIncin=false, antiDeath=false, antiDC=false, ultAlert=false,
-	jumpOnCounter=false, emoteOnCounter=false, emoteId="", counterLockOnly=false,
+	jumpOnCounter=false, emoteOnCounter=false, emoteId="18614546390", counterLockOnly=false,  -- default = Take-the-L emote
 	gojoSel="Repulse", disgName="", disgOn=false, idleId="", walkId="", fps=false, fpsSaved=nil, spots={}, flingBV=nil, nameTag=nil }
 
 -- ── anti-send-back teleport ──
@@ -1851,38 +1851,44 @@ track(RunSvc.Heartbeat:Connect(function()
 		local st=c:GetAttribute("Stamina"); if type(st)=="number" then c:SetAttribute("Stamina",100) end end)
 end))
 
--- ── fling ──
-function pxStopFling() if PX.flingBV then pcall(function() PX.flingBV:Destroy() end); PX.flingBV=nil end end
-function pxStartFling()
-	local r=myHRP(); if not r then return end
-	pxStopFling()
-	-- FIX: math.huge for MaxTorque/P makes the solver NaN out (no spin, no fling). Use finite LARGE values.
-	local b=Instance.new("BodyAngularVelocity")
-	b.MaxTorque=Vector3.new(1,1,1)*4e5
-	b.AngularVelocity=Vector3.new(0, 1e5, 0)
-	b.P=1e5
-	b.Parent=r; PX.flingBV=b
+-- ── TRASH CAN THROW (pick a trash can, TP to each player, hurl it at them) ──
+local PX_TRASH = {}
+function pxTrashList()
+	local out, seen = {}, {}
+	for _,o in ipairs(WS:GetDescendants()) do
+		local n=string.lower(o.Name)
+		if (o:IsA("Model") or o:IsA("BasePart")) and (n:find("trash") or n:find("garbage") or n:find("bin") or n:find("trashcan") or n=="can") then
+			if not seen[o.Name] then seen[o.Name]=true; out[#out+1]=o.Name; PX_TRASH[o.Name]=o end
+		end
+	end
+	if #out==0 then out[1]="(none found)" end
+	return out
 end
-function pxSetFling(v) PX.fling=v; if v then pxStartFling() else pxStopFling() end end
--- keep the spin asserted every frame (the humanoid otherwise damps it -> weak/no fling)
-track(RunSvc.Heartbeat:Connect(function()
-	if not PX.fling then return end
-	local r=myHRP(); if not r then return end
-	if not (PX.flingBV and PX.flingBV.Parent) then pxStartFling() end
-	pcall(function() r.AssemblyAngularVelocity=Vector3.new(0, 1e5, 0) end)
-end))
-local pxWFTok
-function pxSetWalkFling(v) PX.walkFling=v; if pxWFTok then pxWFTok.c=true; pxWFTok=nil end
-	if not v then return end
-	local tok={c=false}; pxWFTok=tok
-	task.spawn(function() while not tok.c and PX.walkFling do local r=myHRP()
-		if r then pcall(function() local v0=r.AssemblyLinearVelocity; r.AssemblyLinearVelocity=Vector3.new(v0.X,9e4,v0.Z); RunSvc.Heartbeat:Wait(); r.AssemblyLinearVelocity=Vector3.new(v0.X,-9e4,v0.Z) end) end
-		RunSvc.Heartbeat:Wait() end end)
+local function trashPart(inst)
+	if not inst then return nil end
+	if inst:IsA("BasePart") then return inst end
+	return inst.PrimaryPart or inst:FindFirstChildWhichIsA("BasePart")
 end
-function pxFlingAll() local me=myHRP(); if not me then return end local home=me.CFrame; pxStartFling()
-	task.spawn(function() for _,p in ipairs(Players:GetPlayers()) do if p~=LP then local pt=partOf(p)
-		if pt then pcall(function() me.CFrame=pt.CFrame; me.AssemblyLinearVelocity=Vector3.new(0,9e4,0) end); task.wait(0.12) end end end
-		task.wait(0.1); if not PX.fling then pxStopFling() end; pcall(function() me.CFrame=home end) end)
+function pxThrowTrashAll(name)
+	local part=trashPart(PX_TRASH[name])
+	if not part then notify("Trash","pick a trash can first",2); return end
+	local me=myHRP(); if not me then return end
+	task.spawn(function()
+		for _,p in ipairs(Players:GetPlayers()) do if p~=LP then local pt=partOf(p)
+			if pt then
+				pxTP(pt.CFrame*CFrame.new(0,0,7), 0.5)                                          -- teleport to the target
+				task.wait(0.12)
+				pcall(function()
+					part.CFrame = me.CFrame*CFrame.new(0,2,-2)                                   -- grab it (claims network ownership)
+					RunSvc.Heartbeat:Wait()
+					local dir=(pt.Position - part.Position)
+					part.AssemblyLinearVelocity = (dir.Magnitude>0 and dir.Unit or me.CFrame.LookVector)*220 + Vector3.new(0,45,0)  -- hurl it
+				end)
+				task.wait(0.3)
+			end
+		end end
+		notify("Trash Can All","thrown at everyone",2)
+	end)
 end
 
 -- ── aimlock ──
@@ -2145,42 +2151,44 @@ local AURA = {
 	Rainbow   = {c1=Color3.fromRGB(255,80,80),   c2=Color3.fromRGB(120,120,255), li=Color3.fromRGB(255,255,255), cols=6, rainbow=true},
 }
 local AURA_ORDER = {"Fire","Inferno","Ice","Frost","Void","Shadow","Holy","Toxic","Blood","Lightning","Galaxy","Sakura","Rainbow"}
-local auraObjs, auraParts, auraEmitters, auraAnchor, auraLight = {}, {}, {}, nil, nil
+local auraObjs, auraBeams, auraEmitters, auraAnchor, auraLight = {}, {}, {}, nil, nil
 local function auraMount() local c=myChar(); return c and (c:FindFirstChild("HumanoidRootPart") or myHRP()) end
 local function clearAura()
 	for _,o in ipairs(auraObjs) do pcall(function() o:Destroy() end) end
-	auraObjs, auraParts, auraEmitters, auraAnchor, auraLight = {}, {}, {}, nil, nil
+	auraObjs, auraBeams, auraEmitters, auraAnchor, auraLight = {}, {}, {}, nil, nil
 end
-local function auraPart(size, color, transp, role)
-	local p=Instance.new("Part"); p.Shape=Enum.PartType.Cylinder; p.Size=size; p.Material=Enum.Material.Neon
-	p.Color=color; p.Transparency=transp; p.CanCollide=false; p.CanQuery=false; p.Anchored=true; p.CastShadow=false
-	p:SetAttribute("role", role); p.Parent=WS
-	auraObjs[#auraObjs+1]=p; auraParts[#auraParts+1]=p
-	return p
-end
+-- Smooth ANIME energy: soft rising smoke/energy particles (no blocky parts) + tapered BEAMS that stream
+-- from your feet up to ~45 studs, swirling — the flowing column look, not solid geometry.
 local function applyAura()
 	clearAura()
 	local m=auraMount(); if not m then return end
 	local t=AURA[PX.auraName] or AURA.Fire
-	local n=t.cols or 4
-	auraPart(Vector3.new(0.6, 30, 30), t.c1, 0.30, "ground")                                    -- big ground disc
-	for i=1,n do local p=auraPart(Vector3.new(46, 5, 5), (i%2==0 and t.c2 or t.c1), 0.55, "col"); p:SetAttribute("idx", i); p:SetAttribute("n", n) end   -- tall columns
-	auraPart(Vector3.new(56, 8, 8), t.c1, 0.5, "core")                                          -- central core column
+	local n=(t.cols or 4)+3
 	local att=Instance.new("Attachment"); att.Parent=m; auraObjs[#auraObjs+1]=att; auraAnchor=att
-	local e1=Instance.new("ParticleEmitter"); e1.Parent=att                                     -- rising flames/energy
+	local e1=Instance.new("ParticleEmitter"); e1.Parent=att                                     -- rising energy body (soft, tall)
 	e1.Color=ColorSequence.new(t.c1,t.c2); e1.LightEmission=1; e1.LightInfluence=0
-	e1.Texture="rbxasset://textures/particles/fire_main.dds"
-	e1.Rate=70; e1.Lifetime=NumberRange.new(1,1.7); e1.Speed=NumberRange.new(10,20); e1.SpreadAngle=Vector2.new(16,16)
-	e1.Size=NumberSequence.new({NumberSequenceKeypoint.new(0,5), NumberSequenceKeypoint.new(1,0)})
-	e1.Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.2), NumberSequenceKeypoint.new(1,1)})
-	e1.Acceleration=Vector3.new(0,22,0); e1.Rotation=NumberRange.new(0,360)
+	e1.Texture="rbxasset://textures/particles/smoke_main.dds"
+	e1.Rate=95; e1.Lifetime=NumberRange.new(1.4,2.2); e1.Speed=NumberRange.new(28,44); e1.SpreadAngle=Vector2.new(7,7); e1.Drag=1.5
+	e1.Size=NumberSequence.new({NumberSequenceKeypoint.new(0,4.5), NumberSequenceKeypoint.new(0.4,3.2), NumberSequenceKeypoint.new(1,0)})
+	e1.Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.25), NumberSequenceKeypoint.new(1,1)})
+	e1.Acceleration=Vector3.new(0,30,0); e1.Rotation=NumberRange.new(0,360)
 	auraObjs[#auraObjs+1]=e1; auraEmitters[#auraEmitters+1]=e1
-	local e2=Instance.new("ParticleEmitter"); e2.Parent=att                                     -- sparkle burst
+	local e2=Instance.new("ParticleEmitter"); e2.Parent=att                                     -- rising sparkles/embers
 	e2.Color=ColorSequence.new(t.c2,Color3.new(1,1,1)); e2.LightEmission=1; e2.LightInfluence=0
 	e2.Texture="rbxasset://textures/particles/sparkles_main.dds"
-	e2.Rate=130; e2.Lifetime=NumberRange.new(0.6,1.2); e2.Speed=NumberRange.new(8,16); e2.SpreadAngle=Vector2.new(35,35)
-	e2.Size=NumberSequence.new(1.4); e2.Acceleration=Vector3.new(0,18,0); e2.Rotation=NumberRange.new(0,360)
+	e2.Rate=130; e2.Lifetime=NumberRange.new(0.9,1.7); e2.Speed=NumberRange.new(16,30); e2.SpreadAngle=Vector2.new(16,16)
+	e2.Size=NumberSequence.new({NumberSequenceKeypoint.new(0,1.4), NumberSequenceKeypoint.new(1,0)}); e2.Acceleration=Vector3.new(0,26,0); e2.Rotation=NumberRange.new(0,360)
 	auraObjs[#auraObjs+1]=e2; auraEmitters[#auraEmitters+1]=e2
+	for i=1,n do                                                                                 -- vertical energy STREAKS (beams) reaching to the top
+		local b0=Instance.new("Attachment"); b0.Parent=m; auraObjs[#auraObjs+1]=b0
+		local b1=Instance.new("Attachment"); b1.Parent=m; auraObjs[#auraObjs+1]=b1
+		local beam=Instance.new("Beam"); beam.Attachment0=b0; beam.Attachment1=b1; beam.Parent=m
+		beam.Color=ColorSequence.new(t.c1,t.c2); beam.LightEmission=1; beam.FaceCamera=true; beam.Segments=16
+		beam.Width0=2.6; beam.Width1=0.12
+		beam.Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.05), NumberSequenceKeypoint.new(0.7,0.45), NumberSequenceKeypoint.new(1,1)})
+		beam.CurveSize0=2.5; beam.CurveSize1=-2.5
+		auraObjs[#auraObjs+1]=beam; auraBeams[#auraBeams+1]={beam=beam, b0=b0, b1=b1, idx=i, n=n}
+	end
 	local li=Instance.new("PointLight"); li.Color=t.li or t.c1; li.Range=28; li.Brightness=6; li.Parent=m
 	auraObjs[#auraObjs+1]=li; auraLight=li
 end
@@ -2194,19 +2202,11 @@ track(RunSvc.RenderStepped:Connect(function(dt)
 	local pr=AURA[PX.auraName]
 	local rainbow = PX.auraRainbow or (pr and pr.rainbow)
 	local col = rainbow and Color3.fromHSV((auraTick*0.15)%1, 1, 1) or nil
-	local feet = m.Position - Vector3.new(0, 3, 0)
-	for _,p in ipairs(auraParts) do pcall(function()
-		local role=p:GetAttribute("role")
-		if role=="ground" then
-			p.CFrame = CFrame.new(feet) * CFrame.Angles(0, auraTick*1.5, 0) * CFrame.Angles(0,0,math.pi/2)
-		elseif role=="core" then
-			p.CFrame = CFrame.new(feet + Vector3.new(0, 27, 0)) * CFrame.Angles(0,0,math.pi/2)
-		else
-			local idx=p:GetAttribute("idx") or 1; local nn=p:GetAttribute("n") or 4
-			local a=auraTick*1.2 + (idx-1)*(2*math.pi/nn); local R=5.5
-			p.CFrame = CFrame.new(feet + Vector3.new(math.cos(a)*R, 22, math.sin(a)*R)) * CFrame.Angles(0,0,math.pi/2)
-		end
-		if col then p.Color=col end
+	for _,e in ipairs(auraBeams) do pcall(function()
+		local ang = auraTick*2.2 + (e.idx-1)*(2*math.pi/e.n); local r=1.9
+		e.b0.Position = Vector3.new(math.cos(ang)*r, -2.5, math.sin(ang)*r)                       -- feet, swirling
+		e.b1.Position = Vector3.new(math.cos(ang+1.4)*r*0.25, 45, math.sin(ang+1.4)*r*0.25)       -- converge near the top (~45 studs up)
+		if col then e.beam.Color=ColorSequence.new(col) end
 	end) end
 	if col then
 		if auraLight then auraLight.Color=col end
@@ -2215,7 +2215,7 @@ track(RunSvc.RenderStepped:Connect(function(dt)
 end))
 track(LP.CharacterAdded:Connect(function() task.wait(0.7); if PX.aura then applyAura() end end))
 
-function pxCleanup() pcall(pxStopFling); pcall(clearAura); pcall(function() if PX.nameTag then PX.nameTag:Destroy() end end); pcall(function() local r=myHRP(); if r then r.Anchored=false end end); pcall(function() if PX.fps then pxSetFPS(false) end end) end
+function pxCleanup() pcall(clearAura); pcall(function() if PX.nameTag then PX.nameTag:Destroy() end end); pcall(function() local r=myHRP(); if r then r.Anchored=false end end); pcall(function() if PX.fps then pxSetFPS(false) end end) end
 track(LP.CharacterAdded:Connect(function() task.wait(0.6); if PX.disgOn then pxSetName(true) end; if PX.fps then pxSetFPS(true) end end))
 
 -- ════════ PLUS TABS ════════
@@ -2240,10 +2240,11 @@ do
 	tab:CreateToggle({ Name="No Animations", CurrentValue=false, Callback=function(v) PX.noAnim=v end })
 	tab:CreateToggle({ Name="Upside Down", CurrentValue=false, Callback=function(v) pxSetUpside(v) end })
 	tab:CreateToggle({ Name="No Cooldowns", CurrentValue=false, Callback=function(v) PX.noCD=v end })
-	tab:CreateSection("Fling")
-	tab:CreateToggle({ Name="Flinging", CurrentValue=false, Callback=function(v) pxSetFling(v) end })
-	tab:CreateToggle({ Name="Walk Fling", CurrentValue=false, Callback=function(v) pxSetWalkFling(v) end })
-	tab:CreateButton({ Name="Fling All", Callback=function() pxFlingAll() end })
+	tab:CreateSection("Trash Can")
+	local trashSel="(none found)"
+	local tdrop = tab:CreateDropdown({ Name="Trash Can", Options=pxTrashList(), CurrentOption=pxTrashList()[1], Callback=function(o) trashSel=(type(o)=="table") and o[1] or o end })
+	tab:CreateButton({ Name="Refresh", Callback=function() pcall(function() tdrop:Refresh(pxTrashList(), false) end) end })
+	tab:CreateButton({ Name="Trash Can All", Callback=function() pxThrowTrashAll(trashSel) end })
 	tab:CreateSection("Aim")
 	tab:CreateToggle({ Name="Aimlock", CurrentValue=false, Callback=function(v) PX.aimlock=v end })
 	tab:CreateSlider({ Name="Aimlock Range", Range={50,400}, Increment=10, Suffix="", CurrentValue=250, Callback=function(v) PX.aimRange=v end })
@@ -2305,7 +2306,7 @@ do
 	tab:CreateToggle({ Name="Ultimate Alert", CurrentValue=false, Callback=function(v) PX.ultAlert=v end })
 	tab:CreateToggle({ Name="Jump On Counter", CurrentValue=false, Callback=function(v) PX.jumpOnCounter=v end })
 	tab:CreateToggle({ Name="Emote On Counter", CurrentValue=false, Callback=function(v) PX.emoteOnCounter=v end })
-	tab:CreateInput({ Name="Emote Id", PlaceholderText="rbxassetid", RemoveTextAfterFocusLost=false, Callback=function(x) PX.emoteId=x or "" end })
+	tab:CreateInput({ Name="Emote Id (default = Take-the-L)", PlaceholderText="18614546390", RemoveTextAfterFocusLost=false, Callback=function(x) if x and x~="" then PX.emoteId=x end end })
 end
 
 do
