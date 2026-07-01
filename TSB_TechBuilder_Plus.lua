@@ -1734,9 +1734,10 @@ local Light  = game:GetService("Lighting")
 local PX = { wsOn=false, ws=16, fly=false, flySpd=60, noclip=false, invis=false, ghost=false,
 	freeze=false, fling=false, walkFling=false, noAnim=false, upside=false, noCD=false,
 	infJump=false, jumpPow=50, antiRagdoll=false, antiVoid=false, lastSafe=nil,
-	autoUpper=false, autoDownslam=false, aura=false, auraName="Goku",
+	autoUpper=false, autoDownslam=false, aura=false, auraName="Fire", auraRainbow=false,
 	aimlock=false, aimRange=250, streak=false, lastKills=nil, lastStreak=nil,
-	antiTableFlip=false, antiSerious=false, antiOmni=false, antiGarou=false, antiIncin=false, antiDeath=false, antiDC=false, ultAlert=false, jumpOnCounter=false,
+	antiTableFlip=false, antiSerious=false, antiOmni=false, antiGarou=false, antiIncin=false, antiDeath=false, antiDC=false, ultAlert=false,
+	jumpOnCounter=false, emoteOnCounter=false, emoteId="", counterLockOnly=false,
 	gojoSel="Repulse", disgName="", disgOn=false, idleId="", walkId="", fps=false, fpsSaved=nil, spots={}, flingBV=nil, nameTag=nil }
 
 -- ── anti-send-back teleport ──
@@ -1936,7 +1937,7 @@ local function trackMatches(track, ids)
 	for _,id in ipairs(ids) do if aid:find(id, 1, true) then return true end end
 	return false
 end
-local pxLastDodge, pxLastHead = 0, 0
+local pxLastDodge, pxLastHead, pxLastEmote = 0, 0, 0
 local function pxBackDash()
 	pcall(function()
 		VIM:SendKeyEvent(true,KC.S,false,game)
@@ -1944,19 +1945,26 @@ local function pxBackDash()
 		VIM:SendKeyEvent(false,KC.S,false,game)
 	end)
 end
+local function pxPlayEmote()   -- plays YOUR emote (by id) as a taunt
+	local h=myHum(); if not (h and PX.emoteId~="") then return end
+	local id=tostring(PX.emoteId); if id:match("^%d+$") then id="rbxassetid://"..id end
+	pcall(function() local a=Instance.new("Animation"); a.AnimationId=id; h:LoadAnimation(a):Play() end)
+end
 track(RunSvc.Heartbeat:Connect(function()
 	local anyDodge=false; for _,e in ipairs(PX_ANTI) do if PX[e.f] then anyDodge=true break end end
-	local wantHead = PX.jumpOnCounter or PX.ultAlert
-	if not (anyDodge or wantHead) then return end
+	local wantCounter = PX.jumpOnCounter or PX.ultAlert or PX.emoteOnCounter
+	if not (anyDodge or wantCounter) then return end
 	local me=myHRP(); if not me then return end
 	for _,plr in ipairs(Players:GetPlayers()) do if plr~=LP and plr.Character then
+		-- LOCK-ON ONLY: when set, only react to the player you're locked onto
+		local lockOK = (not PX.counterLockOnly) or (lockTarget and plr==lockTarget)
 		local pt=plr.Character:FindFirstChild("HumanoidRootPart"); local h=plr.Character:FindFirstChildOfClass("Humanoid")
 		if pt and h and (pt.Position-me.Position).Magnitude<40 then
 			local a=h:FindFirstChildOfClass("Animator")
 			if a then local ok,tr=pcall(function() return a:GetPlayingAnimationTracks() end)
 				if ok and tr then
-					-- 1) counter stance? -> alert / jump on their head (avoids the counter, which hits in front)
-					if wantHead then
+					-- 1) counter stance? -> alert / jump-on-head / emote taunt
+					if wantCounter and lockOK then
 						for _,t in ipairs(tr) do
 							if trackMatches(t,{ANIM_COUNTER.garou}) or trackMatches(t,{ANIM_COUNTER.deathblow}) or trackMatches(t,{ANIM_COUNTER.split}) then
 								if PX.ultAlert then notify("COUNTER", plr.Name.." is countering!", 2) end
@@ -1965,12 +1973,15 @@ track(RunSvc.Heartbeat:Connect(function()
 									local head=plr.Character:FindFirstChild("Head") or pt
 									pxTP(CFrame.new(head.Position + Vector3.new(0, 3.5, 0)), 0.5)   -- land on their head
 								end
+								if PX.emoteOnCounter and os.clock()-pxLastEmote>1.2 then
+									pxLastEmote=os.clock(); pxPlayEmote()                              -- taunt them with your emote
+								end
 								break
 							end
 						end
 					end
-					-- 2) flagged offensive move? -> back-dash out
-					if anyDodge and os.clock()-pxLastDodge>0.8 then
+					-- 2) flagged offensive move? -> back-dash out (also respects lock-on-only)
+					if anyDodge and lockOK and os.clock()-pxLastDodge>0.8 then
 						for _,t in ipairs(tr) do
 							for _,e in ipairs(PX_ANTI) do if PX[e.f] and trackMatches(t, e.ids) then
 								pxLastDodge=os.clock(); pxBackDash(); return
@@ -2117,69 +2128,90 @@ function pxSetAutoMoves()
 	end)
 end
 
--- ── CLIENT AURAS (character-themed VFX: particles + light + spinning halos + pillars) ──
+-- ── CLIENT AURAS (CRAZY style: tall energy columns + big ground ring + heavy particles + rainbow) ──
 local AURA = {
-	Goku            = {c1=Color3.fromRGB(255,225,90),  c2=Color3.fromRGB(255,255,255), rings=true,  beams=true,  li=Color3.fromRGB(255,220,120)},
-	Gojo            = {c1=Color3.fromRGB(80,140,255),  c2=Color3.fromRGB(170,90,255),  rings=true,  beams=true,  li=Color3.fromRGB(120,150,255)},
-	Luffy           = {c1=Color3.fromRGB(235,60,60),   c2=Color3.fromRGB(255,255,255), rings=true,  beams=false, li=Color3.fromRGB(255,120,120)},
-	Naruto          = {c1=Color3.fromRGB(255,150,40),  c2=Color3.fromRGB(255,220,80),  rings=true,  beams=true,  li=Color3.fromRGB(255,170,60)},
-	["Sung Jin Woo"]= {c1=Color3.fromRGB(120,50,220),  c2=Color3.fromRGB(25,20,40),    rings=true,  beams=true,  li=Color3.fromRGB(140,70,255)},
-	Reimu           = {c1=Color3.fromRGB(230,50,80),   c2=Color3.fromRGB(255,255,255), rings=true,  beams=false, li=Color3.fromRGB(255,120,150)},
-	Vegeta          = {c1=Color3.fromRGB(90,150,255),  c2=Color3.fromRGB(200,140,255), rings=true,  beams=true,  li=Color3.fromRGB(120,170,255)},
-	Sukuna          = {c1=Color3.fromRGB(215,40,40),   c2=Color3.fromRGB(35,10,10),    rings=true,  beams=true,  li=Color3.fromRGB(255,60,60)},
-	Ichigo          = {c1=Color3.fromRGB(35,35,40),    c2=Color3.fromRGB(220,40,60),   rings=true,  beams=true,  li=Color3.fromRGB(210,40,60)},
-	Escanor         = {c1=Color3.fromRGB(255,205,60),  c2=Color3.fromRGB(255,120,20),  rings=true,  beams=true,  li=Color3.fromRGB(255,190,80)},
-	Madara          = {c1=Color3.fromRGB(150,90,255),  c2=Color3.fromRGB(60,20,120),   rings=true,  beams=true,  li=Color3.fromRGB(170,110,255)},
-	["Ultra Instinct"]={c1=Color3.fromRGB(210,220,255),c2=Color3.fromRGB(160,120,255), rings=true,  beams=true,  li=Color3.fromRGB(200,210,255)},
-	Saitama         = {c1=Color3.fromRGB(255,240,180), c2=Color3.fromRGB(255,205,120), rings=false, beams=true,  li=Color3.fromRGB(255,235,180)},
+	Fire      = {c1=Color3.fromRGB(255,120,20),  c2=Color3.fromRGB(255,40,10),   li=Color3.fromRGB(255,120,40),  cols=4},
+	Inferno   = {c1=Color3.fromRGB(255,60,10),   c2=Color3.fromRGB(120,0,0),     li=Color3.fromRGB(255,80,30),   cols=5},
+	Ice       = {c1=Color3.fromRGB(120,220,255), c2=Color3.fromRGB(255,255,255), li=Color3.fromRGB(150,220,255), cols=4},
+	Frost     = {c1=Color3.fromRGB(80,150,255),  c2=Color3.fromRGB(200,240,255), li=Color3.fromRGB(120,180,255), cols=4},
+	Void      = {c1=Color3.fromRGB(150,40,220),  c2=Color3.fromRGB(30,0,45),     li=Color3.fromRGB(160,60,235),  cols=5},
+	Shadow    = {c1=Color3.fromRGB(90,20,160),   c2=Color3.fromRGB(12,12,22),    li=Color3.fromRGB(120,40,200),  cols=4},
+	Holy      = {c1=Color3.fromRGB(255,235,150), c2=Color3.fromRGB(255,255,255), li=Color3.fromRGB(255,240,180), cols=4},
+	Toxic     = {c1=Color3.fromRGB(120,255,60),  c2=Color3.fromRGB(30,120,20),   li=Color3.fromRGB(140,255,80),  cols=4},
+	Blood     = {c1=Color3.fromRGB(220,20,20),   c2=Color3.fromRGB(60,0,0),      li=Color3.fromRGB(255,40,40),   cols=4},
+	Lightning = {c1=Color3.fromRGB(255,240,120), c2=Color3.fromRGB(120,180,255), li=Color3.fromRGB(255,245,160), cols=5},
+	Galaxy    = {c1=Color3.fromRGB(80,120,255),  c2=Color3.fromRGB(180,80,255),  li=Color3.fromRGB(130,120,255), cols=5},
+	Sakura    = {c1=Color3.fromRGB(255,140,200), c2=Color3.fromRGB(255,255,255), li=Color3.fromRGB(255,160,210), cols=4},
+	Rainbow   = {c1=Color3.fromRGB(255,80,80),   c2=Color3.fromRGB(120,120,255), li=Color3.fromRGB(255,255,255), cols=6, rainbow=true},
 }
-local AURA_ORDER = {"Goku","Gojo","Luffy","Naruto","Sung Jin Woo","Reimu","Vegeta","Sukuna","Ichigo","Escanor","Madara","Ultra Instinct","Saitama"}
-local auraObjs, auraRings = {}, {}
+local AURA_ORDER = {"Fire","Inferno","Ice","Frost","Void","Shadow","Holy","Toxic","Blood","Lightning","Galaxy","Sakura","Rainbow"}
+local auraObjs, auraParts, auraEmitters, auraAnchor, auraLight = {}, {}, {}, nil, nil
 local function auraMount() local c=myChar(); return c and (c:FindFirstChild("HumanoidRootPart") or myHRP()) end
 local function clearAura()
 	for _,o in ipairs(auraObjs) do pcall(function() o:Destroy() end) end
-	for _,o in ipairs(auraRings) do pcall(function() o:Destroy() end) end
-	auraObjs, auraRings = {}, {}
+	auraObjs, auraParts, auraEmitters, auraAnchor, auraLight = {}, {}, {}, nil, nil
+end
+local function auraPart(size, color, transp, role)
+	local p=Instance.new("Part"); p.Shape=Enum.PartType.Cylinder; p.Size=size; p.Material=Enum.Material.Neon
+	p.Color=color; p.Transparency=transp; p.CanCollide=false; p.CanQuery=false; p.Anchored=true; p.CastShadow=false
+	p:SetAttribute("role", role); p.Parent=WS
+	auraObjs[#auraObjs+1]=p; auraParts[#auraParts+1]=p
+	return p
 end
 local function applyAura()
 	clearAura()
 	local m=auraMount(); if not m then return end
-	local t=AURA[PX.auraName] or AURA.Goku
-	local att=Instance.new("Attachment"); att.Parent=m; auraObjs[#auraObjs+1]=att
-	local pe=Instance.new("ParticleEmitter"); pe.Parent=att
-	pe.Color=ColorSequence.new(t.c1,t.c2); pe.LightEmission=1; pe.LightInfluence=0
-	pe.Texture="rbxasset://textures/particles/sparkles_main.dds"
-	pe.Rate=90; pe.Lifetime=NumberRange.new(0.6,1.1); pe.Speed=NumberRange.new(7,13)
-	pe.SpreadAngle=Vector2.new(22,22); pe.Size=NumberSequence.new(1.3); pe.Acceleration=Vector3.new(0,16,0); pe.Rotation=NumberRange.new(0,360)
-	auraObjs[#auraObjs+1]=pe
-	local li=Instance.new("PointLight"); li.Color=t.li or t.c1; li.Range=18; li.Brightness=3.2; li.Parent=m; auraObjs[#auraObjs+1]=li
-	if t.rings then for i=1,2 do
-		local ring=Instance.new("Part"); ring.Shape=Enum.PartType.Cylinder; ring.Size=Vector3.new(0.3,7.5,7.5)
-		ring.Material=Enum.Material.Neon; ring.Color=(i==1 and t.c1 or t.c2); ring.Transparency=0.35
-		ring.CanCollide=false; ring.CanQuery=false; ring.Anchored=true; ring.Parent=WS
-		auraRings[#auraRings+1]=ring
-	end end
-	if t.beams then for i=-1,1,2 do
-		local p=Instance.new("Part"); p.Size=Vector3.new(0.45,11,0.45); p.Material=Enum.Material.Neon; p.Color=t.c2; p.Transparency=0.4
-		p.CanCollide=false; p.CanQuery=false; p.Anchored=true; p.Parent=WS; p:SetAttribute("side", i)
-		auraRings[#auraRings+1]=p
-	end end
+	local t=AURA[PX.auraName] or AURA.Fire
+	local n=t.cols or 4
+	auraPart(Vector3.new(0.6, 30, 30), t.c1, 0.30, "ground")                                    -- big ground disc
+	for i=1,n do local p=auraPart(Vector3.new(46, 5, 5), (i%2==0 and t.c2 or t.c1), 0.55, "col"); p:SetAttribute("idx", i); p:SetAttribute("n", n) end   -- tall columns
+	auraPart(Vector3.new(56, 8, 8), t.c1, 0.5, "core")                                          -- central core column
+	local att=Instance.new("Attachment"); att.Parent=m; auraObjs[#auraObjs+1]=att; auraAnchor=att
+	local e1=Instance.new("ParticleEmitter"); e1.Parent=att                                     -- rising flames/energy
+	e1.Color=ColorSequence.new(t.c1,t.c2); e1.LightEmission=1; e1.LightInfluence=0
+	e1.Texture="rbxasset://textures/particles/fire_main.dds"
+	e1.Rate=70; e1.Lifetime=NumberRange.new(1,1.7); e1.Speed=NumberRange.new(10,20); e1.SpreadAngle=Vector2.new(16,16)
+	e1.Size=NumberSequence.new({NumberSequenceKeypoint.new(0,5), NumberSequenceKeypoint.new(1,0)})
+	e1.Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.2), NumberSequenceKeypoint.new(1,1)})
+	e1.Acceleration=Vector3.new(0,22,0); e1.Rotation=NumberRange.new(0,360)
+	auraObjs[#auraObjs+1]=e1; auraEmitters[#auraEmitters+1]=e1
+	local e2=Instance.new("ParticleEmitter"); e2.Parent=att                                     -- sparkle burst
+	e2.Color=ColorSequence.new(t.c2,Color3.new(1,1,1)); e2.LightEmission=1; e2.LightInfluence=0
+	e2.Texture="rbxasset://textures/particles/sparkles_main.dds"
+	e2.Rate=130; e2.Lifetime=NumberRange.new(0.6,1.2); e2.Speed=NumberRange.new(8,16); e2.SpreadAngle=Vector2.new(35,35)
+	e2.Size=NumberSequence.new(1.4); e2.Acceleration=Vector3.new(0,18,0); e2.Rotation=NumberRange.new(0,360)
+	auraObjs[#auraObjs+1]=e2; auraEmitters[#auraEmitters+1]=e2
+	local li=Instance.new("PointLight"); li.Color=t.li or t.c1; li.Range=28; li.Brightness=6; li.Parent=m
+	auraObjs[#auraObjs+1]=li; auraLight=li
 end
 function pxSetAura(v) PX.aura=v; if v then applyAura() else clearAura() end end
 local auraTick=0
 track(RunSvc.RenderStepped:Connect(function(dt)
 	if not PX.aura then return end
 	local m=auraMount(); if not m then return end
-	if not (auraObjs[1] and auraObjs[1].Parent) then applyAura(); return end
+	if not (auraAnchor and auraAnchor.Parent) then applyAura(); return end
 	auraTick=auraTick+dt
-	for i,ring in ipairs(auraRings) do pcall(function()
-		if ring.Shape==Enum.PartType.Cylinder then
-			ring.CFrame = m.CFrame * CFrame.new(0,-1.2,0) * CFrame.Angles(0, auraTick*(3+i), 0) * CFrame.Angles(0,0,math.pi/2)  -- flat spinning halo
+	local pr=AURA[PX.auraName]
+	local rainbow = PX.auraRainbow or (pr and pr.rainbow)
+	local col = rainbow and Color3.fromHSV((auraTick*0.15)%1, 1, 1) or nil
+	local feet = m.Position - Vector3.new(0, 3, 0)
+	for _,p in ipairs(auraParts) do pcall(function()
+		local role=p:GetAttribute("role")
+		if role=="ground" then
+			p.CFrame = CFrame.new(feet) * CFrame.Angles(0, auraTick*1.5, 0) * CFrame.Angles(0,0,math.pi/2)
+		elseif role=="core" then
+			p.CFrame = CFrame.new(feet + Vector3.new(0, 27, 0)) * CFrame.Angles(0,0,math.pi/2)
 		else
-			local side=ring:GetAttribute("side") or 1
-			ring.CFrame = m.CFrame * CFrame.Angles(0, auraTick*2, 0) * CFrame.new(side*2.2,0,0)  -- orbiting pillar
+			local idx=p:GetAttribute("idx") or 1; local nn=p:GetAttribute("n") or 4
+			local a=auraTick*1.2 + (idx-1)*(2*math.pi/nn); local R=5.5
+			p.CFrame = CFrame.new(feet + Vector3.new(math.cos(a)*R, 22, math.sin(a)*R)) * CFrame.Angles(0,0,math.pi/2)
 		end
+		if col then p.Color=col end
 	end) end
+	if col then
+		if auraLight then auraLight.Color=col end
+		for _,e in ipairs(auraEmitters) do pcall(function() e.Color=ColorSequence.new(col) end) end
+	end
 end))
 track(LP.CharacterAdded:Connect(function() task.wait(0.7); if PX.aura then applyAura() end end))
 
@@ -2222,7 +2254,8 @@ do
 	local tab = Window:CreateTab("Auras", 4483362458)
 	tab:CreateSection("Client Aura")
 	tab:CreateToggle({ Name="Enable Aura", CurrentValue=false, Callback=function(v) pxSetAura(v) end })
-	tab:CreateDropdown({ Name="Aura", Options=AURA_ORDER, CurrentOption="Goku", Callback=function(o) PX.auraName=(type(o)=="table") and o[1] or o; if PX.aura then applyAura() end end })
+	tab:CreateDropdown({ Name="Aura", Options=AURA_ORDER, CurrentOption="Fire", Callback=function(o) PX.auraName=(type(o)=="table") and o[1] or o; if PX.aura then applyAura() end end })
+	tab:CreateToggle({ Name="Rainbow", CurrentValue=false, Callback=function(v) PX.auraRainbow=v end })
 end
 
 do
@@ -2268,8 +2301,11 @@ do
 	tab:CreateToggle({ Name="Anti Death Blow", CurrentValue=false, Callback=function(v) PX.antiDeath=v end })
 	tab:CreateToggle({ Name="Anti Death Counter", CurrentValue=false, Callback=function(v) PX.antiDC=v end })
 	tab:CreateSection("Counter")
+	tab:CreateToggle({ Name="Lock-On Target Only", CurrentValue=false, Callback=function(v) PX.counterLockOnly=v end })
 	tab:CreateToggle({ Name="Ultimate Alert", CurrentValue=false, Callback=function(v) PX.ultAlert=v end })
 	tab:CreateToggle({ Name="Jump On Counter", CurrentValue=false, Callback=function(v) PX.jumpOnCounter=v end })
+	tab:CreateToggle({ Name="Emote On Counter", CurrentValue=false, Callback=function(v) PX.emoteOnCounter=v end })
+	tab:CreateInput({ Name="Emote Id", PlaceholderText="rbxassetid", RemoveTextAfterFocusLost=false, Callback=function(x) PX.emoteId=x or "" end })
 end
 
 do
