@@ -2115,8 +2115,8 @@ VisualsTab:CreateParagraph({Title="Aura Maker", Content="Build your own aura lik
 local function reVFX() if S.VFXOn then applyCustomVFX() end end
 VisualsTab:CreateToggle({Name="Apply My Aura", CurrentValue=false, Flag="VFXOn", Callback=function(v) S.VFXOn=v; if v then applyCustomVFX() else clearCustomVFX() end end})
 VisualsTab:CreateDropdown({Name="Preset", Options={"Fire","Ice","Lightning","Galaxy","Shadow","Holy","Toxic","Rainbow","Void","Sakura","Nuke"}, CurrentOption={}, Flag="VFXPreset", Callback=function(o)
-    local nm=(type(o)=="table" and o[1]) or o
-    if not nm or nm=="" then return end          -- ignore the callback Fluriore fires on creation (no red aura on spawn)
+    local nm; if type(o)=="table" then nm=o[1] else nm=o end   -- empty table -> nm=nil (Fluriore fires this on creation)
+    if not nm or nm=="" then return end                        -- so no red aura applies on spawn
     applyVFXPreset(nm); S.VFXOn=true; applyCustomVFX()
 end})
 
@@ -2234,4 +2234,8 @@ UtilityTab:CreateButton({Name="Unload Valutix Hub", Callback=function()
 end})
 
 
-Rayfield:Notify({Title="Valutix Hub v2.15.0", Content="Loaded - by Valutix Hub Owner", Duration=6})
+-- INSURANCE: Fluriore fires element callbacks on creation, which can flip the aura on during build.
+-- After the GUI settles, force the aura OFF so you always spawn clean (no red sphere).
+task.delay(1.2, function() S.VFXOn=false; pcall(clearCustomVFX) end)
+
+Rayfield:Notify({Title="Valutix Hub", Content="Loaded.", Duration=5})
