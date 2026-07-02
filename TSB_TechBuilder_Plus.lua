@@ -1739,7 +1739,7 @@ local Light  = game:GetService("Lighting")
 local PX = { wsOn=false, ws=16, fly=false, flySpd=60, noclip=false, invis=false, ghost=false,
 	freeze=false, fling=false, walkFling=false, noAnim=false, upside=false, noCD=false,
 	infJump=false, jumpPow=50, antiRagdoll=false, antiVoid=false, lastSafe=nil,
-	autoUpper=false, autoDownslam=false, aura=false, auraName="Fire", auraRainbow=false,
+	autoUpper=false, autoDownslam=false, aura=false, auraName="Fire", auraRainbow=false, auraSize=1.4,
 	aimlock=false, aimRange=250, streak=false, lastKills=nil, lastStreak=nil,
 	antiTableFlip=false, antiSerious=false, antiOmni=false, antiGarou=false, antiIncin=false, antiDeath=false, antiDC=false, ultAlert=false,
 	jumpOnCounter=false, counterLockOnly=false,
@@ -2251,32 +2251,44 @@ function pxTPNearest() local me=myHRP(); if not me then return end local bp,bd
 function pxTPSky() local r=myHRP(); if r then pxTP(CFrame.new(r.Position.X,r.Position.Y+300,r.Position.Z),0.9) end end
 function pxTPSpawn() local sp=WS:FindFirstChildWhichIsA("SpawnLocation",true); if sp then pxTP(sp.CFrame*CFrame.new(0,4,0),0.6); notify("Teleport","spawn",2) else notify("Teleport","no SpawnLocation found",2) end end
 
--- ── AUTO UPPERCUT / DOWNSLAM — routed through the BASE engine's doAction (same reliable input path the
---    tech builder uses: REPLAYING flag redirects the M1 click into the game, faces the target, tap-jump). ──
+-- ── AUTO UPPERCUT / DOWNSLAM — fired through TSB's REAL remote: Character.Communicate:FireServer(...).
+--    M1 = {Goal="LeftClick", MousePos=<aim CFrame>} ; Jump = {Goal="Record Jump"}. (VIM never worked here.)
+local function pxComm(tbl)
+	local c=myChar(); local comm=c and c:FindFirstChild("Communicate")
+	if not comm then return false end
+	pcall(function() comm:FireServer(tbl) end)
+	return true
+end
+local function pxM1(targetPart)                                     -- LeftClick aimed at the target
+	local mp
+	if targetPart and targetPart.Parent then mp=CFrame.new(targetPart.Position)
+	else local cam=WS.CurrentCamera; mp=(cam and cam.CFrame) or CFrame.new() end
+	pxComm({Goal="LeftClick", MousePos=mp})
+end
+local function pxJumpR() pxComm({Goal="Record Jump"}) end
 local pxAutoTok
 function pxSetAutoMoves()
 	if pxAutoTok then pxAutoTok.c=true; pxAutoTok=nil end
 	if not (PX.autoUpper or PX.autoDownslam) then return end
 	local tok={c=false}; pxAutoTok=tok
 	task.spawn(function()
-		local rtok={cancel=false}
 		while not tok.c and (PX.autoUpper or PX.autoDownslam) do
-			local pt=pxNearest(18)
+			local pt=pxNearest(30)
 			if pt then
-				pcall(faceTarget)                                        -- base camera-aim onto the target
-				REPLAYING=true                                           -- send M1 into the GAME, not the UI
-				-- open the M1 CHAIN first at real punch cadence (~300ms), then the launcher step
-				local m1s = PX.autoDownslam and 3 or 2
-				for i=1,m1s do if tok.c then break end pcall(doAction, {act="m1", hold=45}, rtok); task.wait(0.3) end
+				pcall(faceTarget)
+				for i=1,3 do if tok.c then break end pxM1(pt); task.wait(0.3) end          -- 3 M1s
 				if not tok.c then
-					if PX.autoUpper then pcall(doAction, {act="uppercut", jumpLead=280, m1Hold=45, jumpReleaseDelay=40}, rtok)   -- M1 + final M1 under held space = launch
-					elseif PX.autoDownslam then pcall(doAction, {act="downslam", airDelay=350, m1Hold=45}, rtok) end
+					if PX.autoDownslam then
+						pxJumpR(); task.wait(0.35)                                            -- jump -> airborne
+						pxM1(pt)                                                             -- M1 in the air = DOWNSLAM
+					else -- uppercut
+						pxJumpR(); task.wait(0.02)                                            -- jump...
+						pxM1(pt)                                                              -- ...immediate M1 = UPPERCUT launch
+					end
 				end
-				REPLAYING=false
-				task.wait(0.6)
+				task.wait(0.55)
 			else task.wait(0.2) end
 		end
-		REPLAYING=false
 	end)
 end
 
@@ -2310,64 +2322,57 @@ local function clearAura()
 	for _,o in ipairs(vfxObjs) do pcall(function() o:Destroy() end) end
 	vfxObjs, vfxEmitters, vfxGround, vfxLight, vfxHighlight = {}, {}, nil, nil, nil
 end
--- ANIME AURA: flame energy that WRAPS the body (LockedToPart particles from the feet), a bright inner core,
--- rising embers, a glowing character OUTLINE (Highlight), a soft ground ring + light. No blocky parts.
+-- ANIME AURA: dense flame energy that WRAPS the body + a TALL rising column that reaches up + embers +
+-- glowing character OUTLINE + ground ring + light. Everything scales with the Size slider.
+local function nseq(a, k, b) return NumberSequence.new({NumberSequenceKeypoint.new(0,a), NumberSequenceKeypoint.new(0.5,k), NumberSequenceKeypoint.new(1,b)}) end
 local function applyAura()
 	clearAura()
 	local mount=auraMount(); if not mount then return end
 	local char=myChar(); vfxChar=char
 	local t=AURA[PX.auraName] or AURA.Fire
 	local c1,c2 = t.c1, t.c2 or t.c1
-	local bodyTex = (t.tex=="fire" and A_FIRE) or (t.tex=="spark" and A_SPARK) or A_SMOKE
+	local sz = PX.auraSize or 1.4
+	local flameTex = (t.tex=="spark") and A_SPARK or A_FIRE
 
-	-- character OUTLINE glow (the anime rim light)
-	local hl=Instance.new("Highlight"); hl.Adornee=char; hl.FillTransparency=1
-	hl.OutlineColor=c1; hl.OutlineTransparency=0.1; hl.DepthMode=Enum.HighlightDepthMode.Occluded; hl.Parent=char
+	local hl=Instance.new("Highlight"); hl.Adornee=char; hl.FillColor=c1; hl.FillTransparency=0.85   -- body tint + rim glow
+	hl.OutlineColor=c1; hl.OutlineTransparency=0.05; hl.DepthMode=Enum.HighlightDepthMode.Occluded; hl.Parent=char
 	vfxObjs[#vfxObjs+1]=hl; vfxHighlight=hl
 
 	local att=Instance.new("Attachment",mount); att.Position=Vector3.new(0,-2.6,0); vfxObjs[#vfxObjs+1]=att
-	-- OUTER FLAME: big fire tongues that stretch up and follow the body (LockedToPart = wraps you like DBZ ki)
+	-- OUTER FLAME wrap (locked to body, vertically stretched = anime ki tongues), dense
 	local e1=Instance.new("ParticleEmitter",att)
-	e1.Texture=A_FIRE; e1.Color=ColorSequence.new(c1,c2); e1.LightEmission=1; e1.LightInfluence=0
-	e1.LockedToPart=true
-	e1.Rate=64; e1.Lifetime=NumberRange.new(0.45,0.7); e1.Speed=NumberRange.new(9,15); e1.SpreadAngle=Vector2.new(24,24)
-	e1.Size=NumberSequence.new({NumberSequenceKeypoint.new(0,4.4), NumberSequenceKeypoint.new(0.5,5.6), NumberSequenceKeypoint.new(1,0.6)})
-	e1.Squash=NumberSequence.new({NumberSequenceKeypoint.new(0,-0.45), NumberSequenceKeypoint.new(1,-0.15)})   -- stretch flames VERTICALLY = anime tongue shape
-	e1.Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.25), NumberSequenceKeypoint.new(0.75,0.55), NumberSequenceKeypoint.new(1,1)})
-	e1.Acceleration=Vector3.new(0,12,0); e1.Rotation=NumberRange.new(-12,12)
+	e1.Texture=flameTex; e1.Color=ColorSequence.new(c1,c2); e1.LightEmission=1; e1.LightInfluence=0; e1.LockedToPart=true
+	e1.Rate=120; e1.Lifetime=NumberRange.new(0.45,0.75); e1.Speed=NumberRange.new(9,16); e1.SpreadAngle=Vector2.new(20,20)
+	e1.Size=nseq(4.5*sz, 6.0*sz, 0.6*sz)
+	e1.Squash=NumberSequence.new({NumberSequenceKeypoint.new(0,-0.5), NumberSequenceKeypoint.new(1,-0.15)})
+	e1.Transparency=nseq(0.2, 0.5, 1); e1.Acceleration=Vector3.new(0,13,0); e1.Rotation=NumberRange.new(-14,14)
 	vfxObjs[#vfxObjs+1]=e1; vfxEmitters[#vfxEmitters+1]=e1
-	-- INNER CORE: brighter, hotter, tighter flame inside the outer one
+	-- INNER hot core
 	local e2=Instance.new("ParticleEmitter",att)
-	e2.Texture=A_FIRE; e2.Color=ColorSequence.new(c2,WHITE); e2.LightEmission=1; e2.LightInfluence=0
-	e2.LockedToPart=true
-	e2.Rate=46; e2.Lifetime=NumberRange.new(0.35,0.55); e2.Speed=NumberRange.new(7,11); e2.SpreadAngle=Vector2.new(14,14)
-	e2.Size=NumberSequence.new({NumberSequenceKeypoint.new(0,2.6), NumberSequenceKeypoint.new(0.5,3.4), NumberSequenceKeypoint.new(1,0.3)})
-	e2.Squash=NumberSequence.new({NumberSequenceKeypoint.new(0,-0.5), NumberSequenceKeypoint.new(1,-0.2)})
-	e2.Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.15), NumberSequenceKeypoint.new(1,1)})
-	e2.Acceleration=Vector3.new(0,10,0)
+	e2.Texture=flameTex; e2.Color=ColorSequence.new(c2,WHITE); e2.LightEmission=1; e2.LightInfluence=0; e2.LockedToPart=true
+	e2.Rate=80; e2.Lifetime=NumberRange.new(0.35,0.55); e2.Speed=NumberRange.new(7,12); e2.SpreadAngle=Vector2.new(12,12)
+	e2.Size=nseq(2.6*sz, 3.6*sz, 0.3*sz); e2.Squash=NumberSequence.new({NumberSequenceKeypoint.new(0,-0.5), NumberSequenceKeypoint.new(1,-0.2)})
+	e2.Transparency=nseq(0.12, 0.4, 1); e2.Acceleration=Vector3.new(0,11,0)
 	vfxObjs[#vfxObjs+1]=e2; vfxEmitters[#vfxEmitters+1]=e2
-	-- EMBERS: free-rising sparks that break off the aura and float high
+	-- TALL rising COLUMN (not locked -> streams high above you)
 	local e3=Instance.new("ParticleEmitter",att)
-	e3.Texture=A_SPARK; e3.Color=ColorSequence.new(c2,WHITE); e3.LightEmission=1; e3.LightInfluence=0
-	e3.Rate=42; e3.Lifetime=NumberRange.new(1.0,1.8); e3.Speed=NumberRange.new(14,26); e3.SpreadAngle=Vector2.new(18,18)
-	e3.Size=NumberSequence.new({NumberSequenceKeypoint.new(0,1.1), NumberSequenceKeypoint.new(1,0)})
-	e3.Acceleration=Vector3.new(0,20,0); e3.Rotation=NumberRange.new(0,360)
+	e3.Texture=A_SMOKE; e3.Color=ColorSequence.new(c1,c2); e3.LightEmission=1; e3.LightInfluence=0
+	e3.Rate=70; e3.Lifetime=NumberRange.new(1.3,2.1); e3.Speed=NumberRange.new(30,48); e3.SpreadAngle=Vector2.new(5,5); e3.Drag=1
+	e3.Size=nseq(3.2*sz, 2.4*sz, 0); e3.Transparency=nseq(0.35, 0.6, 1); e3.Acceleration=Vector3.new(0,28,0); e3.Rotation=NumberRange.new(0,360)
 	vfxObjs[#vfxObjs+1]=e3; vfxEmitters[#vfxEmitters+1]=e3
-	-- HAZE at the feet (soft base so the aura reads as one shape)
+	-- EMBERS
 	local e4=Instance.new("ParticleEmitter",att)
-	e4.Texture=bodyTex==A_FIRE and A_SMOKE or bodyTex; e4.Color=ColorSequence.new(c1,c1); e4.LightEmission=0.9; e4.LightInfluence=0
-	e4.LockedToPart=true
-	e4.Rate=26; e4.Lifetime=NumberRange.new(0.5,0.8); e4.Speed=NumberRange.new(2,4); e4.SpreadAngle=Vector2.new(60,60)
-	e4.Size=NumberSequence.new({NumberSequenceKeypoint.new(0,3.4), NumberSequenceKeypoint.new(1,1)})
-	e4.Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0.55), NumberSequenceKeypoint.new(1,1)})
+	e4.Texture=A_SPARK; e4.Color=ColorSequence.new(c2,WHITE); e4.LightEmission=1; e4.LightInfluence=0
+	e4.Rate=55; e4.Lifetime=NumberRange.new(1.0,1.9); e4.Speed=NumberRange.new(15,28); e4.SpreadAngle=Vector2.new(16,16)
+	e4.Size=nseq(1.2*sz, 0.8*sz, 0); e4.Acceleration=Vector3.new(0,22,0); e4.Rotation=NumberRange.new(0,360)
 	vfxObjs[#vfxObjs+1]=e4; vfxEmitters[#vfxEmitters+1]=e4
 
-	local ring=Instance.new("Part"); ring.Shape=Enum.PartType.Cylinder; ring.Size=Vector3.new(0.35,11,11)   -- soft ground ring
-	ring.Material=Enum.Material.Neon; ring.Color=c1; ring.Transparency=0.45
+	local ring=Instance.new("Part"); ring.Shape=Enum.PartType.Cylinder; ring.Size=Vector3.new(0.35, 9*sz, 9*sz)   -- ground ring
+	ring.Material=Enum.Material.Neon; ring.Color=c1; ring.Transparency=0.4
 	ring.CanCollide=false; ring.CanQuery=false; ring.Anchored=true; ring.CastShadow=false; ring.Parent=WS
 	vfxObjs[#vfxObjs+1]=ring; vfxGround=ring
 
-	local lp=Instance.new("PointLight",mount); lp.Color=t.li or c1; lp.Brightness=7; lp.Range=24; vfxObjs[#vfxObjs+1]=lp; vfxLight=lp
+	local lp=Instance.new("PointLight",mount); lp.Color=t.li or c1; lp.Brightness=8; lp.Range=20+8*sz; vfxObjs[#vfxObjs+1]=lp; vfxLight=lp
 end
 function pxSetAura(v) PX.aura=v; if v then applyAura() else clearAura() end end
 local auraT=0
@@ -2435,6 +2440,7 @@ do
 	tab:CreateSection("Client Aura")
 	tab:CreateToggle({ Name="Enable Aura", CurrentValue=false, Callback=function(v) pxSetAura(v) end })
 	tab:CreateDropdown({ Name="Aura", Options=AURA_ORDER, CurrentOption="Fire", Callback=function(o) PX.auraName=(type(o)=="table") and o[1] or o; if PX.aura then applyAura() end end })
+	tab:CreateSlider({ Name="Size", Range={5,40}, Increment=1, Suffix="", CurrentValue=14, Callback=function(v) PX.auraSize=v/10; if PX.aura then applyAura() end end })
 	tab:CreateToggle({ Name="Rainbow", CurrentValue=false, Callback=function(v) PX.auraRainbow=v end })
 end
 
