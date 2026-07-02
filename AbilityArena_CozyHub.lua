@@ -78,6 +78,11 @@ do
     if type(FluLib) == "table" and type(FluLib.MakeGui) == "function" then
         local ACCENT = Color3.fromRGB(255, 45, 45)
         local TAB_ICON = "rbxassetid://16932740082"
+        local ICONS = {   -- Lucide-name -> real asset id (Fluriore only takes rbxassetid, no Lucide names)
+            home="rbxassetid://7733960981", swords="rbxassetid://7733798747", sparkles="rbxassetid://8997388430",
+            navigation="rbxassetid://7734020989", footprints="rbxassetid://7743870731", eye="rbxassetid://7733774602",
+            target="rbxassetid://7743872758", wrench="rbxassetid://7743878358",
+        }
         local function arr(t) local o={}; if type(t)=="table" then for _,v in ipairs(t) do o[#o+1]=v end end; return o end
         local function asTable(v) if type(v)=="table" then return v elseif v~=nil then return {v} else return {} end end
         local shim = {}
@@ -94,7 +99,7 @@ do
             _FluWindow = FluLib:MakeGui({ NameHub = cfg.Name or "Hub", Description = cfg.LoadingSubtitle or "", Color = col })
             local W = {}
             function W:CreateTab(name, icon)
-                local flTab = _FluWindow:CreateTab({ Name = name, Icon = TAB_ICON })
+                local flTab = _FluWindow:CreateTab({ Name = name, Icon = ICONS[icon] or TAB_ICON })
                 local T, cur = {}, nil
                 local function sec() if not cur then cur = flTab:AddSection("General") end return cur end
                 function T:CreateSection(nm) cur = flTab:AddSection(nm or "Section"); return T end
@@ -109,6 +114,15 @@ do
                 function T:CreateInput(c)
                     c=c or {}
                     pcall(function() sec():AddInput({ Title=c.Name or "Input", Content=c.PlaceholderText or "", Callback=c.Callback or function() end }) end)
+                    return { Set=function() end }
+                end
+                function T:CreateColorPicker(c)
+                    -- Fluriore has no color picker -> expose an "r,g,b" input that feeds the callback a Color3
+                    c=c or {}
+                    pcall(function() sec():AddInput({ Title=(c.Name or "Color").." (type r,g,b)", Content="e.g. 255,40,40", Callback=function(txt)
+                        local r,g,b = tostring(txt):match("(%d+)%D+(%d+)%D+(%d+)")
+                        if r and c.Callback then pcall(c.Callback, Color3.fromRGB(tonumber(r), tonumber(g), tonumber(b))) end
+                    end }) end)
                     return { Set=function() end }
                 end
                 function T:CreateDropdown(c)
