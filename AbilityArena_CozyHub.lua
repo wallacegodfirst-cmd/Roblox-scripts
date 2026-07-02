@@ -285,7 +285,11 @@ local function buildSkillNewDir(skill, direction)
         ..string.char(3,9).."Timestamp"..string.char(2)..nowStamp()..string.char(0)
 end
 
-local function fireM1() fireRaw(buildM1()) end
+-- DISABLED: firing this hand-crafted raw M1 packet at the Jolt remote is what got you KICKED
+-- the moment Auto M1 turned on (the server rejects/flags the crafted packet), and it dealt no
+-- damage anyway (empty "Hits" list). The auto features now rely ONLY on the legit
+-- VirtualInputManager click, which drives the game's own real M1 (no kick).
+local function fireM1() end
 
 -- ── M1 PACKET SPY (debug) ──────────────────────────────────────
 -- Logs every outgoing Jolt_Reliable payload so we can capture a REAL damaging
@@ -1651,11 +1655,10 @@ end)
 -- (Kill Aura removed in v2.9.3 per request - use the hitbox expanders + your own M1.)
 
 task.spawn(function()
-    while task.wait(0.12) do
+    while task.wait(0.22) do          -- ~4.5/s: matches a real M1 chain, not a suspicious spam rate
         if S.AutoM1 then
             pcall(function()
-                clickM1()
-                fireM1()
+                clickM1()             -- legit game M1 (VirtualInputManager click); no raw packet -> no kick
             end)
         end
     end
