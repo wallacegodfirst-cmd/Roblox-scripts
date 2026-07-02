@@ -63,70 +63,70 @@
 -- v2.13.6: added M1 Packet Spy (Utility>Debug) to capture a real damaging M1 packet so buildM1
 --          can be rebuilt to carry the target (fixes Auto Farm M1 dealing no damage).
 
--- ════════ UI: Fluriore, wrapped in a Rayfield-compatible shim ════════
--- The whole hub was written against Rayfield's API. Instead of rewriting 130+ element
--- calls, we load Fluriore and expose a tiny `Rayfield` adapter that maps
--- CreateWindow/CreateTab/CreateSection/CreateToggle/... onto Fluriore's
--- MakeGui/CreateTab/AddSection/AddToggle/... — so every existing call + callback still works.
-local FluLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mc4121ban/Fluriore-UI/main/source.lua"))()
+-- ════════ UI: Fluriore (Rayfield-compatible shim) with a Rayfield FALLBACK ════════
+-- The hub was written against Rayfield's API. We load Fluriore and expose a tiny `Rayfield`
+-- adapter mapping CreateWindow/CreateTab/CreateSection/CreateToggle/... onto Fluriore's real
+-- API (verified: MakeGui / CreateTab / AddSection / AddToggle/AddSlider/AddButton/AddInput/
+-- AddDropdown{:Refresh}/AddParagraph / MakeNotify / DestroyGui). If Fluriore fails to load,
+-- we fall back to the FULL Rayfield so EVERY tab + feature still appears.
+local Rayfield
 local _FluWindow
-local Rayfield = {}
 do
-    local ACCENT = Color3.fromRGB(255, 45, 45)
-    local TAB_ICON = "rbxassetid://16932740082"
-    local function arr(t) local o={}; if type(t)=="table" then for _,v in ipairs(t) do o[#o+1]=v end end; return o end
-    local function asTable(v) if type(v)=="table" then return v elseif v~=nil then return {v} else return {} end end
+    local FluLib
+    pcall(function() FluLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mc4121ban/Fluriore-UI/main/source.lua"))() end)
 
-    function Rayfield:Notify(cfg)
-        cfg = cfg or {}
-        pcall(function() FluLib:MakeNotify({ Title=cfg.Title or "Notice", Description=cfg.Content or cfg.Description or "", Content=cfg.Content or cfg.Description or "" }) end)
-    end
-    function Rayfield:Destroy()
-        pcall(function() if _FluWindow and _FluWindow.Destroy then _FluWindow:Destroy() end end)
-    end
-    function Rayfield:CreateWindow(cfg)
-        cfg = cfg or {}
-        local col = (cfg.Theme and (cfg.Theme.ToggleEnabled or cfg.Theme.SliderProgress)) or ACCENT
-        local flWin = FluLib:MakeGui({ NameHub = cfg.Name or "Hub", Description = cfg.LoadingSubtitle or "", Color = col })
-        _FluWindow = flWin
-        local W = {}
-        function W:CreateTab(name, icon)
-            local flTab = flWin:CreateTab({ Name = name, Icon = TAB_ICON })
-            local T = {}
-            local cur
-            local function sec() if not cur then cur = flTab:AddSection("General") end return cur end
-            function T:CreateSection(nm) cur = flTab:AddSection(nm or "Section"); return T end
-            function T:CreateParagraph(c) c=c or {}; pcall(function() sec():AddParagraph({ Title=c.Title or "", Content=c.Content or "" }) end); return {} end
-            function T:CreateButton(c) c=c or {}; pcall(function() sec():AddButton({ Title=c.Name or "Button", Content="", Callback=c.Callback or function() end }) end); return {} end
-            function T:CreateToggle(c) c=c or {}; pcall(function() sec():AddToggle({ Title=c.Name or "Toggle", Content="", Default=c.CurrentValue and true or false, Callback=c.Callback or function() end }) end); return { Set=function() end } end
-            function T:CreateSlider(c)
-                c=c or {}; local r=c.Range or {0,100}
-                pcall(function() sec():AddSlider({ Title=c.Name or "Slider", Content=c.Suffix or "", Min=r[1] or 0, Max=r[2] or 100, Default=c.CurrentValue or r[1] or 0, Callback=c.Callback or function() end }) end)
-                return { Set=function() end }
-            end
-            function T:CreateInput(c)
-                c=c or {}
-                pcall(function() sec():AddInput({ Title=c.Name or "Input", Content="", Placeholder=c.PlaceholderText or "", Callback=c.Callback or function() end }) end)
-                return { Set=function() end }
-            end
-            function T:CreateDropdown(c)
-                c=c or {}; local el
-                pcall(function()
-                    el = sec():AddDropdown({ Title=c.Name or "Dropdown", Content="", Multi=c.MultipleOptions and true or false, Options=arr(c.Options), Default=asTable(c.CurrentOption), Callback=c.Callback or function() end })
-                end)
-                return {
-                    Refresh = function(_, newOpts)
-                        if not el then return end
-                        for _,m in ipairs({"Refresh","UpdateOptions","SetOptions","Reload","Update"}) do
-                            if type(el[m])=="function" then pcall(function() el[m](el, arr(newOpts)) end); return end
-                        end
-                    end,
-                    Set = function() end,
-                }
-            end
-            return T
+    if type(FluLib) == "table" and type(FluLib.MakeGui) == "function" then
+        local ACCENT = Color3.fromRGB(255, 45, 45)
+        local TAB_ICON = "rbxassetid://16932740082"
+        local function arr(t) local o={}; if type(t)=="table" then for _,v in ipairs(t) do o[#o+1]=v end end; return o end
+        local function asTable(v) if type(v)=="table" then return v elseif v~=nil then return {v} else return {} end end
+        local shim = {}
+        function shim:Notify(cfg)
+            cfg = cfg or {}
+            pcall(function() FluLib:MakeNotify({ Title=cfg.Title or "Notice", Description=cfg.Content or cfg.Description or "", Content=cfg.Content or cfg.Description or "", Time=cfg.Duration }) end)
         end
-        return W
+        function shim:Destroy()
+            pcall(function() if _FluWindow then (_FluWindow.DestroyGui or _FluWindow.Destroy)(_FluWindow) end end)
+        end
+        function shim:CreateWindow(cfg)
+            cfg = cfg or {}
+            local col = (cfg.Theme and (cfg.Theme.ToggleEnabled or cfg.Theme.SliderProgress)) or ACCENT
+            _FluWindow = FluLib:MakeGui({ NameHub = cfg.Name or "Hub", Description = cfg.LoadingSubtitle or "", Color = col })
+            local W = {}
+            function W:CreateTab(name, icon)
+                local flTab = _FluWindow:CreateTab({ Name = name, Icon = TAB_ICON })
+                local T, cur = {}, nil
+                local function sec() if not cur then cur = flTab:AddSection("General") end return cur end
+                function T:CreateSection(nm) cur = flTab:AddSection(nm or "Section"); return T end
+                function T:CreateParagraph(c) c=c or {}; pcall(function() sec():AddParagraph({ Title=c.Title or "", Content=c.Content or "" }) end); return {} end
+                function T:CreateButton(c) c=c or {}; pcall(function() sec():AddButton({ Title=c.Name or "Button", Content="", Callback=c.Callback or function() end }) end); return {} end
+                function T:CreateToggle(c) c=c or {}; pcall(function() sec():AddToggle({ Title=c.Name or "Toggle", Content="", Default=c.CurrentValue and true or false, Callback=c.Callback or function() end }) end); return { Set=function() end } end
+                function T:CreateSlider(c)
+                    c=c or {}; local r=c.Range or {0,100}
+                    pcall(function() sec():AddSlider({ Title=c.Name or "Slider", Content=c.Suffix or "", Min=r[1] or 0, Max=r[2] or 100, Increment=c.Increment or 1, Default=c.CurrentValue or r[1] or 0, Callback=c.Callback or function() end }) end)
+                    return { Set=function() end }
+                end
+                function T:CreateInput(c)
+                    c=c or {}
+                    pcall(function() sec():AddInput({ Title=c.Name or "Input", Content=c.PlaceholderText or "", Callback=c.Callback or function() end }) end)
+                    return { Set=function() end }
+                end
+                function T:CreateDropdown(c)
+                    c=c or {}; local el
+                    pcall(function() el = sec():AddDropdown({ Title=c.Name or "Dropdown", Content="", Multi=c.MultipleOptions and true or false, Options=arr(c.Options), Default=asTable(c.CurrentOption), Callback=c.Callback or function() end }) end)
+                    return {
+                        Refresh = function(_, newOpts) if el and type(el.Refresh)=="function" then pcall(function() el:Refresh(arr(newOpts)) end) end end,
+                        Set = function() end,
+                    }
+                end
+                return T
+            end
+            return W
+        end
+        Rayfield = shim
+    else
+        -- Fluriore unavailable → full Rayfield so every tab + feature still loads
+        Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
     end
 end
 
