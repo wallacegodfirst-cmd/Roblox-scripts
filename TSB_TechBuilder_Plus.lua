@@ -2271,23 +2271,23 @@ function pxSetAutoMoves()
 	if pxAutoTok then pxAutoTok.c=true; pxAutoTok=nil end
 	if not (PX.autoUpper or PX.autoDownslam) then return end
 	local tok={c=false}; pxAutoTok=tok
+	local function stop() return tok.c or not (PX.autoUpper or PX.autoDownslam) end   -- OFF = stop NOW
+	local function w(sec) local t0=os.clock(); while os.clock()-t0<sec do if stop() then return false end RunSvc.Heartbeat:Wait() end return not stop() end
 	task.spawn(function()
-		while not tok.c and (PX.autoUpper or PX.autoDownslam) do
+		while not stop() do
 			local pt=pxNearest(30)
 			if pt then
 				pcall(faceTarget)
-				for i=1,3 do if tok.c then break end pxM1(pt); task.wait(0.3) end          -- 3 M1s
-				if not tok.c then
+				for i=1,3 do if stop() then break end pxM1(pt); if not w(0.3) then break end end   -- 3 M1s (cancellable)
+				if not stop() then
 					if PX.autoDownslam then
-						pxJumpR(); task.wait(0.35)                                            -- jump -> airborne
-						pxM1(pt)                                                             -- M1 in the air = DOWNSLAM
-					else -- uppercut
-						pxJumpR(); task.wait(0.02)                                            -- jump...
-						pxM1(pt)                                                              -- ...immediate M1 = UPPERCUT launch
+						pxJumpR(); if w(0.24) then pxM1(pt) end                                       -- jump -> M1 mid-air = DOWNSLAM
+					else
+						pxJumpR(); if w(0.03) then pxM1(pt) end                                       -- jump -> instant M1 = UPPERCUT
 					end
 				end
-				task.wait(0.55)
-			else task.wait(0.2) end
+				w(0.5)
+			else w(0.2) end
 		end
 	end)
 end
