@@ -1867,7 +1867,7 @@ end
 local Window = Rayfield:CreateWindow({
     Name = "Valutix Hub",
     LoadingTitle = "Valutix Hub",
-    LoadingSubtitle = "Ability Arena · Fluriore",
+    LoadingSubtitle = "",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -2114,7 +2114,11 @@ VisualsTab:CreateSection("AURA / VFX MAKER")
 VisualsTab:CreateParagraph({Title="Aura Maker", Content="Build your own aura like the Aura games - presets, dual colour / rainbow, particles, light, spinning rings, beams, trail. Client-side (only you see it)."})
 local function reVFX() if S.VFXOn then applyCustomVFX() end end
 VisualsTab:CreateToggle({Name="Apply My Aura", CurrentValue=false, Flag="VFXOn", Callback=function(v) S.VFXOn=v; if v then applyCustomVFX() else clearCustomVFX() end end})
-VisualsTab:CreateDropdown({Name="Preset", Options={"Fire","Ice","Lightning","Galaxy","Shadow","Holy","Toxic","Rainbow","Void","Sakura","Nuke"}, CurrentOption={}, Flag="VFXPreset", Callback=function(o) applyVFXPreset((type(o)=="table" and o[1]) or o); S.VFXOn=true; applyCustomVFX() end})
+VisualsTab:CreateDropdown({Name="Preset", Options={"Fire","Ice","Lightning","Galaxy","Shadow","Holy","Toxic","Rainbow","Void","Sakura","Nuke"}, CurrentOption={}, Flag="VFXPreset", Callback=function(o)
+    local nm=(type(o)=="table" and o[1]) or o
+    if not nm or nm=="" then return end          -- ignore the callback Fluriore fires on creation (no red aura on spawn)
+    applyVFXPreset(nm); S.VFXOn=true; applyCustomVFX()
+end})
 
 VisualsTab:CreateSection("Aura - Core")
 VisualsTab:CreateToggle({Name="Core Shape", CurrentValue=true, Flag="VFXShapeOn", Callback=function(v) S.VFXShapeOn=v; reVFX() end})
