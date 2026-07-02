@@ -63,7 +63,72 @@
 -- v2.13.6: added M1 Packet Spy (Utility>Debug) to capture a real damaging M1 packet so buildM1
 --          can be rebuilt to carry the target (fixes Auto Farm M1 dealing no damage).
 
-local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
+-- ════════ UI: Fluriore, wrapped in a Rayfield-compatible shim ════════
+-- The whole hub was written against Rayfield's API. Instead of rewriting 130+ element
+-- calls, we load Fluriore and expose a tiny `Rayfield` adapter that maps
+-- CreateWindow/CreateTab/CreateSection/CreateToggle/... onto Fluriore's
+-- MakeGui/CreateTab/AddSection/AddToggle/... — so every existing call + callback still works.
+local FluLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mc4121ban/Fluriore-UI/main/source.lua"))()
+local _FluWindow
+local Rayfield = {}
+do
+    local ACCENT = Color3.fromRGB(255, 45, 45)
+    local TAB_ICON = "rbxassetid://16932740082"
+    local function arr(t) local o={}; if type(t)=="table" then for _,v in ipairs(t) do o[#o+1]=v end end; return o end
+    local function asTable(v) if type(v)=="table" then return v elseif v~=nil then return {v} else return {} end end
+
+    function Rayfield:Notify(cfg)
+        cfg = cfg or {}
+        pcall(function() FluLib:MakeNotify({ Title=cfg.Title or "Notice", Description=cfg.Content or cfg.Description or "", Content=cfg.Content or cfg.Description or "" }) end)
+    end
+    function Rayfield:Destroy()
+        pcall(function() if _FluWindow and _FluWindow.Destroy then _FluWindow:Destroy() end end)
+    end
+    function Rayfield:CreateWindow(cfg)
+        cfg = cfg or {}
+        local col = (cfg.Theme and (cfg.Theme.ToggleEnabled or cfg.Theme.SliderProgress)) or ACCENT
+        local flWin = FluLib:MakeGui({ NameHub = cfg.Name or "Hub", Description = cfg.LoadingSubtitle or "", Color = col })
+        _FluWindow = flWin
+        local W = {}
+        function W:CreateTab(name, icon)
+            local flTab = flWin:CreateTab({ Name = name, Icon = TAB_ICON })
+            local T = {}
+            local cur
+            local function sec() if not cur then cur = flTab:AddSection("General") end return cur end
+            function T:CreateSection(nm) cur = flTab:AddSection(nm or "Section"); return T end
+            function T:CreateParagraph(c) c=c or {}; pcall(function() sec():AddParagraph({ Title=c.Title or "", Content=c.Content or "" }) end); return {} end
+            function T:CreateButton(c) c=c or {}; pcall(function() sec():AddButton({ Title=c.Name or "Button", Content="", Callback=c.Callback or function() end }) end); return {} end
+            function T:CreateToggle(c) c=c or {}; pcall(function() sec():AddToggle({ Title=c.Name or "Toggle", Content="", Default=c.CurrentValue and true or false, Callback=c.Callback or function() end }) end); return { Set=function() end } end
+            function T:CreateSlider(c)
+                c=c or {}; local r=c.Range or {0,100}
+                pcall(function() sec():AddSlider({ Title=c.Name or "Slider", Content=c.Suffix or "", Min=r[1] or 0, Max=r[2] or 100, Default=c.CurrentValue or r[1] or 0, Callback=c.Callback or function() end }) end)
+                return { Set=function() end }
+            end
+            function T:CreateInput(c)
+                c=c or {}
+                pcall(function() sec():AddInput({ Title=c.Name or "Input", Content="", Placeholder=c.PlaceholderText or "", Callback=c.Callback or function() end }) end)
+                return { Set=function() end }
+            end
+            function T:CreateDropdown(c)
+                c=c or {}; local el
+                pcall(function()
+                    el = sec():AddDropdown({ Title=c.Name or "Dropdown", Content="", Multi=c.MultipleOptions and true or false, Options=arr(c.Options), Default=asTable(c.CurrentOption), Callback=c.Callback or function() end })
+                end)
+                return {
+                    Refresh = function(_, newOpts)
+                        if not el then return end
+                        for _,m in ipairs({"Refresh","UpdateOptions","SetOptions","Reload","Update"}) do
+                            if type(el[m])=="function" then pcall(function() el[m](el, arr(newOpts)) end); return end
+                        end
+                    end,
+                    Set = function() end,
+                }
+            end
+            return T
+        end
+        return W
+    end
+end
 
 local Players             = game:GetService("Players")
 local RS                  = game:GetService("ReplicatedStorage")
@@ -1786,9 +1851,9 @@ end
 -- GUI
 -- ============================================================
 local Window = Rayfield:CreateWindow({
-    Name = "Valutix Hub | Ability Arena",
+    Name = "Valutix Hub",
     LoadingTitle = "Valutix Hub",
-    LoadingSubtitle = "v2.15.0 - by Valutix Hub Owner",
+    LoadingSubtitle = "Ability Arena · Fluriore",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
@@ -1836,13 +1901,13 @@ local Window = Rayfield:CreateWindow({
 })
 
 local HomeTab      = Window:CreateTab("Home",      "home")
-local CombatTab    = Window:CreateTab("Combat",    "swords")
-local AbilitiesTab = Window:CreateTab("Abilities", "sparkles")
-local TeleportsTab = Window:CreateTab("Teleports", "navigation")
+local CombatTab    = Window:CreateTab("Fight",     "swords")
+local AbilitiesTab = Window:CreateTab("Skills",    "sparkles")
+local TeleportsTab = Window:CreateTab("Teleport",  "navigation")
 local MovementTab  = Window:CreateTab("Movement",  "footprints")
-local VisualsTab   = Window:CreateTab("Visuals",   "eye")
+local VisualsTab   = Window:CreateTab("Auras",     "eye")
 local FarmTab      = Window:CreateTab("Farm",      "target")
-local UtilityTab   = Window:CreateTab("Utility",   "wrench")
+local UtilityTab   = Window:CreateTab("Misc",      "wrench")
 
 -- \u2500\u2500 HOME (landing page) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 HomeTab:CreateSection("Welcome")
