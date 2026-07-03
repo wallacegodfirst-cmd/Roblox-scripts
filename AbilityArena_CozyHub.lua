@@ -1919,7 +1919,7 @@ local Window = Rayfield:CreateWindow({
         Shadow                       = Color3.fromRGB(0, 0, 0),
 
         NotificationBackground       = Color3.fromRGB(6, 4, 5),
-        NotificationActionsBackground= Color3.fromRGB(255, 45, 45),
+        NotificationActionsBackground= Color3.fromRGB(120, 20, 22),   -- deep red so overlaid text stays legible
 
         TabBackground                = Color3.fromRGB(12, 9, 10),
         TabStroke                    = Color3.fromRGB(70, 22, 26),
@@ -1939,13 +1939,13 @@ local Window = Rayfield:CreateWindow({
 
         ToggleBackground             = Color3.fromRGB(20, 13, 15),
         ToggleEnabled                = Color3.fromRGB(255, 45, 45),   -- neon red ON
-        ToggleDisabled               = Color3.fromRGB(80, 74, 76),    -- grey OFF
+        ToggleDisabled               = Color3.fromRGB(120, 112, 114), -- grey OFF (visible on near-black)
         ToggleEnabledStroke          = Color3.fromRGB(255, 95, 95),
-        ToggleDisabledStroke         = Color3.fromRGB(110, 104, 106),
+        ToggleDisabledStroke         = Color3.fromRGB(140, 134, 136),
         ToggleEnabledOuterStroke     = Color3.fromRGB(180, 30, 34),
         ToggleDisabledOuterStroke    = Color3.fromRGB(45, 40, 42),
 
-        DropdownSelected             = Color3.fromRGB(24, 15, 17),
+        DropdownSelected             = Color3.fromRGB(110, 34, 38),   -- red-tinted so the picked option is visible
         DropdownUnselected           = Color3.fromRGB(9, 6, 7),
 
         InputBackground              = Color3.fromRGB(12, 8, 9),

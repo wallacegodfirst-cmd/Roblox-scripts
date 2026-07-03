@@ -1421,8 +1421,8 @@ do
 		if req then local ok2, r = pcall(function() return req({Url=u, Method="GET"}) end); if ok2 and type(r)=="table" and type(r.Body)=="string" and #r.Body>2000 then return r.Body end end
 		return nil
 	end
-	if getgenv and type(getgenv().__VAULTIX_RF_SRC)=="string" then                         -- reuse a cached source from a prior run = instant menu
-		local ok, lib = pcall(function() return loadstring(getgenv().__VAULTIX_RF_SRC)() end)
+	if getgenv and type(getgenv().__DREAMHUB_RF_SRC)=="string" then                         -- reuse a cached source from a prior run = instant menu
+		local ok, lib = pcall(function() return loadstring(getgenv().__DREAMHUB_RF_SRC)() end)
 		if ok and type(lib)=="table" then Rayfield = lib end
 	end
 	for _=1,6 do
@@ -1431,7 +1431,7 @@ do
 			local src = fetch(u)
 			if src then
 				local ok, lib = pcall(function() return loadstring(src)() end)
-				if ok and type(lib)=="table" then Rayfield = lib; if getgenv then getgenv().__VAULTIX_RF_SRC = src end; break end
+				if ok and type(lib)=="table" then Rayfield = lib; if getgenv then getgenv().__DREAMHUB_RF_SRC = src end; break end
 			end
 		end
 		if not Rayfield then task.wait(0.4) end                                            -- brief wait, then retry (same execution)
