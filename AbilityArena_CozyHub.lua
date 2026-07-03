@@ -76,30 +76,22 @@ do
     pcall(function() FluLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mc4121ban/Fluriore-UI/main/source.lua"))() end)
 
     if type(FluLib) == "table" and type(FluLib.MakeGui) == "function" then
-        local ACCENT = Color3.fromRGB(0, 0, 0)   -- Dream Hub: strong-black accent
-        -- ---- White + strong-black recolor of Fluriore's (dark) GUI ----
-        -- Fluriore ships a near-black theme. We flip it: dark backgrounds -> white,
-        -- light/white text -> strong black, every outline/stroke -> strong black.
+        local ACCENT = Color3.fromRGB(255, 45, 45)   -- Dream Hub: original RED accent
+        -- ---- Make Fluriore's GUI VERY BLACK, keeping the red accents ----
+        -- Fluriore ships a dark theme (Main = RGB 15,15,15). We push every non-red dark
+        -- background to pure black for a "very black" look; red accents / light text stay.
         local CoreGuiSvc = game:GetService("CoreGui")
-        local WHITE, BLACK = Color3.fromRGB(255,255,255), Color3.fromRGB(0,0,0)
+        local VBLACK = Color3.fromRGB(0,0,0)
         local function lum(c) return 0.299*c.R + 0.587*c.G + 0.114*c.B end
+        local function isReddish(c) return c.R > c.G + 0.12 and c.R > c.B + 0.12 end  -- protect red accents
         local function recolorOne(o)
             if not o then return end
             pcall(function()
-                -- Keep the selected-tab accent bar as a STRONG BLACK indicator (don't flip to white).
-                if o.Name == "ChooseFrame" and o:IsA("GuiObject") then o.BackgroundColor3 = BLACK; return end
                 if o:IsA("GuiObject") then
-                    if lum(o.BackgroundColor3) < 0.5 then o.BackgroundColor3 = WHITE end
-                    if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
-                        if lum(o.TextColor3) > 0.5 then o.TextColor3 = BLACK end
-                    end
-                    if o:IsA("ImageLabel") or o:IsA("ImageButton") then
-                        if lum(o.ImageColor3) > 0.5 then o.ImageColor3 = BLACK end
-                        pcall(function() if lum(o.ScrollBarImageColor3) > 0.5 then o.ScrollBarImageColor3 = BLACK end end)
-                    end
-                    pcall(function() o.ScrollBarImageColor3 = BLACK end)
-                elseif o:IsA("UIStroke") then
-                    o.Color = BLACK
+                    local bg = o.BackgroundColor3
+                    -- Only darken genuinely-dark, non-red panels -> pure black. Never touch red
+                    -- accents (selected-tab bar, toggles-on, section gradient) or light text.
+                    if (not isReddish(bg)) and lum(bg) < 0.30 then o.BackgroundColor3 = VBLACK end
                 end
             end)
         end
@@ -131,7 +123,7 @@ do
         end
         function shim:CreateWindow(cfg)
             cfg = cfg or {}
-            local col = ACCENT   -- Dream Hub: always strong-black accent
+            local col = ACCENT   -- Dream Hub: red accent (see ACCENT above)
             _FluWindow = FluLib:MakeGui({ NameHub = cfg.Name or "Hub", Description = cfg.LoadingSubtitle or "", Color = col })
             -- Flip Fluriore's dark theme to white + strong black, and keep new elements recolored.
             pcall(function() watchGui(CoreGuiSvc:FindFirstChild("HirimiGui")) end)
@@ -1919,46 +1911,46 @@ local Window = Rayfield:CreateWindow({
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
-    -- White theme with strong-black text / outlines / accents
+    -- Original RED + VERY BLACK theme (near-pure-black bg, neon-red accents)
     Theme = {
-        TextColor                    = Color3.fromRGB(10, 10, 10),
-        Background                   = Color3.fromRGB(255, 255, 255),
-        Topbar                       = Color3.fromRGB(245, 245, 245),
+        TextColor                    = Color3.fromRGB(235, 235, 235),
+        Background                   = Color3.fromRGB(0, 0, 0),
+        Topbar                       = Color3.fromRGB(8, 6, 7),
         Shadow                       = Color3.fromRGB(0, 0, 0),
 
-        NotificationBackground       = Color3.fromRGB(250, 250, 250),
-        NotificationActionsBackground= Color3.fromRGB(0, 0, 0),
+        NotificationBackground       = Color3.fromRGB(6, 4, 5),
+        NotificationActionsBackground= Color3.fromRGB(255, 45, 45),
 
-        TabBackground                = Color3.fromRGB(240, 240, 240),
-        TabStroke                    = Color3.fromRGB(0, 0, 0),
-        TabBackgroundSelected        = Color3.fromRGB(0, 0, 0),      -- selected tab = strong black
-        TabTextColor                 = Color3.fromRGB(20, 20, 20),
-        SelectedTabTextColor         = Color3.fromRGB(255, 255, 255),-- white text on black selected tab
+        TabBackground                = Color3.fromRGB(12, 9, 10),
+        TabStroke                    = Color3.fromRGB(70, 22, 26),
+        TabBackgroundSelected        = Color3.fromRGB(255, 40, 40),   -- selected tab = neon red
+        TabTextColor                 = Color3.fromRGB(200, 190, 192),
+        SelectedTabTextColor         = Color3.fromRGB(15, 8, 9),      -- dark text on red for contrast
 
-        ElementBackground            = Color3.fromRGB(250, 250, 250),
-        ElementBackgroundHover       = Color3.fromRGB(235, 235, 235),
-        SecondaryElementBackground   = Color3.fromRGB(245, 245, 245),
-        ElementStroke                = Color3.fromRGB(0, 0, 0),
-        SecondaryElementStroke       = Color3.fromRGB(0, 0, 0),
+        ElementBackground            = Color3.fromRGB(10, 7, 8),
+        ElementBackgroundHover       = Color3.fromRGB(22, 14, 16),
+        SecondaryElementBackground   = Color3.fromRGB(7, 5, 6),
+        ElementStroke                = Color3.fromRGB(58, 24, 28),
+        SecondaryElementStroke       = Color3.fromRGB(48, 20, 24),
 
-        SliderBackground             = Color3.fromRGB(210, 210, 210), -- light track
-        SliderProgress               = Color3.fromRGB(0, 0, 0),       -- black fill
-        SliderStroke                 = Color3.fromRGB(0, 0, 0),
+        SliderBackground             = Color3.fromRGB(90, 16, 20),    -- dark red track
+        SliderProgress               = Color3.fromRGB(255, 45, 45),   -- neon red fill
+        SliderStroke                 = Color3.fromRGB(255, 85, 85),
 
-        ToggleBackground             = Color3.fromRGB(225, 225, 225),
-        ToggleEnabled                = Color3.fromRGB(0, 0, 0),       -- black ON
-        ToggleDisabled               = Color3.fromRGB(170, 170, 170), -- grey OFF
-        ToggleEnabledStroke          = Color3.fromRGB(0, 0, 0),
-        ToggleDisabledStroke         = Color3.fromRGB(140, 140, 140),
-        ToggleEnabledOuterStroke     = Color3.fromRGB(0, 0, 0),
-        ToggleDisabledOuterStroke    = Color3.fromRGB(190, 190, 190),
+        ToggleBackground             = Color3.fromRGB(20, 13, 15),
+        ToggleEnabled                = Color3.fromRGB(255, 45, 45),   -- neon red ON
+        ToggleDisabled               = Color3.fromRGB(80, 74, 76),    -- grey OFF
+        ToggleEnabledStroke          = Color3.fromRGB(255, 95, 95),
+        ToggleDisabledStroke         = Color3.fromRGB(110, 104, 106),
+        ToggleEnabledOuterStroke     = Color3.fromRGB(180, 30, 34),
+        ToggleDisabledOuterStroke    = Color3.fromRGB(45, 40, 42),
 
-        DropdownSelected             = Color3.fromRGB(230, 230, 230),
-        DropdownUnselected           = Color3.fromRGB(250, 250, 250),
+        DropdownSelected             = Color3.fromRGB(24, 15, 17),
+        DropdownUnselected           = Color3.fromRGB(9, 6, 7),
 
-        InputBackground              = Color3.fromRGB(248, 248, 248),
-        InputStroke                  = Color3.fromRGB(0, 0, 0),
-        PlaceholderColor             = Color3.fromRGB(120, 120, 120),
+        InputBackground              = Color3.fromRGB(12, 8, 9),
+        InputStroke                  = Color3.fromRGB(70, 30, 34),
+        PlaceholderColor             = Color3.fromRGB(150, 138, 140),
     },
 })
 
