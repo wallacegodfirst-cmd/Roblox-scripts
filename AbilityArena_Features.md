@@ -1,9 +1,10 @@
-# Valutix Hub - Ability Arena
+# Dream Hub - Ability Arena
 
 Client-side hub for Ability Arena. Everything is local/input-based (visuals are seen by you;
 combat drives the game's own inputs). UI: Fluriore (falls back to Rayfield if Fluriore fails to load).
 
 ## Recent changes
+- Rebranded to **Dream Hub** with a **white + strong-black** theme (white panels, black text, black outlines/accents) — same Fluriore GUI, recolored.
 - Switched the whole GUI from Rayfield to Fluriore, with a Rayfield fallback so it always loads.
 - Renamed tabs: Home / Fight / Skills / Teleport / Movement / Auras / Farm / Misc, each with its own icon.
 - Fixed empty Farm and Misc tabs (a missing color-picker adapter was halting the build).
@@ -89,4 +90,4 @@ Aura / VFX Maker (build your own):
 - Instant Respawn
 - Rejoin Server / Server Hop
 - Dump Player Data (console) / Spy M1 Packets (debug)
-- Unload Valutix Hub
+- Unload Dream Hub

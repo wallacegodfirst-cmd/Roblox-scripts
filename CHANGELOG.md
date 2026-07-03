@@ -6,6 +6,12 @@ The Strongest Battlegrounds is server-validated, so nothing is guaranteed god-mo
 
 ---
 
+## 🎨 Rebrand: both hubs are now **Dream Hub**
+- **Ability Arena → Dream Hub** — **white theme** (white panels, strong-black text, black outlines/accents). Same Fluriore GUI, just recolored.
+- **TSB → Dream Hub / Dream Hub PLUS** — **strong-black theme** (near-pure-black, dark-dark) with **white outlines** on every panel/toggle/slider/input.
+
+---
+
 ## ⚔️ TSB Tech Builder (Base + PLUS)
 
 **Two scripts now:**
@@ -32,7 +38,7 @@ The Strongest Battlegrounds is server-validated, so nothing is guaranteed god-mo
 
 ---
 
-## ✨ Ability Arena — Valutix Hub
+## ✨ Ability Arena — Dream Hub
 
 - **New UI: switched from Rayfield → Fluriore** (with a Rayfield fallback so it always loads).
 - Renamed tabs: **Home / Fight / Skills / Teleport / Movement / Auras / Farm / Misc**, each with its own icon.

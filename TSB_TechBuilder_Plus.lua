@@ -907,8 +907,8 @@ end
 -- executor, so Jump/Dash are best-effort; Run/Stop/Lock control the script reliably.
 local mobileSG
 function buildMobileBar()
-	pcall(function() local g=(gethui and gethui()) or game:GetService("CoreGui"); local old=g:FindFirstChild("Vaultix_Mobile"); if old then old:Destroy() end end)
-	local sg=Instance.new("ScreenGui"); sg.Name="Vaultix_Mobile"; sg.ResetOnSpawn=false; sg.IgnoreGuiInset=true; sg.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
+	pcall(function() local g=(gethui and gethui()) or game:GetService("CoreGui"); local old=g:FindFirstChild("Dream_Mobile"); if old then old:Destroy() end end)
+	local sg=Instance.new("ScreenGui"); sg.Name="Dream_Mobile"; sg.ResetOnSpawn=false; sg.IgnoreGuiInset=true; sg.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 	pcall(function() sg.Parent=(gethui and gethui()) or game:GetService("CoreGui") end)
 	if not sg.Parent then pcall(function() sg.Parent=LP:FindFirstChildOfClass("PlayerGui") end) end
 	local bar=Instance.new("Frame"); bar.Size=UDim2.fromOffset(338,44); bar.Position=UDim2.new(0.5,0,0,8); bar.AnchorPoint=Vector2.new(0.5,0); bar.BackgroundColor3=Color3.fromRGB(20,14,16); bar.BackgroundTransparency=0.1; bar.BorderSizePixel=0; bar.ZIndex=50; bar.Parent=sg
@@ -1139,7 +1139,7 @@ function startRecord()
 	end)
 end
 
--- ════════ GUI — RAYFIELD  (Vaultix Hub) ════════
+-- ════════ GUI — RAYFIELD  (Dream Hub) ════════
 -- Roster reworked from Bert's full tech guide. Combos stored as TOKEN strings → mkSteps() → engine steps.
 -- Notation: M1xN, DASH_F/B/L/R, JUMP, UPPERCUT(=mini-uppercut/MU), DOWNSLAM(=DS), WAIT, S1-S4 (the char's 4 keyed moves).
 
@@ -1157,14 +1157,14 @@ local function JUMP() return {act="jump", hold=60, preDelay=0, postDelay=90, lab
 local function ULT()  return {act="ultimate", hold=35, preDelay=0, postDelay=200, label="Ultimate"} end
 local function BLK(ms) return {act="block", dur=ms or 320, preDelay=0, postDelay=70, label="Block"} end
 
-statusSet = function(t,_) print("[Vaultix] "..tostring(t)) end
-logSet    = function(lg) if lg and #lg>0 then print("[Vaultix log] "..tostring(lg[#lg])) end end                                   -- live per-step input log -> F9
-reportSet = function(r) for _,e in ipairs(r or {}) do print("[Vaultix report] "..((e.row and e.row>0 and ("#"..e.row.." ") or "")..tostring(e.status or "").." "..tostring(e.text))) end end   -- per-step results + terminal reasons
+statusSet = function(t,_) print("[Dream] "..tostring(t)) end
+logSet    = function(lg) if lg and #lg>0 then print("[Dream log] "..tostring(lg[#lg])) end end                                   -- live per-step input log -> F9
+reportSet = function(r) for _,e in ipairs(r or {}) do print("[Dream report] "..((e.row and e.row>0 and ("#"..e.row.." ") or "")..tostring(e.status or "").." "..tostring(e.text))) end end   -- per-step results + terminal reasons
 
 function printCombo()
-	if #seq==0 then print("[Vaultix] combo is empty"); return end
+	if #seq==0 then print("[Dream] combo is empty"); return end
 	local t={}; for i,s in ipairs(seq) do t[#t+1]=i..". "..(s.label or s.act or "?") end
-	print("[Vaultix] combo ("..#seq.." steps):\n"..table.concat(t,"\n"))
+	print("[Dream] combo ("..#seq.." steps):\n"..table.concat(t,"\n"))
 end
 
 -- ───────── token → engine-step translator ─────────
@@ -1397,7 +1397,7 @@ function detectCharacter()
 	return hit
 end
 function scanCharacter()
-	print("[Vaultix] ───── character scan (send me this) ─────")
+	print("[Dream] ───── character scan (send me this) ─────")
 	pcall(function()
 		local c = LP_.Character
 		print("Character model name:", c and c.Name)
@@ -1405,7 +1405,7 @@ function scanCharacter()
 			for _,d in ipairs(c:GetChildren()) do print("  child:", d.ClassName, "|", d.Name, d:IsA("StringValue") and ("= "..tostring(d.Value)) or "") end end
 		for _,d in ipairs(LP_:GetChildren()) do print("  player:", d.ClassName, "|", d.Name) end
 	end)
-	print("[Vaultix] ───── end scan ─────")
+	print("[Dream] ───── end scan ─────")
 end
 
 -- ───────── load Rayfield (ROBUST: retry so the menu shows on the FIRST execution, not the 3rd) ─────────
@@ -1438,30 +1438,31 @@ do
 	end
 end
 if type(Rayfield)~="table" then
-	warn("[Vaultix] Rayfield UI failed to load after retries - check internet/executor HttpGet, then re-execute.")
+	warn("[Dream] Rayfield UI failed to load after retries - check internet/executor HttpGet, then re-execute.")
 	if CFG then CFG.lockOn=false; if onLockChanged then pcall(onLockChanged, false) end end  -- don't leave the camera hijacked with no menu to stop it
 	do return end                                                                          -- abort the GUI build cleanly (engine already loaded)
 end
 local function notify(title, content, dur) pcall(function() Rayfield:Notify({Title=title, Content=content, Duration=dur or 3}) end) end
 
+-- Dream Hub theme: STRONG black (dark-dark, near-pure black) with WHITE outlines everywhere.
 local RED = {
-	TextColor = Color3.fromRGB(240,234,235), Background = Color3.fromRGB(18,13,14),
-	Topbar = Color3.fromRGB(27,18,20), Shadow = Color3.fromRGB(9,6,7),
-	NotificationBackground = Color3.fromRGB(24,16,18), NotificationActionsBackground = Color3.fromRGB(205,46,52),
-	TabBackground = Color3.fromRGB(33,22,24), TabStroke = Color3.fromRGB(64,32,36),
-	TabBackgroundSelected = Color3.fromRGB(205,46,52), TabTextColor = Color3.fromRGB(205,194,196),
-	SelectedTabTextColor = Color3.fromRGB(255,255,255), ElementBackground = Color3.fromRGB(31,21,23),
-	ElementBackgroundHover = Color3.fromRGB(46,29,32), SecondaryElementBackground = Color3.fromRGB(26,18,20),
-	ElementStroke = Color3.fromRGB(62,34,38), SecondaryElementStroke = Color3.fromRGB(54,30,34),
-	SliderBackground = Color3.fromRGB(74,24,28), SliderProgress = Color3.fromRGB(225,55,55), SliderStroke = Color3.fromRGB(210,62,66),
-	ToggleBackground = Color3.fromRGB(40,26,28), ToggleEnabled = Color3.fromRGB(225,55,55), ToggleDisabled = Color3.fromRGB(96,74,76),
-	ToggleEnabledStroke = Color3.fromRGB(240,92,92), ToggleDisabledStroke = Color3.fromRGB(72,56,58),
-	ToggleEnabledOuterStroke = Color3.fromRGB(188,46,50), ToggleDisabledOuterStroke = Color3.fromRGB(50,40,42),
-	DropdownSelected = Color3.fromRGB(46,29,32), DropdownUnselected = Color3.fromRGB(28,19,21),
-	InputBackground = Color3.fromRGB(31,21,23), InputStroke = Color3.fromRGB(70,38,42), PlaceholderColor = Color3.fromRGB(150,118,120),
+	TextColor = Color3.fromRGB(245,245,245), Background = Color3.fromRGB(0,0,0),
+	Topbar = Color3.fromRGB(8,8,8), Shadow = Color3.fromRGB(0,0,0),
+	NotificationBackground = Color3.fromRGB(5,5,5), NotificationActionsBackground = Color3.fromRGB(255,255,255),
+	TabBackground = Color3.fromRGB(12,12,12), TabStroke = Color3.fromRGB(255,255,255),
+	TabBackgroundSelected = Color3.fromRGB(255,255,255), TabTextColor = Color3.fromRGB(200,200,200),
+	SelectedTabTextColor = Color3.fromRGB(0,0,0), ElementBackground = Color3.fromRGB(10,10,10),
+	ElementBackgroundHover = Color3.fromRGB(24,24,24), SecondaryElementBackground = Color3.fromRGB(6,6,6),
+	ElementStroke = Color3.fromRGB(255,255,255), SecondaryElementStroke = Color3.fromRGB(210,210,210),
+	SliderBackground = Color3.fromRGB(35,35,35), SliderProgress = Color3.fromRGB(255,255,255), SliderStroke = Color3.fromRGB(255,255,255),
+	ToggleBackground = Color3.fromRGB(18,18,18), ToggleEnabled = Color3.fromRGB(255,255,255), ToggleDisabled = Color3.fromRGB(80,80,80),
+	ToggleEnabledStroke = Color3.fromRGB(255,255,255), ToggleDisabledStroke = Color3.fromRGB(120,120,120),
+	ToggleEnabledOuterStroke = Color3.fromRGB(255,255,255), ToggleDisabledOuterStroke = Color3.fromRGB(60,60,60),
+	DropdownSelected = Color3.fromRGB(24,24,24), DropdownUnselected = Color3.fromRGB(8,8,8),
+	InputBackground = Color3.fromRGB(10,10,10), InputStroke = Color3.fromRGB(255,255,255), PlaceholderColor = Color3.fromRGB(140,140,140),
 }
 local Window = Rayfield:CreateWindow({
-	Name = "Vaultix Hub PLUS", LoadingTitle = "Vaultix Hub PLUS", LoadingSubtitle = "TSB Tech Builder v3.0 + extras",
+	Name = "Dream Hub PLUS", LoadingTitle = "Dream Hub PLUS", LoadingSubtitle = "TSB Tech Builder v3.0 + extras",
 	Theme = RED, DisableRayfieldPrompts = true, ConfigurationSaving = { Enabled = false }, KeySystem = false,
 })
 
@@ -1568,7 +1569,7 @@ do
 		for _,x in ipairs(e) do if x.status=="warn" then warn=warn+1 else hard=hard+1 end end
 		if #e==0 then notify("Combo looks clean","no issues found",4)
 		else notify(hard.." errors, "..warn.." warnings","see F9 (Print) for details",5) end
-		print("[Vaultix] combo check: "..hard.." errors / "..warn.." warnings")
+		print("[Dream] combo check: "..hard.." errors / "..warn.." warnings")
 		for _,x in ipairs(e) do print("  "..(x.status=="warn" and "[warn]" or "[ERR] ").." "..((x.row and x.row>0) and ("#"..x.row.." ") or "")..tostring(x.text)) end
 	end })
 	tab:CreateKeybind({ Name = "Run / STOP hotkey", CurrentKeybind = CFG.runKey or "T", HoldToInteract = false, Callback = function() triggerRun() end })
@@ -1595,11 +1596,11 @@ do
 			local steps = mkSteps(cb.t)
 			loadSeq(steps)
 			CFG.sweat = (cb.n:find("Sweaty") or cb.n:find("Pro") or cb.n:find("Insane")) and true or false   -- auto-enable SWEAT tech (shift-lock + side-dash) for Sweaty+ combos
-			print("[Vaultix] LOADED '"..cb.n.."' = "..cb.t.."  ("..#steps.." steps"..(CFG.sweat and ", SWEAT on" or "")..").")
+			print("[Dream] LOADED '"..cb.n.."' = "..cb.t.."  ("..#steps.." steps"..(CFG.sweat and ", SWEAT on" or "")..").")
 			if run then notify("Running: "..cb.n, "watch your character", 2); task.wait(0.2); runSeq()
 			else notify("Loaded: "..cb.n, #steps.." steps -> press RUN or T", 4) end
 		end)
-		if not ok then notify("Load failed", "see F9 console", 3); warn("[Vaultix] loadCharCombo error for "..tostring(selChar).." #"..tostring(n)) end
+		if not ok then notify("Load failed", "see F9 console", 3); warn("[Dream] loadCharCombo error for "..tostring(selChar).." #"..tostring(n)) end
 	end
 	tab:CreateSection("Pick your character + combo")
 	tab:CreateDropdown({ Name = "Character", Options = CHARS_ORDER, CurrentOption = selChar, Callback = function(o)
@@ -1616,7 +1617,7 @@ do
 	tab:CreateToggle({ Name = "Auto-combo: chain RANDOM combos for this character", CurrentValue = CFG.autoCombo and true or false, Callback = function(v) CFG.autoCombo = v; saveCfg(); if v and STATE=="idle" then autoNext() end end })
 	tab:CreateButton({ Name = "Show this character's combos + moves (console)", Callback = function()
 		local c = CHARS[selChar]; if not c then return end
-		print("[Vaultix] "..selChar.."  | move slots: "..(c.slots or "?"))
+		print("[Dream] "..selChar.."  | move slots: "..(c.slots or "?"))
 		for i,cb in ipairs(c.combos) do print("  #"..i.."  "..cb.n) end
 	end })
 	tab:CreateButton({ Name = "Scan my character (console) — send me this", Callback = scanCharacter })
@@ -1649,7 +1650,7 @@ do
 	end })
 	tab:CreateButton({ Name = "Delete by name", Callback = function() if nm~="" then deleteTech(nm); notify("Deleted","'"..nm.."'",3) end end })
 	tab:CreateButton({ Name = "List saved (console)", Callback = function()
-		local l = listTechs() or {}; print("[Vaultix] saved ("..#l.."):"); for _,n in ipairs(l) do print(" - "..n) end
+		local l = listTechs() or {}; print("[Dream] saved ("..#l.."):"); for _,n in ipairs(l) do print(" - "..n) end
 	end })
 end
 
@@ -2222,9 +2223,9 @@ function pxSetFPS(v) PX.fps=v
 			elseif o:IsA("BasePart") then o.Material=Enum.Material.Plastic; o.Reflectance=0 end end) end
 		pcall(function() Light.GlobalShadows=false; Light.FogEnd=9e9 end)
 	else pcall(function() if PX.fpsSaved then settings().Rendering.QualityLevel=PX.fpsSaved end; Light.GlobalShadows=true end) end end
-function pxScanRemotes() print("[VaultixPlus] ── REMOTE SCAN (copy ALL to me) ──"); local n=0
+function pxScanRemotes() print("[DreamPlus] ── REMOTE SCAN (copy ALL to me) ──"); local n=0
 	pcall(function() for _,o in ipairs(game:GetDescendants()) do if o:IsA("RemoteEvent") or o:IsA("RemoteFunction") or o:IsA("UnreliableRemoteEvent") then n=n+1; print(("  %s | %s | %s"):format(o.ClassName,o.Name,o:GetFullName())) end end end)
-	print("[VaultixPlus] total: "..n.." ── END ──"); notify("Scan Remotes","Printed "..n.." remotes to F9. Send me the list.",6) end
+	print("[DreamPlus] total: "..n.." ── END ──"); notify("Scan Remotes","Printed "..n.." remotes to F9. Send me the list.",6) end
 
 -- ── teleports (best-guess defaults; Save overrides) ──
 local PX_TPDEF={
@@ -2540,5 +2541,5 @@ local function unload()
 end
 do local gg=(getgenv and getgenv()) or _G; gg.__TSB_UNLOAD=unload end
 
-notify("Vaultix Hub PLUS", "Loaded.", 4)
-print("[Vaultix] loaded.")
+notify("Dream Hub PLUS", "Loaded.", 4)
+print("[Dream] loaded.")

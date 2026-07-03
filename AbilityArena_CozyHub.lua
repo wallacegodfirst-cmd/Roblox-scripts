@@ -1,5 +1,5 @@
--- Valutix Hub | Ability Arena | v2.15.0
--- by Valutix Hub Owner
+-- Dream Hub | Ability Arena | v2.15.0
+-- by Dream Hub Owner
 -- v2.8.0: Kill Aura fixed (crash bug killed the loop), real clicking, One Shot Punch
 --         remote wired into every M1, fixed M1 packet bytes, buffer sends, hitbox
 --         expanders reworked (M1 + Ability share one engine), Teleports tab added.
@@ -41,7 +41,7 @@
 --         (destroys Workspace.KillBricks so they can't touch-kill you). Both are
 --         toggles that re-clear every second to beat re-replication.
 -- v2.9.8: neon-red Rayfield theme (near-black UI, glowing red toggles/sliders/tabs).
--- v2.9.9: rebranded to Valutix Hub; added a Home tab + per-tab sidebar icons.
+-- v2.9.9: rebranded to Dream Hub; added a Home tab + per-tab sidebar icons.
 -- v2.10.0: teleport fixes (no fling, removed lobby TP-to-Spawn, safe Click-TP, auto-refresh
 --          target lists, Save-Health-safe Safe-Spawn) + full Unload disconnect + lighting restore.
 -- v2.11.0: richer ESP (ability + colored health bar + 2D boxes + max-distance), View Player
@@ -76,7 +76,43 @@ do
     pcall(function() FluLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mc4121ban/Fluriore-UI/main/source.lua"))() end)
 
     if type(FluLib) == "table" and type(FluLib.MakeGui) == "function" then
-        local ACCENT = Color3.fromRGB(255, 45, 45)
+        local ACCENT = Color3.fromRGB(0, 0, 0)   -- Dream Hub: strong-black accent
+        -- ---- White + strong-black recolor of Fluriore's (dark) GUI ----
+        -- Fluriore ships a near-black theme. We flip it: dark backgrounds -> white,
+        -- light/white text -> strong black, every outline/stroke -> strong black.
+        local CoreGuiSvc = game:GetService("CoreGui")
+        local WHITE, BLACK = Color3.fromRGB(255,255,255), Color3.fromRGB(0,0,0)
+        local function lum(c) return 0.299*c.R + 0.587*c.G + 0.114*c.B end
+        local function recolorOne(o)
+            if not o then return end
+            pcall(function()
+                -- Keep the selected-tab accent bar as a STRONG BLACK indicator (don't flip to white).
+                if o.Name == "ChooseFrame" and o:IsA("GuiObject") then o.BackgroundColor3 = BLACK; return end
+                if o:IsA("GuiObject") then
+                    if lum(o.BackgroundColor3) < 0.5 then o.BackgroundColor3 = WHITE end
+                    if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
+                        if lum(o.TextColor3) > 0.5 then o.TextColor3 = BLACK end
+                    end
+                    if o:IsA("ImageLabel") or o:IsA("ImageButton") then
+                        if lum(o.ImageColor3) > 0.5 then o.ImageColor3 = BLACK end
+                        pcall(function() if lum(o.ScrollBarImageColor3) > 0.5 then o.ScrollBarImageColor3 = BLACK end end)
+                    end
+                    pcall(function() o.ScrollBarImageColor3 = BLACK end)
+                elseif o:IsA("UIStroke") then
+                    o.Color = BLACK
+                end
+            end)
+        end
+        local function recolorTree(root)
+            if not root then return end
+            recolorOne(root)
+            for _,d in ipairs(root:GetDescendants()) do recolorOne(d) end
+        end
+        local function watchGui(gui)
+            if not gui then return end
+            recolorTree(gui)
+            pcall(function() gui.DescendantAdded:Connect(function(d) task.defer(recolorOne, d) end) end)
+        end
         local TAB_ICON = "rbxassetid://16932740082"
         local ICONS = {   -- Lucide-name -> real asset id (Fluriore only takes rbxassetid, no Lucide names)
             home="rbxassetid://7733960981", swords="rbxassetid://7733798747", sparkles="rbxassetid://8997388430",
@@ -95,8 +131,17 @@ do
         end
         function shim:CreateWindow(cfg)
             cfg = cfg or {}
-            local col = (cfg.Theme and (cfg.Theme.ToggleEnabled or cfg.Theme.SliderProgress)) or ACCENT
+            local col = ACCENT   -- Dream Hub: always strong-black accent
             _FluWindow = FluLib:MakeGui({ NameHub = cfg.Name or "Hub", Description = cfg.LoadingSubtitle or "", Color = col })
+            -- Flip Fluriore's dark theme to white + strong black, and keep new elements recolored.
+            pcall(function() watchGui(CoreGuiSvc:FindFirstChild("HirimiGui")) end)
+            pcall(function()
+                local nb = CoreGuiSvc:FindFirstChild("NotifyGui")
+                if nb then watchGui(nb) end
+                CoreGuiSvc.ChildAdded:Connect(function(ch)
+                    if ch and ch.Name == "NotifyGui" then task.defer(watchGui, ch) end
+                end)
+            end)
             local W = {}
             function W:CreateTab(name, icon)
                 local flTab = _FluWindow:CreateTab({ Name = name, Icon = ICONS[icon] or TAB_ICON })
@@ -625,7 +670,7 @@ local function grabAbility(name)
     if grabbing or not name or name == "" then return end
     local f = findElementFolder()
     if not f then
-        Rayfield:Notify({Title="Valutix Hub", Content="ElementSelection not found - are you in the lobby?", Duration=4})
+        Rayfield:Notify({Title="Dream Hub", Content="ElementSelection not found - are you in the lobby?", Duration=4})
         return
     end
     local pad = f:FindFirstChild(name); if not pad then return end
@@ -761,12 +806,12 @@ local function applyAuraNow(name)
 end
 local function addAura(name)
     local f = vfxFolder()
-    if not f then Rayfield:Notify({Title="Valutix Hub", Content="VFX assets folder not found.", Duration=3}); return end
-    if not (name and f:FindFirstChild(name)) then Rayfield:Notify({Title="Valutix Hub", Content="Pick an aura first.", Duration=3}); return end
+    if not f then Rayfield:Notify({Title="Dream Hub", Content="VFX assets folder not found.", Duration=3}); return end
+    if not (name and f:FindFirstChild(name)) then Rayfield:Notify({Title="Dream Hub", Content="Pick an aura first.", Duration=3}); return end
     clearAura()
     activeAura = name
     applyAuraNow(name)
-    Rayfield:Notify({Title="Valutix Hub", Content="Aura '"..name.."' on - it stays until you Remove it.", Duration=4})
+    Rayfield:Notify({Title="Dream Hub", Content="Aura '"..name.."' on - it stays until you Remove it.", Duration=4})
 end
 -- keep the aura alive + emitting so it "stands longer" (re-emits every 0.5s)
 task.spawn(function()
@@ -1605,9 +1650,9 @@ local function viewPlayer(name)
     local cam = Workspace.CurrentCamera
     if subj and cam then
         pcall(function() cam.CameraSubject = subj end); S.Viewing = name
-        Rayfield:Notify({Title="Valutix Hub", Content="Now viewing "..name..".", Duration=3})
+        Rayfield:Notify({Title="Dream Hub", Content="Now viewing "..name..".", Duration=3})
     else
-        Rayfield:Notify({Title="Valutix Hub", Content="Player not found.", Duration=3})
+        Rayfield:Notify({Title="Dream Hub", Content="Player not found.", Duration=3})
     end
 end
 local function stopView()
@@ -1833,7 +1878,7 @@ local function tpToPlayer(name, behind)
     local char = p and p.Character
     local tr = char and charPart(char)
     if not (tr and getRoot()) then
-        Rayfield:Notify({Title="Valutix Hub", Content="Target not found.", Duration=3})
+        Rayfield:Notify({Title="Dream Hub", Content="Target not found.", Duration=3})
         return
     end
     local off = (behind and -1 or 1) * tr.CFrame.LookVector * 4 + Vector3.new(0,1,0)
@@ -1868,52 +1913,52 @@ end
 -- GUI
 -- ============================================================
 local Window = Rayfield:CreateWindow({
-    Name = "Valutix Hub",
-    LoadingTitle = "Valutix Hub",
+    Name = "Dream Hub",
+    LoadingTitle = "Dream Hub",
     LoadingSubtitle = "",
     ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
     Discord = { Enabled = false },
     KeySystem = false,
-    -- Neon-red dark theme (near-black bg, glowing red toggles/sliders/selected tab)
+    -- White theme with strong-black text / outlines / accents
     Theme = {
-        TextColor                    = Color3.fromRGB(235, 235, 235),
-        Background                   = Color3.fromRGB(15, 12, 13),
-        Topbar                       = Color3.fromRGB(22, 16, 18),
-        Shadow                       = Color3.fromRGB(8, 6, 7),
+        TextColor                    = Color3.fromRGB(10, 10, 10),
+        Background                   = Color3.fromRGB(255, 255, 255),
+        Topbar                       = Color3.fromRGB(245, 245, 245),
+        Shadow                       = Color3.fromRGB(0, 0, 0),
 
-        NotificationBackground       = Color3.fromRGB(20, 14, 16),
-        NotificationActionsBackground= Color3.fromRGB(255, 45, 45),
+        NotificationBackground       = Color3.fromRGB(250, 250, 250),
+        NotificationActionsBackground= Color3.fromRGB(0, 0, 0),
 
-        TabBackground                = Color3.fromRGB(28, 20, 22),
-        TabStroke                    = Color3.fromRGB(70, 22, 26),
-        TabBackgroundSelected        = Color3.fromRGB(255, 40, 40),  -- selected tab = neon red
-        TabTextColor                 = Color3.fromRGB(200, 190, 192),
-        SelectedTabTextColor         = Color3.fromRGB(20, 12, 13),   -- dark text on red for contrast
+        TabBackground                = Color3.fromRGB(240, 240, 240),
+        TabStroke                    = Color3.fromRGB(0, 0, 0),
+        TabBackgroundSelected        = Color3.fromRGB(0, 0, 0),      -- selected tab = strong black
+        TabTextColor                 = Color3.fromRGB(20, 20, 20),
+        SelectedTabTextColor         = Color3.fromRGB(255, 255, 255),-- white text on black selected tab
 
-        ElementBackground            = Color3.fromRGB(26, 19, 21),
-        ElementBackgroundHover       = Color3.fromRGB(38, 24, 27),
-        SecondaryElementBackground   = Color3.fromRGB(22, 16, 18),
-        ElementStroke                = Color3.fromRGB(58, 26, 30),
-        SecondaryElementStroke       = Color3.fromRGB(50, 24, 28),
+        ElementBackground            = Color3.fromRGB(250, 250, 250),
+        ElementBackgroundHover       = Color3.fromRGB(235, 235, 235),
+        SecondaryElementBackground   = Color3.fromRGB(245, 245, 245),
+        ElementStroke                = Color3.fromRGB(0, 0, 0),
+        SecondaryElementStroke       = Color3.fromRGB(0, 0, 0),
 
-        SliderBackground             = Color3.fromRGB(120, 18, 22),  -- dark red track
-        SliderProgress               = Color3.fromRGB(255, 45, 45),  -- neon red fill
-        SliderStroke                 = Color3.fromRGB(255, 85, 85),
+        SliderBackground             = Color3.fromRGB(210, 210, 210), -- light track
+        SliderProgress               = Color3.fromRGB(0, 0, 0),       -- black fill
+        SliderStroke                 = Color3.fromRGB(0, 0, 0),
 
-        ToggleBackground             = Color3.fromRGB(30, 22, 24),
-        ToggleEnabled                = Color3.fromRGB(255, 45, 45),  -- neon red ON
-        ToggleDisabled               = Color3.fromRGB(85, 80, 82),   -- grey OFF
-        ToggleEnabledStroke          = Color3.fromRGB(255, 95, 95),
-        ToggleDisabledStroke         = Color3.fromRGB(115, 110, 112),
-        ToggleEnabledOuterStroke     = Color3.fromRGB(180, 30, 34),
-        ToggleDisabledOuterStroke    = Color3.fromRGB(55, 50, 52),
+        ToggleBackground             = Color3.fromRGB(225, 225, 225),
+        ToggleEnabled                = Color3.fromRGB(0, 0, 0),       -- black ON
+        ToggleDisabled               = Color3.fromRGB(170, 170, 170), -- grey OFF
+        ToggleEnabledStroke          = Color3.fromRGB(0, 0, 0),
+        ToggleDisabledStroke         = Color3.fromRGB(140, 140, 140),
+        ToggleEnabledOuterStroke     = Color3.fromRGB(0, 0, 0),
+        ToggleDisabledOuterStroke    = Color3.fromRGB(190, 190, 190),
 
-        DropdownSelected             = Color3.fromRGB(40, 24, 27),
-        DropdownUnselected           = Color3.fromRGB(26, 19, 21),
+        DropdownSelected             = Color3.fromRGB(230, 230, 230),
+        DropdownUnselected           = Color3.fromRGB(250, 250, 250),
 
-        InputBackground              = Color3.fromRGB(28, 21, 23),
-        InputStroke                  = Color3.fromRGB(75, 34, 38),
-        PlaceholderColor             = Color3.fromRGB(150, 138, 140),
+        InputBackground              = Color3.fromRGB(248, 248, 248),
+        InputStroke                  = Color3.fromRGB(0, 0, 0),
+        PlaceholderColor             = Color3.fromRGB(120, 120, 120),
     },
 })
 
@@ -1928,11 +1973,11 @@ local UtilityTab   = Window:CreateTab("Misc",      "wrench")
 
 -- \u2500\u2500 HOME (landing page) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 HomeTab:CreateSection("Welcome")
-HomeTab:CreateParagraph({Title="Valutix Hub", Content="Ability Arena  -  v2.15.0\nPick a tab on the left to get started."})
+HomeTab:CreateParagraph({Title="Dream Hub", Content="Ability Arena  -  v2.15.0\nPick a tab on the left to get started."})
 HomeTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
 HomeTab:CreateParagraph({Title="Best combo", Content="Dash Behind On Hit (lands your M1 + puts you behind them) + M1 Hitbox. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
 HomeTab:CreateSection("Credits")
-HomeTab:CreateParagraph({Title="Credits", Content="Valutix Hub v2.15.0 - by Valutix Hub Owner"})
+HomeTab:CreateParagraph({Title="Credits", Content="Dream Hub v2.15.0 - by Dream Hub Owner"})
 
 CombatTab:CreateSection("Survival")
 CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
@@ -1946,14 +1991,14 @@ CombatTab:CreateToggle({Name="Remove Water Border (makes Anti Water hold)", Curr
     S.RemoveWaterBorder=v
     if v then
         local n=destroyWaterBorder()
-        Rayfield:Notify({Title="Valutix Hub", Content="Water border removed ("..n.." parts). Keeps clearing while on.", Duration=4})
+        Rayfield:Notify({Title="Dream Hub", Content="Water border removed ("..n.." parts). Keeps clearing while on.", Duration=4})
     end
 end})
 CombatTab:CreateToggle({Name="Anti Kill Bricks (remove them)", CurrentValue=false, Flag="AntiKillBricks", Callback=function(v)
     S.AntiKillBricks=v
     if v then
         local n=destroyKillBricks()
-        Rayfield:Notify({Title="Valutix Hub", Content="Kill bricks removed ("..n.." parts). Keeps clearing while on.", Duration=4})
+        Rayfield:Notify({Title="Dream Hub", Content="Kill bricks removed ("..n.." parts). Keeps clearing while on.", Duration=4})
     end
 end})
 CombatTab:CreateToggle({Name="Save Health (low HP -> fly to sky, heal, drop back)", CurrentValue=false, Flag="SaveHealth", Callback=function(v) S.SaveHealth=v end})
@@ -2018,7 +2063,7 @@ TeleportsTab:CreateButton({Name="TP Behind Target", Callback=function() tpToPlay
 TeleportsTab:CreateButton({Name="TP Behind Nearest Player", Callback=function()
     local p = nearestPlayer()
     if p then tpToPlayer(p.Name, true)
-    else Rayfield:Notify({Title="Valutix Hub", Content="No players nearby.", Duration=3}) end
+    else Rayfield:Notify({Title="Dream Hub", Content="No players nearby.", Duration=3}) end
 end})
 TeleportsTab:CreateButton({Name="Refresh Player List", Callback=function()
     pcall(function() tpDrop:Refresh(playerNames()) end)
@@ -2035,7 +2080,7 @@ TeleportsTab:CreateButton({Name="TP To Ability Pads (lobby)", Callback=function(
             tpTo(CFrame.new(pp + Vector3.new(0, 5, 0)))
         end
     else
-        Rayfield:Notify({Title="Valutix Hub", Content="Ability pads not found - are you in the lobby?", Duration=3})
+        Rayfield:Notify({Title="Dream Hub", Content="Ability pads not found - are you in the lobby?", Duration=3})
     end
 end})
 TeleportsTab:CreateToggle({Name="Click Teleport  [V]", CurrentValue=false, Flag="ClickTP", Callback=function(v) S.ClickTP=v end})
@@ -2045,7 +2090,7 @@ TeleportsTab:CreateButton({Name="Set Safe Spawn (save position)", Callback=funct
     local root = getRoot()
     if root then
         savedSpawnCF = root.CFrame
-        Rayfield:Notify({Title="Valutix Hub", Content="Safe spawn saved!", Duration=4})
+        Rayfield:Notify({Title="Dream Hub", Content="Safe spawn saved!", Duration=4})
     end
 end})
 TeleportsTab:CreateButton({Name="TP to Safe Spawn", Callback=function()
@@ -2055,12 +2100,12 @@ TeleportsTab:CreateButton({Name="TP to Safe Spawn", Callback=function()
         local r = getRoot(); if r then pcall(function() r.Anchored = false end) end
         tpTo(tpCF + Vector3.new(0, 3, 0))
     else
-        Rayfield:Notify({Title="Valutix Hub", Content="No safe spawn set yet.", Duration=4})
+        Rayfield:Notify({Title="Dream Hub", Content="No safe spawn set yet.", Duration=4})
     end
 end})
 TeleportsTab:CreateButton({Name="Clear Safe Spawn", Callback=function()
     savedSpawnCF = nil
-    Rayfield:Notify({Title="Valutix Hub", Content="Safe spawn cleared.", Duration=3})
+    Rayfield:Notify({Title="Dream Hub", Content="Safe spawn cleared.", Duration=3})
 end})
 
 MovementTab:CreateToggle({Name="Fly (WASD + Space/Ctrl)", CurrentValue=false, Flag="Fly", Callback=function(v) S.Fly=v end})
@@ -2153,7 +2198,7 @@ VisualsTab:CreateButton({Name="Save / Copy Preset", Callback=function()
     local preset = string.format("shape=%s|c1=%s|c2=%s|size=%d|transp=%d|tex=%s|rate=%d|speed=%d|spread=%d|rainbow=%s|light=%s|bright=%d|rings=%s|ringc=%d|beams=%s|trail=%s",
         S.VFXShape, rgb(S.VFXColor), rgb(S.VFXColor2), S.VFXSize, math.floor(S.VFXTransparency*100), S.VFXTexture, S.VFXRate, S.VFXSpeed, S.VFXSpread,
         tostring(S.VFXRainbow), tostring(S.VFXLight), S.VFXBrightness, tostring(S.VFXRings), S.VFXRingCount, tostring(S.VFXBeams), tostring(S.VFXTrail))
-    pcall(function() if writefile then writefile("ValutixAura.txt", preset) end end)
+    pcall(function() if writefile then writefile("DreamAura.txt", preset) end end)
     pcall(function() if setclipboard then setclipboard(preset) end end)
     Rayfield:Notify({Title="Aura Maker", Content="Preset saved + copied. Share the text to let others rebuild your aura.", Duration=5})
 end})
@@ -2165,7 +2210,7 @@ FarmTab:CreateSlider({Name="Auto Play Search Range", Range={10,300}, Increment=5
 FarmTab:CreateSection("Auto Farm")
 FarmTab:CreateToggle({Name="Auto Farm Target", CurrentValue=false, Flag="AutoFarm", Callback=function(v)
     if v and not S.FarmTarget then
-        Rayfield:Notify({Title="Valutix Hub", Content="Pick a target first.", Duration=3})
+        Rayfield:Notify({Title="Dream Hub", Content="Pick a target first.", Duration=3})
         v=false
     end
     S.AutoFarm=v
@@ -2208,23 +2253,23 @@ UtilityTab:CreateButton({Name="Dump Player Data (to console)", Callback=function
     end
     dump(LP.Character, "SELF")
     for _,pl in ipairs(Players:GetPlayers()) do if pl ~= LP then dump(pl.Character, "PLAYER") end end
-    Rayfield:Notify({Title="Valutix Hub", Content="Dumped to console (open F9 / executor console).", Duration=5})
+    Rayfield:Notify({Title="Dream Hub", Content="Dumped to console (open F9 / executor console).", Duration=5})
 end})
 
 UtilityTab:CreateToggle({Name="Spy M1 Packets  [debug, uses a hook]", CurrentValue=false, Flag="M1Spy", Callback=function(v)
     S.M1Spy = v
     if v then
         if installM1Spy() then
-            Rayfield:Notify({Title="Valutix Hub", Content="M1 Spy ON. Turn OFF Auto Farm/Auto M1, then LEFT-CLICK an enemy once. Copy the [M1SPY] line with 'UseM1'/'Hits' from console.", Duration=10})
+            Rayfield:Notify({Title="Dream Hub", Content="M1 Spy ON. Turn OFF Auto Farm/Auto M1, then LEFT-CLICK an enemy once. Copy the [M1SPY] line with 'UseM1'/'Hits' from console.", Duration=10})
         else
             S.M1Spy = false
-            Rayfield:Notify({Title="Valutix Hub", Content="Your executor has no hookmetamethod - can't spy packets.", Duration=6})
+            Rayfield:Notify({Title="Dream Hub", Content="Your executor has no hookmetamethod - can't spy packets.", Duration=6})
         end
     end
 end})
 
 UtilityTab:CreateSection("Admin")
-UtilityTab:CreateButton({Name="Unload Valutix Hub", Callback=function()
+UtilityTab:CreateButton({Name="Unload Dream Hub", Callback=function()
     for _,c in pairs(Conns) do pcall(function() c:Disconnect() end) end
     for _,c in ipairs(Listeners) do pcall(function() c:Disconnect() end) end
     pcall(function() setFullBright(false) end)   -- restore lighting if Full Bright was on
@@ -2241,4 +2286,4 @@ end})
 -- After the GUI settles, force the aura OFF so you always spawn clean (no red sphere).
 task.delay(1.2, function() S.VFXOn=false; pcall(clearCustomVFX) end)
 
-Rayfield:Notify({Title="Valutix Hub", Content="Loaded.", Duration=5})
+Rayfield:Notify({Title="Dream Hub", Content="Loaded.", Duration=5})

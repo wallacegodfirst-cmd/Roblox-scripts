@@ -5,7 +5,9 @@ server-side, so nothing is guaranteed god-mode; the reliable parts are movement,
 anti-move dodging, and inputs sent through the game's own remotes.
 
 ## New GUI
-- A new UI is being added (theme/library provided separately). This doc will be updated when it lands.
+- Rebranded to **Dream Hub** (base) / **Dream Hub PLUS**.
+- New theme: **strong black** (near-pure-black, dark-dark background) with **white outlines** on every
+  panel, toggle, slider and input. Selected tab / toggles-on / slider fill are white for contrast.
 
 ## New features (this update)
 - Uppercut and Downslam now fire the REAL game remote (Character.Communicate: LeftClick = M1,
