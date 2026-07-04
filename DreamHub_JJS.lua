@@ -260,7 +260,12 @@ do
 	local backDashStage = 0  -- Back Dash alternates per E press: E #1 = plain teleport backstab, E #2 = walk forward -> dash back -> flash (handled in the E bind below)
 	local function doApproach(targetHRP, myHRP)  -- PRE-flash movement per mode; the snap-behind + flash + back-lock chain happens right after (in doBackstab)
 		local m = Settings.Mode
-		if m == "Side Dash" then fireDash("Right"); clientDash("Right", 60, 0.1); task.wait(0.04)   -- FAST side dash AROUND -> the snap puts you at their back -> flash + chain
+		if m == "Side Dash" then                                                                   -- play the captured SIDE DASH anim, dash, then the snap puts you at their back -> flash
+			pcall(function()
+				local c = myCharResolved(); local h = c and c:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
+				if a then local anim = Instance.new("Animation"); anim.AnimationId = "rbxassetid://75203303352791"; local t = a:LoadAnimation(anim); t.Priority = Enum.AnimationPriority.Action2; t:Play(0.04); task.delay(0.5, function() pcall(function() t:Stop() end) end) end
+			end)
+			fireDash("Right"); clientDash("Right", 60, 0.1); task.wait(0.04)
 		elseif m == "Jump" then jumpNow(); task.wait(0.12)                                          -- SMOOTH regular jump (no glitchy teleport-arc), then the snap-behind + flash lands on their BACK
 		end  -- "Teleport"/"M1 Black Flash" = no pre-move; "Back Dash" is a dedicated 2-stage E handler
 	end
@@ -6912,7 +6917,7 @@ do
     skSec:Toggle({ Name = "Awakening G", Callback = function(b) if SkillsApi then SkillsApi.setKey(6, b) end end })
     skSec:Toggle({ Name = "Auto Gojo TP (R -> behind enemy)", Callback = function(b) if GojoTpApi then GojoTpApi.set(b) end end })
     skSec:Toggle({ Name = "Reversal Red (press 3 -> R)", Callback = function(b) if ReversalRedApi then ReversalRedApi.set(b) end end })
-    skSec:Dropdown({ Name = "M1 Finisher", Items = { "Off", "Down Slam", "Uppercut" }, Default = "Off", Callback = function(m) if M1ComboApi then M1ComboApi.setMode(m) end end })
+    skSec:Dropdown({ Name = "Auto Down Slam / Upper Cut (3 M1s -> finisher)", Items = { "Off", "Down Slam", "Uppercut" }, Default = "Off", Callback = function(m) if M1ComboApi then M1ComboApi.setMode(m) end end })
     skSec:Button({ Name = "Rika Down Slam", Callback = function()
         local chs = workspace:FindFirstChild("Characters"); local ch = (chs and chs:FindFirstChild(LocalPlayer.Name)) or LocalPlayer.Character
         local mv = ch and ch:FindFirstChild("Moveset"); local slam = mv and mv:FindFirstChild("Rika Slam")
@@ -6932,7 +6937,7 @@ do
     local counterSec = defSub:Section({ Name = "Counter", Side = 1 })
     counterSec:Toggle({ Name = "Auto Counter", Callback = function(b) if CounterApi then CounterApi.set(b) end end })
     counterSec:Toggle({ Name = "Locked Only", Callback = function(b) if CounterApi then CounterApi.setLockedOnly(b) end end })
-    if tier("plus") then counterSec:Toggle({ Name = "Side Dash Assist", Callback = function(b) if SideDashApi then SideDashApi.set(b) end end }) end
+    counterSec:Toggle({ Name = "Side Dash Assist", Callback = function(b) if SideDashApi then SideDashApi.set(b) end end })   -- always visible now
     counterSec:Toggle({ Name = "Anti Counter", Callback = function(b) if AntiCounterApi then AntiCounterApi.set(b) end end })
     counterSec:Toggle({ Name = "Auto Evasive", Callback = function(b) if EvasiveApi then EvasiveApi.set(b) end end })
     counterSec:Dropdown({ Name = "Evasive Dir", Items = { "Cycle", "Back", "Left", "Right", "Toward Target" }, Default = "Cycle", Callback = function(v) if EvasiveApi then EvasiveApi.setDir(v) end end })
