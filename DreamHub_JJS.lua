@@ -175,9 +175,10 @@ do
 	local lastM1 = 0      -- M1 Black Flash: debounce so a fast M1 burst only starts the chain once per click
 	local burstUntil = 0  -- self-driving modes (M1 Black Flash / Back Dash / Auto Counter) run the PROVEN teleport chain even if the master "Auto Chain" toggle is off, for a short burst after each trigger
 	local runChain        -- forward-declared: fires the proven teleport black-flash chain (doBackstab), optionally snapping to a specific attacker first (Auto Counter)
-	local function pressR() pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.05); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game) end) end
+	local function pressR() feintInjectUntil = tick() + 0.35; pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.05); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game) end) end
 	local FEINT_MOVE_KEYS = { [1] = Enum.KeyCode.One, [2] = Enum.KeyCode.Two, [3] = Enum.KeyCode.Three, [4] = Enum.KeyCode.Four }
-	local function pressKeyTap(kc) pcall(function() VirtualInputManager:SendKeyEvent(true, kc, false, game); task.wait(0.045); VirtualInputManager:SendKeyEvent(false, kc, false, game) end) end
+	local feintInjectUntil = 0   -- while WE inject keys, the feint handlers must ignore them (self-triggering = 'Feint Abilities affects Feint M1/BF')
+	local function pressKeyTap(kc) feintInjectUntil = tick() + 0.35; pcall(function() VirtualInputManager:SendKeyEvent(true, kc, false, game); task.wait(0.045); VirtualInputManager:SendKeyEvent(false, kc, false, game) end) end
 	local function pressMove(n) local kc = FEINT_MOVE_KEYS[tonumber(n) or 0]; if kc then pressKeyTap(kc) end end
 	local savedWS, savedJP, savedAR, bfCollideSaved
 	local liveLoops = 0
@@ -474,10 +475,8 @@ do
 		animator.AnimationPlayed:Connect(function(track)
 			local animId = track.Animation and track.Animation.AnimationId
 			if not animId then return end
-			-- M1 BLACK FLASH: your M1 -> the SAME proven teleport black flash (the chain), just triggered by your M1 instead of pressing E for you.
-			if Settings.Mode == "M1 Black Flash" and tick() - lastM1 > 0.22 then
-				if _G.VX_IS_M1 and _G.VX_IS_M1(track) then lastM1 = tick(); task.delay(0.06, function() if Settings.Mode == "M1 Black Flash" and humanoid.Health > 0 and runChain then runChain() end end) end   -- FASTER: 0.06 so the flash follows your M1 near-instantly
-			end
+			-- (M1 Black Flash triggers ONLY from the landed-click path now - the anim path double-fired the chain
+			-- on top of it: two overlapping snap-holds = the fling.)
 			-- AUTO FEINT Mode B ("Feint M1"): count YOUR M1 swings (Vessel/any M1 anim + a click); after feintM1Count, press R (feint) then the chosen move (1-4).
 			if feintMode == "M1" and _G.VX_IS_M1 and _G.VX_IS_M1(track) then
 				if tick() - lastM1Feint > 1.5 then m1FeintCount = 0 end   -- reset if you stopped M1ing
@@ -580,7 +579,8 @@ do
 				end
 			end
 			-- Feint Abilities: you cast ANY skill (1/2/3/4) -> R right after = feint the move (own toggle OR the dropdown mode)
-			if (feintMovesOn or feintMode == "Moves") and MOVEKEYS[input.KeyCode] then
+			-- (skips OUR OWN injected keys - they were re-triggering this and breaking Feint M1 / Feint BF)
+			if (feintMovesOn or feintMode == "Moves") and MOVEKEYS[input.KeyCode] and tick() >= feintInjectUntil then
 				task.delay(0.14, function() pressR() end)
 			end
 		end)
@@ -7585,9 +7585,9 @@ do
     bfSec:Dropdown({ Name = "Auto Feint", Items = { "Off", "Feint Black Flash", "Feint M1", "Feint Moves" }, Default = "Off", Callback = function(v)
         if ChainApi then ChainApi.setFeintMode(v == "Feint Black Flash" and "BF" or (v == "Feint M1" and "M1" or (v == "Feint Moves" and "Moves" or "Off"))) end
     end })
-    bfSec:Dropdown({ Name = "A - Stop after (black flashes)", Items = { "1", "2", "3", "4" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintBFStop(v) end end })
-    bfSec:Dropdown({ Name = "B - Feint after (M1s)", Items = { "1", "2", "3" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintM1Count(v) end end })
-    bfSec:Dropdown({ Name = "B - Move after feint", Items = { "1", "2", "3", "4" }, Default = "1", Callback = function(v) if ChainApi then ChainApi.setFeintMove(v) end end })
+    bfSec:Dropdown({ Name = "Stop After (flashes)", Items = { "1", "2", "3", "4" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintBFStop(v) end end })
+    bfSec:Dropdown({ Name = "Feint After (M1s)", Items = { "1", "2", "3" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintM1Count(v) end end })
+    bfSec:Dropdown({ Name = "Move After Feint", Items = { "1", "2", "3", "4" }, Default = "1", Callback = function(v) if ChainApi then ChainApi.setFeintMove(v) end end })
     bfSec:Toggle({ Name = "Feint Abilities (1-4 -> R)", Default = false, Callback = function(b) if ChainApi and ChainApi.setFeintMoves then ChainApi.setFeintMoves(b) end end })
     bfSec:Toggle({ Name = "Aim Assist (face enemy on every move)", Default = false, Callback = function(b) if AimAssistApi then AimAssistApi.set(b) end end })
     bfSec:Slider({ Name = "Cooldown", Min = 0.1, Max = 1, Default = 0.45, Decimals = 0.01, Suffix = "s", Callback = function(v) if BFApi then BFApi.SetCooldown(v) end end })
