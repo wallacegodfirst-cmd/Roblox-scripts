@@ -1169,8 +1169,8 @@ do
 	local function lockedTarget() local g = _G.VX_LOCK; return (g and g.get) and g.get() or nil end
 	local function myHRP() local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character; return c and c:FindFirstChild("HumanoidRootPart") end
 	local M1_ID = "75337033003776"  -- the JJS M1 anim id
-	local function pressCounter()  -- press the per-character COUNTER key ONLY - NO teleport, NO dodge (Hakari = R, Itadori/Sukuna/Choso = 3, Mahito = 4)
-		local ck = counterKey(); if ck then last = tick(); pcall(function() VIM:SendKeyEvent(true, ck, false, game); task.wait(0.2); VIM:SendKeyEvent(false, ck, false, game) end) end
+	local function pressCounter()  -- TAP the per-character COUNTER key (short hold so it can re-counter fast M1s)
+		local ck = counterKey(); if ck then last = tick(); pcall(function() VIM:SendKeyEvent(true, ck, false, game); task.wait(0.08); VIM:SendKeyEvent(false, ck, false, game) end) end
 	end
 	local function isAttackId(id)   -- EVERY known attack id: M1 + the full captured list + the block dict + the counter ids
 		if not id then return false end
@@ -1200,7 +1200,7 @@ do
 	end
 	task.spawn(function()
 		while true do
-			if on and tick() - last > 0.35 then   -- just a key press now, so it can react fast to each attack
+			if on and tick() - last > 0.2 then   -- just a key press now, so it can react fast to each attack
 				local hrp = myHRP(); local chars = workspace:FindFirstChild("Characters")
 				local lockT = lockedOnly and lockedTarget() or nil   -- Locked Only: react to just this one target (nil target = counter nobody)
 				if hrp and chars and not (lockedOnly and not lockT) then
@@ -1223,7 +1223,7 @@ do
 	end)
 	-- EVENT-DRIVEN reaction: the ANIM THREAT SYSTEM hooks every enemy Animator and calls this the INSTANT any anim starts, so we counter BEFORE the hit lands - on every M1 and every captured attack id, not a 0.05s poll.
 	_G.VX_AUTOCOUNTER = function(enemyChar, id)
-		if not on or tick() - last <= 0.35 then return end   -- just a key press now, react fast
+		if not on or tick() - last <= 0.2 then return end   -- just a key press now, react fast
 		if not isAttackId(id) then return end
 		local hrp = myHRP(); if not hrp then return end
 		local r = enemyChar and enemyChar:FindFirstChild("HumanoidRootPart"); if not r then return end
