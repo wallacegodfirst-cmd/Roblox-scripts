@@ -260,12 +260,15 @@ do
 	local backDashStage = 0  -- Back Dash alternates per E press: E #1 = plain teleport backstab, E #2 = walk forward -> dash back -> flash (handled in the E bind below)
 	local function doApproach(targetHRP, myHRP)  -- PRE-flash movement per mode; the snap-behind + flash + back-lock chain happens right after (in doBackstab)
 		local m = Settings.Mode
-		if m == "Side Dash" then                                                                   -- play the captured SIDE DASH anim, dash, then the snap puts you at their back -> flash
-			pcall(function()
-				local c = myCharResolved(); local h = c and c:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
-				if a then local anim = Instance.new("Animation"); anim.AnimationId = "rbxassetid://75203303352791"; local t = a:LoadAnimation(anim); t.Priority = Enum.AnimationPriority.Action2; t:Play(0.04); task.delay(0.5, function() pcall(function() t:Stop() end) end) end
-			end)
-			fireDash("Right"); clientDash("Right", 60, 0.1); task.wait(0.04)
+		if m == "Side Dash" then                                                                   -- play the SIDE DASH anims + dash remote, then the snap AIMS you at their back (no weird velocity shove)
+			local function playA(id)
+				pcall(function()
+					local c = myCharResolved(); local h = c and c:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
+					if a then local anim = Instance.new("Animation"); anim.AnimationId = id; local t = a:LoadAnimation(anim); t.Priority = Enum.AnimationPriority.Action2; t:Play(0.04); task.delay(0.5, function() pcall(function() t:Stop() end) end) end
+				end)
+			end
+			playA("rbxassetid://75203303352791"); playA("rbxassetid://96489184596023")
+			fireDash("Right"); task.wait(0.05)                                                      -- remote dash (i-frames) only; the snap does the aiming
 		elseif m == "Jump" then jumpNow(); task.wait(0.12)                                          -- SMOOTH regular jump (no glitchy teleport-arc), then the snap-behind + flash lands on their BACK
 		end  -- "Teleport"/"M1 Black Flash" = no pre-move; "Back Dash" is a dedicated 2-stage E handler
 	end
@@ -304,7 +307,9 @@ do
 		dashGen = dashGen + 1  -- KILL any still-running approach dash so nothing pushes you off the back after the snap
 		local behindPos, targetPos = getBehind(targetHRP)
 		if _G.VX_ACPASS then _G.VX_ACPASS() end   -- whitelist the snap so the anti-cheat doesn't revert it (= you actually land on their back)
-		myHRP.CFrame = CFrame.lookAt(behindPos, targetPos)
+		local snapCF = CFrame.lookAt(behindPos, targetPos)
+		myHRP.CFrame = snapCF
+		pcall(function() myChar:PivotTo(snapCF) end)   -- move the WHOLE model too (some rigs don't follow a bare HRP write) = reliably AT their back
 		myHRP.AssemblyLinearVelocity = Vector3.zero
 		myHRP.AssemblyAngularVelocity = Vector3.zero
 		pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)  -- ground the state after a jump so the flash (ability) isn't blocked mid-air
@@ -347,7 +352,9 @@ do
 			end
 			behindPos, targetPos = getBehind(targetHRP)
 			if _G.VX_ACPASS then _G.VX_ACPASS() end   -- whitelist every re-snap so the anti-cheat can't drag you off their back
-			myHRP.CFrame = CFrame.lookAt(behindPos, targetPos)
+			local snapCF = CFrame.lookAt(behindPos, targetPos)
+			myHRP.CFrame = snapCF
+			pcall(function() myChar:PivotTo(snapCF) end)   -- keep the WHOLE model pinned to their back
 			myHRP.AssemblyLinearVelocity = Vector3.zero
 			myHRP.AssemblyAngularVelocity = Vector3.zero
 			-- NO camera hijack: you keep full control of your own camera / zoom (removed the zoom-in lock).
