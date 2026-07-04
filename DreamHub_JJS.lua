@@ -175,10 +175,11 @@ do
 	local lastM1 = 0      -- M1 Black Flash: debounce so a fast M1 burst only starts the chain once per click
 	local burstUntil = 0  -- self-driving modes (M1 Black Flash / Back Dash / Auto Counter) run the PROVEN teleport chain even if the master "Auto Chain" toggle is off, for a short burst after each trigger
 	local runChain        -- forward-declared: fires the proven teleport black-flash chain (doBackstab), optionally snapping to a specific attacker first (Auto Counter)
-	local function pressR() feintInjectUntil = tick() + 0.35; pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.05); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game) end) end
+	local function pressR() _G.VX_INJECT_UNTIL = tick() + 0.35; pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.05); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game) end) end
 	local FEINT_MOVE_KEYS = { [1] = Enum.KeyCode.One, [2] = Enum.KeyCode.Two, [3] = Enum.KeyCode.Three, [4] = Enum.KeyCode.Four }
-	local feintInjectUntil = 0   -- while WE inject keys, the feint handlers must ignore them (self-triggering = 'Feint Abilities affects Feint M1/BF')
-	local function pressKeyTap(kc) feintInjectUntil = tick() + 0.35; pcall(function() VirtualInputManager:SendKeyEvent(true, kc, false, game); task.wait(0.045); VirtualInputManager:SendKeyEvent(false, kc, false, game) end) end
+	-- GLOBAL injection guard: EVERY module that injects keys stamps this; every key-triggered feature ignores
+	-- injected keys. (Feint's move-press was triggering Auto Air; Auto Air's taps were triggering the feints.)
+	local function pressKeyTap(kc) _G.VX_INJECT_UNTIL = tick() + 0.35; pcall(function() VirtualInputManager:SendKeyEvent(true, kc, false, game); task.wait(0.045); VirtualInputManager:SendKeyEvent(false, kc, false, game) end) end
 	local function pressMove(n) local kc = FEINT_MOVE_KEYS[tonumber(n) or 0]; if kc then pressKeyTap(kc) end end
 	local savedWS, savedJP, savedAR, bfCollideSaved
 	local liveLoops = 0
@@ -188,7 +189,7 @@ do
 	local Settings = {
 		BackDistance    = 1.5,    -- dead-center on the back
 		LockRange       = 34,
-		LockDuration    = 0.6,    -- track the back through the WHOLE hit + movement (longer = never loses the back)
+		LockDuration    = 0.22,   -- SHORT: just long enough for the flash to land. (0.6s of pinning behind a knocked-back body = the fling window)
 		PreAttackDelay  = 0.05,   -- settle a beat after the snap so the flash KEY actually registers (0.018 = sometimes eaten -> no flash)
 		KeyHoldDuration = 0.09,
 		PosLead         = 0.14,   -- lead a MOVING target harder so a runner/dasher's back stays under you
@@ -231,7 +232,10 @@ do
 		local look = targetHRP.CFrame.LookVector
 		local flat = Vector3.new(look.X, 0, look.Z); local mag = flat.Magnitude
 		local dir = (mag < 0.01) and Vector3.new(0, 0, -1) or (flat / mag)
-		return tPos - dir * math.max(Settings.BackDistance, 2.8), tPos   -- behind their back but NEVER overlapping their body (overlap = the physics shove that flung you both)
+		local clear = math.max(Settings.BackDistance, 2.8)
+		local okv2, tv2 = pcall(function() return targetHRP.AssemblyLinearVelocity end)
+		if okv2 and tv2 then clear = clear + math.min(tv2.Magnitude * 0.06, 2.5) end   -- knockback clearance: a flying body gets extra room so it can't slam through you between frames
+		return tPos - dir * clear, tPos
 	end
 	local function myCharResolved()  -- JJS keeps your live body under workspace.Characters; LP.Character can lag/differ
 		local chs = workspace:FindFirstChild("Characters")
@@ -349,7 +353,7 @@ do
 		if m == "Side Dash" then                                                                   -- CURVE around them to their back (anime run-around), then flash
 			playAnim("rbxassetid://75203303352791"); playAnim("rbxassetid://96489184596023")
 			fireDash("Right")
-			orbitAround(targetHRP, { duration = 0.2, endRadius = Settings.BackDistance, extraSweep = math.pi * 0.3, endBehind = true })   -- fast but SMOOTH arc that reads as a real dash around them
+			orbitAround(targetHRP, { duration = 0.24, endRadius = math.max(Settings.BackDistance, 3), extraSweep = math.pi * 0.4, endBehind = true })   -- wider, weightier wrap = reads like a real player circling them
 		elseif m == "Jump" then                                                                    -- SPRINT to them (real movement, NO teleport) -> JUMP over -> flash lands on the back
 			local t0 = tick()
 			while tick() - t0 < 1.4 do                                                             -- run-up: drive toward them at sprint speed, facing them
@@ -580,7 +584,7 @@ do
 			end
 			-- Feint Abilities: you cast ANY skill (1/2/3/4) -> R right after = feint the move (own toggle OR the dropdown mode)
 			-- (skips OUR OWN injected keys - they were re-triggering this and breaking Feint M1 / Feint BF)
-			if (feintMovesOn or feintMode == "Moves") and MOVEKEYS[input.KeyCode] and tick() >= feintInjectUntil then
+			if (feintMovesOn or feintMode == "Moves") and MOVEKEYS[input.KeyCode] and tick() >= (_G.VX_INJECT_UNTIL or 0) then
 				task.delay(0.14, function() pressR() end)
 			end
 		end)
@@ -3141,7 +3145,7 @@ do
 			end
 		end
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then local mdl = landedM1Target(); if mdl then lastM1Tgt = mdl end end   -- remember who you're hitting (Auto Air targets THEM)
-		if input.KeyCode == Enum.KeyCode.Three and redOn then                             -- REVERSAL RED: press 3 -> click R (longer hold so it registers)
+		if input.KeyCode == Enum.KeyCode.Three and redOn and tick() >= (_G.VX_INJECT_UNTIL or 0) then   -- REVERSAL RED: press 3 -> click R (ignores injected 3s)
 			task.delay(0.12, function() pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.12); VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game) end) end)
 		end
 		-- ══ AUTO AIR sequences ══
@@ -3152,8 +3156,10 @@ do
 			return c and detectCharName(c) or nil
 		end
 		local function tapKey(kc, hold)
+			_G.VX_INJECT_UNTIL = tick() + 0.35   -- injected: other key-triggered features must ignore this
 			pcall(function() VIM:SendKeyEvent(true, kc, false, game); task.wait(hold or 0.09); VIM:SendKeyEvent(false, kc, false, game) end)
 		end
+		if tick() < (_G.VX_INJECT_UNTIL or 0) then return end   -- this key was INJECTED by a feature - never chain off it
 		-- BULLETPROOF character check: detected name, model name, DISPLAY name, or any Moveset entry containing the word.
 		local function charIs(...)
 			local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
@@ -3165,7 +3171,7 @@ do
 			return false
 		end
 		local function dbgAir(msg) if _G.VX_BF_DEBUG then print("[DreamHub AutoAir] " .. msg) end end
-		local function holdJump() pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.08); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end
+		local function holdJump() _G.VX_INJECT_UNTIL = tick() + 0.35; pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.08); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end
 
 		-- GAMBLER: when you M1 (click) -> press 3 + JUMP at the SAME time (launcher)
 		if autoAirOn and input.UserInputType == Enum.UserInputType.MouseButton1 and charIs("hakari", "rough energy", "gambler") then
