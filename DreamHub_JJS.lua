@@ -177,7 +177,7 @@ do
 	local FEINT_MOVE_KEYS = { [1] = Enum.KeyCode.One, [2] = Enum.KeyCode.Two, [3] = Enum.KeyCode.Three, [4] = Enum.KeyCode.Four }
 	local function pressKeyTap(kc) pcall(function() VirtualInputManager:SendKeyEvent(true, kc, false, game); task.wait(0.045); VirtualInputManager:SendKeyEvent(false, kc, false, game) end) end
 	local function pressMove(n) local kc = FEINT_MOVE_KEYS[tonumber(n) or 0]; if kc then pressKeyTap(kc) end end
-	local savedWS, savedJP, savedAR
+	local savedWS, savedJP, savedAR, bfCollideSaved
 	local liveLoops = 0
 
 	local chainTarget = nil   -- LOCKED target for the whole combo/chain: once a hit starts, keep the SAME enemy (no random switching to whoever drifts closer). Cleared when the chain ends.
@@ -186,8 +186,8 @@ do
 		BackDistance    = 1.5,    -- dead-center on the back
 		LockRange       = 34,
 		LockDuration    = 0.6,    -- track the back through the WHOLE hit + movement (longer = never loses the back)
-		PreAttackDelay  = 0.018,  -- FASTER: minimal settle before the flash (still enough to register the snap)
-		KeyHoldDuration = 0.035,
+		PreAttackDelay  = 0.05,   -- settle a beat after the snap so the flash KEY actually registers (0.018 = sometimes eaten -> no flash)
+		KeyHoldDuration = 0.09,
 		PosLead         = 0.14,   -- lead a MOVING target harder so a runner/dasher's back stays under you
 		AbilityKey      = Enum.KeyCode.Three,
 		Mode            = "Teleport",  -- how to approach before the flash: Teleport / Jump / Side Dash / Back Dash
@@ -373,6 +373,8 @@ do
 			savedWS = hum.WalkSpeed
 			savedJP = hum.JumpPower
 			savedAR = hum.AutoRotate
+			bfCollideSaved = {}
+			for _, p in ipairs(myChar:GetDescendants()) do if p:IsA("BasePart") and p.CanCollide then bfCollideSaved[p] = true; pcall(function() p.CanCollide = false end) end end   -- ANTI-FLING: don't collide while pinned to their back (collision shoved THEM flying)
 		end
 		liveLoops = liveLoops + 1
 		dashGen = dashGen + 1  -- KILL any still-running approach dash so nothing pushes you off the back after the snap
@@ -418,6 +420,7 @@ do
 						hum.WalkSpeed = savedWS
 						hum.JumpPower = savedJP
 					end
+					if bfCollideSaved then for p in pairs(bfCollideSaved) do if p.Parent then pcall(function() p.CanCollide = true end) end end bfCollideSaved = nil end   -- restore collision
 				end
 				return
 			end
@@ -2752,25 +2755,30 @@ do
 		local dir = flat.Magnitude > 0.01 and flat.Unit or Vector3.new(0, 0, -1)
 		return tr.Position - dir * 4
 	end
-	local sdaDir = 1   -- alternate LEFT / RIGHT each landed M1
+	local sdaDir = 1            -- alternate LEFT / RIGHT approach side
+	local sdaCount, sdaLastHit = 0, 0   -- fires on the SECOND landed M1 of a string, not the first
 	local function trigger()
 		if not on then return end
-		if tick() - last < 0.4 then return end   -- once per M1, not a fling on every frame
+		if tick() - last < 0.4 then return end   -- once per swing, not a fling on every frame
 		if tick() - (_G.VX_LAUNCHING or 0) < 0.3 then return end   -- don't reposition during an uppercut launch
-		-- fire ONLY when the M1 LANDED: enemy in melee range, in front of you
+		-- count ONLY landed M1s: enemy in melee range, in front of you
 		local mh = getHRP(myModel()); if not mh then return end
 		local tgt = nearestEnemy(9); local tr = tgt and getHRP(tgt)
 		if not tr then return end
 		local to = tr.Position - mh.Position
 		if to.Magnitude > 9 or mh.CFrame.LookVector:Dot(to.Unit) < 0.35 then return end
+		if tick() - sdaLastHit > 1.2 then sdaCount = 0 end   -- string reset if you paused
+		sdaLastHit = tick(); sdaCount = sdaCount + 1
+		if sdaCount < 2 then return end                       -- 1st M1 = nothing; the SECOND landed M1 triggers the dash
+		sdaCount = 0
 		last = tick()
 		fireKnit("MovementService", "Dash", sdaDir > 0 and "Right" or "Left", true)   -- REAL side dash remote (i-frames + anim)
-		-- LANDED M1 -> spin AROUND them (left/right alternating), same cinematic orbit, still facing them
+		-- SECOND landed M1 -> the M1-BF dash: curve around to their BACK (alternating side), facing them
 		if _G.VX_ORBIT then
 			local d = sdaDir; sdaDir = -sdaDir
-			task.spawn(function() _G.VX_ORBIT(tr, { duration = 0.16, endRadius = math.max(to.Magnitude, 3), extraSweep = math.pi * 0.5, endBehind = false, dir = d }) end)
+			task.spawn(function() _G.VX_ORBIT(tr, { duration = 0.16, endRadius = 3, extraSweep = math.pi * 0.3, endBehind = true, dir = d }) end)
 		end
-		vxLog("SideDash assist (turn-around)")
+		vxLog("SideDash assist -> back")
 	end
 	-- PRIMARY: fire the side dash the instant YOUR character plays an M1 animation (works for every character, survives input-processing)
 	local hooked = setmetatable({}, { __mode = "k" })
@@ -2884,25 +2892,111 @@ do
 		local g = _G.VX_LOCK; local lt = (g and g.get) and g.get() or nil
 		return (lt and lt.Parent) and lt or nearestEnemyChar()
 	end
+	-- helpers for the Auto Air / mid-M1 sequences
+	local autoAirOn = false
+	local lastM1Tgt = nil                 -- the enemy your last LANDED M1 hit (all sequences target THEM, like the Dummy in your captures)
+	local function knitRE(svcName, reName)
+		local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
+		local s = k and k:FindFirstChild(svcName); local re = s and s:FindFirstChild("RE"); return re and re:FindFirstChild(reName)
+	end
+	local function myMoveset(name)
+		local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+		local mv = c and c:FindFirstChild("Moveset"); return mv and mv:FindFirstChild(name)
+	end
+	local function airborneMe()
+		local hrp = myHRP(); if not hrp then return false end
+		local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+		local h = c and c:FindFirstChildOfClass("Humanoid")
+		return (h and h.FloorMaterial == Enum.Material.Air) or false
+	end
+	local function landedM1Target()  -- an enemy in melee range IN FRONT = your M1 landed on them
+		local mh = myHRP(); if not mh then return nil end
+		local mdl = nearestEnemyChar(); if not mdl then return nil end
+		local tr = mdl:FindFirstChild("HumanoidRootPart"); if not tr then return nil end
+		local to = tr.Position - mh.Position
+		if to.Magnitude <= 9 and mh.CFrame.LookVector:Dot(to.Unit) > 0.35 then return mdl end
+		return nil
+	end
 	UIS.InputBegan:Connect(function(input, gpe)
 		if gpe then return end
-		if input.KeyCode == Enum.KeyCode.R and gojoOn and tick() - lastGojo > 0.3 then   -- AUTO GOJO TP: R -> AIM at the locked/nearest enemy, then fire RightActivated -> TP behind them
-			local mdl = currentTarget()
-			local tgt = asPlayerCharacter(mdl)
-			if tgt then
+		-- GOJO TP BACK MID-BATTLE: while you're M1ing, it presses R FOR you (Gojo TP behind) so the combo continues from their back
+		if input.UserInputType == Enum.UserInputType.MouseButton1 and gojoOn and tick() - lastGojo > 1.1 then
+			local mdl = landedM1Target()
+			if mdl then
+				lastM1Tgt = mdl
 				lastGojo = tick()
-				faceTargetNow(mdl)                                                        -- MUST be aiming at the user for R to take them
-				task.delay(0.05, function()
-					local re = gojoRE()
-					if re then pcall(function() re:FireServer(tgt) end)
-					elseif _G.VX_BF_DEBUG then print("[DreamHub] GojoService.RE.RightActivated NOT FOUND (are you Gojo?)") end
+				task.delay(0.22, function()   -- let the M1 register, then the auto-R
+					faceTargetNow(mdl)
+					local re = gojoRE(); if re then pcall(function() re:FireServer(mdl) end) end
 				end)
 			end
 		end
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then local mdl = landedM1Target(); if mdl then lastM1Tgt = mdl end end   -- remember who you're hitting (Auto Air targets THEM)
 		if input.KeyCode == Enum.KeyCode.Three and redOn then                             -- REVERSAL RED: press 3 -> click R (longer hold so it registers)
 			task.delay(0.12, function() pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.12); VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game) end) end)
 		end
+		-- ══ AUTO AIR sequences (one toggle, character-safe: each fires only if YOUR character has that move) ══
+		if autoAirOn and input.KeyCode == Enum.KeyCode.Three then
+			-- LOCUST: you click 3 -> after 2s spam LocustService.RightActivated(target) until you're in the air
+			if knitRE("LocustService", "RightActivated") then
+				task.delay(2, function()
+					local re = knitRE("LocustService", "RightActivated")
+					local tgt = (lastM1Tgt and lastM1Tgt.Parent) and lastM1Tgt or currentTarget()
+					if not (re and tgt) then return end
+					local t0 = tick()
+					while tick() - t0 < 2.5 and not airborneMe() do pcall(function() re:FireServer(tgt) end); task.wait(0.18) end
+				end)
+			end
+		end
+		if autoAirOn and input.KeyCode == Enum.KeyCode.Two then
+			-- TEN SHADOWS: you click 2 (Nue) -> it clicks R for you (MegumiService.RightActivated)
+			if myMoveset("Nue") then
+				task.delay(0.4, function() local re = knitRE("MegumiService", "RightActivated"); if re then pcall(function() re:FireServer() end) end end)
+			end
+		end
+		if autoAirOn and input.KeyCode == Enum.KeyCode.R then
+			-- TEN SHADOWS: you press R -> MegumiService.RightActivated + Rabbit Escape at the same time
+			if myMoveset("Rabbit Escape") then
+				local re = knitRE("MegumiService", "RightActivated"); if re then pcall(function() re:FireServer() end) end
+				task.delay(0.1, function()
+					local mv = myMoveset("Rabbit Escape"); local re2 = knitRE("RabbitEscapeService", "Activated")
+					if mv and re2 then pcall(function() re2:FireServer(mv) end) end
+				end)
+			end
+		end
 	end)
+	-- AUTO AIR anim triggers: Twofold Kick (Gojo) kicks them UP -> click R (RightActivated at the target).
+	-- Gambler: your landed M1 -> fire Rough Energy (the 'click 3 for you' launcher).
+	local TWOFOLD_ANIM = "104749346956269"
+	local lastKickR, lastGamb = 0, 0
+	local hookedAir = setmetatable({}, { __mode = "k" })
+	local function hookAirAnims()
+		local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+		local h = c and c:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
+		if not a or hookedAir[a] then return end
+		hookedAir[a] = a.AnimationPlayed:Connect(function(track)
+			if not autoAirOn then return end
+			local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+"); if not id then return end
+			if id == TWOFOLD_ANIM and tick() - lastKickR > 1.2 then                        -- Twofold Kick -> they're going UP -> R takes them in the air
+				lastKickR = tick()
+				task.delay(0.45, function()
+					local tgt = (lastM1Tgt and lastM1Tgt.Parent) and lastM1Tgt or currentTarget()
+					local re = gojoRE(); if re and tgt then faceTargetNow(tgt); pcall(function() re:FireServer(tgt) end) end
+				end)
+			end
+			if _G.VX_M1_IDS and _G.VX_M1_IDS[id] and myMoveset("Rough Energy") and tick() - lastGamb > 1.4 then   -- GAMBLER: landed M1 -> Rough Energy launcher ('clicks 3 for you')
+				if landedM1Target() then
+					lastGamb = tick()
+					task.delay(0.15, function()
+						local mv = myMoveset("Rough Energy"); local re = knitRE("RoughEnergyService", "Activated")
+						if mv and re then pcall(function() re:FireServer(mv, true) end) end
+					end)
+				end
+			end
+		end)
+	end
+	task.spawn(function() while true do if autoAirOn then pcall(hookAirAnims) end task.wait(0.7) end end)
+	AutoAirApi_set = function(v) autoAirOn = v == true end
 	-- ANIM-DRIVEN backup (your captured ids): keeps aiming through Gojo's R (99920923658527), and the RED
 	-- charge anim (137654778575373) auto-clicks R even if the key-3 press was missed/eaten.
 	local GOJO_R_ANIM, RED_ANIM = "99920923658527", "137654778575373"
@@ -3229,15 +3323,14 @@ local Library do
         ["RightAlt"]          = "RightAlt"
     }
 
-    -- DREAM HUB 4K THEME: pure black panels, crisp WHITE accents + outlines (high-contrast black & white)
     local Themes = {
         ["Preset"] = {
-            ["Background"] = FromRGB(0, 0, 0),
-            ["Inline"] = FromRGB(6, 6, 6),
-            ["Element"] = FromRGB(14, 14, 14),
+            ["Background"] = FromRGB(16, 18, 18),
+            ["Inline"] = FromRGB(21, 24, 24),
+            ["Element"] = FromRGB(30, 34, 34),
             ["Accent"] = FromRGB(255, 255, 255),
-            ["Border"] = FromRGB(255, 255, 255),
-            ["Border 2"] = FromRGB(170, 170, 170)
+            ["Border"] = FromRGB(30, 34, 34),
+            ["Border 2"] = FromRGB(56, 62, 62)
         }
     }
 
@@ -3246,6 +3339,18 @@ local Library do
     Library.Pages.__index = Library.Pages
 
     Library.Theme = TableClone(Themes["Preset"])
+
+    -- per-tier accent (FREE red / PREMIUM gold / PLUS volt-white) over the exact dark theme
+    if VX_TIER == "free" then
+        Library.Theme["Accent"] = FromRGB(240, 45, 58)
+        Library.Theme["Border 2"] = FromRGB(72, 40, 44)
+    elseif VX_TIER == "plus" then
+        Library.Theme["Accent"] = FromRGB(238, 246, 250)
+        Library.Theme["Border 2"] = FromRGB(70, 76, 84)
+    else
+        Library.Theme["Accent"] = FromRGB(245, 190, 70)
+        Library.Theme["Border 2"] = FromRGB(74, 62, 38)
+    end
 
     -- Folders
     pcall(function()
@@ -7098,8 +7203,9 @@ do
     skSec:Toggle({ Name = "Skill 4", Callback = function(b) if SkillsApi then SkillsApi.setKey(4, b) end end })
     skSec:Toggle({ Name = "Special R", Callback = function(b) if SkillsApi then SkillsApi.setKey(5, b) end end })
     skSec:Toggle({ Name = "Awakening G", Callback = function(b) if SkillsApi then SkillsApi.setKey(6, b) end end })
-    skSec:Toggle({ Name = "Auto Gojo TP (R -> behind enemy)", Callback = function(b) if GojoTpApi then GojoTpApi.set(b) end end })
+    skSec:Toggle({ Name = "Gojo TP Back (mid-M1 auto R)", Callback = function(b) if GojoTpApi then GojoTpApi.set(b) end end })
     skSec:Toggle({ Name = "Reversal Red (press 3 -> R)", Callback = function(b) if ReversalRedApi then ReversalRedApi.set(b) end end })
+    skSec:Toggle({ Name = "Auto Air (Gojo/Locust/Gambler/Shadows)", Callback = function(b) if AutoAirApi_set then AutoAirApi_set(b) end end })
     skSec:Dropdown({ Name = "Auto Slam / Uppercut", Items = { "Off", "Down Slam", "Uppercut" }, Default = "Off", Callback = function(m) if M1ComboApi then M1ComboApi.setMode(m) end end })
     skSec:Button({ Name = "Rika Down Slam", Callback = function()
         local chs = workspace:FindFirstChild("Characters"); local ch = (chs and chs:FindFirstChild(LocalPlayer.Name)) or LocalPlayer.Character
