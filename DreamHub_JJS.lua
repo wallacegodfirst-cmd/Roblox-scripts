@@ -361,6 +361,7 @@ do
 					h.CFrame = CFrame.lookAt(h.Position, Vector3.new(targetHRP.Position.X, h.Position.Y, targetHRP.Position.Z))
 					h.AssemblyLinearVelocity = Vector3.new(dir.X * 34, h.AssemblyLinearVelocity.Y, dir.Z * 34)   -- sprint-speed RUN, real physics, no teleport
 				end)
+				pcall(function() local cam = workspace.CurrentCamera; cam.CFrame = cam.CFrame:Lerp(CFrame.lookAt(cam.CFrame.Position, targetHRP.Position), 0.4) end)  -- AIM the camera at them through the run-up
 				task.wait()
 			end
 			jumpNow()                                                                              -- real jump...
@@ -415,6 +416,13 @@ do
 		hum.WalkSpeed = 0
 		hum.JumpPower = 0
 		task.wait(Settings.PreAttackDelay)
+		do  -- WAIT TO BE GROUNDED before the flash key: airborne = the game EATS the ability ('doesn't black flash most of the time' on Jump/arcs)
+			local t0 = tick()
+			while hum.FloorMaterial == Enum.Material.Air and tick() - t0 < 0.4 do
+				pcall(function() myHRP.AssemblyLinearVelocity = Vector3.new(0, -30, 0) end)   -- drop fast onto the ground behind them
+				task.wait(0.03)
+			end
+		end
 		pcall(function()
 			VirtualInputManager:SendKeyEvent(true, Settings.AbilityKey, false, game)
 			task.wait(Settings.KeyHoldDuration)
@@ -703,25 +711,23 @@ local VX_TP_SPEED = 80
 -- Resolve the anti-cheat TELEPORT whitelist remote ROBUSTLY (the hardcoded Knit path goes stale when the
 -- game updates -> teleports set back). Try the known path first, else search for any RemoteEvent named
 -- "Teleport" (preferring an AntiCheat-ish parent). Cached; re-resolves if the cached one is destroyed.
-local vxACRemotes = nil   -- ALL whitelist candidates: the game moves/renames this remote between updates, so fire every match
-local vxACStamp = 0
+local vxACRemote = nil   -- the ONE AntiCheat whitelist remote. Firing extra 'Teleport' remotes broke it - exact path only, single fallback.
 local function vxResolveAC()
-	if vxACRemotes and tick() - vxACStamp < 30 then return vxACRemotes end   -- re-scan every 30s (survives game updates mid-session)
+	if vxACRemote and vxACRemote.Parent then return vxACRemote end
 	local RS = game:GetService("ReplicatedStorage")
-	local list = {}
 	local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
 	local svc = k and k:FindFirstChild("AntiCheatService"); local re = svc and svc:FindFirstChild("RE"); re = re and re:FindFirstChild("Teleport")
-	if re and re:IsA("RemoteEvent") then list[#list + 1] = re end
-	for _, d in ipairs(RS:GetDescendants()) do
-		if d:IsA("RemoteEvent") and string.lower(d.Name) == "teleport" and d ~= re then list[#list + 1] = d end
+	if re and re:IsA("RemoteEvent") then vxACRemote = re; return re end
+	for _, d in ipairs(RS:GetDescendants()) do   -- fallback ONLY if the known path is gone: the first AntiCheat-parented match
+		if d:IsA("RemoteEvent") and string.lower(d.Name) == "teleport" and string.find(string.lower(d:GetFullName()), "anticheat") then vxACRemote = d; return d end
 	end
-	vxACRemotes = list; vxACStamp = tick(); return list
+	return nil
 end
 local vxTeleLastActive = 0  -- last time a teleport actually moved you; the safety loop uses it to know when NO teleport is running
 local function vxACPass()
 	vxTeleLastActive = tick()
-	local list = vxResolveAC()
-	if list then for _, re in ipairs(list) do pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end end
+	local re = vxResolveAC()
+	if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end
 end
 _G.VX_ACPASS = vxACPass   -- expose so the black-flash snap-behind can whitelist its CFrame writes (else the anti-cheat reverts them = never lands on the back)
 local vxTeleGen = 0  -- overlap guard: each teleport takes the next number; a newer one supersedes older holds so rapid teleports (Rika sword) do not fight over your CFrame or leave PlatformStand stuck on (frozen)
@@ -1566,18 +1572,12 @@ do
 		if re and (re:IsA("RemoteEvent") or re:IsA("UnreliableRemoteEvent")) then return re end
 		return nil
 	end
-	local crowColor = nil   -- optional recolor (dropdown)
-	local CROW_COLORS = { Red = Color3.fromRGB(255,40,40), Blue = Color3.fromRGB(60,120,255), Purple = Color3.fromRGB(160,60,255), Green = Color3.fromRGB(60,220,90), White = Color3.fromRGB(240,240,240), Black = Color3.fromRGB(12,12,12) }
 	local expandedCrow = setmetatable({}, { __mode = "k" })   -- expand each crow's hitbox ONCE
 	local function dressCrow(crow, expandMult)  -- expand the hitbox + apply the chosen color (no anchoring when the SERVER is flying it)
 		local function one(p)
 			if not p:IsA("BasePart") then return end
 			pcall(function() p.CanCollide = false end)
 			if not expandedCrow[p] then expandedCrow[p] = true; pcall(function() p.Size = p.Size * (expandMult or 5) end) end   -- BIG hitbox: it clips everything near the target
-			if crowColor then
-				pcall(function() p.Color = crowColor; p.Material = Enum.Material.Neon end)          -- Neon so the color GLOWS
-				pcall(function() if p:IsA("MeshPart") then p.TextureID = "" end end)                -- the mesh texture was hiding the color
-			end
 		end
 		if crow:IsA("BasePart") then one(crow) else for _, p in ipairs(crow:GetDescendants()) do one(p) end end
 	end
@@ -1649,7 +1649,6 @@ do
 	end)
 	CrowUltApi = {
 		set = function(v) on = v == true; if not v then flying = false end end,
-		setColor = function(name) crowColor = CROW_COLORS[name] end,   -- pick a color ('Default' = keeps the game's look)
 	}
 	-- Crow Hit / Lock On: turning this on lets you CLICK a user to lock + red-outline them; any crow you send auto-homes onto that locked target and hits from any distance.
 	CrowHitApi = { set = function(v) crowHitOn = v == true; if _G.VX_LOCK then _G.VX_LOCK.want("crow", crowHitOn) end end }
@@ -2513,7 +2512,7 @@ do
 
 	-- AUTO ULT HEAD OF HEI: when YOUR character plays an M1 ANIMATION (any character's M1 id, shared via _G.VX_M1_IDS) -> press G to ult. Anim-based = fires on a real M1 (incl. hitting the dummy), not just a raw click.
 	local UIS = game:GetService("UserInputService")
-	local HEI_LEAD = 0.26    -- press G as the M1 CONNECTS (the swing takes ~0.25s to land) so the ult combos off the hit. Raise/lower if the timing is off.
+	local HEI_LEAD = 0.26    -- press G as the M1 CONNECTS; adjustable in the UI ('Hei Ult Timing' slider).
 	local heiCd = 0
 	local function heiFire()
 		if tick() - heiCd < 1.2 then return end
@@ -2531,7 +2530,7 @@ do
 	task.spawn(function() while true do if headOn then hookHei() end task.wait(0.7) end end)
 	-- G is pressed ONLY off the detected M1 ANIMATION (any character's M1 id) + a 1.2s cooldown = one timed G per
 	-- M1 swing, not a spam. (Removed the raw-click backup, which fired G on every click incl. GUI clicks.)
-	HeadUltApi = { set = function(v) headOn = v == true end }
+	HeadUltApi = { set = function(v) headOn = v == true end, setLead = function(v) HEI_LEAD = math.clamp(tonumber(v) or 0.26, 0.05, 0.6) end }
 
 	-- AUTO RIKA LOVE SWORD: in Yuta's domain, GRAB a sword (teleport onto it - grabbing a sword IS a whitelisted teleport, and vxGlide fires the AntiCheat Teleport whitelist), then teleport to a user + slash. 4 times, then press 4.
 	local function findSwords()  -- ONLY the exact "Sword" objects at workspace.Domains.Domain.DomainCollider.Sword (NOT the "long" swords)
@@ -2680,11 +2679,17 @@ do
 	local RS = game:GetService("ReplicatedStorage")
 	local busy = false
 	local function acPass() local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services"); local svc = k and k:FindFirstChild("AntiCheatService"); local re = svc and svc:FindFirstChild("RE"); re = re and re:FindFirstChild("Teleport"); if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end end
-	local function behindPos(er)  -- a point behind their back
+	local function behindPos(er)  -- a point behind their back, ON THE GROUND (raycast down - floating in the air broke the follow-up M1)
 		local look = er.CFrame.LookVector; local flat = Vector3.new(look.X, 0, look.Z); local dir = flat.Magnitude > 0.01 and flat.Unit or Vector3.new(0, 0, -1)
-		return er.Position - dir * 3 + Vector3.new(0, 1.5, 0)
+		local p = er.Position - dir * 3
+		local rp = RaycastParams.new(); rp.FilterType = Enum.RaycastFilterType.Exclude
+		local ex = { myModel() }; if er.Parent then ex[#ex + 1] = er.Parent end
+		rp.FilterDescendantsInstances = ex
+		local hit = workspace:Raycast(p + Vector3.new(0, 4, 0), Vector3.new(0, -22, 0), rp)
+		if hit then return Vector3.new(p.X, hit.Position.Y + 3, p.Z) end        -- feet on the floor behind them
+		return Vector3.new(p.X, er.Position.Y, p.Z)                              -- no floor found: at least match THEIR height
 	end
-	local function goBehind(enemyChar)  -- FLY to behind them (smooth), then STAY behind (track their back) ~1s
+	local function goBehind(enemyChar)  -- TELEPORT-style Goku blink to behind them (grounded), then STAY behind ~1s
 		local er = enemyChar and enemyChar:FindFirstChild("HumanoidRootPart"); if not er or busy then return end
 		busy = true
 		playGoku()
@@ -2866,16 +2871,28 @@ do
 		if to.Magnitude > 9 or mh.CFrame.LookVector:Dot(to.Unit) < 0.35 then return end
 		if tick() - sdaLastHit > 1.2 then sdaCount = 0 end   -- string reset if you paused
 		sdaLastHit = tick(); sdaCount = sdaCount + 1
-		if sdaCount < sdaNeed then return end                 -- dash-behind fires on hit #sdaNeed (1-3, your dropdown)
+		if sdaCount < sdaNeed then return end                 -- fires on hit #sdaNeed (1-3, your dropdown)
 		sdaCount = 0
 		last = tick()
-		fireKnit("MovementService", "Dash", sdaDir > 0 and "Right" or "Left", true)   -- REAL side dash remote (i-frames + anim)
-		-- SECOND landed M1 -> the M1-BF dash: curve around to their BACK (alternating side), facing them
-		if _G.VX_ORBIT then
-			local d = sdaDir; sdaDir = -sdaDir
-			task.spawn(function() _G.VX_ORBIT(tr, { duration = 0.16, endRadius = 3, extraSweep = math.pi * 0.3, endBehind = true, dir = d }) end)
-		end
-		vxLog("SideDash assist -> back")
+		-- SWEAT DASH: a REAL evasive dash in a random direction (Left/Right/Back) - remote (i-frames + the
+		-- game's own dash movement/anim) + a matching velocity burst. NO orbit, NO teleport, NO glide.
+		local dirs = { "Left", "Right", "Back" }
+		local pick = dirs[math.random(1, #dirs)]
+		fireKnit("MovementService", "Dash", pick, true)
+		local vmap = { Left = -mh.CFrame.RightVector, Right = mh.CFrame.RightVector, Back = -mh.CFrame.LookVector }
+		local v = vmap[pick]
+		task.spawn(function()   -- short burst so the dash has real bite, then hands control straight back
+			local t0 = tick()
+			while tick() - t0 < 0.12 do
+				local h = getHRP(myModel()); if not h then break end
+				pcall(function()
+					h.AssemblyLinearVelocity = Vector3.new(v.X * 68, math.min(h.AssemblyLinearVelocity.Y, 0), v.Z * 68)
+					h.CFrame = CFrame.lookAt(h.Position, Vector3.new(tr.Position.X, h.Position.Y, tr.Position.Z))   -- keep FACING them through the dash
+				end)
+				task.wait()
+			end
+		end)
+		vxLog("SideDash assist: " .. pick)
 	end
 	-- PRIMARY: fire the side dash the instant YOUR character plays an M1 animation (works for every character, survives input-processing)
 	local hooked = setmetatable({}, { __mode = "k" })
@@ -3062,33 +3079,70 @@ do
 		local function tapKey(kc, hold)
 			pcall(function() VIM:SendKeyEvent(true, kc, false, game); task.wait(hold or 0.09); VIM:SendKeyEvent(false, kc, false, game) end)
 		end
-		-- (character gate: detected name OR the moveset itself - detection failing on some rigs was why Auto Air 'still doesn't work')
-		local function isChar(name, moveA, moveB)
-			if myCharName() == name then return true end
-			if moveA and myMoveset(moveA) then return true end
-			if moveB and myMoveset(moveB) then return true end
+		-- BULLETPROOF character check: detected name, model name, DISPLAY name, or any Moveset entry containing the word.
+		-- (every previous gate style failed on some rigs - this one can't miss)
+		local function charIs(word, ...)
+			word = string.lower(word)
+			local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+			if not c then return false end
+			local n = detectCharName(c); if n and string.lower(n) == word then return true end
+			if string.find(string.lower(c.Name), word, 1, true) then return true end
+			local h = c:FindFirstChildOfClass("Humanoid")
+			if h and string.find(string.lower(h.DisplayName or ""), word, 1, true) then return true end
+			local mv = c:FindFirstChild("Moveset")
+			if mv then
+				for _, m in ipairs(mv:GetChildren()) do
+					local ml = string.lower(m.Name)
+					if string.find(ml, word, 1, true) then return true end
+					for _, extra in ipairs({ ... }) do if string.find(ml, string.lower(extra), 1, true) then return true end end
+				end
+			end
 			return false
 		end
-		if autoAirOn and input.KeyCode == Enum.KeyCode.Three and isChar("Locust") then
-			-- LOCUST: you click 3 -> after 2s keep pressing R (RightActivated) until you're in the air
-			_G.VX_BUSY = tick() + 5
-			task.delay(2, function()
-				local t0 = tick()
-				while autoAirOn and tick() - t0 < 2.6 and not airborneMe() do tapKey(Enum.KeyCode.R); task.wait(0.22) end
-			end)
-			if _G.VX_BF_DEBUG then print("[DreamHub AutoAir] Locust: 3 -> R spam in 2s") end
+		local function dbgAir(msg) if _G.VX_BF_DEBUG then print("[DreamHub AutoAir] " .. msg) end end
+		if autoAirOn and input.KeyCode == Enum.KeyCode.Three then
+			if charIs("locust") then
+				-- LOCUST: you click 3 -> after 2s keep pressing R until you're in the air
+				_G.VX_BUSY = tick() + 5
+				dbgAir("Locust: 3 -> R spam in 2s")
+				task.delay(2, function()
+					local t0 = tick()
+					while autoAirOn and tick() - t0 < 2.6 and not airborneMe() do tapKey(Enum.KeyCode.R); task.wait(0.22) end
+				end)
+			elseif charIs("gojo", "lapse", "blue") then
+				-- GOJO Lapse Blue: you click 3 -> they get pulled UP -> AIM UP and click R
+				_G.VX_BUSY = tick() + 2.2
+				dbgAir("Gojo: Lapse Blue -> aim up + R")
+				task.delay(0.9, function()
+					if not autoAirOn then return end
+					local hrp = myHRP()
+					pcall(function() local cam = workspace.CurrentCamera; cam.CFrame = CFrame.lookAt(cam.CFrame.Position, (hrp and hrp.Position or cam.CFrame.Position) + Vector3.new(0, 60, 12)) end)  -- AIM UP
+					task.wait(0.1)
+					tapKey(Enum.KeyCode.R)
+				end)
+			elseif charIs("hakari", "rough energy", "gambler") then
+				-- GAMBLER: you click 3 -> run the Rough Energy remote (your capture, exactly)
+				_G.VX_BUSY = tick() + 1.5
+				dbgAir("Gambler: 3 -> Rough Energy remote")
+				task.delay(0.1, function()
+					local mv = myMoveset("Rough Energy"); local re = knitRE("RoughEnergyService", "Activated")
+					if mv and re then pcall(function() re:FireServer(mv, true) end) else dbgAir("Gambler: Moveset['Rough Energy'] or remote MISSING") end
+				end)
+			else
+				dbgAir("3 pressed but no Auto Air character matched (Locust/Gojo/Gambler)")
+			end
 		end
-		if autoAirOn and input.KeyCode == Enum.KeyCode.Two and isChar("Megumi", "Nue", "Rabbit Escape") then
+		if autoAirOn and input.KeyCode == Enum.KeyCode.Two and charIs("megumi", "nue", "rabbit") then
 			-- TEN SHADOWS: you click 2 (Nue) -> it clicks R for you
 			_G.VX_BUSY = tick() + 1.5
+			dbgAir("Shadows: 2 -> R")
 			task.delay(0.45, function() if autoAirOn then tapKey(Enum.KeyCode.R) end end)
-			if _G.VX_BF_DEBUG then print("[DreamHub AutoAir] Shadows: 2 -> R") end
 		end
-		if autoAirOn and input.KeyCode == Enum.KeyCode.R and isChar("Megumi", "Nue", "Rabbit Escape") then
+		if autoAirOn and input.KeyCode == Enum.KeyCode.R and charIs("megumi", "nue", "rabbit") then
 			-- TEN SHADOWS: you press R -> it clicks 1 (Rabbit Escape) right after
 			_G.VX_BUSY = tick() + 1.5
+			dbgAir("Shadows: R -> 1")
 			task.delay(0.12, function() if autoAirOn then tapKey(Enum.KeyCode.One) end end)
-			if _G.VX_BF_DEBUG then print("[DreamHub AutoAir] Shadows: R -> 1") end
 		end
 	end)
 	-- AUTO AIR anim triggers: Twofold Kick (Gojo) kicks them UP -> click R (RightActivated at the target).
@@ -3111,15 +3165,6 @@ do
 					if tgt then faceTargetNow(tgt) end
 					pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.09); VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game) end)
 				end)
-			end
-			if _G.VX_M1_IDS and _G.VX_M1_IDS[id] and myMoveset("Rough Energy") and tick() - lastGamb > 1.4 then   -- GAMBLER: landed M1 -> click 3 for you (Rough Energy launcher)
-				if landedM1Target() then
-					lastGamb = tick(); _G.VX_BUSY = tick() + 1.4
-					task.delay(0.15, function()
-						if not autoAirOn then return end
-						pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Three, false, game); task.wait(0.09); VIM:SendKeyEvent(false, Enum.KeyCode.Three, false, game) end)
-					end)
-				end
 			end
 		end)
 	end
@@ -7323,15 +7368,15 @@ do
         mmGui.Name = "DreamMin"; mmGui.ResetOnSpawn = false; mmGui.IgnoreGuiInset = false; mmGui.DisplayOrder = 9600
         pcall(function() mmGui.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
         if not mmGui.Parent then mmGui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui") end
-        local btn = Instance.new("TextButton")
+        local btn = Instance.new("ImageButton")
         -- top-CENTER, small, NOT draggable (draggable was capturing touch input = the "can't move for a few seconds" freeze).
-        btn.Size = UDim2.fromOffset(38, 38); btn.Position = UDim2.new(0.5, -19, 0, 6); btn.AnchorPoint = Vector2.new(0, 0)
-        btn.BackgroundColor3 = Color3.fromRGB(120, 80, 255); btn.Text = "-"; btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        btn.Font = Enum.Font.GothamBold; btn.TextSize = 24; btn.AutoButtonColor = true
+        btn.Size = UDim2.fromOffset(40, 40); btn.Position = UDim2.new(0.5, -20, 0, 6); btn.AnchorPoint = Vector2.new(0, 0)
+        btn.BackgroundColor3 = Color3.fromRGB(10, 10, 12); btn.Image = "rbxassetid://108005745550201"   -- the Dream logo
+        btn.ScaleType = Enum.ScaleType.Fit; btn.AutoButtonColor = true
         btn.Active = true; btn.Draggable = false; btn.ZIndex = 10; btn.Parent = mmGui
         Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 10)
         local us = Instance.new("UIStroke"); us.Color = Color3.fromRGB(255, 255, 255); us.Thickness = 1.2; us.Transparency = 0.5; us.Parent = btn
-        btn.MouseButton1Click:Connect(function() pcall(function() Window:SetOpen(not Window.IsOpen); btn.Text = Window.IsOpen and "-" or "+" end) end)
+        btn.MouseButton1Click:Connect(function() pcall(function() Window:SetOpen(not Window.IsOpen) end) end)
     end)
 
     Window:Category("Vaultix")
@@ -7397,8 +7442,8 @@ do
     ultSec:Toggle({ Name = "Auto Ult", Callback = function(b) if AutoUltApi then AutoUltApi.set(b) end end })
     ultSec:Toggle({ Name = "Crow Ult (G)", Callback = function(b) if CrowUltApi then CrowUltApi.set(b) end end })
     ultSec:Toggle({ Name = "Crow Lock On", Callback = function(b) if CrowHitApi then CrowHitApi.set(b) end end })
-    ultSec:Dropdown({ Name = "Crow Color", Items = { "Default", "Red", "Blue", "Purple", "Green", "White", "Black" }, Default = "Default", Callback = function(v) if CrowUltApi and CrowUltApi.setColor then CrowUltApi.setColor(v) end end })
     ultSec:Toggle({ Name = "Head of Hei Ult", Callback = function(b) if HeadUltApi then HeadUltApi.set(b) end end })
+    ultSec:Slider({ Name = "Hei Ult Timing", Min = 0.05, Max = 0.6, Default = 0.26, Decimals = 0.01, Suffix = "s", Callback = function(v) if HeadUltApi and HeadUltApi.setLead then HeadUltApi.setLead(v) end end })
     ultSec:Toggle({ Name = "Rika Love Sword", Callback = function(b) if RikaSwordApi then RikaSwordApi.set(b) end end })
     ultSec:Toggle({ Name = "Rika Down Slam", Callback = function(b) if SlamApi then SlamApi.set(b) end end })
     ultSec:Toggle({ Name = "Goku M1", Callback = function(b) if GokuApi then GokuApi.set(b) end end })
