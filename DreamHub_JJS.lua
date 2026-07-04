@@ -533,8 +533,22 @@ local function vxResolveAC()
 	end
 	vxACRemote = best; return best
 end
-local function vxACPass() local re = vxResolveAC(); if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end end
+local vxTeleLastActive = 0  -- last time a teleport actually moved you; the safety loop uses it to know when NO teleport is running
+local function vxACPass() vxTeleLastActive = tick(); local re = vxResolveAC(); if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end end
 local vxTeleGen = 0  -- overlap guard: each teleport takes the next number; a newer one supersedes older holds so rapid teleports (Rika sword) do not fight over your CFrame or leave PlatformStand stuck on (frozen)
+-- SAFETY: never leave you stuck in PlatformStand (the "frozen after teleport" pose in the screenshot).
+-- Once no teleport has touched you for ~0.4s, force PlatformStand OFF so you can ALWAYS move again.
+task.spawn(function()
+	local Players = game:GetService("Players"); local LP = Players.LocalPlayer
+	while true do
+		task.wait(0.3)
+		if tick() - vxTeleLastActive > 0.4 then
+			local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+			local h = c and c:FindFirstChildOfClass("Humanoid")
+			if h and h.PlatformStand then pcall(function() h.PlatformStand = false end) end
+		end
+	end
+end)
 local function vxGlide(target, onArrive, holdTime)  -- faithful port of your forceTeleport: clean constraints, spam CFrame, PlatformStand. holdTime = how long to keep re-asserting (longer = far teleports stick).
 	local LP = game:GetService("Players").LocalPlayer
 	task.spawn(function()
@@ -950,10 +964,9 @@ do
 		local c = myChar(); local hum = c and c:FindFirstChildOfClass("Humanoid")
 		local airborne = hum ~= nil and hum.FloorMaterial == Enum.Material.Air
 		local rising = hrp.AssemblyLinearVelocity.Y > 2                            -- you jumped / are going up
-		local falling = hrp.AssemblyLinearVelocity.Y < -6                          -- DROPPING off a ledge/building (not wall-running up) - don't parkour here
 		local intoWall = UIS:IsKeyDown(Enum.KeyCode.W)                             -- you're actively pushing toward the wall (intent) - not just standing near one in a fight
-		-- parkour when you APPROACH a wall while jumping/rising into it + holding W. Falling OFF a building (Y dropping) no longer plays the wall-run anim.
-		if intoWall and (airborne or rising) and not falling and wallNear() and not climbing then
+		-- parkour when you APPROACH a wall while jumping/airborne + holding W.
+		if intoWall and (airborne or rising) and wallNear() and not climbing then
 			-- movement key -> anim (swapped to match in-game: A/going-left uses the right-lean clip, D/going-right uses the left-lean clip)
 			local key = (UIS:IsKeyDown(Enum.KeyCode.A) and "parkRight") or (UIS:IsKeyDown(Enum.KeyCode.D) and "parkLeft") or "parkRight"
 			for k, t in pairs(sideTracks) do if k ~= key and t.IsPlaying then pcall(function() t:Stop() end) end end  -- stop the other side's anim
@@ -1349,16 +1362,14 @@ do
 		anchorCrow(crow)                                                            -- every frame: keep it anchored so gravity/server can't drop or shove it
 		local cp = crow:GetPivot().Position                                         -- read AND write via the same pivot frame (no part-offset drift pulling it toward the floor)
 		local hd = Vector3.new(tp.X - cp.X, 0, tp.Z - cp.Z).Magnitude
-		if hd <= DET then                                                           -- horizontally over the target -> detonate ON them, exactly ONCE
-			if not detonated then detonated = true; flying = false; click() end
+		if hd <= DET then                                                           -- OVER the target: HOLD it hovering ABOVE them (follow). NO auto-click/detonate (clicking made it drop). You click when YOU want.
+			moveCrow(crow, CFrame.new(Vector3.new(tp.X, tp.Y + 8, tp.Z)))
 			return
 		end
-		-- ALTITUDE scales with horizontal distance: far = cruise HIGH (never skim the ground at range),
-		-- close = drop onto the target's upper body. This kills the "aims at the ground when far" bug.
-		local aimY = tp.Y + math.clamp(hd * 0.6, 6, 70)
-		local myY = cp.Y                                                             -- also never fly BELOW your own current height while still far -> no dipping toward distant ground
-		if hd > DET + 6 and aimY < myY then aimY = myY end
-		if aimY < tp.Y + 4 then aimY = tp.Y + 4 end                                  -- HARD FLOOR: never below the target's torso, so the crow can never touch the ground
+		-- ALTITUDE: stay HIGH the whole way so it NEVER goes down / skims the ground - only ever hover ABOVE the target, no matter how far.
+		local aimY = tp.Y + math.clamp(hd * 0.6, 10, 70)
+		if aimY < cp.Y then aimY = cp.Y end                                          -- never DESCEND while still approaching -> it can't dip toward the ground
+		if aimY < tp.Y + 8 then aimY = tp.Y + 8 end                                  -- always at least ~8 studs above them
 		local aim = Vector3.new(tp.X, aimY, tp.Z)
 		local dir = aim - cp
 		local nextPos = cp + dir.Unit * math.min(dir.Magnitude, STEP)               -- STRONG step -> crosses long range fast and overrides any snap-back the next frame
