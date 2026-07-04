@@ -34,7 +34,10 @@ Build and run combos with correct TSB timing.
 
 ## Plus - Tech Builder Plus (the full hub)
 Everything in Prem PLUS these tabs:
-- Fight - the combo builder Fight page (one-click lock + combo).
+- Fight - the combo builder Fight page (one-click lock + combo) + Adapt.
+- Adapt - one toggle: auto-picks your character's combos and chains them on the nearest enemy,
+  turns on every anti-move dodge, and retunes the M1 ping profile to your live ping. Turning it
+  off restores exactly the toggles you had before.
 - Player - WalkSpeed, Fly (+ flight animation), Noclip, Infinite Jump, Jump Power, Auto Uppercut,
   Auto Downslam, Anti-Ragdoll, Anti-Void, Invisibility, No Animations, Upside Down, No Cooldowns,
   Aimlock (+ range), Streak Notifier.

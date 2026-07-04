@@ -1491,6 +1491,59 @@ onRunDone = function(natural)
 	if natural and CFG.autoCombo then task.delay(0.5, function() if CFG.autoCombo and STATE=="idle" then autoNext() end end) end
 end
 
+-- ══════ ADAPT: one toggle that reads the fight and tunes everything ══════
+-- ON  → auto-picks YOUR character's combos, auto-chains them on the nearest enemy,
+--       turns ON every anti-move dodge, and retunes the M1 ping profile to your LIVE ping.
+-- OFF → restores exactly the toggles you had before (non-destructive).
+local ADAPT_ANTI = {"antiRagdoll","antiVoid","antiTableFlip","antiSerious","antiOmni","antiGarou","antiIncin","antiDeath","antiDC"}
+local adaptSaved, adaptTok = nil, 0
+local function pingMs()
+	local ok,v = pcall(function() return game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue() end)
+	return (ok and tonumber(v)) or 120
+end
+local function pxAdaptTune()
+	local p = pingMs()                          -- pick the M1 gap that survives your ping
+	if p >= 260 then CFG.m1Profile="HighPing"
+	elseif p >= 150 then CFG.m1Profile="Safe"
+	elseif p >= 80  then CFG.m1Profile="Normal"
+	else CFG.m1Profile="Fast" end
+	local d = detectCharacter()                 -- use the right roster for whatever you're holding
+	if d and selChar ~= d then selChar = d end
+end
+function pxSetAdapt(v)
+	PX.adapt = v
+	if v then
+		adaptSaved = { m1=CFG.m1Profile, auto=CFG.autoCombo, lock=CFG.lockOn, anti={} }
+		for _,f in ipairs(ADAPT_ANTI) do adaptSaved.anti[f]=PX[f]; PX[f]=true end   -- dodge everything
+		CFG.lockOn = true; if lockToggle then pcall(function() lockToggle:Set(true) end) end
+		CFG.autoCombo = true
+		pcall(pxAdaptTune)
+		adaptTok = adaptTok + 1; local myTok = adaptTok
+		if STATE=="idle" and currentTargetPart() then autoNext() end
+		task.spawn(function()
+			while PX.adapt and myTok==adaptTok do
+				pcall(pxAdaptTune)
+				for _,f in ipairs(ADAPT_ANTI) do PX[f]=true end       -- keep every dodge armed
+				if not CFG.autoCombo then CFG.autoCombo=true end        -- keep the chain alive
+				if STATE=="idle" and currentTargetPart() then pcall(autoNext) end
+				task.wait(1.5)
+			end
+		end)
+		notify("Adapt","ON — auto-combo + dodge-all + live ping tune",3)
+	else
+		adaptTok = adaptTok + 1
+		if adaptSaved then
+			for _,f in ipairs(ADAPT_ANTI) do PX[f]=adaptSaved.anti[f] end
+			CFG.m1Profile = adaptSaved.m1 or CFG.m1Profile
+			CFG.autoCombo = adaptSaved.auto or false
+			CFG.lockOn    = adaptSaved.lock or false
+			if lockToggle then pcall(function() lockToggle:Set(CFG.lockOn) end) end
+			adaptSaved = nil
+		end
+		notify("Adapt","OFF — restored your toggles",2)
+	end
+end
+
 -- ───────── FIGHT tab (reworked: the one-click "just win the 1v1" page) ─────────
 do
 	local tab = Window:CreateTab("Fight", 4483362458)
@@ -1513,6 +1566,8 @@ do
 			if STATE=="idle" and currentTargetPart() then autoNext() end
 		end
 	end })
+	tab:CreateSection("Adapt")
+	tab:CreateToggle({ Name = "Adapt (auto-combo + dodge everything + tune to your ping)", CurrentValue = false, Callback = function(v) pxSetAdapt(v) end })
 	tab:CreateSection("Make hits land")
 	tab:CreateToggle({ Name = "Chase: close the gap so the combo reaches (bounded, no noob-running)", CurrentValue = CFG.chase and true or false, Callback = function(v) CFG.chase = v; notify("Chase", v and "ON" or "OFF (runs in place)", 2) end })
 	tab:CreateToggle({ Name = "M1 Reach (hitbox expander — visual, server may ignore)", CurrentValue = CFG.hitbox and true or false, Callback = function(v) setHitbox(v); notify("M1 Reach", v and "ON" or "OFF", 2) end })
@@ -1743,7 +1798,7 @@ local PX = { wsOn=false, ws=16, fly=false, flySpd=60, noclip=false, invis=false,
 	autoUpper=false, autoDownslam=false, aura=false, auraName="Fire", auraRainbow=false, auraSize=1.4,
 	aimlock=false, aimRange=250, streak=false, lastKills=nil, lastStreak=nil,
 	antiTableFlip=false, antiSerious=false, antiOmni=false, antiGarou=false, antiIncin=false, antiDeath=false, antiDC=false, ultAlert=false,
-	jumpOnCounter=false, counterLockOnly=false,
+	jumpOnCounter=false, counterLockOnly=false, adapt=false,
 	gojoSel="Repulse", disgName="", disgOn=false, idleId="", walkId="", fps=false, fpsSaved=nil, spots={}, flingBV=nil, nameTag=nil }
 
 -- ── anti-send-back teleport ──

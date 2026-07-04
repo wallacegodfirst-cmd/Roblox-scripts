@@ -26,6 +26,7 @@ The Strongest Battlegrounds is server-validated, so nothing is guaranteed god-mo
 - Fixed the Volt **"out of local registers (>200)"** compile crash.
 
 ### PLUS hub tabs
+- **Adapt** (Fight tab) — one toggle that reads the fight and tunes everything: auto-picks **your character's** combos and chains them on the nearest enemy, arms **every** anti-move dodge, and retunes the **M1 ping profile to your live ping**. Toggling off restores the exact toggles you had before.
 - **Player** — WalkSpeed, **Fly (with flight animation)**, Noclip, Infinite Jump, Jump Power, Invisibility, No-Anim, Upside Down, No-Cooldown, **sticky Aimlock (aims at the head)**, **Streak Notifier** (reads the killstreak tag).
 - **Auras** — anime **body-wrapping ki-flame aura** + rising energy + glowing outline + ground ring, **13 colors + Rainbow + Size slider**.
 - **Keybinds** — Anime Teleport, Ghost Mode, HRP Freeze, Gojo (Repulse / Erase / Attract).
