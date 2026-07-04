@@ -475,7 +475,7 @@ end
 -- BATCH 2 MODULES  (Item ESP + Auto Grab, Auto Skills, Invisibility, Auto Parkour, Teleport)
 -- Each module exposes a small API; the GUI below wires them.
 -- ============================================================
-local ItemsApi, SkillsApi, InvisApi, ParkourApi, TPApi, M1ComboApi, CounterApi, LockOnApi, AutoUltApi, AntiAfkApi, NoclipApi, FarmApi, SpeedApi, FlyApi, PlayerEspApi, DashApi, TrainApi, DrinkApi, AntiStunApi, AntiRagdollApi, SideDashApi, EvasiveApi, AntiDomainApi, ResetApi, InfJumpApi, AntiCounterApi, AutoAdaptApi, JumpHeadApi, AntiBlackHoleApi, CrowUltApi, CrowHitApi, AutoDomainAdaptApi, HeadUltApi, RikaSwordApi, SlamApi, GokuApi, HollowApi, VisualApi, AimAssistApi
+local ItemsApi, SkillsApi, InvisApi, ParkourApi, TPApi, M1ComboApi, CounterApi, LockOnApi, AutoUltApi, AntiAfkApi, NoclipApi, FarmApi, SpeedApi, FlyApi, PlayerEspApi, DashApi, TrainApi, DrinkApi, AntiStunApi, AntiRagdollApi, SideDashApi, EvasiveApi, AntiDomainApi, ResetApi, InfJumpApi, AntiCounterApi, AutoAdaptApi, JumpHeadApi, AntiBlackHoleApi, CrowUltApi, CrowHitApi, AutoDomainAdaptApi, HeadUltApi, RikaSwordApi, SlamApi, GokuApi, HollowApi, VisualApi, AimAssistApi, RemoveTreesApi
 
 -- EVERY character's M1 anim id (user-captured) - set EARLY so Head of Hei / Goku M1 / Side Dash all detect a real M1 regardless of module load order
 do
@@ -1338,7 +1338,7 @@ do
 	end
 	-- CONTROLLER: re-read the target's LIVE position every frame (lock-on), ANCHOR + hard-drive the WHOLE crow HIGH toward the target so it never touches the ground or snaps back, then click ONCE to detonate on arrival.
 	-- Runs for Crow Ult (G -> flying) AND Crow Lock On (crowHitOn -> auto-home ANY crow that spawns).  We connect after the game loads, so our per-frame write wins = the crow can't get pulled off course.
-	local HOVER, STEP, DET = 12, 18, 6   -- HOVER: studs to stay ABOVE the target while cruising | STEP: studs/frame (strong, long range) | DET: horizontal distance to detonate
+	local HOVER, STEP, DET = 8, 10, 9   -- HOVER: studs above target | STEP: max studs/frame far away | DET: horizontal radius at which it just HOLDS on the target (follows it)
 	local detonated = false              -- one-shot per crow: reset when the crow despawns, so we click exactly once per detonation (no M1 spam)
 	RunService.Heartbeat:Connect(function()
 		if not (flying or crowHitOn) then return end
@@ -1362,7 +1362,8 @@ do
 		if aimY < tp.Y + 8 then aimY = tp.Y + 8 end                                  -- always at least ~8 studs above them
 		local aim = Vector3.new(tp.X, aimY, tp.Z)
 		local dir = aim - cp
-		local nextPos = cp + dir.Unit * math.min(dir.Magnitude, STEP)               -- STRONG step -> crosses long range fast and overrides any snap-back the next frame
+		local stepCap = (hd < 26) and 4 or STEP                                     -- EASE IN when close so it settles ON the target instead of blowing way past it
+		local nextPos = cp + dir.Unit * math.min(dir.Magnitude, stepCap)            -- never moves further than the target (no overshoot); tracks the exact live position
 		local look = Vector3.new(tp.X, nextPos.Y, tp.Z)
 		if (look - nextPos).Magnitude < 0.05 then moveCrow(crow, CFrame.new(nextPos))  -- crow is right over the target: look-at == pos would make a NaN CFrame, so place without a facing
 		else moveCrow(crow, CFrame.new(nextPos, look)) end
@@ -1821,16 +1822,31 @@ do
 	local RunService = game:GetService("RunService")
 	local on = false
 	local function myModel() local chars = workspace:FindFirstChild("Characters"); return (chars and chars:FindFirstChild(LP.Name)) or LP.Character end
-	local NAMES = { "Stun", "Stunned", "HitStun", "Hitstun", "Knockback", "Knockbacked", "Blockstun", "BlockStun", "Guardbreak", "GuardBreak", "Stagger" }
+	local NAMES = { "Stun", "Stunned", "HitStun", "Hitstun", "eStun", "Knockback", "Knockbacked", "Blockstun", "BlockStun", "Guardbreak", "GuardBreak", "Stagger" }
+	local baseWS, baseJP = 16, 50
 	RunService.Heartbeat:Connect(function()  -- every frame so a stun is cleared the instant it lands (value writes = cheap). Covers every common stun/knockback flag JJS uses.
 		if not on then return end
-		local m = myModel(); local info = m and m:FindFirstChild("Info")
-		if not info then return end
-		for _, nm in ipairs(NAMES) do
-			local v = info:FindFirstChild(nm)
-			if v and (v:IsA("NumberValue") or v:IsA("IntValue") or v:IsA("BoolValue")) then
-				pcall(function() if typeof(v.Value) == "boolean" then v.Value = false else v.Value = 0 end end)
+		local m = myModel(); if not m then return end
+		local hum = m:FindFirstChildOfClass("Humanoid")
+		local info = m:FindFirstChild("Info")
+		if info then
+			for _, nm in ipairs(NAMES) do
+				local v = info:FindFirstChild(nm)
+				if v and (v:IsA("NumberValue") or v:IsA("IntValue") or v:IsA("BoolValue")) then
+					pcall(function() if typeof(v.Value) == "boolean" then v.Value = false else v.Value = 0 end end)
+				end
 			end
+		end
+		if hum then
+			pcall(function()
+				if hum.WalkSpeed > 8 then baseWS = hum.WalkSpeed end        -- remember your real speed while un-stunned
+				if hum.JumpPower > 8 then baseJP = hum.JumpPower end
+				if hum.WalkSpeed < 1 then hum.WalkSpeed = baseWS end        -- a stun froze you (WS=0) -> restore movement
+				if hum.JumpPower < 1 then hum.JumpPower = baseJP end
+				local st = hum:GetState()
+				if st == Enum.HumanoidStateType.Physics or st == Enum.HumanoidStateType.FallingDown then hum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+			end)
+			for _, nm in ipairs(NAMES) do if hum:GetAttribute(nm) ~= nil then pcall(function() hum:SetAttribute(nm, false) end) end end
 		end
 	end)
 	AntiStunApi = { set = function(v) on = v == true end }
@@ -1844,24 +1860,45 @@ do
 	local LP = Players.LocalPlayer
 	local on = false
 	local function myModel() local chars = workspace:FindFirstChild("Characters"); return (chars and chars:FindFirstChild(LP.Name)) or LP.Character end
+	local hookedHum = nil
+	local function protectStates(hum)  -- disable the ragdoll/falling states + snap OUT if the game forces one
+		if not hum then return end
+		pcall(function()
+			hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+			hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+		end)
+		if hookedHum ~= hum then
+			hookedHum = hum
+			hum.StateChanged:Connect(function(_, new)
+				if not on then return end
+				if new == Enum.HumanoidStateType.Ragdoll or new == Enum.HumanoidStateType.FallingDown then
+					pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+				end
+			end)
+		end
+	end
 	task.spawn(function()
 		while true do
 			if on then
 				local m = myModel()
 				if m then
 					local hum = m:FindFirstChildOfClass("Humanoid")
+					protectStates(hum)
+					if hum and hum.PlatformStand then pcall(function() hum.PlatformStand = false end) end
 					local info = m:FindFirstChild("Info")
 					local rag = info and (info:FindFirstChild("Ragdoll") or info:FindFirstChild("Ragdolled"))
-					local ragged = (hum and hum.PlatformStand) or (rag and rag.Value and rag.Value ~= false and rag.Value ~= 0) or false
-					if ragged then  -- only fight ragdoll while it's actually happening (constant fighting = the jank/crush you felt)
-						if hum then pcall(function() hum.PlatformStand = false end) end
-						if rag then pcall(function() if typeof(rag.Value) == "boolean" then rag.Value = false else rag.Value = 0 end end) end
-						local rc = m:FindFirstChild("RagdollConstraints")
-						if rc then for _, c in ipairs(rc:GetDescendants()) do if c:IsA("Constraint") and c.Enabled then pcall(function() c.Enabled = false end) end end end
+					if rag then pcall(function() if typeof(rag.Value) == "boolean" then rag.Value = false else rag.Value = 0 end end) end
+					local rc = m:FindFirstChild("RagdollConstraints")
+					if rc then for _, c in ipairs(rc:GetDescendants()) do if c:IsA("Constraint") and c.Enabled then pcall(function() c.Enabled = false end) end end end
+					for _, d in ipairs(m:GetDescendants()) do   -- kill custom ragdoll joints, re-enable the normal ones
+						pcall(function()
+							if d:IsA("BallSocketConstraint") then d.Enabled = false
+							elseif d:IsA("Motor6D") and not d.Enabled then d.Enabled = true end
+						end)
 					end
 				end
 			end
-			task.wait(0.08)
+			task.wait(0.15)
 		end
 	end)
 	AntiRagdollApi = { set = function(v) on = v == true end }
@@ -2541,17 +2578,58 @@ do
 		if dmode == "Cycle" then idx = (idx % #CYCLE) + 1; return CYCLE[idx] end
 		return dmode  -- Back / Right / Left
 	end
+	local function selfHit()  -- YOU got hit / are inside a move (stun/knockback marker on YOUR body) -> dash out NOW
+		local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+		if not c then return false end
+		local info = c:FindFirstChild("Info")
+		if info then for _, nm in ipairs({ "Stun", "Stunned", "HitStun", "Hitstun", "eStun", "BlockStun", "Knockback" }) do
+			local v = info:FindFirstChild(nm); if v and v.Value and v.Value ~= false and v.Value ~= 0 then return true end
+		end end
+		local h = c:FindFirstChildOfClass("Humanoid")
+		if h and (h.PlatformStand or h:GetAttribute("Stun") == true or h:GetAttribute("HitStun") == true) then return true end
+		return false
+	end
 	task.spawn(function()
 		while true do
-			if on and tick() - last > 0.35 and enemyAttacking() then
+			if on and tick() - last > 0.22 and (enemyAttacking() or selfHit()) then   -- react to an incoming swing OR the instant YOU get hit / are inside a move
 				last = tick()
-				local d = pickDir()
-				fireKnit("MovementService", "Dash", d, true)  -- ONLY the remote: Dash(dir, true) - the `true` is the evasive/i-frame flag (back/left/right). No velocity shove.
+				fireKnit("MovementService", "Dash", pickDir(), true)  -- Dash(dir, true) = the i-frame evasive dash (back/left/right)
 			end
-			task.wait(0.06)
+			task.wait(0.04)
 		end
 	end)
 	EvasiveApi = { set = function(v) on = v == true end, setDir = function(m) dmode = m or "Cycle" end }
+end
+
+-- ============================================================
+-- MODULE: REMOVE TREES  (hide the map trees so you can see the fight better)
+-- ============================================================
+do
+	local on = false
+	local hidden = setmetatable({}, { __mode = "k" })   -- part -> its original transparency (so we can restore)
+	local function treesRoot()
+		local map = workspace:FindFirstChild("Map"); local d = map and map:FindFirstChild("Destructible")
+		if d then local t = d:FindFirstChild("Trees", true); if t then return t end end   -- workspace.Map.Destructible...Trees
+		return nil
+	end
+	task.spawn(function()
+		while true do
+			if on then
+				local t = treesRoot()
+				if t then
+					for _, p in ipairs(t:GetDescendants()) do
+						if p:IsA("BasePart") and hidden[p] == nil then hidden[p] = p.Transparency; pcall(function() p.Transparency = 1 end) end
+						if p:IsA("Decal") or p:IsA("Texture") then pcall(function() p.Transparency = 1 end) end
+					end
+				end
+			end
+			task.wait(0.6)   -- re-hide trees that stream back in
+		end
+	end)
+	RemoveTreesApi = { set = function(v)
+		on = v == true
+		if not on then for p, tr in pairs(hidden) do if p and p.Parent then pcall(function() p.Transparency = tr end) end hidden[p] = nil end end   -- restore
+	end }
 end
 
 -- ============================================================
@@ -6637,6 +6715,22 @@ do
     local tierNice = (VX_TIER == "free" and "Free") or (VX_TIER == "plus" and "Plus") or "Premium"
     local Window = Library:Window({ Name = "Dream Hub", SubTitle = "JJS  -  " .. tierNice, ExpiresIn = "lifetime" })
 
+    -- MINIMIZE button (PC + mobile): a small floating, draggable tap button that hides/shows the whole menu.
+    pcall(function()
+        local mmGui = Instance.new("ScreenGui")
+        mmGui.Name = "\0"; mmGui.ResetOnSpawn = false; mmGui.IgnoreGuiInset = true; mmGui.DisplayOrder = 9600
+        pcall(function() mmGui.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
+        if not mmGui.Parent then mmGui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui") end
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.fromOffset(44, 44); btn.Position = UDim2.new(0, 14, 0, 14); btn.AnchorPoint = Vector2.new(0, 0)
+        btn.BackgroundColor3 = Color3.fromRGB(120, 80, 255); btn.Text = "-"; btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        btn.Font = Enum.Font.GothamBold; btn.TextSize = 26; btn.AutoButtonColor = true
+        btn.Active = true; btn.Draggable = true; btn.Parent = mmGui
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 10)
+        local us = Instance.new("UIStroke"); us.Color = Color3.fromRGB(255, 255, 255); us.Thickness = 1.2; us.Transparency = 0.5; us.Parent = btn
+        btn.MouseButton1Click:Connect(function() pcall(function() Window:SetOpen(not Window.IsOpen); btn.Text = Window.IsOpen and "-" or "+" end) end)
+    end)
+
     Window:Category("Vaultix")
 
     -- ===================== COMBAT =====================
@@ -6720,6 +6814,7 @@ do
     local mvSub = MovePage:SubPage({ Name = "Movement", Columns = 2 })
     local coreSec = mvSub:Section({ Name = "Core", Side = 1 })
     coreSec:Toggle({ Name = "Auto Parkour", Callback = function(b) if ParkourApi then ParkourApi.set(b) end end })
+    coreSec:Toggle({ Name = "Remove Trees (see better)", Callback = function(b) if RemoveTreesApi then RemoveTreesApi.set(b) end end })
     coreSec:Toggle({ Name = "Infinite Jump", Callback = function(b) if InfJumpApi then InfJumpApi.set(b) end end })
     coreSec:Button({ Name = "Dash Forward", Callback = function() if DashApi then DashApi.forward() end end })
     if tier("plus") then
