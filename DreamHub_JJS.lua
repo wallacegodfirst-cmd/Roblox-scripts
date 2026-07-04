@@ -419,6 +419,19 @@ do
 		if inputState == Enum.UserInputState.Begin then doEPress() end
 		return Enum.ContextActionResult.Sink
 	end, false, 1000, Enum.KeyCode.E)
+		-- M1 BLACK FLASH (reliable): in "M1 Black Flash" mode, EVERY left-click fires the flash (debounced).
+		-- The old anim-only detection caught only the FIRST M1 (one anim id) then stopped - this fixes 'works once'.
+		do
+			local UIS_M1 = game:GetService("UserInputService")
+			UIS_M1.InputBegan:Connect(function(input, gpe)
+				if gpe then return end
+				if input.UserInputType == Enum.UserInputType.MouseButton1 and Settings.Mode == "M1 Black Flash" and tick() - lastM1 > 0.25 then
+					lastM1 = tick()
+					if _G.VX_BF_DEBUG then print("[DreamHub BF] click -> M1 black flash") end
+					if runChain then runChain() end
+				end
+			end)
+		end
 
 	-- MOBILE SUPPORT: a floating tap button so phone players (no keyboard E) can fire the chosen chain approach. Toggled via ChainApi.setMobile. M1 Black Flash needs no button (M1 auto-fires) but the button still works.
 	local mobileGui, mobileBtn
@@ -2113,8 +2126,9 @@ do
 		return false
 	end
 	local SUKUNA_DOMAIN_IDS = { ["125442768208685"] = true, ["134795274895344"] = true, ["121752268008113"] = true }  -- Sukuna domain HIT anims -> spam 4 for 10s
-	local sukunaSpamUntil = 0
-	local selfHooked = setmetatable({}, { __mode = "k" })  -- hook YOUR animator so we know when YOU cast a domain / are caught in Sukuna's
+	local GOJO_DOMAIN_IDS = { ["138196552148011"] = true }  -- Gojo domain HIT anim -> press 4 ONCE
+	local sukunaSpamUntil, gojoAdaptCd, frozenCd = 0, 0, 0
+	local selfHooked = setmetatable({}, { __mode = "k" })  -- hook YOUR animator so we know when YOU cast a domain / are caught in Sukuna's or Gojo's
 	local function hookSelfDomain()
 		local m = myModel(); local h = m and m:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
 		if not a or selfHooked[a] then return end
@@ -2126,8 +2140,25 @@ do
 				sukunaSpamUntil = tick() + 10
 				if not wasActive then task.spawn(function() while tick() < sukunaSpamUntil do pressFour(); task.wait(0.25) end end) end
 			end
+			if GOJO_DOMAIN_IDS[id] and domainAdaptOn and tick() - gojoAdaptCd > 2 then gojoAdaptCd = tick(); pressFour() end   -- caught in GOJO'S domain -> ADAPT: press 4 ONCE
 		end)
 	end
+	-- GOJO / frozen detection: if you are TRYING to move (input a direction) but your body isn't actually
+	-- moving (frozen by Gojo's Infinite Void), press 4 ONCE to adapt.
+	task.spawn(function()
+		local UIS = game:GetService("UserInputService")
+		while true do
+			task.wait(0.15)
+			if domainAdaptOn and tick() - frozenCd > 2 then
+				local m = myModel(); local hum = m and m:FindFirstChildOfClass("Humanoid"); local hrp = m and m:FindFirstChild("HumanoidRootPart")
+				if hum and hrp then
+					local wantsMove = hum.MoveDirection.Magnitude > 0.1 or UIS:IsKeyDown(Enum.KeyCode.W) or UIS:IsKeyDown(Enum.KeyCode.A) or UIS:IsKeyDown(Enum.KeyCode.S) or UIS:IsKeyDown(Enum.KeyCode.D)
+					local vel = Vector3.new(hrp.AssemblyLinearVelocity.X, 0, hrp.AssemblyLinearVelocity.Z).Magnitude
+					if wantsMove and vel < 1.5 then frozenCd = tick(); pressFour() end   -- you're inputting movement but not moving = frozen -> adapt once
+				end
+			end
+		end
+	end)
 	task.spawn(function()  -- workspace.Domains scan: Anti-Domain escape (ANY domain, incl. vessel - not just anim-id) + Auto-Domain-Adapt spam + black-hole EFFECT scan
 		local lastDom, lastReactedDom, domType, domStart, bhCd, dbgCd = nil, nil, "other", 0, 0, 0
 		local function dbg(msg) if VX_DEBUG and VX_NOTIFY and tick() - dbgCd > 2 then dbgCd = tick(); pcall(function() VX_NOTIFY(msg, nil) end) end end  -- ONLY with Debug on; never leaks internals during normal play
