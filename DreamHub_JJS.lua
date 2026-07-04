@@ -298,6 +298,7 @@ do
 		liveLoops = liveLoops + 1
 		dashGen = dashGen + 1  -- KILL any still-running approach dash so nothing pushes you off the back after the snap
 		local behindPos, targetPos = getBehind(targetHRP)
+		if _G.VX_ACPASS then _G.VX_ACPASS() end   -- whitelist the snap so the anti-cheat doesn't revert it (= you actually land on their back)
 		myHRP.CFrame = CFrame.lookAt(behindPos, targetPos)
 		myHRP.AssemblyLinearVelocity = Vector3.zero
 		myHRP.AssemblyAngularVelocity = Vector3.zero
@@ -344,6 +345,7 @@ do
 				return
 			end
 			behindPos, targetPos = getBehind(targetHRP)
+			if _G.VX_ACPASS then _G.VX_ACPASS() end   -- whitelist every re-snap so the anti-cheat can't drag you off their back
 			myHRP.CFrame = CFrame.lookAt(behindPos, targetPos)
 			myHRP.AssemblyLinearVelocity = Vector3.zero
 			myHRP.AssemblyAngularVelocity = Vector3.zero
@@ -478,6 +480,7 @@ do
 				dashGen = dashGen + 1
 				local bp = getBehind(tHRP)
 				local faceAt = Vector3.new(tHRP.Position.X, bp.Y, tHRP.Position.Z)   -- face the attacker, dead flat
+				if _G.VX_ACPASS then _G.VX_ACPASS() end   -- whitelist so the anti-cheat doesn't revert the snap
 				pcall(function() myHRP.CFrame = CFrame.lookAt(bp, faceAt); myHRP.AssemblyLinearVelocity = Vector3.zero end)
 			end
 		end
@@ -555,6 +558,7 @@ local function vxResolveAC()
 end
 local vxTeleLastActive = 0  -- last time a teleport actually moved you; the safety loop uses it to know when NO teleport is running
 local function vxACPass() vxTeleLastActive = tick(); local re = vxResolveAC(); if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end end
+_G.VX_ACPASS = vxACPass   -- expose so the black-flash snap-behind can whitelist its CFrame writes (else the anti-cheat reverts them = never lands on the back)
 local vxTeleGen = 0  -- overlap guard: each teleport takes the next number; a newer one supersedes older holds so rapid teleports (Rika sword) do not fight over your CFrame or leave PlatformStand stuck on (frozen)
 -- SAFETY: never leave you stuck in PlatformStand (the "frozen after teleport" pose in the screenshot).
 -- Once no teleport has touched you for ~0.4s, force PlatformStand OFF so you can ALWAYS move again.
