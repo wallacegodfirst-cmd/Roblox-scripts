@@ -161,11 +161,22 @@ do
 	-- values ONCE (first hit), and only restore when the LAST overlapping loop finishes.
 	local lockActive = false
 	local lastApproach = 0  -- the jump/dash flourish must fire ONLY on the first hit of a chain; doing it every chained hit breaks the chain (dash knocks you off / airborne jump kills the flash)
-	local feintN, bfCount, lastBF = 0, 0, 0  -- Auto Feint: after N black flashes (feintN = 1..4), press R (feint) + reset; 0 = off
+	-- AUTO FEINT (two modes):
+	--   "BF" = Feint Black Flash: after feintBFStop black flashes, press R (feint) then stop.
+	--   "M1" = Feint M1: after feintM1Count of YOUR M1s, press R (feint) then a chosen move key (1-4).
+	local feintMode = "Off"          -- "Off" / "BF" / "M1"
+	local feintBFStop = 2            -- Mode A: stop after this many black flashes
+	local feintM1Count = 2           -- Mode B: press R after this many of your M1s
+	local feintMove = 1              -- Mode B: which move (1-4) to press after the R feint
+	local bfCount, lastBF = 0, 0
+	local m1FeintCount, lastM1Feint = 0, 0
 	local lastM1 = 0      -- M1 Black Flash: debounce so a fast M1 burst only starts the chain once per click
 	local burstUntil = 0  -- self-driving modes (M1 Black Flash / Back Dash / Auto Counter) run the PROVEN teleport chain even if the master "Auto Chain" toggle is off, for a short burst after each trigger
 	local runChain        -- forward-declared: fires the proven teleport black-flash chain (doBackstab), optionally snapping to a specific attacker first (Auto Counter)
 	local function pressR() pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.05); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game) end) end
+	local FEINT_MOVE_KEYS = { [1] = Enum.KeyCode.One, [2] = Enum.KeyCode.Two, [3] = Enum.KeyCode.Three, [4] = Enum.KeyCode.Four }
+	local function pressKeyTap(kc) pcall(function() VirtualInputManager:SendKeyEvent(true, kc, false, game); task.wait(0.045); VirtualInputManager:SendKeyEvent(false, kc, false, game) end) end
+	local function pressMove(n) local kc = FEINT_MOVE_KEYS[tonumber(n) or 0]; if kc then pressKeyTap(kc) end end
 	local savedWS, savedJP, savedAR
 	local liveLoops = 0
 
@@ -347,17 +358,26 @@ do
 			local animId = track.Animation and track.Animation.AnimationId
 			if not animId then return end
 			-- M1 BLACK FLASH: your M1 -> the SAME proven teleport black flash (the chain), just triggered by your M1 instead of pressing E for you.
-			if Settings.Mode == "M1 Black Flash" and tick() - lastM1 > 0.3 then
-				if _G.VX_IS_M1 and _G.VX_IS_M1(track) then lastM1 = tick(); task.delay(0.06, function() if Settings.Mode == "M1 Black Flash" and humanoid.Health > 0 and runChain then runChain() end end) end   -- FASTER: 0.06 (was 0.1) so the flash follows your M1 near-instantly
+			if Settings.Mode == "M1 Black Flash" and tick() - lastM1 > 0.22 then
+				if _G.VX_IS_M1 and _G.VX_IS_M1(track) then lastM1 = tick(); task.delay(0.06, function() if Settings.Mode == "M1 Black Flash" and humanoid.Health > 0 and runChain then runChain() end end) end   -- FASTER: 0.06 so the flash follows your M1 near-instantly
+			end
+			-- AUTO FEINT Mode B ("Feint M1"): count YOUR M1 swings (Vessel/any M1 anim + a click); after feintM1Count, press R (feint) then the chosen move (1-4).
+			if feintMode == "M1" and _G.VX_IS_M1 and _G.VX_IS_M1(track) then
+				if tick() - lastM1Feint > 1.5 then m1FeintCount = 0 end   -- reset if you stopped M1ing
+				lastM1Feint = tick(); m1FeintCount = m1FeintCount + 1
+				if m1FeintCount >= feintM1Count then
+					m1FeintCount = 0
+					task.delay(0.08, function() pressR(); task.wait(0.06); pressMove(feintMove) end)   -- feint, then the move
+				end
 			end
 			local delayTime = AnimationTriggers[animId]
 			if not delayTime and StraightAnimations[animId] then delayTime = 0.19 end
 			if delayTime then
-				-- AUTO FEINT (works whether or not the chain is on): count your black flashes; after feintN, press R (feint) then stop. Then you click E again.
-				if feintN > 0 then
+				-- AUTO FEINT Mode A ("Feint Black Flash"): count black flashes; after feintBFStop, press R (feint) then stop. Then you click E again.
+				if feintMode == "BF" and feintBFStop > 0 then
 					if tick() - lastBF > 1.5 then bfCount = 0 end   -- reset the count if you stopped flashing
 					lastBF = tick(); bfCount = bfCount + 1
-					if bfCount >= feintN then bfCount = 0; task.delay(delayTime + 0.05, pressR) end
+					if bfCount >= feintBFStop then bfCount = 0; task.delay(delayTime + 0.05, pressR) end
 				end
 				-- the wind-up re-press = the BLACK FLASH + chain extension. ALL modes use this proven conversion (chain on, OR a self-driving burst from M1/Back Dash/Counter).
 				if ScriptEnabled or tick() < burstUntil then
@@ -368,38 +388,23 @@ do
 	end
 	if LocalPlayer.Character then setupCharacter(LocalPlayer.Character) end
 	LocalPlayer.CharacterAdded:Connect(setupCharacter)
-	local function handleBackDashE()  -- Back Dash is a 2-stage E: #1 quick side dash to LINE UP behind the target (no flash), #2 W-forward -> dash back -> Black Flash.
+	local function handleBackDashE()  -- Back Dash is a 2-stage E: #1 = Black Flash now; #2 = walk away ~3-4 studs -> dash back (Q) -> Black Flash.
 		if backDashStage == 0 then
 			backDashStage = 1
-			-- E #1: quick basic side dash for positioning + a fast arc toward their back. LOCK the target for the follow-up. NO flash yet.
-			task.spawn(function()
-				local tgt = getNearestEnemy(Settings.LockRange); local tr = getHRP(tgt)
-				if tgt then chainTarget = tgt; chainTargetT = tick() end
-				-- dash toward the side that gets you around their back
-				local side = "Right"
-				if tr then
-					local myHRP = getHRP(myCharResolved())
-					if myHRP then local rel = tr.CFrame:ToObjectSpace(myHRP.CFrame); if rel.X < 0 then side = "Left" end end   -- go around the near side
-				end
-				fireDash(side); clientDash(side, 60, 0.1)
-				if tr then
-					for _ = 1, 5 do   -- fast arc toward directly-behind (predicts their movement via getBehind)
-						local h = getHRP(myCharResolved()); if not (h and tr.Parent) then break end
-						local bp = select(1, getBehind(tr))
-						pcall(function() h.CFrame = CFrame.lookAt(h.Position:Lerp(bp, 0.45), Vector3.new(tr.Position.X, h.Position.Y, tr.Position.Z)); h.AssemblyLinearVelocity = Vector3.zero end)
-						task.wait(0.02)
-					end
-				end
-			end)
+			-- E #1: just Black Flash immediately (the proven teleport-behind + conversion).
+			if runChain then runChain() end
 		else
 			backDashStage = 0
-			task.spawn(function()                                                  -- E #2: W forward briefly (close in) -> dash BACK -> snap to their back -> Black Flash
-				pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game) end)
-				task.wait(0.1)
-				pcall(function() VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game) end)
+			task.spawn(function()                                                  -- E #2: walk AWAY ~3-4 studs -> dash back (Q) -> snap to their back -> Black Flash
+				local tgt = getNearestEnemy(Settings.LockRange)                    -- lock the target so the flash returns to THEM after the retreat
+				if tgt then chainTarget = tgt; chainTargetT = tick() end
+				pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.S, false, game) end)   -- walk backward, away from them
+				task.wait(0.16)                                                     -- ~3-4 studs at run speed
+				pcall(function() VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.S, false, game) end)
+				pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Q, false, game); task.wait(0.03); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Q, false, game) end)  -- dash (Q)
 				fireDash("Back"); clientDash("Back", 62, 0.08)
-				task.wait(0.08)                                                     -- short: let the back-dash register, then flash instantly (was 0.2 = felt delayed)
-				if runChain then runChain() end                                     -- snaps to the LOCKED back + converts = Black Flash
+				task.wait(0.08)                                                     -- let the dash register, then flash
+				if runChain then runChain() end                                     -- snap to the LOCKED back + convert = Black Flash
 			end)
 		end
 	end
@@ -466,7 +471,10 @@ do
 		setLockRange = function(v) if type(v) == "number" then Settings.LockRange = v end end,
 		setKey = function(kc) if typeof(kc) == "EnumItem" then Settings.AbilityKey = kc end end,
 		setMode = function(m) if type(m) == "string" then Settings.Mode = m; backDashStage = 0; chainTarget = nil; if mobileBtn then mobileBtn.Text = mobileLabel() end end end,   -- Teleport / Jump / Side Dash / Back Dash (2-stage E) / M1 Black Flash (M1 fires the chain)
-		setFeint = function(n) feintN = tonumber(n) or 0 end,                            -- Auto Feint: press R after this many (1-4) black flashes; 0 = off
+		setFeintMode = function(m) feintMode = (m == "BF" or m == "M1") and m or "Off"; bfCount = 0; m1FeintCount = 0 end,  -- Off / BF (Feint Black Flash) / M1 (Feint M1)
+		setFeintBFStop = function(n) feintBFStop = tonumber(n) or 2 end,                  -- Mode A: press R after this many black flashes
+		setFeintM1Count = function(n) feintM1Count = tonumber(n) or 2 end,                -- Mode B: press R after this many of your M1s
+		setFeintMove = function(n) feintMove = tonumber(n) or 1 end,                      -- Mode B: which move (1-4) to press after the feint
 		backstab = function(tgt) if runChain then runChain(tgt) end end,                 -- Auto Counter -> the proven teleport black flash on WHO swung
 		setMobile = function(v) setMobileBtn(v == true) end,                             -- MOBILE: show/hide the floating tap-to-fire button (phone = no keyboard E)
 	}
@@ -6582,7 +6590,12 @@ do
         else BFApi.SetEnabled(false); ChainApi.setEnabled(false) end
     end })
     bfSec:Dropdown({ Name = "Approach", Items = { "Teleport", "Jump", "Side Dash", "Back Dash", "M1 Black Flash" }, Default = "Teleport", Callback = function(m) if ChainApi then ChainApi.setMode(m) end end })
-    bfSec:Dropdown({ Name = "Auto Feint", Items = { "Off", "1", "2", "3", "4" }, Default = "Off", Callback = function(v) if ChainApi then ChainApi.setFeint(v == "Off" and 0 or v) end end })
+    bfSec:Dropdown({ Name = "Auto Feint", Items = { "Off", "Feint Black Flash", "Feint M1" }, Default = "Off", Callback = function(v)
+        if ChainApi then ChainApi.setFeintMode(v == "Feint Black Flash" and "BF" or (v == "Feint M1" and "M1" or "Off")) end
+    end })
+    bfSec:Dropdown({ Name = "A - Stop after (black flashes)", Items = { "1", "2", "3", "4" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintBFStop(v) end end })
+    bfSec:Dropdown({ Name = "B - Feint after (M1s)", Items = { "1", "2", "3" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintM1Count(v) end end })
+    bfSec:Dropdown({ Name = "B - Move after feint", Items = { "1", "2", "3", "4" }, Default = "1", Callback = function(v) if ChainApi then ChainApi.setFeintMove(v) end end })
     bfSec:Slider({ Name = "Cooldown", Min = 0.1, Max = 1, Default = 0.45, Decimals = 0.01, Suffix = "s", Callback = function(v) if BFApi then BFApi.SetCooldown(v) end end })
     if tier("premium") then
         bfSec:Slider({ Name = "Back Dist", Min = 1, Max = 6, Default = 2, Decimals = 0.1, Callback = function(v) if ChainApi then ChainApi.setBackDistance(v) end end })
