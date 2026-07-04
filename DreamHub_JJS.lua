@@ -504,7 +504,7 @@ end
 -- BATCH 2 MODULES  (Item ESP + Auto Grab, Auto Skills, Invisibility, Auto Parkour, Teleport)
 -- Each module exposes a small API; the GUI below wires them.
 -- ============================================================
-local ItemsApi, SkillsApi, InvisApi, ParkourApi, TPApi, M1ComboApi, CounterApi, LockOnApi, AutoUltApi, AntiAfkApi, NoclipApi, FarmApi, SpeedApi, FlyApi, PlayerEspApi, DashApi, TrainApi, DrinkApi, AntiStunApi, AntiRagdollApi, SideDashApi, EvasiveApi, AntiDomainApi, ResetApi, InfJumpApi, AntiCounterApi, AutoAdaptApi, JumpHeadApi, AntiBlackHoleApi, CrowUltApi, CrowHitApi, AutoDomainAdaptApi, HeadUltApi, RikaSwordApi, SlamApi, GokuApi, HollowApi, VisualApi, AimAssistApi, RemoveTreesApi
+local ItemsApi, SkillsApi, InvisApi, ParkourApi, TPApi, M1ComboApi, CounterApi, LockOnApi, AutoUltApi, AntiAfkApi, NoclipApi, FarmApi, SpeedApi, FlyApi, PlayerEspApi, DashApi, TrainApi, DrinkApi, AntiStunApi, AntiRagdollApi, SideDashApi, EvasiveApi, AntiDomainApi, ResetApi, InfJumpApi, AntiCounterApi, AutoAdaptApi, JumpHeadApi, AntiBlackHoleApi, CrowUltApi, CrowHitApi, AutoDomainAdaptApi, HeadUltApi, RikaSwordApi, SlamApi, GokuApi, HollowApi, VisualApi, AimAssistApi, RemoveTreesApi, GojoTpApi, ReversalRedApi
 
 -- EVERY character's M1 anim id (user-captured) - set EARLY so Head of Hei / Goku M1 / Side Dash all detect a real M1 regardless of module load order
 do
@@ -2685,6 +2685,44 @@ do
 		end
 	end)
 	EvasiveApi = { set = function(v) on = v == true end, setDir = function(m) dmode = m or "Cycle" end }
+end
+
+-- ============================================================
+-- MODULE: GOJO TP (R) + REVERSAL RED (3 -> R)
+-- ============================================================
+do
+	local Players = game:GetService("Players")
+	local UIS = game:GetService("UserInputService")
+	local VIM = game:GetService("VirtualInputManager")
+	local RS = game:GetService("ReplicatedStorage")
+	local LP = Players.LocalPlayer
+	local gojoOn, redOn, lastGojo = false, false, 0
+	local function myHRP() local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character; return c and c:FindFirstChild("HumanoidRootPart") end
+	local function nearestEnemyChar()
+		local hrp = myHRP(); if not hrp then return nil end
+		local best, bd
+		local function chk(m) if m and m.Name ~= LP.Name and m ~= LP.Character then local r = m:FindFirstChild("HumanoidRootPart"); local h = m:FindFirstChildOfClass("Humanoid"); if r and h and h.Health > 0 then local d = (r.Position - hrp.Position).Magnitude; if not bd or d < bd then best, bd = m, d end end end end
+		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP then chk(plr.Character) end end
+		local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do chk(m) end end
+		return best
+	end
+	local function gojoRE()  -- GojoService.RE.RightActivated -> fires with a target Character = TP behind them
+		local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
+		local s = k and k:FindFirstChild("GojoService"); local re = s and s:FindFirstChild("RE"); return re and re:FindFirstChild("RightActivated")
+	end
+	UIS.InputBegan:Connect(function(input, gpe)
+		if gpe then return end
+		if input.KeyCode == Enum.KeyCode.R and gojoOn and tick() - lastGojo > 0.3 then   -- AUTO GOJO TP: R -> fire RightActivated at the locked/nearest enemy -> TP behind them
+			local g = _G.VX_LOCK; local lt = (g and g.get) and g.get() or nil
+			local tgt = (lt and lt.Parent) and lt or nearestEnemyChar()
+			if tgt then lastGojo = tick(); local re = gojoRE(); if re then pcall(function() re:FireServer(tgt) end) end end
+		end
+		if input.KeyCode == Enum.KeyCode.Three and redOn then                             -- REVERSAL RED: press 3 -> also press R
+			task.delay(0.08, function() pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game) end) end)
+		end
+	end)
+	GojoTpApi = { set = function(v) gojoOn = v == true end }
+	ReversalRedApi = { set = function(v) redOn = v == true end }
 end
 
 -- ============================================================
@@ -6868,6 +6906,8 @@ do
     skSec:Toggle({ Name = "Skill 4", Callback = function(b) if SkillsApi then SkillsApi.setKey(4, b) end end })
     skSec:Toggle({ Name = "Special R", Callback = function(b) if SkillsApi then SkillsApi.setKey(5, b) end end })
     skSec:Toggle({ Name = "Awakening G", Callback = function(b) if SkillsApi then SkillsApi.setKey(6, b) end end })
+    skSec:Toggle({ Name = "Auto Gojo TP (R -> behind enemy)", Callback = function(b) if GojoTpApi then GojoTpApi.set(b) end end })
+    skSec:Toggle({ Name = "Reversal Red (press 3 -> R)", Callback = function(b) if ReversalRedApi then ReversalRedApi.set(b) end end })
     skSec:Dropdown({ Name = "M1 Finisher", Items = { "Off", "Down Slam", "Uppercut" }, Default = "Off", Callback = function(m) if M1ComboApi then M1ComboApi.setMode(m) end end })
     skSec:Button({ Name = "Rika Down Slam", Callback = function()
         local chs = workspace:FindFirstChild("Characters"); local ch = (chs and chs:FindFirstChild(LocalPlayer.Name)) or LocalPlayer.Character
