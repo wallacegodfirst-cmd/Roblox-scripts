@@ -318,7 +318,7 @@ do
 			diff = diff + sweepDir * extraSweep                               -- widen the arc in a stable direction (real circling)
 			local angle = startAngle + diff * e
 			local radius = startRadius + (endRadius - startRadius) * e + radialBias * math.sin(e * math.pi)
-			if radius < 2 then radius = 2 end                                 -- never INSIDE their body (that's the fling)
+			if radius < 3 then radius = 3 end                                 -- never INSIDE their body (that's the fling)
 			local y = baseY + (tp.Y - tp0.Y) + yArc * math.sin(e * math.pi)   -- follow their height + optional jump arc
 			local pos = Vector3.new(tp.X + math.cos(angle) * radius, y, tp.Z + math.sin(angle) * radius)
 			local step = pos - lastPos
@@ -520,7 +520,8 @@ do
 			if tr and tr.Parent then                                            -- 1) normal side-dash black flash
 				playAnim("rbxassetid://75203303352791"); playAnim("rbxassetid://96489184596023")
 				fireDash("Right")
-				orbitAround(tr, { duration = 0.16, endRadius = Settings.BackDistance, extraSweep = math.pi * 0.25, endBehind = true })
+				local mh0 = getHRP(myCharResolved()); if mh0 then pcall(function() mh0.AssemblyLinearVelocity = Vector3.zero end) end   -- kill the dash-remote velocity BEFORE the orbit (that burst was the back-dash fling)
+				orbitAround(tr, { duration = 0.16, endRadius = math.max(Settings.BackDistance, 3), extraSweep = math.pi * 0.25, endBehind = true })
 			end
 			if runChain then runChain(tgt) end
 			-- 2) BACKGROUND WATCHER on THAT target: when they're FACING you (their back turned away), dash behind + flash
@@ -538,7 +539,8 @@ do
 						chainTarget = tgt; chainTargetT = tick()
 						playAnim("rbxassetid://134581973800784")                -- back-dash anim
 						fireDash("Back")
-						orbitAround(tr2, { duration = 0.18, endRadius = Settings.BackDistance, extraSweep = math.pi * 0.3, endBehind = true })  -- quick dash AROUND to the open back
+						local mh2 = getHRP(myCharResolved()); if mh2 then pcall(function() mh2.AssemblyLinearVelocity = Vector3.zero end) end   -- no dash-burst fling
+						orbitAround(tr2, { duration = 0.18, endRadius = math.max(Settings.BackDistance, 3), extraSweep = math.pi * 0.3, endBehind = true })  -- quick dash AROUND to the open back
 						if runChain then runChain(tgt) end                      -- black flash
 						return                                                  -- one counter-flash per E press
 					end
@@ -629,10 +631,10 @@ do
 		mobileBtn.Size = UDim2.fromOffset(108, 46); mobileBtn.Position = UDim2.new(1, -128, 1, -170); mobileBtn.AnchorPoint = Vector2.new(0, 0)
 		mobileBtn.BackgroundColor3 = Color3.fromRGB(226, 46, 58); mobileBtn.Text = mobileLabel(); mobileBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 		mobileBtn.Font = Enum.Font.GothamBold; mobileBtn.TextSize = 13; mobileBtn.AutoButtonColor = true
-		mobileBtn.Active = true; mobileBtn.Draggable = true; mobileBtn.Visible = false; mobileBtn.Parent = mobileGui
+		mobileBtn.Active = true; mobileBtn.Draggable = false; mobileBtn.Visible = false; mobileBtn.ZIndex = 20; mobileBtn.Parent = mobileGui
 		local uc = Instance.new("UICorner"); uc.CornerRadius = UDim.new(0, 9); uc.Parent = mobileBtn
 		local us = Instance.new("UIStroke"); us.Color = Color3.fromRGB(255, 255, 255); us.Thickness = 1.2; us.Transparency = 0.55; us.Parent = mobileBtn
-		mobileBtn.MouseButton1Click:Connect(function() doEPress() end)
+		mobileBtn.MouseButton1Click:Connect(function() doEPress() end)   -- tap = fire the black flash for the current mode (works on phone)
 	end
 	local function setMobileBtn(v)
 		buildMobile()
@@ -2903,25 +2905,34 @@ do
 		if sdaCount < sdaNeed then return end                 -- fires on hit #sdaNeed (1-3, your dropdown)
 		sdaCount = 0
 		last = tick()
-		-- SWEAT DASH: a REAL evasive dash - LEFT or RIGHT only (never away from the target) - remote (i-frames
-		-- + the game's own dash movement/anim) + a matching velocity burst. NO orbit, NO teleport, NO glide.
-		local dirs = { "Left", "Right" }
-		local pick = dirs[math.random(1, #dirs)]
-		fireKnit("MovementService", "Dash", pick, true)
-		local vmap = { Left = -mh.CFrame.RightVector, Right = mh.CFrame.RightVector }
-		local v = vmap[pick]
-		task.spawn(function()   -- short burst so the dash has real bite, then hands control straight back
+		-- PRO SWEAT: dash to the RIGHT and curl BEHIND them (like a 10k+ player spacing their string) - the game's
+		-- real dash (i-frames + anim) + a SOFT eased velocity curl to the back. No teleport, no snap, no glide.
+		fireKnit("MovementService", "Dash", "Right", true)
+		local h0 = getHRP(myModel()); if h0 then pcall(function() h0.AssemblyLinearVelocity = Vector3.zero end) end
+		task.spawn(function()
+			local dur = 0.26
 			local t0 = tick()
-			while tick() - t0 < 0.12 do
-				local h = getHRP(myModel()); if not h then break end
+			while tick() - t0 < dur do
+				local h = getHRP(myModel()); local trl = getHRP(tgt); if not (h and trl and trl.Parent) then break end
+				local e = (tick() - t0) / dur; e = e * e * (3 - 2 * e)                          -- smoothstep = soft accel/decel
+				-- aim point curls from 'to their right side' to 'directly behind them', led by their velocity
+				local look = trl.CFrame.LookVector; local flat = Vector3.new(look.X, 0, look.Z)
+				local bdir = flat.Magnitude > 0.01 and flat.Unit or Vector3.new(0, 0, -1)
+				local rdir = Vector3.new(bdir.Z, 0, -bdir.X)                                     -- their right
+				local okv, tv = pcall(function() return trl.AssemblyLinearVelocity end)
+				local lead = (okv and tv and tv.Magnitude > 1) and Vector3.new(tv.X, 0, tv.Z) * 0.12 * e or Vector3.zero
+				local aim = trl.Position + lead - bdir * 3 + rdir * (3.2 * (1 - e))              -- side -> back, always >=3 studs out (no overlap)
+				local h2 = getHRP(myModel())
+				local to = aim - h2.Position
 				pcall(function()
-					h.AssemblyLinearVelocity = Vector3.new(v.X * 68, math.min(h.AssemblyLinearVelocity.Y, 0), v.Z * 68)
-					h.CFrame = CFrame.lookAt(h.Position, Vector3.new(tr.Position.X, h.Position.Y, tr.Position.Z))   -- keep FACING them through the dash
+					h2.AssemblyLinearVelocity = Vector3.new(to.X * 9, math.min(h2.AssemblyLinearVelocity.Y, 0), to.Z * 9)   -- SOFT pull (velocity, not CFrame) = weighty + legit
+					h2.CFrame = CFrame.lookAt(h2.Position, Vector3.new(trl.Position.X, h2.Position.Y, trl.Position.Z))       -- always face them
 				end)
 				task.wait()
 			end
+			local h = getHRP(myModel()); if h then pcall(function() h.AssemblyLinearVelocity = Vector3.new(0, math.min(h.AssemblyLinearVelocity.Y, 0), 0) end) end
 		end)
-		vxLog("SideDash assist: " .. pick)
+		vxLog("SideDash assist: sweat -> back")
 	end
 	-- BLOCK PUNISH (part of Side Dash Assist): the enemy you're hitting raises BLOCK -> instantly get BEHIND
 	-- them and M1 (their block faces the wrong way = free hit). This is the 'escape their block and hit them'.
@@ -3089,6 +3100,7 @@ do
 	end
 	-- helpers for the Auto Air / mid-M1 sequences
 	local autoAirOn = false
+	local lastVesselAir = 0
 	local lastM1Tgt = nil                 -- the enemy your last LANDED M1 hit (all sequences target THEM, like the Dummy in your captures)
 	local function knitRE(svcName, reName)
 		local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
@@ -3143,95 +3155,73 @@ do
 			pcall(function() VIM:SendKeyEvent(true, kc, false, game); task.wait(hold or 0.09); VIM:SendKeyEvent(false, kc, false, game) end)
 		end
 		-- BULLETPROOF character check: detected name, model name, DISPLAY name, or any Moveset entry containing the word.
-		-- (every previous gate style failed on some rigs - this one can't miss)
-		local function charIs(word, ...)
-			word = string.lower(word)
+		local function charIs(...)
 			local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
 			if not c then return false end
-			local n = detectCharName(c); if n and string.lower(n) == word then return true end
-			if string.find(string.lower(c.Name), word, 1, true) then return true end
-			local h = c:FindFirstChildOfClass("Humanoid")
-			if h and string.find(string.lower(h.DisplayName or ""), word, 1, true) then return true end
-			local mv = c:FindFirstChild("Moveset")
-			if mv then
-				for _, m in ipairs(mv:GetChildren()) do
-					local ml = string.lower(m.Name)
-					if string.find(ml, word, 1, true) then return true end
-					for _, extra in ipairs({ ... }) do if string.find(ml, string.lower(extra), 1, true) then return true end end
-				end
-			end
+			local n = c:FindFirstChildOfClass("Humanoid")
+			local hay = string.lower((c.Name or "") .. " " .. (n and n.DisplayName or "") .. " " .. (detectCharName(c) or ""))
+			local mv = c:FindFirstChild("Moveset"); if mv then for _, m in ipairs(mv:GetChildren()) do hay = hay .. " " .. string.lower(m.Name) end end
+			for _, w in ipairs({ ... }) do if string.find(hay, string.lower(w), 1, true) then return true end end
 			return false
 		end
 		local function dbgAir(msg) if _G.VX_BF_DEBUG then print("[DreamHub AutoAir] " .. msg) end end
-		if autoAirOn and input.KeyCode == Enum.KeyCode.Three then
-			if charIs("locust") then
-				-- LOCUST: you click 3 -> after 2s keep pressing R until you're in the air
-				_G.VX_BUSY = tick() + 5
-				dbgAir("Locust: 3 -> R spam in 2s")
-				task.delay(2, function()
-					local t0 = tick()
-					while autoAirOn and tick() - t0 < 2.6 and not airborneMe() do tapKey(Enum.KeyCode.R); task.wait(0.22) end
-				end)
-			elseif charIs("gojo", "lapse", "blue") then
-				-- GOJO Lapse Blue: you click 3 -> they get pulled UP -> AIM UP and click R
-				_G.VX_BUSY = tick() + 2.2
-				dbgAir("Gojo: Lapse Blue -> aim up + R")
-				task.delay(0.9, function()
-					if not autoAirOn then return end
-					local hrp = myHRP()
-					pcall(function() local cam = workspace.CurrentCamera; cam.CFrame = CFrame.lookAt(cam.CFrame.Position, (hrp and hrp.Position or cam.CFrame.Position) + Vector3.new(0, 60, 12)) end)  -- AIM UP
-					task.wait(0.1)
-					tapKey(Enum.KeyCode.R)
-				end)
-			elseif charIs("hakari", "rough energy", "gambler") then
-				-- GAMBLER: you click 3 -> run the Rough Energy remote (your capture, exactly)
-				_G.VX_BUSY = tick() + 1.5
-				dbgAir("Gambler: 3 -> Rough Energy remote")
-				task.delay(0.1, function()
-					local mv = myMoveset("Rough Energy"); local re = knitRE("RoughEnergyService", "Activated")
-					if mv and re then pcall(function() re:FireServer(mv, true) end) else dbgAir("Gambler: Moveset['Rough Energy'] or remote MISSING") end
-				end)
-			else
-				dbgAir("3 pressed but no Auto Air character matched (Locust/Gojo/Gambler)")
+		local function holdJump() pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.08); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end
+
+		-- GAMBLER: when you M1 (click) -> press 3 + JUMP at the SAME time (launcher)
+		if autoAirOn and input.UserInputType == Enum.UserInputType.MouseButton1 and charIs("hakari", "rough energy", "gambler") then
+			_G.VX_BUSY = tick() + 1.2
+			dbgAir("Gambler: M1 -> 3 + Jump")
+			task.spawn(function() tapKey(Enum.KeyCode.Three) end)
+			task.spawn(function() holdJump() end)
+		end
+
+		-- KEY 1
+		if autoAirOn and input.KeyCode == Enum.KeyCode.One then
+			if charIs("gojo") then
+				-- GOJO Lapse Blue: you press 1 -> press R
+				_G.VX_BUSY = tick() + 1.6; dbgAir("Gojo: 1 (Lapse Blue) -> R")
+				task.delay(0.4, function() if autoAirOn then tapKey(Enum.KeyCode.R) end end)
 			end
 		end
-		if autoAirOn and input.KeyCode == Enum.KeyCode.Two and charIs("megumi", "nue", "rabbit") then
-			-- TEN SHADOWS: you click 2 (Nue) -> it clicks R for you
-			_G.VX_BUSY = tick() + 1.5
-			dbgAir("Shadows: 2 -> R")
-			task.delay(0.45, function() if autoAirOn then tapKey(Enum.KeyCode.R) end end)
+
+		-- KEY 2
+		if autoAirOn and input.KeyCode == Enum.KeyCode.Two then
+			if charIs("gojo") then
+				-- GOJO Twofold Kick: you press 2 -> press R
+				_G.VX_BUSY = tick() + 1.6; dbgAir("Gojo: 2 (Twofold) -> R")
+				task.delay(0.35, function() if autoAirOn then tapKey(Enum.KeyCode.R) end end)
+			elseif charIs("megumi", "nue", "rabbit") then
+				-- TEN SHADOWS: you press 2 (Nue) -> press R
+				_G.VX_BUSY = tick() + 1.5; dbgAir("Shadows: 2 -> R")
+				task.delay(0.45, function() if autoAirOn then tapKey(Enum.KeyCode.R) end end)
+			end
 		end
+
+		-- KEY 3 (Locust)
+		if autoAirOn and input.KeyCode == Enum.KeyCode.Three and charIs("locust") then
+			_G.VX_BUSY = tick() + 5; dbgAir("Locust: 3 -> R until airborne")
+			task.delay(2, function()
+				local t0 = tick()
+				while autoAirOn and tick() - t0 < 2.6 and not airborneMe() do tapKey(Enum.KeyCode.R); task.wait(0.22) end
+			end)
+		end
+
+		-- KEY R (Ten Shadows)
 		if autoAirOn and input.KeyCode == Enum.KeyCode.R and charIs("megumi", "nue", "rabbit") then
-			-- TEN SHADOWS: you press R -> it clicks 1 (Rabbit Escape) right after
-			_G.VX_BUSY = tick() + 1.5
-			dbgAir("Shadows: R -> 1")
+			_G.VX_BUSY = tick() + 1.5; dbgAir("Shadows: R -> 1")
 			task.delay(0.12, function() if autoAirOn then tapKey(Enum.KeyCode.One) end end)
+		end
+
+		-- JUMP (Vessel): you jump -> click 1
+		if autoAirOn and input.KeyCode == Enum.KeyCode.Space and charIs("vessel", "itadori", "sukuna", "black flash", "divergent") then
+			if tick() - (lastVesselAir or 0) > 0.9 then
+				lastVesselAir = tick(); _G.VX_BUSY = tick() + 1.2; dbgAir("Vessel: Jump -> 1")
+				task.delay(0.12, function() if autoAirOn then tapKey(Enum.KeyCode.One) end end)
+			end
 		end
 	end)
 	-- AUTO AIR anim triggers: Twofold Kick (Gojo) kicks them UP -> click R (RightActivated at the target).
 	-- Gambler: your landed M1 -> fire Rough Energy (the 'click 3 for you' launcher).
-	local TWOFOLD_ANIM = "104749346956269"
-	local lastKickR, lastGamb = 0, 0
-	local hookedAir = setmetatable({}, { __mode = "k" })
-	local function hookAirAnims()
-		local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
-		local h = c and c:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
-		if not a or hookedAir[a] then return end
-		hookedAir[a] = a.AnimationPlayed:Connect(function(track)
-			if not autoAirOn then return end
-			local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+"); if not id then return end
-			if id == TWOFOLD_ANIM and tick() - lastKickR > 1.2 then                        -- GOJO Twofold Kick -> they're going UP -> click R (aimed at them) to take them in the air
-				lastKickR = tick(); _G.VX_BUSY = tick() + 1.6
-				task.delay(0.45, function()
-					if not autoAirOn then return end
-					local tgt = (lastM1Tgt and lastM1Tgt.Parent) and lastM1Tgt or currentTarget()
-					if tgt then faceTargetNow(tgt) end
-					pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.09); VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game) end)
-				end)
-			end
-		end)
-	end
-	task.spawn(function() while true do if autoAirOn then pcall(hookAirAnims) end task.wait(0.7) end end)
 	AutoAirApi_set = function(v) autoAirOn = v == true end
 	-- ANIM-DRIVEN backup (your captured ids): keeps aiming through Gojo's R (99920923658527), and the RED
 	-- charge anim (137654778575373) auto-clicks R even if the key-3 press was missed/eaten.
@@ -7550,10 +7540,32 @@ do
         btn.Size = UDim2.fromOffset(40, 40); btn.Position = UDim2.new(0.5, -20, 0, 6); btn.AnchorPoint = Vector2.new(0, 0)
         btn.BackgroundColor3 = Color3.fromRGB(10, 10, 12); btn.Image = "rbxassetid://82151574125055"   -- the Dream logo (real IMAGE asset id)
         btn.ScaleType = Enum.ScaleType.Fit; btn.AutoButtonColor = true
-        btn.Active = true; btn.Draggable = false; btn.ZIndex = 10; btn.Parent = mmGui
+        btn.Active = true; btn.ZIndex = 10; btn.Parent = mmGui
         Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 10)
         local us = Instance.new("UIStroke"); us.Color = Color3.fromRGB(255, 255, 255); us.Thickness = 1.2; us.Transparency = 0.5; us.Parent = btn
-        btn.MouseButton1Click:Connect(function() pcall(function() Window:SetOpen(not Window.IsOpen) end) end)
+        -- DRAG (custom - won't capture-freeze movement) + TAP toggles the menu only if you didn't drag
+        do
+            local dragging, moved, startPos, startMouse = false, false, nil, nil
+            local UISm = game:GetService("UserInputService")
+            btn.InputBegan:Connect(function(i)
+                if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+                    dragging = true; moved = false; startPos = btn.Position; startMouse = i.Position
+                end
+            end)
+            UISm.InputChanged:Connect(function(i)
+                if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+                    local d = i.Position - startMouse
+                    if math.abs(d.X) + math.abs(d.Y) > 6 then moved = true end
+                    btn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+                end
+            end)
+            UISm.InputEnded:Connect(function(i)
+                if (i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch) and dragging then
+                    dragging = false
+                    if not moved then pcall(function() Window:SetOpen(not Window.IsOpen) end) end
+                end
+            end)
+        end
     end)
 
     Window:Category("Vaultix")
@@ -7579,13 +7591,12 @@ do
     bfSec:Toggle({ Name = "Feint Abilities (1-4 -> R)", Default = false, Callback = function(b) if ChainApi and ChainApi.setFeintMoves then ChainApi.setFeintMoves(b) end end })
     bfSec:Toggle({ Name = "Aim Assist (face enemy on every move)", Default = false, Callback = function(b) if AimAssistApi then AimAssistApi.set(b) end end })
     bfSec:Slider({ Name = "Cooldown", Min = 0.1, Max = 1, Default = 0.45, Decimals = 0.01, Suffix = "s", Callback = function(v) if BFApi then BFApi.SetCooldown(v) end end })
+    bfSec:Toggle({ Name = "Mobile BF Button", Default = false, Callback = function(b)   -- phone: floating tap button that fires the black flash for the current mode
+        if ChainApi then ChainApi.setMobile(b) end
+    end })
     if tier("premium") then
         bfSec:Slider({ Name = "Back Dist", Min = 1, Max = 6, Default = 2, Decimals = 0.1, Callback = function(v) if ChainApi then ChainApi.setBackDistance(v) end end })
         bfSec:Slider({ Name = "Range", Min = 10, Max = 60, Default = 30, Decimals = 1, Callback = function(v) if ChainApi then ChainApi.setLockRange(v) end end })
-        bfSec:Toggle({ Name = "Mobile Support", Default = false, Callback = function(b)   -- phone: floating tap button for the chosen approach (Teleport / Side Dash / Back Dash). M1 mode = just tap M1.
-            if ChainApi then ChainApi.setMobile(b) end
-            if b then pcall(function() Library:Notification("BF chain mobile support on", 4) end) end
-        end })
     end
     local blockSec = bfSub:Section({ Name = "Auto Block", Side = 2 })
     blockSec:Toggle({ Name = "Dash Block", Default = false, Callback = function(b) BlockFlags.Dash = b end })
@@ -7733,13 +7744,6 @@ do
     jhSec:Button({ Name = "Jump On Head", Callback = function() if JumpHeadApi then JumpHeadApi.jump(jhTarget) end end })
     local farmSec = plySub:Section({ Name = "Farm & Train", Side = 2 })
     farmSec:Toggle({ Name = "Auto Farm", Callback = function(b) if FarmApi then FarmApi.set(b) end end })
-    farmSec:Toggle({ Name = "Control Dummy (WASD + Space)", Callback = function(b) if ControlDummyApi then ControlDummyApi.set(b) end end })
-    farmSec:Toggle({ Name = "Dummy Fly (Space/Ctrl)", Callback = function(b) if ControlDummyApi then ControlDummyApi.setFly(b) end end })
-    local dumTargets
-    dumTargets = farmSec:Dropdown({ Name = "Dummy Target", Items = playerList(), Default = "Nearest", Callback = function(v) if ControlDummyApi then ControlDummyApi.setTarget(v) end end })
-    farmSec:Button({ Name = "Refresh Dummy Targets", Callback = function() if dumTargets then pcall(function() dumTargets:Refresh(playerList()) end) end end })
-    farmSec:Toggle({ Name = "Dummy Attack (stand mode)", Callback = function(b) if ControlDummyApi then ControlDummyApi.setAttack(b) end end })
-    farmSec:Button({ Name = "Dummy Black Flash", Callback = function() if ControlDummyApi then ControlDummyApi.blackFlash() end end })
     farmSec:Dropdown({ Name = "Farm Target", Items = playerList(), Default = "Nearest", Callback = function(v) if FarmApi then FarmApi.setTarget(v) end end })
     farmSec:Button({ Name = "Spawn Train", Callback = function() if TrainApi then TrainApi.spawn() end end })
     farmSec:Toggle({ Name = "Auto Train", Callback = function(b) if TrainApi then TrainApi.setAuto(b) end end })
