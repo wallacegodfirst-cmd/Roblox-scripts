@@ -484,7 +484,7 @@ end
 -- BATCH 2 MODULES  (Item ESP + Auto Grab, Auto Skills, Invisibility, Auto Parkour, Teleport)
 -- Each module exposes a small API; the GUI below wires them.
 -- ============================================================
-local ItemsApi, SkillsApi, InvisApi, ParkourApi, TPApi, M1ComboApi, CounterApi, LockOnApi, AutoUltApi, AntiAfkApi, NoclipApi, FarmApi, SpeedApi, FlyApi, PlayerEspApi, DashApi, TrainApi, DrinkApi, AntiStunApi, AntiRagdollApi, SideDashApi, EvasiveApi, AntiDomainApi, ResetApi, InfJumpApi, AntiCounterApi, AutoAdaptApi, JumpHeadApi, AntiBlackHoleApi, CrowUltApi, CrowHitApi, AutoDomainAdaptApi, HeadUltApi, RikaSwordApi, SlamApi, GokuApi, HollowApi, VisualApi
+local ItemsApi, SkillsApi, InvisApi, ParkourApi, TPApi, M1ComboApi, CounterApi, LockOnApi, AutoUltApi, AntiAfkApi, NoclipApi, FarmApi, SpeedApi, FlyApi, PlayerEspApi, DashApi, TrainApi, DrinkApi, AntiStunApi, AntiRagdollApi, SideDashApi, EvasiveApi, AntiDomainApi, ResetApi, InfJumpApi, AntiCounterApi, AutoAdaptApi, JumpHeadApi, AntiBlackHoleApi, CrowUltApi, CrowHitApi, AutoDomainAdaptApi, HeadUltApi, RikaSwordApi, SlamApi, GokuApi, HollowApi, VisualApi, AimAssistApi
 
 -- EVERY character's M1 anim id (user-captured) - set EARLY so Head of Hei / Goku M1 / Side Dash all detect a real M1 regardless of module load order
 do
@@ -2061,24 +2061,21 @@ do
 	end
 	task.spawn(function()  -- workspace.Domains scan: Anti-Domain escape (ANY domain, incl. vessel - not just anim-id) + Auto-Domain-Adapt spam + black-hole EFFECT scan
 		local lastDom, lastReactedDom, domType, domStart, bhCd, dbgCd = nil, nil, "other", 0, 0, 0
-		local function dbg(msg) if VX_NOTIFY and tick() - dbgCd > 2 then dbgCd = tick(); pcall(function() VX_NOTIFY(msg, nil) end) end end  -- throttled, only shows with Debug on
+		local function dbg(msg) if VX_DEBUG and VX_NOTIFY and tick() - dbgCd > 2 then dbgCd = tick(); pcall(function() VX_NOTIFY(msg, nil) end) end end  -- ONLY with Debug on; never leaks internals during normal play
 		while true do
 			local dom = (domainOn or domainAdaptOn) and activeDomain() or nil
 			if domainOn or domainAdaptOn then hookSelfDomain() end  -- track when YOU cast a domain
-			if not dom then lastDom = nil; if domainAdaptOn then dbg("Domain Adapt: no domain in workspace.Domains") end
+			if not dom then lastDom = nil; if domainAdaptOn then dbg("Domain Adapt: none active") end
 			else
 				if dom ~= lastDom then lastDom = dom; domType = domainTypeOf(dom); domStart = tick() end  -- classify the new domain ONCE (avoid re-scanning its many parts each tick)
 				local mine = domainMine(dom) or (tick() - selfDomainCast <= 13)                          -- is this YOUR OWN domain? (Owner value or you just cast one)
 				if domainOn and not mine and (dom ~= lastReactedDom or insideDomain(dom)) and tick() - domainCd > 3 then
 					domainCd = tick(); lastReactedDom = dom; domainReact("Domain")                        -- ESCAPE: fire once on any new domain, then RETRY every 3s while still trapped (so a set-back can't leave you stuck)
 				end
-				if domainAdaptOn then                                                                     -- ADAPT: press 4 in ANY enemy domain (all types), per-type cap (vessel = 8s)
-					if mine then dbg("Domain Adapt: your own domain (skipped)")
-					elseif not insideDomain(dom) then dbg("Domain Adapt: domain found but you are not inside")
-					else
-						local cap = DOMAIN_CAP[domType]
-						if not cap or tick() - domStart <= cap then pressFour(); dbg("Domain Adapt: pressing 4 (" .. domType .. ")") else dbg("Domain Adapt: cap reached (" .. domType .. ")") end
-					end
+				if domainAdaptOn and not mine then                                                        -- ADAPT: press 4 whenever an ENEMY domain is up (the inside-check was a false-negative that made it do nothing). Per-type time cap.
+					local cap = DOMAIN_CAP[domType]
+					if not cap or tick() - domStart <= cap then pressFour(); dbg("Domain Adapt: 4 (" .. domType .. ")") else dbg("Domain Adapt: cap (" .. domType .. ")") end
+				elseif domainAdaptOn and mine then dbg("Domain Adapt: own domain (skip)")
 				end
 			end
 			if blackholeOn and tick() - bhCd > 4 and blackHoleObject() then bhCd = tick(); blackholeReact() end
@@ -2159,7 +2156,8 @@ do
 		end)
 	end
 	task.spawn(function() while true do if headOn then hookHei() end task.wait(0.7) end end)
-	UIS.InputBegan:Connect(function(input, gpe) if headOn and not gpe and input.UserInputType == Enum.UserInputType.MouseButton1 then heiFire() end end)  -- backup: raw click
+	-- G is pressed ONLY off the detected M1 ANIMATION (any character's M1 id) + a 1.2s cooldown = one timed G per
+	-- M1 swing, not a spam. (Removed the raw-click backup, which fired G on every click incl. GUI clicks.)
 	HeadUltApi = { set = function(v) headOn = v == true end }
 
 	-- AUTO RIKA LOVE SWORD: in Yuta's domain, GRAB a sword (teleport onto it - grabbing a sword IS a whitelisted teleport, and vxGlide fires the AntiCheat Teleport whitelist), then teleport to a user + slash. 4 times, then press 4.
@@ -2553,6 +2551,51 @@ do
 		end
 	end)
 	EvasiveApi = { set = function(v) on = v == true end, setDir = function(m) dmode = m or "Cycle" end }
+end
+
+-- ============================================================
+-- MODULE: AIM ASSIST  (face the enemy the moment you cast ANY move - detected by every captured move anim id)
+-- ============================================================
+do
+	local Players = game:GetService("Players")
+	local LP = Players.LocalPlayer
+	local Camera = workspace.CurrentCamera
+	local on = false
+	local function myChar() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
+	local function myHRP() local c = myChar(); return c and c:FindFirstChild("HumanoidRootPart") end
+	local function idOf(s) return tostring(s):match("%d+") end
+	local function nearestEnemy()
+		local hrp = myHRP(); if not hrp then return nil end
+		local best, bd
+		local function chk(m) if m and m.Name ~= LP.Name and m ~= LP.Character then local r = m:FindFirstChild("HumanoidRootPart"); local h = m:FindFirstChildOfClass("Humanoid"); if r and h and h.Health > 0 then local d = (r.Position - hrp.Position).Magnitude; if not bd or d < bd then best, bd = r, d end end end end
+		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP then chk(plr.Character) end end
+		local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do chk(m) end end
+		return best
+	end
+	local function targetPart()
+		local g = _G.VX_LOCK; local lt = (g and g.get) and g.get() or nil   -- prefer the LOCKED (clicked) enemy
+		if lt and lt.Parent then return lt:FindFirstChild("HumanoidRootPart") or lt:FindFirstChildWhichIsA("BasePart") end
+		return nearestEnemy()
+	end
+	local function faceTarget()
+		local hrp = myHRP(); local tr = targetPart(); if not (hrp and tr) then return end
+		local tp = tr.Position
+		pcall(function() hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(tp.X, hrp.Position.Y, tp.Z)) end)  -- flat-face them so the move fires at them
+		pcall(function() Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, tp) end)
+	end
+	local function isMove(track)  -- ANY of your captured MOVE anims (all skills/ults + M1 ids)
+		if not track or not track.Animation then return false end
+		local id = idOf(track.Animation.AnimationId)
+		return (id and ((_G.VX_ADAPT_IDS and _G.VX_ADAPT_IDS[id]) or (_G.VX_M1_IDS and _G.VX_M1_IDS[id]))) and true or false
+	end
+	local hooked = setmetatable({}, { __mode = "k" })
+	local function hook()
+		local c = myChar(); local h = c and c:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
+		if not a or hooked[a] then return end
+		hooked[a] = a.AnimationPlayed:Connect(function(track) if on and isMove(track) then faceTarget() end end)
+	end
+	task.spawn(function() while true do if on then hook() end task.wait(0.6) end end)
+	AimAssistApi = { set = function(v) on = v == true end }
 end
 
 -- ============================================================
@@ -6613,6 +6656,7 @@ do
     bfSec:Dropdown({ Name = "A - Stop after (black flashes)", Items = { "1", "2", "3", "4" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintBFStop(v) end end })
     bfSec:Dropdown({ Name = "B - Feint after (M1s)", Items = { "1", "2", "3" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintM1Count(v) end end })
     bfSec:Dropdown({ Name = "B - Move after feint", Items = { "1", "2", "3", "4" }, Default = "1", Callback = function(v) if ChainApi then ChainApi.setFeintMove(v) end end })
+    bfSec:Toggle({ Name = "Aim Assist (face enemy on every move)", Default = false, Callback = function(b) if AimAssistApi then AimAssistApi.set(b) end end })
     bfSec:Slider({ Name = "Cooldown", Min = 0.1, Max = 1, Default = 0.45, Decimals = 0.01, Suffix = "s", Callback = function(v) if BFApi then BFApi.SetCooldown(v) end end })
     if tier("premium") then
         bfSec:Slider({ Name = "Back Dist", Min = 1, Max = 6, Default = 2, Decimals = 0.1, Callback = function(v) if ChainApi then ChainApi.setBackDistance(v) end end })
