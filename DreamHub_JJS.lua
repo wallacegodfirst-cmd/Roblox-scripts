@@ -483,6 +483,7 @@ do
 		end
 		doBackstab()
 	end
+	_G.VX_RUNCHAIN = runChain   -- expose the black-flash chain so Anti-Domain "Hit Caster" can flash the domain caster
 	ChainApi = {
 		setEnabled = function(v) ScriptEnabled = v == true end,
 		isEnabled = function() return ScriptEnabled end,
@@ -2035,12 +2036,26 @@ do
 		local tp = trainPos(); if tp then vxTeleportHard(tp + Vector3.new(0, 6, 0), 3); return end               -- no center found: train station
 		vxTeleportHard(hrp.Position + Vector3.new(0, 400, 0), 3)                                                  -- last resort: straight UP, high enough to clear the dome
 	end
+	local function domainCaster()  -- the enemy who CAST the domain = the living enemy nearest the domain center
+		local c = domainCenter(); if not c then return randomEnemyHRP() end
+		local best, bd
+		local function chk(r) if r then local d = (r.Position - c).Magnitude; if not bd or d < bd then best, bd = r, d end end end
+		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local h = plr.Character:FindFirstChildOfClass("Humanoid"); if h and h.Health > 0 then chk(plr.Character:FindFirstChild("HumanoidRootPart")) end end end
+		local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local h = m:FindFirstChildOfClass("Humanoid"); if h and h.Health > 0 then chk(m:FindFirstChild("HumanoidRootPart")) end end end end
+		return best
+	end
 	local function domainReact(name)
 		local hrp = myHRP(); if not hrp then return end
-		if VX_NOTIFY then VX_NOTIFY("Domain: " .. name .. " -> " .. domainMode, false) end
 		if domainMode == "Safe Teleport" then safeTeleport()
-		elseif domainMode == "To Random User" then local r = randomEnemyHRP(); if r then vxTeleportHard(r.Position - r.CFrame.LookVector * 4 + Vector3.new(0, 3, 0), 3) end
-		elseif domainMode == "Teleport Back" then vxTeleportHard(hrp.Position - hrp.CFrame.LookVector * 120 + Vector3.new(0, 8, 0), 3)
+		elseif domainMode == "Teleport to User" then local r = enemyOutsideDomain(domainCenter()) or randomEnemyHRP(); if r then vxTeleportHard(r.Position - r.CFrame.LookVector * 4 + Vector3.new(0, 3, 0), 3) end   -- TP to a user (out of the dome)
+		elseif domainMode == "Hit Caster (Cancel)" then                                                                                          -- TP to the domain CASTER + hit them to cancel it
+			local r = domainCaster()
+			if r then
+				vxTeleportHard(r.Position - r.CFrame.LookVector * 3 + Vector3.new(0, 2, 0), 1.5)
+				if _G.VX_RUNCHAIN and r.Parent then task.delay(0.15, function() pcall(function() _G.VX_RUNCHAIN(r.Parent) end) end)   -- black flash the caster (best cancel)
+				else task.spawn(function() local VIM = game:GetService("VirtualInputManager"); for _ = 1, 4 do pcall(function() VIM:SendMouseButtonEvent(0,0,0,true,game,0); task.wait(0.05); VIM:SendMouseButtonEvent(0,0,0,false,game,0) end); task.wait(0.14) end end) end   -- fallback: M1 them
+			end
+		elseif domainMode == "Back Up" then vxTeleportHard(hrp.Position - hrp.CFrame.LookVector * 140 + Vector3.new(0, 10, 0), 3)                  -- back you UP away from the domain
 		else vxTeleportHard(hrp.Position + Vector3.new(0, 300, 0), 3) end  -- Teleport Up (default)
 	end
 	local function counterReact(enemyChar)  -- jump ON the countering enemy's head instead of just dashing back
@@ -2622,17 +2637,21 @@ do
 	local CYCLE = { "Back", "Left", "Right" }
 	local function myHRP() local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character; return c and c:FindFirstChild("HumanoidRootPart") end
 	local ATTACK = { [Enum.AnimationPriority.Action] = true, [Enum.AnimationPriority.Action2] = true, [Enum.AnimationPriority.Action3] = true, [Enum.AnimationPriority.Action4] = true }
-	local function enemyAttacking()  -- dodge when a nearby enemy is mid-attack: Action-priority anim OR a known JJS attack id (block engine's AnimDict)
+	local function enemyAttacking()  -- dodge when a nearby enemy uses ANY attack/skill: Action-priority anim OR any captured attack/skill/M1 id (wider range so ranged SKILLS trigger it too)
 		local hrp = myHRP(); local chars = workspace:FindFirstChild("Characters"); if not (hrp and chars) then return false end
-		local dict = _G.VX_ANIMDICT
+		local dict = _G.VX_ANIMDICT       -- block engine's attack-anim map
+		local adict = _G.VX_ADAPT_IDS     -- the FULL captured attack/skill/domain id list (catches SKILLS, not just M1s)
+		local mdict = _G.VX_M1_IDS
 		for _, m in ipairs(chars:GetChildren()) do
 			if m.Name ~= LP.Name then
 				local r = m:FindFirstChild("HumanoidRootPart"); local h = m:FindFirstChildOfClass("Humanoid")
-				if r and h and h.Health > 0 and (r.Position - hrp.Position).Magnitude <= 20 then
+				if r and h and h.Health > 0 and (r.Position - hrp.Position).Magnitude <= 45 then   -- wider: a skill thrown from range still triggers a dodge
 					local anim = h:FindFirstChildOfClass("Animator")
 					if anim then for _, tr in ipairs(anim:GetPlayingAnimationTracks()) do
-						if ATTACK[tr.Priority] then return true end
-						if tr.Animation then local id = tostring(tr.Animation.AnimationId):match("%d+"); if id and dict and dict[id] then return true end end
+						if tr.IsPlaying then
+							if ATTACK[tr.Priority] then return true end
+							if tr.Animation then local id = tostring(tr.Animation.AnimationId):match("%d+"); if id and ((dict and dict[id]) or (adict and adict[id]) or (mdict and mdict[id])) then return true end end
+						end
 					end end
 				end
 			end
@@ -6872,7 +6891,7 @@ do
     antiSec:Toggle({ Name = "Anti-Stun", Callback = function(b) if AntiStunApi then AntiStunApi.set(b) end end })
     antiSec:Toggle({ Name = "Anti-Ragdoll", Callback = function(b) if AntiRagdollApi then AntiRagdollApi.set(b) end end })
     antiSec:Toggle({ Name = "Anti-Domain", Callback = function(b) if AntiDomainApi then AntiDomainApi.set(b) end end })
-    antiSec:Dropdown({ Name = "Domain React", Items = { "Safe Teleport", "Teleport Up", "Teleport Back", "To Random User" }, Default = "Safe Teleport", Callback = function(v) if AntiDomainApi then AntiDomainApi.setMode(v) end end })
+    antiSec:Dropdown({ Name = "Domain React", Items = { "Safe Teleport", "Teleport to User", "Hit Caster (Cancel)", "Back Up", "Teleport Up" }, Default = "Safe Teleport", Callback = function(v) if AntiDomainApi then AntiDomainApi.setMode(v) end end })
     antiSec:Toggle({ Name = "Auto Adapt", Callback = function(b) if AutoAdaptApi then AutoAdaptApi.set(b) end end })
     antiSec:Toggle({ Name = "Auto Domain Adapt", Callback = function(b) if AutoDomainAdaptApi then AutoDomainAdaptApi.set(b) end end })
     antiSec:Toggle({ Name = "Anti Black Hole", Callback = function(b) if AntiBlackHoleApi then AntiBlackHoleApi.set(b) end end })
