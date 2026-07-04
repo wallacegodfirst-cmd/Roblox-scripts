@@ -265,7 +265,8 @@ do
 		end  -- "Teleport"/"M1 Black Flash" = no pre-move; "Back Dash" is a dedicated 2-stage E handler
 	end
 	local function doBackstab(fromE)
-		if not ScriptEnabled and tick() >= burstUntil then return end  -- run when the master chain is on OR during a self-driving burst (M1/Back Dash/Counter)
+		if fromE then burstUntil = tick() + 1.0 end                    -- a MANUAL E press is ALWAYS a valid trigger (this was the bug: E did nothing unless Auto Chain was already on)
+		if not ScriptEnabled and tick() >= burstUntil then return end  -- run when the master chain is on OR during a self-driving burst (E press / M1 / Back Dash / Counter)
 		local myChar = myCharResolved()
 		local myHRP = getHRP(myChar)
 		local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
@@ -388,25 +389,15 @@ do
 	end
 	if LocalPlayer.Character then setupCharacter(LocalPlayer.Character) end
 	LocalPlayer.CharacterAdded:Connect(setupCharacter)
-	local function handleBackDashE()  -- Back Dash is a 2-stage E: #1 = Black Flash now; #2 = walk away ~3-4 studs -> dash back (Q) -> Black Flash.
-		if backDashStage == 0 then
-			backDashStage = 1
-			-- E #1: just Black Flash immediately (the proven teleport-behind + conversion).
-			if runChain then runChain() end
-		else
-			backDashStage = 0
-			task.spawn(function()                                                  -- E #2: walk AWAY ~3-4 studs -> dash back (Q) -> snap to their back -> Black Flash
-				local tgt = getNearestEnemy(Settings.LockRange)                    -- lock the target so the flash returns to THEM after the retreat
-				if tgt then chainTarget = tgt; chainTargetT = tick() end
-				pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.S, false, game) end)   -- walk backward, away from them
-				task.wait(0.16)                                                     -- ~3-4 studs at run speed
-				pcall(function() VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.S, false, game) end)
-				pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Q, false, game); task.wait(0.03); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Q, false, game) end)  -- dash (Q)
-				fireDash("Back"); clientDash("Back", 62, 0.08)
-				task.wait(0.08)                                                     -- let the dash register, then flash
-				if runChain then runChain() end                                     -- snap to the LOCKED back + convert = Black Flash
-			end)
-		end
+	local function handleBackDashE()  -- Back Dash: EVERY E press = dash BACK (Q) then Black Flash behind them. No stages.
+		task.spawn(function()
+			local tgt = getNearestEnemy(Settings.LockRange)                        -- lock the target so the flash returns to THEM
+			if tgt then chainTarget = tgt; chainTargetT = tick() end
+			pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Q, false, game); task.wait(0.03); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Q, false, game) end)  -- dash (Q)
+			fireDash("Back"); clientDash("Back", 62, 0.08)
+			task.wait(0.08)                                                         -- let the back-dash register
+			if runChain then runChain() end                                         -- snap to their back + convert = Black Flash
+		end)
 	end
 	local function doEPress()   -- exactly what pressing E does for the current approach (also fired by the mobile tap button)
 		if Settings.Mode == "Back Dash" then handleBackDashE()                  -- 2-stage teleport/dash
@@ -821,27 +812,26 @@ do
 	local enabled, rate, range = false, 0.4, 30
 	local keys = { [1] = false, [2] = false, [3] = false, [4] = false, [5] = false, [6] = false }
 	local KC = { [1] = Enum.KeyCode.One, [2] = Enum.KeyCode.Two, [3] = Enum.KeyCode.Three, [4] = Enum.KeyCode.Four, [5] = Enum.KeyCode.R, [6] = Enum.KeyCode.G }
-	local function myHRP() local c = LP.Character; return c and c:FindFirstChild("HumanoidRootPart") end
-	local function enemyNear()
-		local hrp = myHRP(); if not hrp then return false end
-		local function chk(m)
-			if m and m ~= LP.Character then
-				local h = m:FindFirstChildOfClass("Humanoid"); local r = m:FindFirstChild("HumanoidRootPart")
-				if h and h.Health > 0 and r and (r.Position - hrp.Position).Magnitude <= range then return true end
-			end
-			return false
-		end
-		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and chk(plr.Character) then return true end end
-		local chars = workspace:FindFirstChild("Characters")
-		if chars then for _, m in ipairs(chars:GetChildren()) do if chk(m) then return true end end end
-		return false
+	local function myChar() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end  -- JJS body lives under workspace.Characters
+	local function myHRP() local c = myChar(); return c and c:FindFirstChild("HumanoidRootPart") end
+	local function nearestEnemyHRP()  -- the NEAREST living enemy in range (correct target, not a stale LP.Character read)
+		local hrp = myHRP(); if not hrp then return nil end
+		local best, bd
+		local function chk(m) if m and m.Name ~= LP.Name and m ~= LP.Character then local h = m:FindFirstChildOfClass("Humanoid"); local r = m:FindFirstChild("HumanoidRootPart"); if h and h.Health > 0 and r then local d = (r.Position - hrp.Position).Magnitude; if d <= range and (not bd or d < bd) then best, bd = r, d end end end end
+		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP then chk(plr.Character) end end
+		local chars = workspace:FindFirstChild("Characters"); if chars then for _, m in ipairs(chars:GetChildren()) do chk(m) end end
+		return best
 	end
+	local function faceEnemy(tr) local hrp = myHRP(); if hrp and tr and tr.Parent then pcall(function() hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(tr.Position.X, hrp.Position.Y, tr.Position.Z)) end) end end  -- aim at them so the skill lands on the RIGHT target
 	local function press(kc) pcall(function() VIM:SendKeyEvent(true, kc, false, game); task.wait(0.04); VIM:SendKeyEvent(false, kc, false, game) end) end
 	task.spawn(function()
 		while true do
-			if enabled and enemyNear() then
-				for n = 1, 6 do if keys[n] then press(KC[n]); task.wait(0.12) end end  -- 1/2/3/4 abilities + R special + G awakening
-				task.wait(rate)
+			if enabled then
+				local tr = nearestEnemyHRP()
+				if tr then
+					for n = 1, 6 do if keys[n] then faceEnemy(tr); press(KC[n]); task.wait(0.12) end end  -- face THEN cast: 1/2/3/4 abilities + R special + G awakening
+					task.wait(rate)
+				else task.wait(0.2) end
 			else task.wait(0.2) end
 		end
 	end)
