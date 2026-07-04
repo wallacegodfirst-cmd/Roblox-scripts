@@ -230,7 +230,7 @@ do
 		local look = targetHRP.CFrame.LookVector
 		local flat = Vector3.new(look.X, 0, look.Z); local mag = flat.Magnitude
 		local dir = (mag < 0.01) and Vector3.new(0, 0, -1) or (flat / mag)
-		return tPos - dir * Settings.BackDistance, tPos   -- directly behind their back
+		return tPos - dir * math.max(Settings.BackDistance, 2.8), tPos   -- behind their back but NEVER overlapping their body (overlap = the physics shove that flung you both)
 	end
 	local function myCharResolved()  -- JJS keeps your live body under workspace.Characters; LP.Character can lag/differ
 		local chs = workspace:FindFirstChild("Characters")
@@ -437,10 +437,7 @@ do
 				shouldBreak = true
 			else
 				local par = targetHRP.Parent; local tHum = par and par:FindFirstChildOfClass("Humanoid")
-				if not par or (tHum and tHum.Health <= 0) then   -- re-pick ONLY if the target VANISHED, or (has a humanoid that died). A live DUMMY (no humanoid) stays LOCKED - never switches to a closer one.
-					local newTarget = getNearestEnemy(Settings.LockRange)   -- ONLY switch if the locked target actually died/vanished (never for a closer enemy)
-					if newTarget then targetChar = newTarget; targetHRP = getHRP(targetChar); chainTarget = newTarget; chainTargetT = tick() else shouldBreak = true end
-				end
+				if not par or (tHum and tHum.Health <= 0) then shouldBreak = true end   -- target died/vanished -> END the chain (re-picking mid-hold snapped you across the map = 'fling')
 			end
 			if shouldBreak or tick() >= lockEnd then
 				lockLoop:Disconnect()
@@ -725,8 +722,11 @@ local function vxResolveAC()
 	return nil
 end
 local vxTeleLastActive = 0  -- last time a teleport actually moved you; the safety loop uses it to know when NO teleport is running
+local vxACLastFire = 0
 local function vxACPass()
 	vxTeleLastActive = tick()
+	if tick() - vxACLastFire < 0.2 then return end   -- THROTTLE: combat was firing this ~60x/s and the server rate-limited it -> the whitelist went dead -> teleports set back
+	vxACLastFire = tick()
 	local re = vxResolveAC()
 	if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end
 end
@@ -3269,13 +3269,33 @@ do
 	local UIS = game:GetService("UserInputService")
 	local LP = Players.LocalPlayer
 	local on = false
-	local frozeAt = nil
+	local ghost, ghostRoot = nil, nil
 	local function myC() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
 	local function myR() local c = myC(); return c and c:FindFirstChild("HumanoidRootPart") end
+	-- GHOST method: your REAL body stays put (server + everyone genuinely sees you frozen, because you
+	-- send no movement at all). YOU roam as a local see-through clone with full WASD/Space/Ctrl flight.
+	local function makeGhost()
+		local c = myC(); if not c then return end
+		local ok, cl = pcall(function() c.Archivable = true; return c:Clone() end)
+		if not (ok and cl) then return end
+		cl.Name = "DreamGhost"
+		for _, d in ipairs(cl:GetDescendants()) do
+			pcall(function()
+				if d:IsA("BasePart") then d.Transparency = math.clamp(d.Transparency + 0.6, 0, 1); d.CanCollide = false; d.Anchored = (d.Name == "HumanoidRootPart")
+				elseif d:IsA("Script") or d:IsA("LocalScript") then d:Destroy() end
+			end)
+		end
+		local h = cl:FindFirstChildOfClass("Humanoid"); if h then pcall(function() h.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None end) end
+		cl.Parent = workspace
+		ghost = cl; ghostRoot = cl:FindFirstChild("HumanoidRootPart")
+		local r = myR(); if r and ghostRoot then pcall(function() ghost:PivotTo(r.CFrame) end) end
+		pcall(function() workspace.CurrentCamera.CameraSubject = h or ghostRoot end)   -- your camera follows the ghost
+	end
 	RunService.RenderStepped:Connect(function(dt)
 		if not on then return end
-		local r = myR(); if not r then return end
-		pcall(function() r.Anchored = true end)   -- anchored locally = you stop sending position -> server holds the freeze spot
+		local r = myR()
+		if r then pcall(function() r.Anchored = true; r.AssemblyLinearVelocity = Vector3.zero end) end   -- the real body stays exactly where you froze
+		if not (ghost and ghost.Parent and ghostRoot) then makeGhost(); if not ghostRoot then return end end
 		local cam = workspace.CurrentCamera; if not cam then return end
 		local fwd = cam.CFrame.LookVector; fwd = Vector3.new(fwd.X, 0, fwd.Z); if fwd.Magnitude > 0 then fwd = fwd.Unit end
 		local right = cam.CFrame.RightVector; right = Vector3.new(right.X, 0, right.Z); if right.Magnitude > 0 then right = right.Unit end
@@ -3288,18 +3308,19 @@ do
 		if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then move = move - Vector3.new(0, 1, 0) end
 		if move.Magnitude > 0 then
 			local dir = move.Unit
-			pcall(function() r.CFrame = CFrame.new(r.Position + dir * (24 * dt)) * (r.CFrame - r.CFrame.Position) end)
+			pcall(function() ghostRoot.CFrame = CFrame.new(ghostRoot.Position + dir * (30 * dt)) * (ghostRoot.CFrame - ghostRoot.CFrame.Position) end)
 		end
 	end)
 	DesyncFreezeApi = { set = function(v)
-		local r = myR()
 		if v then
-			on = true; frozeAt = r and r.Position
+			on = true
 		else
 			on = false
+			if ghost then pcall(function() ghost:Destroy() end) end
+			ghost, ghostRoot = nil, nil
+			local c = myC(); local r = myR(); local h = c and c:FindFirstChildOfClass("Humanoid")
 			if r then pcall(function() r.Anchored = false end) end
-			if r and frozeAt then vxTeleportHard(r.Position, 2) end   -- re-sync: glide the server to where you actually are
-			frozeAt = nil
+			pcall(function() workspace.CurrentCamera.CameraSubject = h or r end)   -- camera back on your real body
 		end
 	end }
 end
@@ -3334,6 +3355,7 @@ do
 		if not on then return end
 		if not (dummy and dummy.Parent) then dummy = findDummy(); if not dummy then return end end
 		local r = dummy:FindFirstChild("HumanoidRootPart"); if not r then return end
+		pcall(function() r.Anchored = false end)   -- an ANCHORED dummy ignores everything ('nothing works') - free it first
 		local cam = workspace.CurrentCamera; if not cam then return end
 		local hum = dummy:FindFirstChildOfClass("Humanoid")
 		-- ATTACK MODE (JoJo stand): the dummy chases the chosen player and body-slams through them
@@ -3343,8 +3365,8 @@ do
 				local to = tr.Position - r.Position
 				local dir = to.Magnitude > 0.1 and to.Unit or Vector3.zero
 				pcall(function()
-					r.AssemblyLinearVelocity = Vector3.new(dir.X * 42, math.clamp(to.Y * 2, -18, 26), dir.Z * 42)   -- physics velocity = REPLICATES: everyone sees it charge
-					r.CFrame = CFrame.lookAt(r.Position, Vector3.new(tr.Position.X, r.Position.Y, tr.Position.Z))
+					r.CFrame = CFrame.lookAt(r.Position + dir * (30 * dt), Vector3.new(tr.Position.X, r.Position.Y, tr.Position.Z))   -- ALWAYS moves (CFrame step)...
+					r.AssemblyLinearVelocity = Vector3.new(dir.X * 42, math.clamp(to.Y * 2, -18, 26), dir.Z * 42)                      -- ...and velocity so it REPLICATES when you own its physics
 				end)
 				if hum then pcall(function() hum:Move(dir) end) end
 			end
@@ -3368,8 +3390,9 @@ do
 			local dir = move.Magnitude > 0 and move.Unit or Vector3.zero
 			if hum then pcall(function() hum:Move(dir) end) end   -- walk animation
 			pcall(function()
-				r.AssemblyLinearVelocity = Vector3.new(dir.X * 22, vy, dir.Z * 22)
-				if dir.Magnitude > 0 then r.CFrame = CFrame.lookAt(r.Position, r.Position + dir * 8) end
+				local stepV = Vector3.new(dir.X * 20 * dt, (flyOn and vy or 0) * dt, dir.Z * 20 * dt)
+				if dir.Magnitude > 0 or flyOn then r.CFrame = CFrame.lookAt(r.Position + stepV, r.Position + stepV + (dir.Magnitude > 0 and dir * 8 or r.CFrame.LookVector * 8)) end   -- ALWAYS moves
+				r.AssemblyLinearVelocity = Vector3.new(dir.X * 22, vy, dir.Z * 22)   -- and replicated physics when owned
 			end)
 		elseif UIS:IsKeyDown(Enum.KeyCode.Space) then
 			pcall(function() r.AssemblyLinearVelocity = Vector3.new(r.AssemblyLinearVelocity.X, 30, r.AssemblyLinearVelocity.Z) end)
@@ -7547,10 +7570,6 @@ do
         else BFApi.SetEnabled(false); ChainApi.setEnabled(false) end
     end })
     bfSec:Dropdown({ Name = "Approach", Items = { "Teleport", "Jump", "Side Dash", "Back Dash", "M1 Black Flash" }, Default = "Teleport", Callback = function(m) if ChainApi then ChainApi.setMode(m) end end })
-    bfSec:Dropdown({ Name = "Flash Key (the move that black-flashes)", Items = { "1", "2", "3", "4", "R", "F", "G", "T", "Z", "X", "C", "V" }, Default = "3", Callback = function(v)
-        local KM = { ["1"]=Enum.KeyCode.One, ["2"]=Enum.KeyCode.Two, ["3"]=Enum.KeyCode.Three, ["4"]=Enum.KeyCode.Four, R=Enum.KeyCode.R, F=Enum.KeyCode.F, G=Enum.KeyCode.G, T=Enum.KeyCode.T, Z=Enum.KeyCode.Z, X=Enum.KeyCode.X, C=Enum.KeyCode.C, V=Enum.KeyCode.V }
-        if ChainApi and KM[v] then ChainApi.setKey(KM[v]) end
-    end })
     bfSec:Dropdown({ Name = "Auto Feint", Items = { "Off", "Feint Black Flash", "Feint M1", "Feint Moves" }, Default = "Off", Callback = function(v)
         if ChainApi then ChainApi.setFeintMode(v == "Feint Black Flash" and "BF" or (v == "Feint M1" and "M1" or (v == "Feint Moves" and "Moves" or "Off"))) end
     end })
