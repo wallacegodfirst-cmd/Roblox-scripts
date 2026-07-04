@@ -317,8 +317,6 @@ do
 			task.wait(Settings.KeyHoldDuration)
 			VirtualInputManager:SendKeyEvent(false, Settings.AbilityKey, false, game)
 		end)
-		local oldCamType = Camera.CameraType
-		Camera.CameraType = Enum.CameraType.Scriptable
 		local lockEnd = tick() + Settings.LockDuration
 		local lockLoop
 		lockLoop = RunService.Heartbeat:Connect(function()
@@ -344,8 +342,6 @@ do
 						hum.WalkSpeed = savedWS
 						hum.JumpPower = savedJP
 					end
-					Camera.CameraType = Enum.CameraType.Custom
-					Camera.CameraSubject = hum
 				end
 				return
 			end
@@ -354,8 +350,7 @@ do
 			myHRP.CFrame = CFrame.lookAt(behindPos, targetPos)
 			myHRP.AssemblyLinearVelocity = Vector3.zero
 			myHRP.AssemblyAngularVelocity = Vector3.zero
-			local camPos = myHRP.Position - myHRP.CFrame.LookVector * 4 + Vector3.new(0, 2, 0)
-			Camera.CFrame = CFrame.lookAt(camPos, targetPos)
+			-- NO camera hijack: you keep full control of your own camera / zoom (removed the zoom-in lock).
 		end)
 	end
 	local function setupCharacter(character)
@@ -956,8 +951,8 @@ do
 	local function wallNear()  -- a REAL wall within reach ahead or to a side (players/enemies excluded)
 		local hrp = myHRP(); if not hrp then return false end
 		local p = RaycastParams.new(); p.FilterType = Enum.RaycastFilterType.Exclude; p.FilterDescendantsInstances = exclude()
-		for _, dir in ipairs({ hrp.CFrame.LookVector, hrp.CFrame.RightVector, -hrp.CFrame.RightVector }) do
-			if workspace:Raycast(hrp.Position, dir * 5.5, p) then return true end
+		for _, dir in ipairs({ hrp.CFrame.LookVector, hrp.CFrame.RightVector, -hrp.CFrame.RightVector, -hrp.CFrame.LookVector }) do
+			if workspace:Raycast(hrp.Position, dir * 8, p) then return true end   -- wider reach so a wall is actually detected
 		end
 		return false
 	end
@@ -992,9 +987,8 @@ do
 		local c = myChar(); local hum = c and c:FindFirstChildOfClass("Humanoid")
 		local airborne = hum ~= nil and hum.FloorMaterial == Enum.Material.Air
 		local rising = hrp.AssemblyLinearVelocity.Y > 2                            -- you jumped / are going up
-		local intoWall = UIS:IsKeyDown(Enum.KeyCode.W)                             -- you're actively pushing toward the wall (intent) - not just standing near one in a fight
-		-- parkour when you APPROACH a wall while jumping/airborne + holding W.
-		if intoWall and (airborne or rising) and wallNear() and not climbing then
+		-- parkour whenever you're airborne/rising near a wall (no longer requires holding W - that's why it 'didn't work').
+		if (airborne or rising) and wallNear() and not climbing then
 			-- movement key -> anim (swapped to match in-game: A/going-left uses the right-lean clip, D/going-right uses the left-lean clip)
 			local key = (UIS:IsKeyDown(Enum.KeyCode.A) and "parkRight") or (UIS:IsKeyDown(Enum.KeyCode.D) and "parkLeft") or "parkRight"
 			for k, t in pairs(sideTracks) do if k ~= key and t.IsPlaying then pcall(function() t:Stop() end) end end  -- stop the other side's anim
@@ -6917,7 +6911,7 @@ do
     skSec:Toggle({ Name = "Awakening G", Callback = function(b) if SkillsApi then SkillsApi.setKey(6, b) end end })
     skSec:Toggle({ Name = "Auto Gojo TP (R -> behind enemy)", Callback = function(b) if GojoTpApi then GojoTpApi.set(b) end end })
     skSec:Toggle({ Name = "Reversal Red (press 3 -> R)", Callback = function(b) if ReversalRedApi then ReversalRedApi.set(b) end end })
-    skSec:Dropdown({ Name = "Auto Down Slam / Upper Cut (3 M1s -> finisher)", Items = { "Off", "Down Slam", "Uppercut" }, Default = "Off", Callback = function(m) if M1ComboApi then M1ComboApi.setMode(m) end end })
+    skSec:Dropdown({ Name = "Auto Slam / Uppercut", Items = { "Off", "Down Slam", "Uppercut" }, Default = "Off", Callback = function(m) if M1ComboApi then M1ComboApi.setMode(m) end end })
     skSec:Button({ Name = "Rika Down Slam", Callback = function()
         local chs = workspace:FindFirstChild("Characters"); local ch = (chs and chs:FindFirstChild(LocalPlayer.Name)) or LocalPlayer.Character
         local mv = ch and ch:FindFirstChild("Moveset"); local slam = mv and mv:FindFirstChild("Rika Slam")
