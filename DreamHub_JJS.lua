@@ -261,12 +261,14 @@ do
 	local function doApproach(targetHRP, myHRP)  -- PRE-flash movement per mode; the snap-behind + flash + back-lock chain happens right after (in doBackstab)
 		local m = Settings.Mode
 		if m == "Side Dash" then fireDash("Right"); clientDash("Right", 60, 0.1); task.wait(0.04)   -- FAST side dash AROUND -> the snap puts you at their back -> flash + chain
-		elseif m == "Jump" then                                                                    -- BUNNY HOP onto their HEAD, then the snap-behind + flash lands on their BACK
+		elseif m == "Jump" then                                                                    -- JUMP OVER them (real jump anim) -> arc to their BACK -> Black Flash
 			jumpNow()
 			if targetHRP then
-				for _ = 1, 4 do
+				for _ = 1, 5 do
 					local h = getHRP(myCharResolved()); if not (h and targetHRP.Parent) then break end
-					pcall(function() h.CFrame = CFrame.new(targetHRP.Position + Vector3.new(0, 5.5, 0)); h.AssemblyLinearVelocity = Vector3.new(0, 18, 0) end)  -- land ON their head (bunny hop)
+					local behind = targetHRP.Position - targetHRP.CFrame.LookVector * 3                    -- the far side (behind them)
+					local overPos = h.Position:Lerp(Vector3.new(behind.X, targetHRP.Position.Y + 9, behind.Z), 0.45)   -- arc UP and OVER their head to behind
+					pcall(function() h.CFrame = CFrame.new(overPos); h.AssemblyLinearVelocity = Vector3.new(0, 14, 0) end)
 					task.wait(0.03)
 				end
 			end
@@ -399,13 +401,15 @@ do
 	end
 	if LocalPlayer.Character then setupCharacter(LocalPlayer.Character) end
 	LocalPlayer.CharacterAdded:Connect(setupCharacter)
-	local function handleBackDashE()  -- Back Dash: EVERY E press = dash BACK (Q) then Black Flash behind them. No stages.
+	local function handleBackDashE()  -- Back Dash: EVERY E press = jump HIGH + fling back (Q dash) then Black Flash behind them.
 		task.spawn(function()
 			local tgt = getNearestEnemy(Settings.LockRange)                        -- lock the target so the flash returns to THEM
 			if tgt then chainTarget = tgt; chainTargetT = tick() end
+			jumpNow()                                                              -- jump...
+			local mh = getHRP(myCharResolved()); if mh then pcall(function() mh.AssemblyLinearVelocity = Vector3.new(mh.AssemblyLinearVelocity.X, 70, mh.AssemblyLinearVelocity.Z) end) end  -- ...HIGH (fling up)
 			pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Q, false, game); task.wait(0.03); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Q, false, game) end)  -- dash (Q)
-			fireDash("Back"); clientDash("Back", 62, 0.08)
-			task.wait(0.08)                                                         -- let the back-dash register
+			fireDash("Back"); clientDash("Back", 80, 0.1)                           -- fling BACK harder
+			task.wait(0.09)                                                         -- let the dash register
 			if runChain then runChain() end                                         -- snap to their back + convert = Black Flash
 		end)
 	end
@@ -6780,14 +6784,15 @@ do
     -- MINIMIZE button (PC + mobile): a small floating, draggable tap button that hides/shows the whole menu.
     pcall(function()
         local mmGui = Instance.new("ScreenGui")
-        mmGui.Name = "\0"; mmGui.ResetOnSpawn = false; mmGui.IgnoreGuiInset = true; mmGui.DisplayOrder = 9600
+        mmGui.Name = "DreamMin"; mmGui.ResetOnSpawn = false; mmGui.IgnoreGuiInset = false; mmGui.DisplayOrder = 9600
         pcall(function() mmGui.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
         if not mmGui.Parent then mmGui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui") end
         local btn = Instance.new("TextButton")
-        btn.Size = UDim2.fromOffset(44, 44); btn.Position = UDim2.new(0, 14, 0, 14); btn.AnchorPoint = Vector2.new(0, 0)
+        -- top-CENTER, small, NOT draggable (draggable was capturing touch input = the "can't move for a few seconds" freeze).
+        btn.Size = UDim2.fromOffset(38, 38); btn.Position = UDim2.new(0.5, -19, 0, 6); btn.AnchorPoint = Vector2.new(0, 0)
         btn.BackgroundColor3 = Color3.fromRGB(120, 80, 255); btn.Text = "-"; btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        btn.Font = Enum.Font.GothamBold; btn.TextSize = 26; btn.AutoButtonColor = true
-        btn.Active = true; btn.Draggable = true; btn.Parent = mmGui
+        btn.Font = Enum.Font.GothamBold; btn.TextSize = 24; btn.AutoButtonColor = true
+        btn.Active = true; btn.Draggable = false; btn.ZIndex = 10; btn.Parent = mmGui
         Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 10)
         local us = Instance.new("UIStroke"); us.Color = Color3.fromRGB(255, 255, 255); us.Thickness = 1.2; us.Transparency = 0.5; us.Parent = btn
         btn.MouseButton1Click:Connect(function() pcall(function() Window:SetOpen(not Window.IsOpen); btn.Text = Window.IsOpen and "-" or "+" end) end)
