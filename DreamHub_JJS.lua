@@ -319,7 +319,7 @@ do
 		if m == "Side Dash" then                                                                   -- CURVE around them to their back (anime run-around), then flash
 			playAnim("rbxassetid://75203303352791"); playAnim("rbxassetid://96489184596023")
 			fireDash("Right")
-			orbitAround(targetHRP, { duration = 0.42, endRadius = Settings.BackDistance + 0.5, extraSweep = math.pi * 0.35, endBehind = true })
+			orbitAround(targetHRP, { duration = 0.3, endRadius = Settings.BackDistance, extraSweep = math.pi * 0.3, endBehind = true })   -- FASTER + ends dead on their back
 		elseif m == "Jump" then                                                                    -- JUMP + curve OVER to their back
 			jumpNow()
 			orbitAround(targetHRP, { duration = 0.5, endRadius = Settings.BackDistance + 0.5, extraSweep = math.pi * 0.3, endBehind = true, yArc = 9 })
@@ -452,19 +452,41 @@ do
 	end
 	if LocalPlayer.Character then setupCharacter(LocalPlayer.Character) end
 	LocalPlayer.CharacterAdded:Connect(setupCharacter)
-	local function handleBackDashE()  -- Back Dash: curved BACKWARD retreat (drift diagonally OUT while facing them, easing) -> flash back onto their back.
+	local bdWatchGen = 0   -- one watcher at a time: a new E press supersedes the old watcher
+	local function handleBackDashE()  -- Back Dash: E = a NORMAL side-dash BF; then a background WATCHER on that target - the moment they turn to FACE you, dash behind + black flash again.
 		task.spawn(function()
 			local tgt = getNearestEnemy(Settings.LockRange)
-			if tgt then chainTarget = tgt; chainTargetT = tick() end
+			if not tgt then return end
+			chainTarget = tgt; chainTargetT = tick()
 			local tr = getHRP(tgt)
-			if tr and tr.Parent then
-				playAnim("rbxassetid://134581973800784")                       -- back-dash animation
-				fireDash("Back")                                               -- real dash remote (i-frames), no straight-line shove
-				-- CURVED diagonal retreat: arc OUT to create distance while orbiting ~90deg around them, facing them, eased
-				orbitAround(tr, { duration = 0.4, endRadius = 15, radialBias = 5, extraSweep = math.pi * 0.5, endBehind = false })
+			if tr and tr.Parent then                                            -- 1) normal side-dash black flash
+				playAnim("rbxassetid://75203303352791"); playAnim("rbxassetid://96489184596023")
+				fireDash("Right")
+				orbitAround(tr, { duration = 0.3, endRadius = Settings.BackDistance, extraSweep = math.pi * 0.3, endBehind = true })
 			end
-			task.wait(0.04)
-			if runChain then runChain() end                                    -- flash back onto their BACK
+			if runChain then runChain(tgt) end
+			-- 2) BACKGROUND WATCHER on THAT target: when they're FACING you (their back turned away), dash behind + flash
+			bdWatchGen = bdWatchGen + 1; local gen = bdWatchGen
+			task.spawn(function()
+				local t0 = tick()
+				task.wait(0.5)                                                  -- let the first flash resolve
+				while tick() - t0 < 4 do                                        -- watch up to 4s for them to turn on you
+					if gen ~= bdWatchGen then return end                        -- a newer E press took over
+					local tr2 = getHRP(tgt); local mh = getHRP(myCharResolved())
+					if not (tr2 and tr2.Parent and mh) then return end
+					local th = tgt:FindFirstChildOfClass("Humanoid"); if th and th.Health <= 0 then return end
+					local toMe = mh.Position - tr2.Position
+					if toMe.Magnitude > 0.1 and tr2.CFrame.LookVector:Dot(toMe.Unit) > 0.45 then   -- they're LOOKING at you = their back is open
+						chainTarget = tgt; chainTargetT = tick()
+						playAnim("rbxassetid://134581973800784")                -- back-dash anim
+						fireDash("Back")
+						orbitAround(tr2, { duration = 0.28, endRadius = Settings.BackDistance, extraSweep = math.pi * 0.4, endBehind = true })  -- quick dash AROUND to the open back
+						if runChain then runChain(tgt) end                      -- black flash
+						return                                                  -- one counter-flash per E press
+					end
+					task.wait(0.06)
+				end
+			end)
 		end)
 	end
 	local function doEPress()   -- exactly what pressing E does for the current approach (also fired by the mobile tap button)
@@ -486,7 +508,9 @@ do
 				if input.UserInputType == Enum.UserInputType.MouseButton1 and Settings.Mode == "M1 Black Flash" and tick() - lastM1 > 0.25 then
 					lastM1 = tick()
 					if _G.VX_BF_DEBUG then print("[DreamHub BF] click -> M1 black flash") end
-					if runChain then runChain() end
+					-- small delay so YOUR M1 swing registers first - firing the flash key mid-swing was getting
+					-- EATEN by the game ('gets to their back but no flash'). Then the chain snaps + flashes.
+					task.delay(0.18, function() if Settings.Mode == "M1 Black Flash" and runChain then runChain() end end)
 				end
 			end)
 		end
@@ -2113,9 +2137,22 @@ do
 		elseif domainMode == "Back Up" then vxTeleportHard(hrp.Position - hrp.CFrame.LookVector * 140 + Vector3.new(0, 10, 0), 3)                  -- back you UP away from the domain
 		else vxTeleportHard(hrp.Position + Vector3.new(0, 300, 0), 3) end  -- Teleport Up (default)
 	end
-	local function counterReact(enemyChar)  -- jump ON the countering enemy's head instead of just dashing back
-		if VX_NOTIFY then VX_NOTIFY("Counter - jumping on head", nil) end
-		if JumpHeadApi then JumpHeadApi.jump((enemyChar and enemyChar.Name) or "Nearest") end
+	local counterMode, counterEmote = "Jump On Head", 1   -- what to do when an enemy counters: jump on their head OR play a saved emote
+	local function emoteRE(name)
+		local RSs = game:GetService("ReplicatedStorage")
+		local k = RSs:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
+		local s = k and k:FindFirstChild("EmoteService"); local re = s and s:FindFirstChild("RE"); return re and re:FindFirstChild(name)
+	end
+	local function counterReact(enemyChar)  -- enemy countered -> Jump On Head OR taunt them with your saved emote
+		if counterMode == "Emote" then
+			local re = emoteRE("Emote")
+			if re then pcall(function() re:FireServer(counterEmote) end) end   -- play emote slot #counterEmote
+			task.delay(2.6, function()                                          -- end it once their counter is done
+				local re2 = emoteRE("EmoteEnd"); if re2 then pcall(function() re2:FireServer() end) end
+			end)
+		else
+			if JumpHeadApi then JumpHeadApi.jump((enemyChar and enemyChar.Name) or "Nearest") end
+		end
 	end
 	local function blackholeReact()  -- black hole = get OUT: blink way up, then to a random user
 		if VX_NOTIFY then VX_NOTIFY("Black Hole - teleporting out", false) end
@@ -2257,7 +2294,11 @@ do
 		end
 	end)
 	AntiDomainApi = { set = function(v) domainOn = v == true end, setMode = function(m) domainMode = m or "Safe Teleport" end }
-	AntiCounterApi = { set = function(v) counterOn = v == true end }
+	AntiCounterApi = {
+		set = function(v) counterOn = v == true end,
+		setMode = function(m) counterMode = (m == "Emote") and "Emote" or "Jump On Head" end,   -- what to do on their counter
+		setEmote = function(n) counterEmote = tonumber(n) or 1 end,                              -- which saved emote slot to play
+	}
 	AutoAdaptApi = { set = function(v) adaptOn = v == true end }
 	AutoDomainAdaptApi = { set = function(v) domainAdaptOn = v == true end }
 	AntiBlackHoleApi = { set = function(v) blackholeOn = v == true end }
@@ -6987,6 +7028,8 @@ do
     counterSec:Toggle({ Name = "Locked Only", Callback = function(b) if CounterApi then CounterApi.setLockedOnly(b) end end })
     counterSec:Toggle({ Name = "Side Dash Assist", Callback = function(b) if SideDashApi then SideDashApi.set(b) end end })   -- always visible now
     counterSec:Toggle({ Name = "Anti Counter", Callback = function(b) if AntiCounterApi then AntiCounterApi.set(b) end end })
+    counterSec:Dropdown({ Name = "On Counter", Items = { "Jump On Head", "Emote" }, Default = "Jump On Head", Callback = function(v) if AntiCounterApi then AntiCounterApi.setMode(v) end end })
+    counterSec:Dropdown({ Name = "Emote #", Items = { "1", "2", "3", "4", "5", "6", "7", "8" }, Default = "1", Callback = function(v) if AntiCounterApi then AntiCounterApi.setEmote(v) end end })
     counterSec:Toggle({ Name = "Auto Evasive", Callback = function(b) if EvasiveApi then EvasiveApi.set(b) end end })
     counterSec:Dropdown({ Name = "Evasive Dir", Items = { "Cycle", "Back", "Left", "Right", "Toward Target" }, Default = "Cycle", Callback = function(v) if EvasiveApi then EvasiveApi.setDir(v) end end })
     local antiSec = defSub:Section({ Name = "Anti / Adapt", Side = 2 })
