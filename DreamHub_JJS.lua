@@ -170,6 +170,7 @@ do
 	local feintMove = 1              -- Mode B: which move (1-4) to press after the R feint
 	local bfCount, lastBF = 0, 0
 	local bfSuppressUntil = 0        -- Mode A: after the feint R, HARD-STOP the chain for a window (this is the 'it must stop' fix)
+	local feintMovesOn = false       -- separate on/off for the abilities feint (1/2/3/4 -> R)
 	local m1FeintCount, lastM1Feint = 0, 0
 	local lastM1 = 0      -- M1 Black Flash: debounce so a fast M1 burst only starts the chain once per click
 	local burstUntil = 0  -- self-driving modes (M1 Black Flash / Back Dash / Auto Counter) run the PROVEN teleport chain even if the master "Auto Chain" toggle is off, for a short burst after each trigger
@@ -399,8 +400,6 @@ do
 			savedWS = hum.WalkSpeed
 			savedJP = hum.JumpPower
 			savedAR = hum.AutoRotate
-			bfCollideSaved = {}
-			for _, p in ipairs(myChar:GetDescendants()) do if p:IsA("BasePart") and p.CanCollide then bfCollideSaved[p] = true; pcall(function() p.CanCollide = false end) end end   -- ANTI-FLING: don't collide while pinned to their back (collision shoved THEM flying)
 		end
 		liveLoops = liveLoops + 1
 		dashGen = dashGen + 1  -- KILL any still-running approach dash so nothing pushes you off the back after the snap
@@ -416,12 +415,14 @@ do
 		hum.WalkSpeed = 0
 		hum.JumpPower = 0
 		task.wait(Settings.PreAttackDelay)
-		do  -- WAIT TO BE GROUNDED before the flash key: airborne = the game EATS the ability ('doesn't black flash most of the time' on Jump/arcs)
+		do  -- WAIT to be grounded before the flash key (airborne = the game eats the ability). PASSIVE wait only:
+			-- the old downward slam, combined with collision-off, tunneled you into the floor = the fling on every mode.
 			local t0 = tick()
-			while hum.FloorMaterial == Enum.Material.Air and tick() - t0 < 0.4 do
-				pcall(function() myHRP.AssemblyLinearVelocity = Vector3.new(0, -30, 0) end)   -- drop fast onto the ground behind them
+			while hum.FloorMaterial == Enum.Material.Air and tick() - t0 < 0.3 do
+				pcall(function() myHRP.AssemblyLinearVelocity = Vector3.zero; myHRP.AssemblyAngularVelocity = Vector3.zero end)
 				task.wait(0.03)
 			end
+			pcall(function() myHRP.AssemblyLinearVelocity = Vector3.zero end)
 		end
 		pcall(function()
 			VirtualInputManager:SendKeyEvent(true, Settings.AbilityKey, false, game)
@@ -453,8 +454,7 @@ do
 						hum.WalkSpeed = savedWS
 						hum.JumpPower = savedJP
 					end
-					if bfCollideSaved then for p in pairs(bfCollideSaved) do if p.Parent then pcall(function() p.CanCollide = true end) end end bfCollideSaved = nil end   -- restore collision
-				end
+					end
 				return
 			end
 			behindPos, targetPos = getBehind(targetHRP)
@@ -580,8 +580,8 @@ do
 					end
 				end
 			end
-			-- Mode "Moves": you cast ANY skill (1/2/3/4) -> R right after = feint the move
-			if feintMode == "Moves" and MOVEKEYS[input.KeyCode] then
+			-- Feint Abilities: you cast ANY skill (1/2/3/4) -> R right after = feint the move (own toggle OR the dropdown mode)
+			if (feintMovesOn or feintMode == "Moves") and MOVEKEYS[input.KeyCode] then
 				task.delay(0.14, function() pressR() end)
 			end
 		end)
@@ -669,6 +669,7 @@ do
 		setFeintBFStop = function(n) feintBFStop = tonumber(n) or 2 end,                  -- Mode A: press R after this many black flashes
 		setFeintM1Count = function(n) feintM1Count = tonumber(n) or 2 end,                -- Mode B: press R after this many of your M1s
 		setFeintMove = function(n) feintMove = tonumber(n) or 1 end,                      -- Mode B: which move (1-4) to press after the feint
+		setFeintMoves = function(v) feintMovesOn = v == true end,                          -- Feint Abilities toggle (1/2/3/4 -> R)
 		backstab = function(tgt) if runChain then runChain(tgt) end end,                 -- Auto Counter -> the proven teleport black flash on WHO swung
 		setMobile = function(v) setMobileBtn(v == true) end,                             -- MOBILE: show/hide the floating tap-to-fire button (phone = no keyboard E)
 	}
@@ -678,7 +679,7 @@ end
 -- BATCH 2 MODULES  (Item ESP + Auto Grab, Auto Skills, Invisibility, Auto Parkour, Teleport)
 -- Each module exposes a small API; the GUI below wires them.
 -- ============================================================
-local ItemsApi, SkillsApi, InvisApi, ParkourApi, TPApi, M1ComboApi, CounterApi, LockOnApi, AutoUltApi, AntiAfkApi, NoclipApi, FarmApi, SpeedApi, FlyApi, PlayerEspApi, DashApi, TrainApi, DrinkApi, AntiStunApi, AntiRagdollApi, SideDashApi, EvasiveApi, AntiDomainApi, ResetApi, InfJumpApi, AntiCounterApi, AutoAdaptApi, JumpHeadApi, AntiBlackHoleApi, CrowUltApi, CrowHitApi, AutoDomainAdaptApi, HeadUltApi, RikaSwordApi, SlamApi, GokuApi, HollowApi, VisualApi, AimAssistApi, RemoveTreesApi, GojoTpApi, ReversalRedApi, ControlDummyApi
+local ItemsApi, SkillsApi, InvisApi, ParkourApi, TPApi, M1ComboApi, CounterApi, LockOnApi, AutoUltApi, AntiAfkApi, NoclipApi, FarmApi, SpeedApi, FlyApi, PlayerEspApi, DashApi, TrainApi, DrinkApi, AntiStunApi, AntiRagdollApi, SideDashApi, EvasiveApi, AntiDomainApi, ResetApi, InfJumpApi, AntiCounterApi, AutoAdaptApi, JumpHeadApi, AntiBlackHoleApi, CrowUltApi, CrowHitApi, AutoDomainAdaptApi, HeadUltApi, RikaSwordApi, SlamApi, GokuApi, HollowApi, VisualApi, AimAssistApi, RemoveTreesApi, GojoTpApi, ReversalRedApi, ControlDummyApi, DesyncFreezeApi
 
 -- EVERY character's M1 anim id (user-captured) - set EARLY so Head of Hei / Goku M1 / Side Dash all detect a real M1 regardless of module load order
 do
@@ -2256,7 +2257,12 @@ do
 		return nil
 	end
 	local function enemyOutsideDomain(c)  -- a user/DUMMY that is OUTSIDE the domain (so teleporting to them actually ESCAPES, never loops you back inside)
-		local function far(r) return r and (not c or (r.Position - c).Magnitude > 150) end
+		local me = myHRP()
+		local function far(r)
+			if not r then return false end
+			if c then return (r.Position - c).Magnitude > 150 end
+			return me and (r.Position - me.Position).Magnitude > 80 or false   -- no center found: at least far from YOU (never TP into the dome around you)
+		end
 		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local r = plr.Character:FindFirstChild("HumanoidRootPart"); if far(r) then return r end end end
 		local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local r = m:FindFirstChild("HumanoidRootPart"); local h = m:FindFirstChildOfClass("Humanoid"); if r and h and h.Health > 0 and far(r) then return r end end end end
 		return nil
@@ -2280,19 +2286,25 @@ do
 		local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local h = m:FindFirstChildOfClass("Humanoid"); if h and h.Health > 0 then chk(m:FindFirstChild("HumanoidRootPart")) end end end end
 		return best
 	end
-	local function domainReact(name)
+	local function domainReact(name, caster)
 		local hrp = myHRP(); if not hrp then return end
-		if domainMode == "Safe Teleport" then safeTeleport()
-		elseif domainMode == "Teleport to User" then local r = enemyOutsideDomain(domainCenter()) or randomEnemyHRP(); if r then vxTeleportHard(r.Position - r.CFrame.LookVector * 4 + Vector3.new(0, 3, 0), 3) end   -- TP to a user (out of the dome)
-		elseif domainMode == "Hit Caster (Cancel)" then                                                                                          -- TP to the domain CASTER + hit them to cancel it
-			local r = domainCaster()
+		if domainMode == "To User + Hit" then
+			-- go to the CASTER (the one whose cast anim triggered this) and HIT them to interrupt the domain
+			local r = (caster and caster:FindFirstChild("HumanoidRootPart")) or domainCaster()
+			local cchar = caster or (r and r.Parent)
 			if r then
 				vxTeleportHard(r.Position - r.CFrame.LookVector * 3 + Vector3.new(0, 2, 0), 1.5)
-				if _G.VX_RUNCHAIN and r.Parent then task.delay(0.15, function() pcall(function() _G.VX_RUNCHAIN(r.Parent) end) end)   -- black flash the caster (best cancel)
-				else task.spawn(function() local VIM = game:GetService("VirtualInputManager"); for _ = 1, 4 do pcall(function() VIM:SendMouseButtonEvent(0,0,0,true,game,0); task.wait(0.05); VIM:SendMouseButtonEvent(0,0,0,false,game,0) end); task.wait(0.14) end end) end   -- fallback: M1 them
+				task.delay(0.12, function()
+					if _G.VX_RUNCHAIN and cchar and cchar.Parent then pcall(function() _G.VX_RUNCHAIN(cchar) end)   -- black flash the caster
+					else pcall(function()                                                                            -- fallback: raw M1s
+						local VIM = game:GetService("VirtualInputManager")
+						for _ = 1, 4 do VIM:SendMouseButtonEvent(0, 0, 0, true, game, 0); task.wait(0.05); VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0); task.wait(0.14) end
+					end) end
+				end)
 			end
-		elseif domainMode == "Back Up" then vxTeleportHard(hrp.Position - hrp.CFrame.LookVector * 70 + Vector3.new(0, 8, 0), 5)                   -- back you up (shorter hop + LONGER hold = no send-back)
-		else vxTeleportHard(hrp.Position + Vector3.new(0, 300, 0), 3) end  -- Teleport Up (default)
+		else
+			safeTeleport()   -- Safe Teleport (default): OUT of the domain
+		end
 	end
 	local counterMode, counterEmote = "Jump On Head", 1   -- what to do when an enemy counters: jump on their head OR play a saved emote
 	local function emoteRE(name)
@@ -2330,10 +2342,12 @@ do
 	local function onAnim(enemyChar, animId)
 		local id = idOf(animId); if not id then return end
 		local er = enemyChar:FindFirstChild("HumanoidRootPart")
-		if domainOn and DOMAINS[id] and tick() - domainCd > 3 then domainCd = tick(); domainReact(DOMAINS[id]) end
+		if domainOn and DOMAINS[id] and tick() - domainCd > 3 then domainCd = tick(); domainReact(DOMAINS[id], enemyChar) end   -- caster passed -> 'To User + Hit' hits the RIGHT person
 		if counterOn and COUNTERS[id] and er and dist(er) <= 26 and tick() - counterCd > 0.8 then counterCd = tick(); counterReact(enemyChar) end
 		-- AUTO ADAPT: on the AnimationPlayed event (so it is TIMED to the attack, not polled), if a nearby enemy starts ANY of the full captured attack-id list OR a block-dict attack -> press 4 (after ADAPT_LEAD). 0.35s de-dupe = one adapt per swing.
 		if adaptOn and er and dist(er) <= 20 and tick() - adaptCd > 0.35 then local dict = _G.VX_ANIMDICT; if ADAPT_IDS[id] or (dict and dict[id]) then adaptCd = tick(); playAdapt() end end
+		-- AUTO EVASIVE rides the SAME proven event: nearby enemy starts any attack -> the i-frame dash fires
+		if _G.VX_EVADE and er and dist(er) <= 30 then local dict = _G.VX_ANIMDICT; if ADAPT_IDS[id] or (dict and dict[id]) or COUNTERS[id] then _G.VX_EVADE() end end
 		if _G.VX_AUTOCOUNTER_ON and _G.VX_AUTOCOUNTER then _G.VX_AUTOCOUNTER(enemyChar, id) end  -- AUTO COUNTER reacts on the SAME event = counters before the hit lands, on every attack id
 	end
 	local hooked = setmetatable({}, { __mode = "k" })  -- animator -> connection (weak so dead chars GC)
@@ -2719,6 +2733,21 @@ do
 		local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do chk(m) end end
 		return best
 	end
+	-- CLICK fallback: a LANDED left-click (enemy in front, melee range) triggers the Goku blink even when the
+	-- anim-id detection misses (that miss = 'Goku M1 no work at all').
+	do
+		local UISg = game:GetService("UserInputService")
+		UISg.InputBegan:Connect(function(input, gpe)
+			if gpe or not on then return end
+			if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+			if tick() - last <= 0.6 then return end
+			local mh = myHRP(); if not mh then return end
+			local tgt = nearestEnemy(); local er = tgt and tgt:FindFirstChild("HumanoidRootPart")
+			if not er then return end
+			local to = er.Position - mh.Position
+			if to.Magnitude <= 9 and mh.CFrame.LookVector:Dot(to.Unit) > 0.35 then last = tick(); task.delay(0.15, function() goBehind(tgt) end) end
+		end)
+	end
 	-- fire on YOUR M1 (so it works when you M1 the dummy): flash behind the nearest enemy + Goku pose
 	local hooked = setmetatable({}, { __mode = "k" })
 	local function hookSelf()
@@ -2874,12 +2903,12 @@ do
 		if sdaCount < sdaNeed then return end                 -- fires on hit #sdaNeed (1-3, your dropdown)
 		sdaCount = 0
 		last = tick()
-		-- SWEAT DASH: a REAL evasive dash in a random direction (Left/Right/Back) - remote (i-frames + the
-		-- game's own dash movement/anim) + a matching velocity burst. NO orbit, NO teleport, NO glide.
-		local dirs = { "Left", "Right", "Back" }
+		-- SWEAT DASH: a REAL evasive dash - LEFT or RIGHT only (never away from the target) - remote (i-frames
+		-- + the game's own dash movement/anim) + a matching velocity burst. NO orbit, NO teleport, NO glide.
+		local dirs = { "Left", "Right" }
 		local pick = dirs[math.random(1, #dirs)]
 		fireKnit("MovementService", "Dash", pick, true)
-		local vmap = { Left = -mh.CFrame.RightVector, Right = mh.CFrame.RightVector, Back = -mh.CFrame.LookVector }
+		local vmap = { Left = -mh.CFrame.RightVector, Right = mh.CFrame.RightVector }
 		local v = vmap[pick]
 		task.spawn(function()   -- short burst so the dash has real bite, then hands control straight back
 			local t0 = tick()
@@ -2894,6 +2923,39 @@ do
 		end)
 		vxLog("SideDash assist: " .. pick)
 	end
+	-- BLOCK PUNISH (part of Side Dash Assist): the enemy you're hitting raises BLOCK -> instantly get BEHIND
+	-- them and M1 (their block faces the wrong way = free hit). This is the 'escape their block and hit them'.
+	local lastPunish = 0
+	local function targetBlocking(tgt)
+		if not tgt then return false end
+		local info = tgt:FindFirstChild("Info")
+		if info then for _, nm in ipairs({ "Block", "Blocking", "IsBlocking", "Guard" }) do
+			local v = info:FindFirstChild(nm); if v and v.Value and v.Value ~= false and v.Value ~= 0 then return true end
+		end end
+		local h = tgt:FindFirstChildOfClass("Humanoid")
+		if h and (h:GetAttribute("Blocking") == true or h:GetAttribute("Block") == true) then return true end
+		return false
+	end
+	task.spawn(function()
+		local VIMs = game:GetService("VirtualInputManager")
+		while true do
+			task.wait(0.12)
+			if on and tick() - lastPunish > 1.6 and tick() >= (_G.VX_BUSY or 0) then
+				local mh = getHRP(myModel())
+				local tgt = nearestEnemy(10); local tr = tgt and getHRP(tgt)
+				if mh and tr and targetBlocking(tgt) then
+					lastPunish = tick()
+					if _G.VX_ORBIT then _G.VX_ORBIT(tr, { duration = 0.14, endRadius = 3, extraSweep = math.pi * 0.2, endBehind = true }) end   -- slip around their guard
+					task.wait(0.05)
+					pcall(function()   -- and HIT: real M1 at their exposed back
+						local cam = workspace.CurrentCamera; local v = (cam and cam.ViewportSize) or Vector2.new(800, 600)
+						VIMs:SendMouseButtonEvent(v.X / 2, v.Y / 2, 0, true, game, 0); task.wait(0.04); VIMs:SendMouseButtonEvent(v.X / 2, v.Y / 2, 0, false, game, 0)
+					end)
+					vxLog("Block punish -> behind + M1")
+				end
+			end
+		end
+	end)
 	-- PRIMARY: fire the side dash the instant YOUR character plays an M1 animation (works for every character, survives input-processing)
 	local hooked = setmetatable({}, { __mode = "k" })
 	local function hookSelf()
@@ -2982,6 +3044,7 @@ do
 			task.wait(0.04)
 		end
 	end)
+	_G.VX_EVADE = function() if on and tick() - last > 0.22 then evade() end end   -- fired by the anim-threat pipeline (same event Auto Adapt provably rides)
 	EvasiveApi = { set = function(v) on = v == true end, setDir = function(m) dmode = m or "Cycle" end }
 end
 
@@ -3196,6 +3259,52 @@ do
 end
 
 -- ============================================================
+-- MODULE: DESYNC FREEZE  (experimental invis: the server keeps you at the frozen spot, YOU keep moving)
+-- Anchoring your root LOCALLY stops your physics replication -> everyone sees you standing at the freeze
+-- point while you actually move around (local WASD driver). Turning it off glides you back legit.
+-- ============================================================
+do
+	local Players = game:GetService("Players")
+	local RunService = game:GetService("RunService")
+	local UIS = game:GetService("UserInputService")
+	local LP = Players.LocalPlayer
+	local on = false
+	local frozeAt = nil
+	local function myC() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
+	local function myR() local c = myC(); return c and c:FindFirstChild("HumanoidRootPart") end
+	RunService.RenderStepped:Connect(function(dt)
+		if not on then return end
+		local r = myR(); if not r then return end
+		pcall(function() r.Anchored = true end)   -- anchored locally = you stop sending position -> server holds the freeze spot
+		local cam = workspace.CurrentCamera; if not cam then return end
+		local fwd = cam.CFrame.LookVector; fwd = Vector3.new(fwd.X, 0, fwd.Z); if fwd.Magnitude > 0 then fwd = fwd.Unit end
+		local right = cam.CFrame.RightVector; right = Vector3.new(right.X, 0, right.Z); if right.Magnitude > 0 then right = right.Unit end
+		local move = Vector3.zero
+		if UIS:IsKeyDown(Enum.KeyCode.W) then move = move + fwd end
+		if UIS:IsKeyDown(Enum.KeyCode.S) then move = move - fwd end
+		if UIS:IsKeyDown(Enum.KeyCode.D) then move = move + right end
+		if UIS:IsKeyDown(Enum.KeyCode.A) then move = move - right end
+		if UIS:IsKeyDown(Enum.KeyCode.Space) then move = move + Vector3.new(0, 1, 0) end
+		if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then move = move - Vector3.new(0, 1, 0) end
+		if move.Magnitude > 0 then
+			local dir = move.Unit
+			pcall(function() r.CFrame = CFrame.new(r.Position + dir * (24 * dt)) * (r.CFrame - r.CFrame.Position) end)
+		end
+	end)
+	DesyncFreezeApi = { set = function(v)
+		local r = myR()
+		if v then
+			on = true; frozeAt = r and r.Position
+		else
+			on = false
+			if r then pcall(function() r.Anchored = false end) end
+			if r and frozeAt then vxTeleportHard(r.Position, 2) end   -- re-sync: glide the server to where you actually are
+			frozeAt = nil
+		end
+	end }
+end
+
+-- ============================================================
 -- MODULE: CONTROL DUMMY  (take the wheel: WASD walks the dummy around, Space hops it)
 -- ============================================================
 do
@@ -3216,12 +3325,32 @@ do
 		end
 		return best
 	end
+	local flyOn, attackOn, atkTarget = false, false, nil
+	local function targetHRPOf(name)
+		local p = Players:FindFirstChild(name); if p and p.Character then local r = p.Character:FindFirstChild("HumanoidRootPart"); if r then return r end end
+		local chs = workspace:FindFirstChild("Characters"); local m = chs and chs:FindFirstChild(name); return m and m:FindFirstChild("HumanoidRootPart")
+	end
 	RunService.Heartbeat:Connect(function(dt)
 		if not on then return end
 		if not (dummy and dummy.Parent) then dummy = findDummy(); if not dummy then return end end
 		local r = dummy:FindFirstChild("HumanoidRootPart"); if not r then return end
 		local cam = workspace.CurrentCamera; if not cam then return end
-		-- camera-relative WASD, flat
+		local hum = dummy:FindFirstChildOfClass("Humanoid")
+		-- ATTACK MODE (JoJo stand): the dummy chases the chosen player and body-slams through them
+		if attackOn and atkTarget then
+			local tr = targetHRPOf(atkTarget)
+			if tr then
+				local to = tr.Position - r.Position
+				local dir = to.Magnitude > 0.1 and to.Unit or Vector3.zero
+				pcall(function()
+					r.AssemblyLinearVelocity = Vector3.new(dir.X * 42, math.clamp(to.Y * 2, -18, 26), dir.Z * 42)   -- physics velocity = REPLICATES: everyone sees it charge
+					r.CFrame = CFrame.lookAt(r.Position, Vector3.new(tr.Position.X, r.Position.Y, tr.Position.Z))
+				end)
+				if hum then pcall(function() hum:Move(dir) end) end
+			end
+			return
+		end
+		-- WASD control (camera-relative). VELOCITY-driven, not CFrame: physics replicates -> everyone SEES it walk/fly.
 		local fwd = cam.CFrame.LookVector; fwd = Vector3.new(fwd.X, 0, fwd.Z); if fwd.Magnitude > 0 then fwd = fwd.Unit end
 		local right = cam.CFrame.RightVector; right = Vector3.new(right.X, 0, right.Z); if right.Magnitude > 0 then right = right.Unit end
 		local move = Vector3.zero
@@ -3229,15 +3358,40 @@ do
 		if UIS:IsKeyDown(Enum.KeyCode.S) then move = move - fwd end
 		if UIS:IsKeyDown(Enum.KeyCode.D) then move = move + right end
 		if UIS:IsKeyDown(Enum.KeyCode.A) then move = move - right end
-		local hum = dummy:FindFirstChildOfClass("Humanoid")
-		if move.Magnitude > 0 then
-			move = move.Unit
-			if hum then pcall(function() hum:Move(move) end) end                                   -- real walk (animations play) when the humanoid listens
-			pcall(function() r.CFrame = CFrame.lookAt(r.Position + move * (16 * dt), r.Position + move * 10) end)  -- and drive it directly so it ALWAYS moves
+		local vy = r.AssemblyLinearVelocity.Y
+		if flyOn then
+			vy = 0
+			if UIS:IsKeyDown(Enum.KeyCode.Space) then vy = 26 end
+			if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then vy = -26 end
+		elseif UIS:IsKeyDown(Enum.KeyCode.Space) then vy = 30 end
+		if move.Magnitude > 0 or flyOn then
+			local dir = move.Magnitude > 0 and move.Unit or Vector3.zero
+			if hum then pcall(function() hum:Move(dir) end) end   -- walk animation
+			pcall(function()
+				r.AssemblyLinearVelocity = Vector3.new(dir.X * 22, vy, dir.Z * 22)
+				if dir.Magnitude > 0 then r.CFrame = CFrame.lookAt(r.Position, r.Position + dir * 8) end
+			end)
+		elseif UIS:IsKeyDown(Enum.KeyCode.Space) then
+			pcall(function() r.AssemblyLinearVelocity = Vector3.new(r.AssemblyLinearVelocity.X, 30, r.AssemblyLinearVelocity.Z) end)
 		end
-		if UIS:IsKeyDown(Enum.KeyCode.Space) then pcall(function() r.AssemblyLinearVelocity = Vector3.new(r.AssemblyLinearVelocity.X, 30, r.AssemblyLinearVelocity.Z) end) end
 	end)
-	ControlDummyApi = { set = function(v) on = v == true; if not on then dummy = nil end end }
+	ControlDummyApi = {
+		set = function(v) on = v == true; if not on then dummy = nil; attackOn = false end end,
+		setFly = function(v) flyOn = v == true end,
+		setAttack = function(v) attackOn = v == true end,
+		setTarget = function(n) atkTarget = (n and n ~= "(none)") and n or nil end,
+		blackFlash = function()   -- DUMMY BLACK FLASH: slam the dummy behind the chosen player and shove through their back
+			if not (dummy and dummy.Parent and atkTarget) then return end
+			local r = dummy:FindFirstChild("HumanoidRootPart"); local tr = targetHRPOf(atkTarget)
+			if not (r and tr) then return end
+			local look = tr.CFrame.LookVector; local flat = Vector3.new(look.X, 0, look.Z)
+			local dir = flat.Magnitude > 0.01 and flat.Unit or Vector3.new(0, 0, -1)
+			pcall(function()
+				r.CFrame = CFrame.lookAt(tr.Position - dir * 4 + Vector3.new(0, 1, 0), tr.Position)
+				r.AssemblyLinearVelocity = dir * 60   -- drive THROUGH their back
+			end)
+		end,
+	}
 end
 
 -- ============================================================
@@ -7371,7 +7525,7 @@ do
         local btn = Instance.new("ImageButton")
         -- top-CENTER, small, NOT draggable (draggable was capturing touch input = the "can't move for a few seconds" freeze).
         btn.Size = UDim2.fromOffset(40, 40); btn.Position = UDim2.new(0.5, -20, 0, 6); btn.AnchorPoint = Vector2.new(0, 0)
-        btn.BackgroundColor3 = Color3.fromRGB(10, 10, 12); btn.Image = "rbxassetid://108005745550201"   -- the Dream logo
+        btn.BackgroundColor3 = Color3.fromRGB(10, 10, 12); btn.Image = "rbxthumb://type=Asset&id=108005745550201&w=150&h=150"   -- the Dream logo (thumb renders decal ids that rbxassetid won't)
         btn.ScaleType = Enum.ScaleType.Fit; btn.AutoButtonColor = true
         btn.Active = true; btn.Draggable = false; btn.ZIndex = 10; btn.Parent = mmGui
         Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 10)
@@ -7397,13 +7551,13 @@ do
         local KM = { ["1"]=Enum.KeyCode.One, ["2"]=Enum.KeyCode.Two, ["3"]=Enum.KeyCode.Three, ["4"]=Enum.KeyCode.Four, R=Enum.KeyCode.R, F=Enum.KeyCode.F, G=Enum.KeyCode.G, T=Enum.KeyCode.T, Z=Enum.KeyCode.Z, X=Enum.KeyCode.X, C=Enum.KeyCode.C, V=Enum.KeyCode.V }
         if ChainApi and KM[v] then ChainApi.setKey(KM[v]) end
     end })
-    bfSec:Toggle({ Name = "BF Debug -> F9 console", Default = false, Callback = function(b) _G.VX_BF_DEBUG = b == true end })
     bfSec:Dropdown({ Name = "Auto Feint", Items = { "Off", "Feint Black Flash", "Feint M1", "Feint Moves" }, Default = "Off", Callback = function(v)
         if ChainApi then ChainApi.setFeintMode(v == "Feint Black Flash" and "BF" or (v == "Feint M1" and "M1" or (v == "Feint Moves" and "Moves" or "Off"))) end
     end })
     bfSec:Dropdown({ Name = "A - Stop after (black flashes)", Items = { "1", "2", "3", "4" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintBFStop(v) end end })
     bfSec:Dropdown({ Name = "B - Feint after (M1s)", Items = { "1", "2", "3" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintM1Count(v) end end })
     bfSec:Dropdown({ Name = "B - Move after feint", Items = { "1", "2", "3", "4" }, Default = "1", Callback = function(v) if ChainApi then ChainApi.setFeintMove(v) end end })
+    bfSec:Toggle({ Name = "Feint Abilities (1-4 -> R)", Default = false, Callback = function(b) if ChainApi and ChainApi.setFeintMoves then ChainApi.setFeintMoves(b) end end })
     bfSec:Toggle({ Name = "Aim Assist (face enemy on every move)", Default = false, Callback = function(b) if AimAssistApi then AimAssistApi.set(b) end end })
     bfSec:Slider({ Name = "Cooldown", Min = 0.1, Max = 1, Default = 0.45, Decimals = 0.01, Suffix = "s", Callback = function(v) if BFApi then BFApi.SetCooldown(v) end end })
     if tier("premium") then
@@ -7464,7 +7618,7 @@ do
     antiSec:Toggle({ Name = "Anti-Stun", Callback = function(b) if AntiStunApi then AntiStunApi.set(b) end end })
     antiSec:Toggle({ Name = "Anti-Ragdoll", Callback = function(b) if AntiRagdollApi then AntiRagdollApi.set(b) end end })
     antiSec:Toggle({ Name = "Anti-Domain", Callback = function(b) if AntiDomainApi then AntiDomainApi.set(b) end end })
-    antiSec:Dropdown({ Name = "Domain React", Items = { "Safe Teleport", "Teleport to User", "Hit Caster (Cancel)", "Back Up", "Teleport Up" }, Default = "Safe Teleport", Callback = function(v) if AntiDomainApi then AntiDomainApi.setMode(v) end end })
+    antiSec:Dropdown({ Name = "Domain React", Items = { "Safe Teleport", "To User + Hit" }, Default = "Safe Teleport", Callback = function(v) if AntiDomainApi then AntiDomainApi.setMode(v) end end })
     antiSec:Toggle({ Name = "Auto Adapt", Callback = function(b) if AutoAdaptApi then AutoAdaptApi.set(b) end end })
     antiSec:Toggle({ Name = "Auto Domain Adapt", Callback = function(b) if AutoDomainAdaptApi then AutoDomainAdaptApi.set(b) end end })
     antiSec:Toggle({ Name = "Anti Black Hole", Callback = function(b) if AntiBlackHoleApi then AntiBlackHoleApi.set(b) end end })
@@ -7478,6 +7632,7 @@ do
     coreSec:Toggle({ Name = "Infinite Jump", Callback = function(b) if InfJumpApi then InfJumpApi.set(b) end end })
     coreSec:Button({ Name = "Dash Forward", Callback = function() if DashApi then DashApi.forward() end end })
     coreSec:Toggle({ Name = "Invisible", Callback = function(b) if InvisApi then InvisApi.set(b) end end })   -- always visible now
+    coreSec:Toggle({ Name = "Desync Freeze (they see you frozen)", Callback = function(b) if DesyncFreezeApi then DesyncFreezeApi.set(b) end end })
     if tier("plus") then
         coreSec:Toggle({ Name = "No Dash CD", Callback = function(b) if DashApi then DashApi.setNoCd(b) end end })
     end
@@ -7560,6 +7715,12 @@ do
     local farmSec = plySub:Section({ Name = "Farm & Train", Side = 2 })
     farmSec:Toggle({ Name = "Auto Farm", Callback = function(b) if FarmApi then FarmApi.set(b) end end })
     farmSec:Toggle({ Name = "Control Dummy (WASD + Space)", Callback = function(b) if ControlDummyApi then ControlDummyApi.set(b) end end })
+    farmSec:Toggle({ Name = "Dummy Fly (Space/Ctrl)", Callback = function(b) if ControlDummyApi then ControlDummyApi.setFly(b) end end })
+    local dumTargets
+    dumTargets = farmSec:Dropdown({ Name = "Dummy Target", Items = playerList(), Default = "Nearest", Callback = function(v) if ControlDummyApi then ControlDummyApi.setTarget(v) end end })
+    farmSec:Button({ Name = "Refresh Dummy Targets", Callback = function() if dumTargets then pcall(function() dumTargets:Refresh(playerList()) end) end end })
+    farmSec:Toggle({ Name = "Dummy Attack (stand mode)", Callback = function(b) if ControlDummyApi then ControlDummyApi.setAttack(b) end end })
+    farmSec:Button({ Name = "Dummy Black Flash", Callback = function() if ControlDummyApi then ControlDummyApi.blackFlash() end end })
     farmSec:Dropdown({ Name = "Farm Target", Items = playerList(), Default = "Nearest", Callback = function(v) if FarmApi then FarmApi.setTarget(v) end end })
     farmSec:Button({ Name = "Spawn Train", Callback = function() if TrainApi then TrainApi.spawn() end end })
     farmSec:Toggle({ Name = "Auto Train", Callback = function(b) if TrainApi then TrainApi.setAuto(b) end end })
