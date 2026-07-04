@@ -1948,22 +1948,24 @@ do
 		local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local r = m:FindFirstChild("HumanoidRootPart"); local h = m:FindFirstChildOfClass("Humanoid"); if r and h and h.Health > 0 and far(r) then return r end end end end
 		return nil
 	end
-	local function safeTeleport()  -- ESCAPE the domain: to a user/DUMMY that is OUTSIDE it (bypass teleport), else bolt AWAY from the center, else train / up. Never lands you back inside (no 3s loop).
+	-- ESCAPE uses vxTeleportHard (speed-capped + whitelisted) instead of the hard-snap vxGlide, which the
+	-- anti-cheat was reverting -> you stayed stuck INSIDE. Capped stepping isn't set back, so you actually leave.
+	local function safeTeleport()  -- ESCAPE the domain: to a user/DUMMY OUTSIDE it, else bolt AWAY from the center + up, else train / straight up. Never lands you back inside.
 		local hrp = myHRP(); if not hrp then return end
 		local c = domainCenter()
 		local out = enemyOutsideDomain(c)
-		if out then vxGlide(out.Position - out.CFrame.LookVector * 4 + Vector3.new(0, 3, 0)); return end   -- go to a user who is OUTSIDE the domain (the dummy, if it is out there)
-		if c then local away = hrp.Position - c; local dir = away.Magnitude > 1 and away.Unit or hrp.CFrame.LookVector; vxGlide(c + dir * 300 + Vector3.new(0, 90, 0)); return end  -- none outside: bolt away from the center + up
-		local tp = trainPos(); if tp then vxGlide(tp + Vector3.new(0, 6, 0)); return end                  -- no center found: train station
-		vxGlide(hrp.Position + Vector3.new(0, 320, 0))                                                     -- last resort: straight up
+		if out then vxTeleportHard(out.Position - out.CFrame.LookVector * 4 + Vector3.new(0, 3, 0), 3); return end   -- go to a user who is OUTSIDE the domain
+		if c then local away = hrp.Position - c; local dir = away.Magnitude > 1 and away.Unit or hrp.CFrame.LookVector; vxTeleportHard(c + dir * 320 + Vector3.new(0, 140, 0), 3); return end  -- none outside: bolt far away from the center + high UP (out of the dome)
+		local tp = trainPos(); if tp then vxTeleportHard(tp + Vector3.new(0, 6, 0), 3); return end               -- no center found: train station
+		vxTeleportHard(hrp.Position + Vector3.new(0, 400, 0), 3)                                                  -- last resort: straight UP, high enough to clear the dome
 	end
 	local function domainReact(name)
 		local hrp = myHRP(); if not hrp then return end
 		if VX_NOTIFY then VX_NOTIFY("Domain: " .. name .. " -> " .. domainMode, false) end
 		if domainMode == "Safe Teleport" then safeTeleport()
-		elseif domainMode == "To Random User" then local r = randomEnemyHRP(); if r then vxGlide(r.Position - r.CFrame.LookVector * 4 + Vector3.new(0, 3, 0)) end
-		elseif domainMode == "Teleport Back" then vxGlide(hrp.Position - hrp.CFrame.LookVector * 120 + Vector3.new(0, 8, 0))
-		else vxGlide(hrp.Position + Vector3.new(0, 250, 0)) end  -- Teleport Up (default)
+		elseif domainMode == "To Random User" then local r = randomEnemyHRP(); if r then vxTeleportHard(r.Position - r.CFrame.LookVector * 4 + Vector3.new(0, 3, 0), 3) end
+		elseif domainMode == "Teleport Back" then vxTeleportHard(hrp.Position - hrp.CFrame.LookVector * 120 + Vector3.new(0, 8, 0), 3)
+		else vxTeleportHard(hrp.Position + Vector3.new(0, 300, 0), 3) end  -- Teleport Up (default)
 	end
 	local function counterReact(enemyChar)  -- jump ON the countering enemy's head instead of just dashing back
 		if VX_NOTIFY then VX_NOTIFY("Counter - jumping on head", nil) end
@@ -2412,11 +2414,11 @@ do
 				local away = hrp.Position - tr.Position; local dir = away.Magnitude > 1 and away.Unit or -tr.CFrame.LookVector
 				local backPos = tr.Position + dir * 16 + Vector3.new(0, 3, 0)  -- back off only a LITTLE (closer to the target)
 				vxGlide(CFrame.lookAt(backPos, Vector3.new(tr.Position.X, backPos.Y, tr.Position.Z)))
-				note("Hollow: backed off from " .. tgt.Name); task.wait(0.6)
+				note("Hollow: backed off from " .. tgt.Name); task.wait(0.3)
 			end
 			aimAt(tr.Position)                                                    -- face the target
 			fireMove("LapseBlueMaxService", "Lapse Blue MAX")                     -- 2) Lapse Blue MAX
-			task.wait(3)                                                          -- 3) wait 3 seconds
+			task.wait(1.6)                                                        -- 3) FASTER charge before Red (was 3s)
 			if tr and tr.Parent then aimAt(tr.Position); note("Hollow: aim target -> Red") end  -- 4) AIM at the SAME target it did, then fire Red
 			task.wait(0.12)
 			fireMove("ReversalRedMaxService", "Reversal Red MAX")                 -- Reversal Red MAX -> Hollow Purple at the target
@@ -2524,7 +2526,7 @@ do
 		for _, m in ipairs(chars:GetChildren()) do
 			if m.Name ~= LP.Name then
 				local r = m:FindFirstChild("HumanoidRootPart"); local h = m:FindFirstChildOfClass("Humanoid")
-				if r and h and h.Health > 0 and (r.Position - hrp.Position).Magnitude <= 15 then
+				if r and h and h.Health > 0 and (r.Position - hrp.Position).Magnitude <= 20 then
 					local anim = h:FindFirstChildOfClass("Animator")
 					if anim then for _, tr in ipairs(anim:GetPlayingAnimationTracks()) do
 						if ATTACK[tr.Priority] then return true end
@@ -2542,7 +2544,7 @@ do
 	end
 	task.spawn(function()
 		while true do
-			if on and tick() - last > 0.8 and enemyAttacking() then
+			if on and tick() - last > 0.35 and enemyAttacking() then
 				last = tick()
 				local d = pickDir()
 				fireKnit("MovementService", "Dash", d, true)  -- ONLY the remote: Dash(dir, true) - the `true` is the evasive/i-frame flag (back/left/right). No velocity shove.
