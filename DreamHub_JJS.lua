@@ -399,11 +399,16 @@ do
 			local tr = getHRP(tgt); local mh = getHRP(myCharResolved())
 			if tr and mh and tr.Parent then
 				local toMe = mh.Position - tr.Position
-				if toMe.Magnitude > 0.1 and tr.CFrame.LookVector:Dot(toMe.Unit) > 0.3 then   -- 2) target is LOOKING at you -> dash back (Q) then flash again
-					pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Q, false, game); task.wait(0.03); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Q, false, game) end)  -- dash back (Q)
+				if toMe.Magnitude > 0.1 and tr.CFrame.LookVector:Dot(toMe.Unit) > 0.3 then   -- 2) target is LOOKING at you -> walk in, JUMP, back-dash, flash again
+					pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game) end)   -- walk/sprint forward toward them
+					task.wait(0.12)
+					jumpNow()                                                                                  -- JUMP (space bar)
+					task.wait(0.05)
+					pcall(function() VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game) end)
+					pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Q, false, game); task.wait(0.03); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Q, false, game) end)  -- BACK DASH (Q)
 					fireDash("Back"); clientDash("Back", 62, 0.08)
 					task.wait(0.1)
-					if runChain then runChain() end                                -- 3) black flash again
+					if runChain then runChain() end                                -- 3) black flash again (snaps to their BACK)
 				end
 			end
 		end)
@@ -2533,7 +2538,8 @@ do
 			task.wait(1.6)                                                        -- 3) FASTER charge before Red (was 3s)
 			if tr and tr.Parent then aimAt(tr.Position); note("Hollow: aim target -> Red") end  -- 4) AIM at the SAME target it did, then fire Red
 			task.wait(0.12)
-			fireMove("ReversalRedMaxService", "Reversal Red MAX")                 -- Reversal Red MAX -> Hollow Purple at the target
+			pcall(function() local VIM = game:GetService("VirtualInputManager"); VIM:SendKeyEvent(true, Enum.KeyCode.Two, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.Two, false, game) end)  -- CLICK 2 after Blue = combine into Hollow Purple
+			fireMove("ReversalRedMaxService", "Reversal Red MAX")                 -- + fire the remote as backup
 			task.wait(0.4); busy = false
 		end)
 	end }
@@ -6151,7 +6157,7 @@ local Library do
 
                     RenderStepped = RunService.RenderStepped:Connect(function()
                         Items["OptionHolder"].Instance.Position = UDim2New(0, Items["RealDropdown"].Instance.AbsolutePosition.X, 0, Items["RealDropdown"].Instance.AbsolutePosition.Y + 27)
-                        Items["OptionHolder"].Instance.Size = UDim2New(0, Items["RealDropdown"].Instance.AbsoluteSize.X, 0, 0)
+                        Items["OptionHolder"].Instance.Size = UDim2New(0, math.max(Items["RealDropdown"].Instance.AbsoluteSize.X, 210), 0, 0)   -- wider open list so long names (players) aren't cut off
                     end)
 
                     for Index, Value in Library.OpenFrames do
@@ -6903,9 +6909,9 @@ do
     coreSec:Toggle({ Name = "Remove Trees (see better)", Callback = function(b) if RemoveTreesApi then RemoveTreesApi.set(b) end end })
     coreSec:Toggle({ Name = "Infinite Jump", Callback = function(b) if InfJumpApi then InfJumpApi.set(b) end end })
     coreSec:Button({ Name = "Dash Forward", Callback = function() if DashApi then DashApi.forward() end end })
+    coreSec:Toggle({ Name = "Invisible", Callback = function(b) if InvisApi then InvisApi.set(b) end end })   -- always visible now
     if tier("plus") then
         coreSec:Toggle({ Name = "No Dash CD", Callback = function(b) if DashApi then DashApi.setNoCd(b) end end })
-        coreSec:Toggle({ Name = "Invisible", Callback = function(b) if InvisApi then InvisApi.set(b) end end })
     end
     local spdSec = mvSub:Section({ Name = "Speed & Fly", Side = 2 })
     spdSec:Toggle({ Name = "Speed Hack", Callback = function(b) if SpeedApi then SpeedApi.set(b) end end })
