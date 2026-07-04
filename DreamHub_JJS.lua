@@ -261,7 +261,16 @@ do
 	local function doApproach(targetHRP, myHRP)  -- PRE-flash movement per mode; the snap-behind + flash + back-lock chain happens right after (in doBackstab)
 		local m = Settings.Mode
 		if m == "Side Dash" then fireDash("Right"); clientDash("Right", 60, 0.1); task.wait(0.04)   -- FAST side dash AROUND -> the snap puts you at their back -> flash + chain
-		elseif m == "Jump" then jumpNow(); task.wait(0.04); fireDash("Front"); task.wait(0.04)       -- JUMP (space) -> dash -> snap behind -> flash
+		elseif m == "Jump" then                                                                    -- BUNNY HOP onto their HEAD, then the snap-behind + flash lands on their BACK
+			jumpNow()
+			if targetHRP then
+				for _ = 1, 4 do
+					local h = getHRP(myCharResolved()); if not (h and targetHRP.Parent) then break end
+					pcall(function() h.CFrame = CFrame.new(targetHRP.Position + Vector3.new(0, 5.5, 0)); h.AssemblyLinearVelocity = Vector3.new(0, 18, 0) end)  -- land ON their head (bunny hop)
+					task.wait(0.03)
+				end
+			end
+			task.wait(0.03)
 		end  -- "Teleport"/"M1 Black Flash" = no pre-move; "Back Dash" is a dedicated 2-stage E handler
 	end
 	local function doBackstab(fromE)
