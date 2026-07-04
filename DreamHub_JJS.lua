@@ -261,18 +261,7 @@ do
 	local function doApproach(targetHRP, myHRP)  -- PRE-flash movement per mode; the snap-behind + flash + back-lock chain happens right after (in doBackstab)
 		local m = Settings.Mode
 		if m == "Side Dash" then fireDash("Right"); clientDash("Right", 60, 0.1); task.wait(0.04)   -- FAST side dash AROUND -> the snap puts you at their back -> flash + chain
-		elseif m == "Jump" then                                                                    -- JUMP OVER them (real jump anim) -> arc to their BACK -> Black Flash
-			jumpNow()
-			if targetHRP then
-				for _ = 1, 5 do
-					local h = getHRP(myCharResolved()); if not (h and targetHRP.Parent) then break end
-					local behind = targetHRP.Position - targetHRP.CFrame.LookVector * 3                    -- the far side (behind them)
-					local overPos = h.Position:Lerp(Vector3.new(behind.X, targetHRP.Position.Y + 9, behind.Z), 0.45)   -- arc UP and OVER their head to behind
-					pcall(function() h.CFrame = CFrame.new(overPos); h.AssemblyLinearVelocity = Vector3.new(0, 14, 0) end)
-					task.wait(0.03)
-				end
-			end
-			task.wait(0.03)
+		elseif m == "Jump" then jumpNow(); task.wait(0.12)                                          -- SMOOTH regular jump (no glitchy teleport-arc), then the snap-behind + flash lands on their BACK
 		end  -- "Teleport"/"M1 Black Flash" = no pre-move; "Back Dash" is a dedicated 2-stage E handler
 	end
 	local function doBackstab(fromE)
@@ -401,16 +390,22 @@ do
 	end
 	if LocalPlayer.Character then setupCharacter(LocalPlayer.Character) end
 	LocalPlayer.CharacterAdded:Connect(setupCharacter)
-	local function handleBackDashE()  -- Back Dash: EVERY E press = jump HIGH + fling back (Q dash) then Black Flash behind them.
+	local function handleBackDashE()  -- Back Dash: FIRST black flash; THEN if the target turns to FACE you, dash back (Q) and black flash AGAIN.
 		task.spawn(function()
-			local tgt = getNearestEnemy(Settings.LockRange)                        -- lock the target so the flash returns to THEM
+			local tgt = getNearestEnemy(Settings.LockRange)                        -- lock the target so the flashes return to THEM
 			if tgt then chainTarget = tgt; chainTargetT = tick() end
-			jumpNow()                                                              -- jump...
-			local mh = getHRP(myCharResolved()); if mh then pcall(function() mh.AssemblyLinearVelocity = Vector3.new(mh.AssemblyLinearVelocity.X, 70, mh.AssemblyLinearVelocity.Z) end) end  -- ...HIGH (fling up)
-			pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Q, false, game); task.wait(0.03); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Q, false, game) end)  -- dash (Q)
-			fireDash("Back"); clientDash("Back", 80, 0.1)                           -- fling BACK harder
-			task.wait(0.09)                                                         -- let the dash register
-			if runChain then runChain() end                                         -- snap to their back + convert = Black Flash
+			if runChain then runChain() end                                        -- 1) black flash first
+			task.wait(0.25)                                                        -- let it resolve, give them a moment to turn
+			local tr = getHRP(tgt); local mh = getHRP(myCharResolved())
+			if tr and mh and tr.Parent then
+				local toMe = mh.Position - tr.Position
+				if toMe.Magnitude > 0.1 and tr.CFrame.LookVector:Dot(toMe.Unit) > 0.3 then   -- 2) target is LOOKING at you -> dash back (Q) then flash again
+					pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Q, false, game); task.wait(0.03); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Q, false, game) end)  -- dash back (Q)
+					fireDash("Back"); clientDash("Back", 62, 0.08)
+					task.wait(0.1)
+					if runChain then runChain() end                                -- 3) black flash again
+				end
+			end
 		end)
 	end
 	local function doEPress()   -- exactly what pressing E does for the current approach (also fired by the mobile tap button)
