@@ -281,8 +281,11 @@ do
 		local tp0 = targetHRP.Position
 		local rel0 = Vector3.new(h0.Position.X - tp0.X, 0, h0.Position.Z - tp0.Z)
 		local startRadius = rel0.Magnitude; if startRadius < 1.5 then startRadius = 6 end
+		if startRadius > 24 then return end                                    -- target too FAR: a giant arc from here is the 'fling across the map' - skip the orbit, the chain still works
+		dur = dur + startRadius * 0.006                                        -- a longer path gets a touch more time (constant SPEED, not constant time = no whip)
 		local startAngle = math.atan2(rel0.Z, rel0.X)
 		local baseY = h0.Position.Y
+		local lastPos = h0.Position                                            -- per-frame SPEED CAP: no single frame may move you a huge distance (kills every fling)
 		-- ANTI-FLING: pass through the enemy instead of colliding (collisions at orbit speed = physics explosions
 		-- that launch you AND them). Restore collision after the arc.
 		local savedCollide = {}
@@ -316,13 +319,20 @@ do
 			if radius < 2 then radius = 2 end                                 -- never INSIDE their body (that's the fling)
 			local y = baseY + (tp.Y - tp0.Y) + yArc * math.sin(e * math.pi)   -- follow their height + optional jump arc
 			local pos = Vector3.new(tp.X + math.cos(angle) * radius, y, tp.Z + math.sin(angle) * radius)
+			local step = pos - lastPos
+			local maxStep = 150 * (1 / 60)                                     -- hard cap ~150 studs/s: NOTHING can whip you across the map in one frame
+			if step.Magnitude > maxStep then pos = lastPos + step.Unit * maxStep end
+			lastPos = pos
 			if _G.VX_ACPASS then _G.VX_ACPASS() end                           -- whitelist so the anti-cheat can't drag the arc back
 			pcall(function()
 				h.CFrame = CFrame.lookAt(pos, Vector3.new(tp.X, pos.Y, tp.Z)) -- always FACE the target
 				h.AssemblyLinearVelocity = Vector3.zero                        -- no residual physics = no launch
 				h.AssemblyAngularVelocity = Vector3.zero
 			end)
-			pcall(function() local cam = workspace.CurrentCamera; cam.CFrame = CFrame.lookAt(cam.CFrame.Position, tp) end)  -- camera AIMS at them through the arc (rotation only - zoom untouched)
+			pcall(function()   -- camera aims at them through the arc - LERPED so it's silky, rotation only (zoom untouched)
+				local cam = workspace.CurrentCamera
+				cam.CFrame = cam.CFrame:Lerp(CFrame.lookAt(cam.CFrame.Position, tp), 0.4)
+			end)
 			if a >= 1 then break end
 			task.wait()
 		end
@@ -1493,20 +1503,33 @@ do
 	end
 	local function onM1() if on or crowHitOn then local t = nearestEnemy(); if t then lastTarget = t end end end  -- clicking a user locks the crow onto them (target = who you last M1)
 	pcall(function() LP:GetMouse().Button1Down:Connect(onM1) end)
-	local function crowModel()  -- the spawned crow effect: workspace.Effects.Crow (Model or Part)
+	local function crowModel()  -- the spawned crow: workspace.Crows.Crow (has a HumanoidRootPart) - Effects.Crow kept as fallback
+		local crows = workspace:FindFirstChild("Crows")
+		if crows then local c = crows:FindFirstChildWhichIsA("Model") or crows:FindFirstChildWhichIsA("BasePart"); if c then return c end end
 		local eff = workspace:FindFirstChild("Effects"); return eff and eff:FindFirstChild("Crow")
 	end
+	local function crowControlRemote()  -- the game's OWN crow steering: Character.Info.ControlRemote:FireServer(position). SERVER-side = it really flies there + hits.
+		local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+		local info = c and c:FindFirstChild("Info"); local re = info and info:FindFirstChild("ControlRemote")
+		if re and (re:IsA("RemoteEvent") or re:IsA("UnreliableRemoteEvent")) then return re end
+		return nil
+	end
+	local crowColor = nil   -- optional recolor (dropdown)
+	local CROW_COLORS = { Red = Color3.fromRGB(255,40,40), Blue = Color3.fromRGB(60,120,255), Purple = Color3.fromRGB(160,60,255), Green = Color3.fromRGB(60,220,90), White = Color3.fromRGB(240,240,240), Black = Color3.fromRGB(12,12,12) }
 	local expandedCrow = setmetatable({}, { __mode = "k" })   -- expand each crow's hitbox ONCE
-	local function anchorCrow(crow)  -- ANCHOR the crow so gravity can't drag it to the ground and the server can't shove it back (kills ground-skim + snap-back)
-		if crow:IsA("BasePart") then
-			pcall(function() crow.Anchored = true; crow.CanCollide = false; crow.AssemblyLinearVelocity = Vector3.zero end)
-			if not expandedCrow[crow] then expandedCrow[crow] = true; pcall(function() crow.Size = crow.Size * 4 end) end   -- EXPANDED hitbox = reliable hits
-			return
+	local function dressCrow(crow, expandMult)  -- expand the hitbox + apply the chosen color (no anchoring when the SERVER is flying it)
+		local function one(p)
+			if not p:IsA("BasePart") then return end
+			pcall(function() p.CanCollide = false end)
+			if not expandedCrow[p] then expandedCrow[p] = true; pcall(function() p.Size = p.Size * (expandMult or 5) end) end   -- BIG hitbox: it clips everything near the target
+			if crowColor then pcall(function() p.Color = crowColor end) end
 		end
-		for _, p in ipairs(crow:GetDescendants()) do if p:IsA("BasePart") then
-			pcall(function() p.Anchored = true; p.CanCollide = false; p.AssemblyLinearVelocity = Vector3.zero end)
-			if not expandedCrow[p] then expandedCrow[p] = true; pcall(function() p.Size = p.Size * 4 end) end
-		end end
+		if crow:IsA("BasePart") then one(crow) else for _, p in ipairs(crow:GetDescendants()) do one(p) end end
+	end
+	local function anchorCrow(crow)  -- FALLBACK ONLY (no ControlRemote): anchor + client-drive so gravity can't drag it down
+		local function one(p) if p:IsA("BasePart") then pcall(function() p.Anchored = true; p.AssemblyLinearVelocity = Vector3.zero end) end end
+		if crow:IsA("BasePart") then one(crow) else for _, p in ipairs(crow:GetDescendants()) do one(p) end end
+		dressCrow(crow)
 	end
 	local function moveCrow(crow, cf)  -- move the WHOLE crow (all parts together via PivotTo) so nothing lags behind and snaps
 		pcall(function() if crow:IsA("BasePart") then crow.CFrame = cf else crow:PivotTo(cf) end end)
@@ -1519,34 +1542,48 @@ do
 	end
 	-- CONTROLLER: re-read the target's LIVE position every frame (lock-on), ANCHOR + hard-drive the WHOLE crow HIGH toward the target so it never touches the ground or snaps back, then click ONCE to detonate on arrival.
 	-- Runs for Crow Ult (G -> flying) AND Crow Lock On (crowHitOn -> auto-home ANY crow that spawns).  We connect after the game loads, so our per-frame write wins = the crow can't get pulled off course.
-	local HOVER, STEP, DET = 8, 14, 7   -- HOVER: studs above target | STEP: max studs/frame far away (fast = long range quickly) | DET: horizontal radius at which it locks ON the target
-	local detonated = false              -- one-shot per crow: reset when the crow despawns, so we click exactly once per detonation (no M1 spam)
+	local HOVER, STEP, DET = 8, 14, 7
+	local lastCtl = 0
 	RunService.Heartbeat:Connect(function()
 		if not (flying or crowHitOn) then return end
-		local crow = crowModel(); if not crow then detonated = false; return end  -- no crow yet / it exploded -> arm the next one
-		-- TARGET = the LOCKED (clicked) user, ONLY. No lock + G-cast homes who you last M1. No lock + pure lock-mode = idle. It NEVER falls back to a random nearest enemy.
+		local crow = crowModel(); if not crow then return end
+		-- TARGET = the LOCKED (clicked) user, ONLY. No lock + G-cast homes who you last M1. It never picks a random enemy.
 		local lt = lockedTarget()
 		local tp
 		if lt then tp = posOf(lt)
 		elseif flying then tp = posOf((lastTarget and lastTarget.Parent) and lastTarget) end
 		if not tp then return end
-		anchorCrow(crow)                                                            -- every frame: keep it anchored so gravity/server can't drop or shove it
-		local cp = crow:GetPivot().Position                                         -- read AND write via the same pivot frame (no part-offset drift pulling it toward the floor)
-		local hd = Vector3.new(tp.X - cp.X, 0, tp.Z - cp.Z).Magnitude
-		if hd <= DET then                                                           -- ON the target: lock RIGHT AT them (upper body) so the expanded hitbox is touching. NO auto-click - you detonate.
-			moveCrow(crow, CFrame.new(Vector3.new(tp.X, tp.Y + 3.5, tp.Z)))
+		dressCrow(crow)                                                             -- big hitbox + your color, every frame (covers newly-streamed parts)
+		local ctl = crowControlRemote()
+		if ctl then
+			-- REAL control: the game's own ControlRemote flies the crow SERVER-side to the position we send.
+			-- Send the target's LIVE chest position (slightly above) ~8x/sec: tracks moving enemies, any distance,
+			-- never touches the ground (the game path-flies it), and the hit registers because the SERVER moves it.
+			if tick() - lastCtl > 0.12 then
+				lastCtl = tick()
+				local aim = Vector3.new(tp.X, tp.Y + 2.5, tp.Z)
+				pcall(function()
+					local v = aim
+					pcall(function() if vector and vector.create then v = vector.create(aim.X, aim.Y, aim.Z) end end)   -- the capture used vector.create; Vector3 also encodes the same
+					ctl:FireServer(v)
+				end)
+			end
 			return
 		end
-		-- ALTITUDE: stay HIGH the whole way so it NEVER goes down / skims the ground - only ever hover ABOVE the target, no matter how far.
+		-- FALLBACK (no ControlRemote found): client-drive like before
+		anchorCrow(crow)
+		local cp = crow:GetPivot().Position
+		local hd = Vector3.new(tp.X - cp.X, 0, tp.Z - cp.Z).Magnitude
+		if hd <= DET then moveCrow(crow, CFrame.new(Vector3.new(tp.X, tp.Y + 3.5, tp.Z))); return end
 		local aimY = tp.Y + math.clamp(hd * 0.6, 10, 70)
-		if aimY < cp.Y then aimY = cp.Y end                                          -- never DESCEND while still approaching -> it can't dip toward the ground
-		if aimY < tp.Y + 8 then aimY = tp.Y + 8 end                                  -- always at least ~8 studs above them
+		if aimY < cp.Y then aimY = cp.Y end
+		if aimY < tp.Y + 8 then aimY = tp.Y + 8 end
 		local aim = Vector3.new(tp.X, aimY, tp.Z)
 		local dir = aim - cp
-		local stepCap = (hd < 26) and 4 or STEP                                     -- EASE IN when close so it settles ON the target instead of blowing way past it
-		local nextPos = cp + dir.Unit * math.min(dir.Magnitude, stepCap)            -- never moves further than the target (no overshoot); tracks the exact live position
+		local stepCap = (hd < 26) and 4 or STEP
+		local nextPos = cp + dir.Unit * math.min(dir.Magnitude, stepCap)
 		local look = Vector3.new(tp.X, nextPos.Y, tp.Z)
-		if (look - nextPos).Magnitude < 0.05 then moveCrow(crow, CFrame.new(nextPos))  -- crow is right over the target: look-at == pos would make a NaN CFrame, so place without a facing
+		if (look - nextPos).Magnitude < 0.05 then moveCrow(crow, CFrame.new(nextPos))
 		else moveCrow(crow, CFrame.new(nextPos, look)) end
 	end)
 	UIS.InputBegan:Connect(function(input, gpe)  -- (M1 target-memory is handled by the GetMouse().Button1Down hook above, not duplicated here)
@@ -1555,7 +1592,10 @@ do
 			if tgt then lastTarget = tgt; fireKnit("MeiMeiService", "Activated", false, tgt); flying = true; vxLog("Crow -> " .. tgt.Name); task.delay(25, function() flying = false end) end
 		end
 	end)
-	CrowUltApi = { set = function(v) on = v == true; if not v then flying = false end end }
+	CrowUltApi = {
+		set = function(v) on = v == true; if not v then flying = false end end,
+		setColor = function(name) crowColor = CROW_COLORS[name] end,   -- pick a color ('Default' = keeps the game's look)
+	}
 	-- Crow Hit / Lock On: turning this on lets you CLICK a user to lock + red-outline them; any crow you send auto-homes onto that locked target and hits from any distance.
 	CrowHitApi = { set = function(v) crowHitOn = v == true; if _G.VX_LOCK then _G.VX_LOCK.want("crow", crowHitOn) end end }
 end
@@ -2756,7 +2796,8 @@ do
 		return tr.Position - dir * 4
 	end
 	local sdaDir = 1            -- alternate LEFT / RIGHT approach side
-	local sdaCount, sdaLastHit = 0, 0   -- fires on the SECOND landed M1 of a string, not the first
+	local sdaNeed = 2           -- how many landed M1s before the dash-behind (1-3, dropdown)
+	local sdaCount, sdaLastHit = 0, 0
 	local function trigger()
 		if not on then return end
 		if tick() - last < 0.4 then return end   -- once per swing, not a fling on every frame
@@ -2769,7 +2810,7 @@ do
 		if to.Magnitude > 9 or mh.CFrame.LookVector:Dot(to.Unit) < 0.35 then return end
 		if tick() - sdaLastHit > 1.2 then sdaCount = 0 end   -- string reset if you paused
 		sdaLastHit = tick(); sdaCount = sdaCount + 1
-		if sdaCount < 2 then return end                       -- 1st M1 = nothing; the SECOND landed M1 triggers the dash
+		if sdaCount < sdaNeed then return end                 -- dash-behind fires on hit #sdaNeed (1-3, your dropdown)
 		sdaCount = 0
 		last = tick()
 		fireKnit("MovementService", "Dash", sdaDir > 0 and "Right" or "Left", true)   -- REAL side dash remote (i-frames + anim)
@@ -2791,7 +2832,7 @@ do
 	end
 	task.spawn(function() while true do if on then hookSelf() end task.wait(0.7) end end)
 	-- ANIM-ONLY on purpose: the old mouse-click "backup" fired on EVERY left click (GUI, camera drags) = dashing when you never M1'd
-	SideDashApi = { set = function(v) on = v == true end }
+	SideDashApi = { set = function(v) on = v == true; sdaCount = 0 end, setHits = function(n) sdaNeed = math.clamp(tonumber(n) or 2, 1, 3); sdaCount = 0 end }
 end
 
 -- ============================================================
@@ -2841,11 +2882,29 @@ do
 		if h and (h.PlatformStand or h:GetAttribute("Stun") == true or h:GetAttribute("HitStun") == true) then return true end
 		return false
 	end
+	local function evade()
+		last = tick()
+		fireKnit("MovementService", "Dash", pickDir(), true)  -- Dash(dir, true) = the i-frame evasive dash (back/left/right), exactly your capture
+	end
+	-- HARD trigger: your HEALTH DROPPED = you were hit by a move -> evasive dash IMMEDIATELY (event, not a poll)
+	local hookedHum = nil
+	local function hookHealth()
+		local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+		local h = c and c:FindFirstChildOfClass("Humanoid")
+		if not h or hookedHum == h then return end
+		hookedHum = h
+		local lastHp = h.Health
+		h.HealthChanged:Connect(function(hp)
+			local dropped = hp < lastHp - 0.5
+			lastHp = hp
+			if on and dropped and tick() - last > 0.22 then evade() end   -- damage taken -> dash out NOW
+		end)
+	end
 	task.spawn(function()
 		while true do
-			if on and tick() - last > 0.22 and (enemyAttacking() or selfHit()) then   -- react to an incoming swing OR the instant YOU get hit / are inside a move
-				last = tick()
-				fireKnit("MovementService", "Dash", pickDir(), true)  -- Dash(dir, true) = the i-frame evasive dash (back/left/right)
+			if on then
+				hookHealth()
+				if tick() - last > 0.22 and (enemyAttacking() or selfHit()) then evade() end   -- incoming swing / skill OR you're stunned
 			end
 			task.wait(0.04)
 		end
@@ -2935,34 +2994,30 @@ do
 		if input.KeyCode == Enum.KeyCode.Three and redOn then                             -- REVERSAL RED: press 3 -> click R (longer hold so it registers)
 			task.delay(0.12, function() pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.12); VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game) end) end)
 		end
-		-- ══ AUTO AIR sequences (one toggle, character-safe: each fires only if YOUR character has that move) ══
-		if autoAirOn and input.KeyCode == Enum.KeyCode.Three then
-			-- LOCUST: you click 3 -> after 2s spam LocustService.RightActivated(target) until you're in the air
-			if knitRE("LocustService", "RightActivated") then
-				task.delay(2, function()
-					local re = knitRE("LocustService", "RightActivated")
-					local tgt = (lastM1Tgt and lastM1Tgt.Parent) and lastM1Tgt or currentTarget()
-					if not (re and tgt) then return end
-					local t0 = tick()
-					while tick() - t0 < 2.5 and not airborneMe() do pcall(function() re:FireServer(tgt) end); task.wait(0.18) end
-				end)
-			end
+		-- ══ AUTO AIR sequences ══
+		-- KEYS, not remotes: the remotes were server-rejected out of context ('nothing works at all').
+		-- Pressing the real key is identical to you pressing it, so the game itself aims/validates.
+		local function myCharName()
+			local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+			return c and detectCharName(c) or nil
 		end
-		if autoAirOn and input.KeyCode == Enum.KeyCode.Two then
-			-- TEN SHADOWS: you click 2 (Nue) -> it clicks R for you (MegumiService.RightActivated)
-			if myMoveset("Nue") then
-				task.delay(0.4, function() local re = knitRE("MegumiService", "RightActivated"); if re then pcall(function() re:FireServer() end) end end)
-			end
+		local function tapKey(kc, hold)
+			pcall(function() VIM:SendKeyEvent(true, kc, false, game); task.wait(hold or 0.09); VIM:SendKeyEvent(false, kc, false, game) end)
 		end
-		if autoAirOn and input.KeyCode == Enum.KeyCode.R then
-			-- TEN SHADOWS: you press R -> MegumiService.RightActivated + Rabbit Escape at the same time
-			if myMoveset("Rabbit Escape") then
-				local re = knitRE("MegumiService", "RightActivated"); if re then pcall(function() re:FireServer() end) end
-				task.delay(0.1, function()
-					local mv = myMoveset("Rabbit Escape"); local re2 = knitRE("RabbitEscapeService", "Activated")
-					if mv and re2 then pcall(function() re2:FireServer(mv) end) end
-				end)
-			end
+		if autoAirOn and input.KeyCode == Enum.KeyCode.Three and myCharName() == "Locust" then
+			-- LOCUST: you click 3 -> after 2s keep pressing R (RightActivated) until you're in the air
+			task.delay(2, function()
+				local t0 = tick()
+				while autoAirOn and tick() - t0 < 2.6 and not airborneMe() do tapKey(Enum.KeyCode.R); task.wait(0.22) end
+			end)
+		end
+		if autoAirOn and input.KeyCode == Enum.KeyCode.Two and myCharName() == "Megumi" then
+			-- TEN SHADOWS: you click 2 (Nue) -> it clicks R for you
+			task.delay(0.45, function() if autoAirOn then tapKey(Enum.KeyCode.R) end end)
+		end
+		if autoAirOn and input.KeyCode == Enum.KeyCode.R and myCharName() == "Megumi" then
+			-- TEN SHADOWS: you press R -> it clicks 1 (Rabbit Escape) right after
+			task.delay(0.12, function() if autoAirOn then tapKey(Enum.KeyCode.One) end end)
 		end
 	end)
 	-- AUTO AIR anim triggers: Twofold Kick (Gojo) kicks them UP -> click R (RightActivated at the target).
@@ -2977,19 +3032,21 @@ do
 		hookedAir[a] = a.AnimationPlayed:Connect(function(track)
 			if not autoAirOn then return end
 			local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+"); if not id then return end
-			if id == TWOFOLD_ANIM and tick() - lastKickR > 1.2 then                        -- Twofold Kick -> they're going UP -> R takes them in the air
+			if id == TWOFOLD_ANIM and tick() - lastKickR > 1.2 then                        -- GOJO Twofold Kick -> they're going UP -> click R (aimed at them) to take them in the air
 				lastKickR = tick()
 				task.delay(0.45, function()
+					if not autoAirOn then return end
 					local tgt = (lastM1Tgt and lastM1Tgt.Parent) and lastM1Tgt or currentTarget()
-					local re = gojoRE(); if re and tgt then faceTargetNow(tgt); pcall(function() re:FireServer(tgt) end) end
+					if tgt then faceTargetNow(tgt) end
+					pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.09); VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game) end)
 				end)
 			end
-			if _G.VX_M1_IDS and _G.VX_M1_IDS[id] and myMoveset("Rough Energy") and tick() - lastGamb > 1.4 then   -- GAMBLER: landed M1 -> Rough Energy launcher ('clicks 3 for you')
+			if _G.VX_M1_IDS and _G.VX_M1_IDS[id] and myMoveset("Rough Energy") and tick() - lastGamb > 1.4 then   -- GAMBLER: landed M1 -> click 3 for you (Rough Energy launcher)
 				if landedM1Target() then
 					lastGamb = tick()
 					task.delay(0.15, function()
-						local mv = myMoveset("Rough Energy"); local re = knitRE("RoughEnergyService", "Activated")
-						if mv and re then pcall(function() re:FireServer(mv, true) end) end
+						if not autoAirOn then return end
+						pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Three, false, game); task.wait(0.09); VIM:SendKeyEvent(false, Enum.KeyCode.Three, false, game) end)
 					end)
 				end
 			end
@@ -7131,7 +7188,15 @@ do
     local Players = game:GetService("Players")
     local LocalPlayer = Players.LocalPlayer
     local function tier(min) local r = { free = 1, premium = 2, plus = 3 } return (r[VX_TIER] or 3) >= (r[min] or 99) end
-    local function playerList() local t = { "Nearest" } for _, pl in ipairs(Players:GetPlayers()) do if pl ~= LocalPlayer then t[#t + 1] = pl.Name end end return t end
+    local function playerList()
+        local t = { "Nearest" }
+        for _, pl in ipairs(Players:GetPlayers()) do if pl ~= LocalPlayer then t[#t + 1] = pl.Name end end
+        local chs = workspace:FindFirstChild("Characters")   -- DUMMIES too (any non-player model with a Humanoid, e.g. 'Dummy') so Auto Farm can grind on them
+        if chs then for _, m in ipairs(chs:GetChildren()) do
+            if m:IsA("Model") and m.Name ~= LocalPlayer.Name and not Players:FindFirstChild(m.Name) and m:FindFirstChildOfClass("Humanoid") then t[#t + 1] = m.Name end
+        end end
+        return t
+    end
 
     local tierNice = (VX_TIER == "free" and "Free") or (VX_TIER == "plus" and "Plus") or "Premium"
     local Window = Library:Window({ Name = "Dream Hub", SubTitle = "JJS  -  " .. tierNice, ExpiresIn = "lifetime" })
@@ -7216,6 +7281,7 @@ do
     ultSec:Toggle({ Name = "Auto Ult", Callback = function(b) if AutoUltApi then AutoUltApi.set(b) end end })
     ultSec:Toggle({ Name = "Crow Ult (G)", Callback = function(b) if CrowUltApi then CrowUltApi.set(b) end end })
     ultSec:Toggle({ Name = "Crow Lock On", Callback = function(b) if CrowHitApi then CrowHitApi.set(b) end end })
+    ultSec:Dropdown({ Name = "Crow Color", Items = { "Default", "Red", "Blue", "Purple", "Green", "White", "Black" }, Default = "Default", Callback = function(v) if CrowUltApi and CrowUltApi.setColor then CrowUltApi.setColor(v) end end })
     ultSec:Toggle({ Name = "Head of Hei Ult", Callback = function(b) if HeadUltApi then HeadUltApi.set(b) end end })
     ultSec:Toggle({ Name = "Rika Love Sword", Callback = function(b) if RikaSwordApi then RikaSwordApi.set(b) end end })
     ultSec:Toggle({ Name = "Rika Down Slam", Callback = function(b) if SlamApi then SlamApi.set(b) end end })
@@ -7227,6 +7293,7 @@ do
     counterSec:Toggle({ Name = "Auto Counter", Callback = function(b) if CounterApi then CounterApi.set(b) end end })
     counterSec:Toggle({ Name = "Locked Only", Callback = function(b) if CounterApi then CounterApi.setLockedOnly(b) end end })
     counterSec:Toggle({ Name = "Side Dash Assist", Callback = function(b) if SideDashApi then SideDashApi.set(b) end end })   -- always visible now
+    counterSec:Dropdown({ Name = "Dash After (M1s)", Items = { "1", "2", "3" }, Default = "2", Callback = function(v) if SideDashApi and SideDashApi.setHits then SideDashApi.setHits(v) end end })
     counterSec:Toggle({ Name = "Anti Counter", Callback = function(b) if AntiCounterApi then AntiCounterApi.set(b) end end })
     counterSec:Dropdown({ Name = "On Counter", Items = { "Jump On Head", "Emote" }, Default = "Jump On Head", Callback = function(v) if AntiCounterApi then AntiCounterApi.setMode(v) end end })
     counterSec:Dropdown({ Name = "Emote #", Items = { "1", "2", "3", "4", "5", "6", "7", "8" }, Default = "1", Callback = function(v) if AntiCounterApi then AntiCounterApi.setEmote(v) end end })
