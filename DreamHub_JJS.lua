@@ -276,12 +276,17 @@ do
 		local extraSweep = opts.extraSweep or 0
 		local radialBias = opts.radialBias or 0
 		local yArc       = opts.yArc or 0
-		local h0 = getHRP(myCharResolved()); if not (h0 and targetHRP and targetHRP.Parent) then return end
+		local myC = myCharResolved()
+		local h0 = getHRP(myC); if not (h0 and targetHRP and targetHRP.Parent) then return end
 		local tp0 = targetHRP.Position
 		local rel0 = Vector3.new(h0.Position.X - tp0.X, 0, h0.Position.Z - tp0.Z)
 		local startRadius = rel0.Magnitude; if startRadius < 1.5 then startRadius = 6 end
 		local startAngle = math.atan2(rel0.Z, rel0.X)
 		local baseY = h0.Position.Y
+		-- ANTI-FLING: pass through the enemy instead of colliding (collisions at orbit speed = physics explosions
+		-- that launch you AND them). Restore collision after the arc.
+		local savedCollide = {}
+		if myC then for _, p in ipairs(myC:GetDescendants()) do if p:IsA("BasePart") and p.CanCollide then savedCollide[p] = true; pcall(function() p.CanCollide = false end) end end end
 		-- decide the sweep DIRECTION once (stable arc, no mid-flight flip-flop)
 		local look0 = targetHRP.CFrame.LookVector
 		local flat0 = Vector3.new(look0.X, 0, look0.Z); local mag0 = flat0.Magnitude
@@ -295,6 +300,8 @@ do
 			local a = math.clamp((tick() - t0) / dur, 0, 1)
 			local e = a * a * (3 - 2 * a)                                     -- smoothstep = smooth accel + decel
 			local tp = targetHRP.Position                                     -- LIVE center -> wraps around them if they move
+			local okv, tv = pcall(function() return targetHRP.AssemblyLinearVelocity end)
+			if okv and tv and tv.Magnitude > 1 then tp = tp + Vector3.new(tv.X, 0, tv.Z) * 0.1 * e end   -- PREDICT a moving target (lead grows toward the end = lands where they'll BE)
 			local endAngle = startAngle
 			if endBehind then
 				local look = targetHRP.CFrame.LookVector
@@ -306,23 +313,33 @@ do
 			diff = diff + sweepDir * extraSweep                               -- widen the arc in a stable direction (real circling)
 			local angle = startAngle + diff * e
 			local radius = startRadius + (endRadius - startRadius) * e + radialBias * math.sin(e * math.pi)
+			if radius < 2 then radius = 2 end                                 -- never INSIDE their body (that's the fling)
 			local y = baseY + (tp.Y - tp0.Y) + yArc * math.sin(e * math.pi)   -- follow their height + optional jump arc
 			local pos = Vector3.new(tp.X + math.cos(angle) * radius, y, tp.Z + math.sin(angle) * radius)
 			if _G.VX_ACPASS then _G.VX_ACPASS() end                           -- whitelist so the anti-cheat can't drag the arc back
-			pcall(function() h.CFrame = CFrame.lookAt(pos, Vector3.new(tp.X, pos.Y, tp.Z)); h.AssemblyLinearVelocity = Vector3.zero end)  -- always FACE the target
+			pcall(function()
+				h.CFrame = CFrame.lookAt(pos, Vector3.new(tp.X, pos.Y, tp.Z)) -- always FACE the target
+				h.AssemblyLinearVelocity = Vector3.zero                        -- no residual physics = no launch
+				h.AssemblyAngularVelocity = Vector3.zero
+			end)
 			if a >= 1 then break end
 			task.wait()
 		end
+		for p in pairs(savedCollide) do if p.Parent then pcall(function() p.CanCollide = true end) end end   -- restore collisions
+		local hEnd = getHRP(myCharResolved())
+		if hEnd then pcall(function() hEnd.AssemblyLinearVelocity = Vector3.zero; hEnd.AssemblyAngularVelocity = Vector3.zero end) end  -- clean exit: zero momentum so NOTHING flings
 	end
+	_G.VX_ORBIT = orbitAround   -- shared: Side Dash Assist uses the same cinematic arc
 	local function doApproach(targetHRP, myHRP)  -- PRE-flash movement per mode; the flash + back-lock happens right after (in doBackstab)
 		local m = Settings.Mode
 		if m == "Side Dash" then                                                                   -- CURVE around them to their back (anime run-around), then flash
 			playAnim("rbxassetid://75203303352791"); playAnim("rbxassetid://96489184596023")
 			fireDash("Right")
-			orbitAround(targetHRP, { duration = 0.3, endRadius = Settings.BackDistance, extraSweep = math.pi * 0.3, endBehind = true })   -- FASTER + ends dead on their back
-		elseif m == "Jump" then                                                                    -- JUMP + curve OVER to their back
+			orbitAround(targetHRP, { duration = 0.22, endRadius = Settings.BackDistance, extraSweep = math.pi * 0.25, endBehind = true })   -- FAST + ends dead on their back
+		elseif m == "Jump" then                                                                    -- SHORT hop + quick curve to their back -> flash almost immediately
 			jumpNow()
-			orbitAround(targetHRP, { duration = 0.5, endRadius = Settings.BackDistance + 0.5, extraSweep = math.pi * 0.3, endBehind = true, yArc = 9 })
+			task.wait(0.03)
+			orbitAround(targetHRP, { duration = 0.24, endRadius = Settings.BackDistance, extraSweep = math.pi * 0.2, endBehind = true, yArc = 4.5 })
 		end  -- "Teleport"/"M1 Black Flash" = no pre-move; "Back Dash" is its own handler below
 	end
 	local function doBackstab(fromE)
@@ -462,7 +479,7 @@ do
 			if tr and tr.Parent then                                            -- 1) normal side-dash black flash
 				playAnim("rbxassetid://75203303352791"); playAnim("rbxassetid://96489184596023")
 				fireDash("Right")
-				orbitAround(tr, { duration = 0.3, endRadius = Settings.BackDistance, extraSweep = math.pi * 0.3, endBehind = true })
+				orbitAround(tr, { duration = 0.22, endRadius = Settings.BackDistance, extraSweep = math.pi * 0.25, endBehind = true })
 			end
 			if runChain then runChain(tgt) end
 			-- 2) BACKGROUND WATCHER on THAT target: when they're FACING you (their back turned away), dash behind + flash
@@ -480,7 +497,7 @@ do
 						chainTarget = tgt; chainTargetT = tick()
 						playAnim("rbxassetid://134581973800784")                -- back-dash anim
 						fireDash("Back")
-						orbitAround(tr2, { duration = 0.28, endRadius = Settings.BackDistance, extraSweep = math.pi * 0.4, endBehind = true })  -- quick dash AROUND to the open back
+						orbitAround(tr2, { duration = 0.22, endRadius = Settings.BackDistance, extraSweep = math.pi * 0.3, endBehind = true })  -- quick dash AROUND to the open back
 						if runChain then runChain(tgt) end                      -- black flash
 						return                                                  -- one counter-flash per E press
 					end
@@ -932,13 +949,19 @@ do
 		return best
 	end
 	local function faceEnemy(tr) local hrp = myHRP(); if hrp and tr and tr.Parent then pcall(function() hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(tr.Position.X, hrp.Position.Y, tr.Position.Z)) end) end end  -- aim at them so the skill lands on the RIGHT target
-	local function press(kc) pcall(function() VIM:SendKeyEvent(true, kc, false, game); task.wait(0.04); VIM:SendKeyEvent(false, kc, false, game) end) end
+	local function press(kc) pcall(function() VIM:SendKeyEvent(true, kc, false, game); task.wait(0.09); VIM:SendKeyEvent(false, kc, false, game) end) end  -- longer hold so the game reliably registers the key
+	local cycleIdx = 0
 	task.spawn(function()
 		while true do
 			if enabled then
 				local tr = nearestEnemyHRP()
 				if tr then
-					for n = 1, 6 do if keys[n] then faceEnemy(tr); press(KC[n]); task.wait(0.12) end end  -- face THEN cast: 1/2/3/4 abilities + R special + G awakening
+					-- ONE skill per cycle (round-robin): pressing 4+ keys back-to-back ate inputs / fired into cooldowns = 'randomly failing'
+					local tried = 0
+					repeat cycleIdx = (cycleIdx % 6) + 1; tried = tried + 1 until keys[cycleIdx] or tried >= 6
+					if keys[cycleIdx] then
+						faceEnemy(tr); task.wait(0.03); press(KC[cycleIdx])   -- face, settle a frame, THEN cast = lands on the right target
+					end
 					task.wait(rate)
 				else task.wait(0.2) end
 			else task.wait(0.2) end
@@ -946,7 +969,7 @@ do
 	end)
 	SkillsApi = {
 		setEnabled = function(v) enabled = v == true end,
-		setKey = function(n, v) if KC[n] then keys[n] = v == true end end,
+		setKey = function(n, v) if KC[n] then keys[n] = v == true; if v then enabled = true end end end,  -- turning ANY skill on arms the system ('Auto Skills did nothing' = master toggle was off)
 		setRate = function(v) if type(v) == "number" then rate = v end end,
 	}
 end
@@ -1172,17 +1195,25 @@ do
 		if count >= 3 and not busy then              -- after 3 of your M1s, finish with the slam / uppercut
 			count = 0; busy = true
 			task.spawn(function()
+				local function realM1()  -- a REAL M1 click at screen center: the game's own input converts airborne M1 -> slam / held-space M1 -> uptilt
+					local cam = workspace.CurrentCamera; local v = (cam and cam.ViewportSize) or Vector2.new(800, 600)
+					pcall(function() VIM:SendMouseButtonEvent(v.X / 2, v.Y / 2, 0, true, game, 0); task.wait(0.04); VIM:SendMouseButtonEvent(v.X / 2, v.Y / 2, 0, false, game, 0) end)
+				end
 				if mode == "Down Slam" then
-					jump(); task.wait(0.13); act("Down")                                    -- slam: jump then Down while airborne
+					jump(); task.wait(0.16)
+					realM1()                                                                 -- airborne M1 = the game's own DOWN SLAM input
+					act("Down")                                                              -- remote as backup
 				else
-					-- Uppercut = HOLD the jump key THROUGH the uptilt (JJS mechanic), fire Up while holding
+					-- Uppercut = HOLD the jump key THROUGH the M1 (JJS mechanic)
 					_G.VX_LAUNCHING = tick()
 					local c = (workspace:FindFirstChild("Characters") and workspace:FindFirstChild("Characters"):FindFirstChild(LP.Name)) or LP.Character
 					local h = c and c:FindFirstChildOfClass("Humanoid")
 					pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)   -- HOLD space
 					if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end
-					task.wait(0.06); act("Up"); task.wait(0.06); act("Up")                  -- uptilt while rising (fire twice to catch the window)
-					task.wait(0.1); pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)  -- release
+					task.wait(0.08)
+					realM1()                                                                 -- held-space M1 = the game's own UPTILT input
+					act("Up")                                                                -- remote as backup
+					task.wait(0.12); pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)  -- release
 				end
 				vxLog(mode)
 				task.wait(0.15); busy = false
@@ -1441,9 +1472,17 @@ do
 	local function crowModel()  -- the spawned crow effect: workspace.Effects.Crow (Model or Part)
 		local eff = workspace:FindFirstChild("Effects"); return eff and eff:FindFirstChild("Crow")
 	end
+	local expandedCrow = setmetatable({}, { __mode = "k" })   -- expand each crow's hitbox ONCE
 	local function anchorCrow(crow)  -- ANCHOR the crow so gravity can't drag it to the ground and the server can't shove it back (kills ground-skim + snap-back)
-		if crow:IsA("BasePart") then pcall(function() crow.Anchored = true; crow.CanCollide = false; crow.AssemblyLinearVelocity = Vector3.zero end); return end
-		for _, p in ipairs(crow:GetDescendants()) do if p:IsA("BasePart") then pcall(function() p.Anchored = true; p.CanCollide = false; p.AssemblyLinearVelocity = Vector3.zero end) end end
+		if crow:IsA("BasePart") then
+			pcall(function() crow.Anchored = true; crow.CanCollide = false; crow.AssemblyLinearVelocity = Vector3.zero end)
+			if not expandedCrow[crow] then expandedCrow[crow] = true; pcall(function() crow.Size = crow.Size * 4 end) end   -- EXPANDED hitbox = reliable hits
+			return
+		end
+		for _, p in ipairs(crow:GetDescendants()) do if p:IsA("BasePart") then
+			pcall(function() p.Anchored = true; p.CanCollide = false; p.AssemblyLinearVelocity = Vector3.zero end)
+			if not expandedCrow[p] then expandedCrow[p] = true; pcall(function() p.Size = p.Size * 4 end) end
+		end end
 	end
 	local function moveCrow(crow, cf)  -- move the WHOLE crow (all parts together via PivotTo) so nothing lags behind and snaps
 		pcall(function() if crow:IsA("BasePart") then crow.CFrame = cf else crow:PivotTo(cf) end end)
@@ -1456,7 +1495,7 @@ do
 	end
 	-- CONTROLLER: re-read the target's LIVE position every frame (lock-on), ANCHOR + hard-drive the WHOLE crow HIGH toward the target so it never touches the ground or snaps back, then click ONCE to detonate on arrival.
 	-- Runs for Crow Ult (G -> flying) AND Crow Lock On (crowHitOn -> auto-home ANY crow that spawns).  We connect after the game loads, so our per-frame write wins = the crow can't get pulled off course.
-	local HOVER, STEP, DET = 8, 10, 9   -- HOVER: studs above target | STEP: max studs/frame far away | DET: horizontal radius at which it just HOLDS on the target (follows it)
+	local HOVER, STEP, DET = 8, 14, 7   -- HOVER: studs above target | STEP: max studs/frame far away (fast = long range quickly) | DET: horizontal radius at which it locks ON the target
 	local detonated = false              -- one-shot per crow: reset when the crow despawns, so we click exactly once per detonation (no M1 spam)
 	RunService.Heartbeat:Connect(function()
 		if not (flying or crowHitOn) then return end
@@ -1470,8 +1509,8 @@ do
 		anchorCrow(crow)                                                            -- every frame: keep it anchored so gravity/server can't drop or shove it
 		local cp = crow:GetPivot().Position                                         -- read AND write via the same pivot frame (no part-offset drift pulling it toward the floor)
 		local hd = Vector3.new(tp.X - cp.X, 0, tp.Z - cp.Z).Magnitude
-		if hd <= DET then                                                           -- OVER the target: HOLD it hovering ABOVE them (follow). NO auto-click/detonate (clicking made it drop). You click when YOU want.
-			moveCrow(crow, CFrame.new(Vector3.new(tp.X, tp.Y + 8, tp.Z)))
+		if hd <= DET then                                                           -- ON the target: lock RIGHT AT them (upper body) so the expanded hitbox is touching. NO auto-click - you detonate.
+			moveCrow(crow, CFrame.new(Vector3.new(tp.X, tp.Y + 3.5, tp.Z)))
 			return
 		end
 		-- ALTITUDE: stay HIGH the whole way so it NEVER goes down / skims the ground - only ever hover ABOVE the target, no matter how far.
@@ -1489,7 +1528,7 @@ do
 	UIS.InputBegan:Connect(function(input, gpe)  -- (M1 target-memory is handled by the GetMouse().Button1Down hook above, not duplicated here)
 		if on and not gpe and input.KeyCode == Enum.KeyCode.G then  -- ult: spawn the crow + take control of its flight to the target
 			local tgt = lockedTarget() or ((lastTarget and lastTarget.Parent) and lastTarget) or nearestEnemy()
-			if tgt then lastTarget = tgt; fireKnit("MeiMeiService", "Activated", false, tgt); flying = true; vxLog("Crow -> " .. tgt.Name); task.delay(12, function() flying = false end) end
+			if tgt then lastTarget = tgt; fireKnit("MeiMeiService", "Activated", false, tgt); flying = true; vxLog("Crow -> " .. tgt.Name); task.delay(25, function() flying = false end) end
 		end
 	end)
 	CrowUltApi = { set = function(v) on = v == true; if not v then flying = false end end }
@@ -2697,20 +2736,14 @@ do
 		if tick() - last < 0.4 then return end   -- once per M1, not a fling on every frame
 		last = tick()
 		fireKnit("MovementService", "Dash", "Right", true)   -- REAL side dash remote (i-frames + the dash animation)
-		-- client velocity dash so you actually SLIDE sideways - NO CFrame teleport (that's the 'it teleports me' you hated)
-		local h0 = getHRP(myModel())
-		if h0 then
-			local rv = h0.CFrame.RightVector
-			task.spawn(function()
-				local t0 = tick()
-				while tick() - t0 < 0.13 do
-					local h = getHRP(myModel()); if not h then break end
-					pcall(function() h.AssemblyLinearVelocity = Vector3.new(rv.X * 72, math.min(h.AssemblyLinearVelocity.Y, 0), rv.Z * 72) end)
-					task.wait()
-				end
-			end)
+		if tick() - (_G.VX_LAUNCHING or 0) < 0.3 then return end   -- don't reposition during an uppercut launch
+		-- SAME cinematic curved sprint as Side Dash BF: eased arc AROUND to their back, facing them,
+		-- adapts to their movement, no glide/teleport look (shared _G.VX_ORBIT engine).
+		local tgt = nearestEnemy(30); local tr = tgt and getHRP(tgt)
+		if tr and _G.VX_ORBIT then
+			task.spawn(function() _G.VX_ORBIT(tr, { duration = 0.24, endRadius = 3.2, extraSweep = math.pi * 0.25, endBehind = true }) end)
 		end
-		vxLog("SideDash (real dash, no teleport)")
+		vxLog("SideDash assist (orbit)")
 	end
 	-- PRIMARY: fire the side dash the instant YOUR character plays an M1 animation (works for every character, survives input-processing)
 	local hooked = setmetatable({}, { __mode = "k" })
@@ -2808,15 +2841,25 @@ do
 		local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
 		local s = k and k:FindFirstChild("GojoService"); local re = s and s:FindFirstChild("RE"); return re and re:FindFirstChild("RightActivated")
 	end
+	local function asPlayerCharacter(mdl)  -- the remote wants the PLAYER's .Character (the working capture used Players[name].Character), not the workspace.Characters model
+		if not mdl then return nil end
+		local plr = Players:GetPlayerFromCharacter(mdl) or Players:FindFirstChild(mdl.Name)
+		return (plr and plr.Character) or mdl
+	end
 	UIS.InputBegan:Connect(function(input, gpe)
 		if gpe then return end
 		if input.KeyCode == Enum.KeyCode.R and gojoOn and tick() - lastGojo > 0.3 then   -- AUTO GOJO TP: R -> fire RightActivated at the locked/nearest enemy -> TP behind them
 			local g = _G.VX_LOCK; local lt = (g and g.get) and g.get() or nil
-			local tgt = (lt and lt.Parent) and lt or nearestEnemyChar()
-			if tgt then lastGojo = tick(); local re = gojoRE(); if re then pcall(function() re:FireServer(tgt) end) end end
+			local tgt = asPlayerCharacter((lt and lt.Parent) and lt or nearestEnemyChar())
+			if tgt then
+				lastGojo = tick()
+				local re = gojoRE()
+				if re then pcall(function() re:FireServer(tgt) end)
+				elseif _G.VX_BF_DEBUG then print("[DreamHub] GojoService.RE.RightActivated NOT FOUND (are you Gojo?)") end
+			end
 		end
-		if input.KeyCode == Enum.KeyCode.Three and redOn then                             -- REVERSAL RED: press 3 -> also press R
-			task.delay(0.08, function() pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game) end) end)
+		if input.KeyCode == Enum.KeyCode.Three and redOn then                             -- REVERSAL RED: press 3 -> also press R (longer hold so it registers)
+			task.delay(0.12, function() pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.12); VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game) end) end)
 		end
 	end)
 	GojoTpApi = { set = function(v) gojoOn = v == true end }
