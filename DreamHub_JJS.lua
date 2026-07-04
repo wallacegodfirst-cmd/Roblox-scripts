@@ -6826,6 +6826,10 @@ do
         else BFApi.SetEnabled(false); ChainApi.setEnabled(false) end
     end })
     bfSec:Dropdown({ Name = "Approach", Items = { "Teleport", "Jump", "Side Dash", "Back Dash", "M1 Black Flash" }, Default = "Teleport", Callback = function(m) if ChainApi then ChainApi.setMode(m) end end })
+    bfSec:Dropdown({ Name = "Flash Key (the move that black-flashes)", Items = { "1", "2", "3", "4", "R", "F", "G", "T", "Z", "X", "C", "V" }, Default = "3", Callback = function(v)
+        local KM = { ["1"]=Enum.KeyCode.One, ["2"]=Enum.KeyCode.Two, ["3"]=Enum.KeyCode.Three, ["4"]=Enum.KeyCode.Four, R=Enum.KeyCode.R, F=Enum.KeyCode.F, G=Enum.KeyCode.G, T=Enum.KeyCode.T, Z=Enum.KeyCode.Z, X=Enum.KeyCode.X, C=Enum.KeyCode.C, V=Enum.KeyCode.V }
+        if ChainApi and KM[v] then ChainApi.setKey(KM[v]) end
+    end })
     bfSec:Toggle({ Name = "BF Debug -> F9 console", Default = false, Callback = function(b) _G.VX_BF_DEBUG = b == true end })
     bfSec:Dropdown({ Name = "Auto Feint", Items = { "Off", "Feint Black Flash", "Feint M1" }, Default = "Off", Callback = function(v)
         if ChainApi then ChainApi.setFeintMode(v == "Feint Black Flash" and "BF" or (v == "Feint M1" and "M1" or "Off")) end
