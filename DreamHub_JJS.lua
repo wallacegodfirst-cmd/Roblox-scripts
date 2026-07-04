@@ -7548,7 +7548,7 @@ do
         local btn = Instance.new("ImageButton")
         -- top-CENTER, small, NOT draggable (draggable was capturing touch input = the "can't move for a few seconds" freeze).
         btn.Size = UDim2.fromOffset(40, 40); btn.Position = UDim2.new(0.5, -20, 0, 6); btn.AnchorPoint = Vector2.new(0, 0)
-        btn.BackgroundColor3 = Color3.fromRGB(10, 10, 12); btn.Image = "rbxthumb://type=Asset&id=108005745550201&w=150&h=150"   -- the Dream logo (thumb renders decal ids that rbxassetid won't)
+        btn.BackgroundColor3 = Color3.fromRGB(10, 10, 12); btn.Image = "rbxassetid://82151574125055"   -- the Dream logo (real IMAGE asset id)
         btn.ScaleType = Enum.ScaleType.Fit; btn.AutoButtonColor = true
         btn.Active = true; btn.Draggable = false; btn.ZIndex = 10; btn.Parent = mmGui
         Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 10)
