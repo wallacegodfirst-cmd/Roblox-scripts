@@ -279,14 +279,15 @@ do
 		local myChar = myCharResolved()
 		local myHRP = getHRP(myChar)
 		local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
-		if not (myHRP and hum) or hum.Health <= 0 then return end
+		if not (myHRP and hum) or hum.Health <= 0 then if _G.VX_BF_DEBUG then print("[DreamHub BF] no body/dead - myHRP=", myHRP ~= nil) end return end
 		local targetChar
 		if chainTarget and chainTarget.Parent and getHRP(chainTarget) and tick() - chainTargetT < 1.5 then   -- STAY locked on the same enemy through the chain (TTL so an abandoned lock can't poison a later combo)
 			local ch = chainTarget:FindFirstChildOfClass("Humanoid")
 			if not ch or ch.Health > 0 then targetChar = chainTarget end
 		end
 		if not targetChar then targetChar = getNearestEnemy(Settings.LockRange) end
-		if not targetChar then return end
+		if not targetChar then if _G.VX_BF_DEBUG then print("[DreamHub BF] NO ENEMY within LockRange "..tostring(Settings.LockRange)) end return end
+		if _G.VX_BF_DEBUG then print("[DreamHub BF] target="..targetChar.Name.." | snapping behind | ability key="..tostring(Settings.AbilityKey)) end
 		chainTarget = targetChar; chainTargetT = tick()   -- lock it (fresh stamp) for the follow-up hits
 		local targetHRP = getHRP(targetChar)
 		if not targetHRP then return end
@@ -409,6 +410,7 @@ do
 		end)
 	end
 	local function doEPress()   -- exactly what pressing E does for the current approach (also fired by the mobile tap button)
+			if _G.VX_BF_DEBUG then print("[DreamHub BF] E press -> mode="..Settings.Mode) end
 		if Settings.Mode == "Back Dash" then handleBackDashE()                  -- 2-stage teleport/dash
 		elseif Settings.Mode == "M1 Black Flash" then if runChain then runChain() end  -- E = the same teleport black flash
 		else doBackstab(true) end                                              -- Teleport/Jump/Side Dash
@@ -1032,6 +1034,16 @@ do
 		goto_ = function(n) if slots[n] then vxTeleportHard(slots[n], 3) end end,
 		spotNames = function() local t = {}; for _, s in ipairs(SPOTS) do t[#t + 1] = s[1] end return t end,
 		spot = function(name) for _, s in ipairs(SPOTS) do if s[1] == name then vxTeleportHard(s[2] + Vector3.new(0, 4, 0), 4); return true end end return false end,  -- HARDENED stepped teleport, 4s hold so a far spot can't be set back
+		playerNames = function() local t = {}; for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP then t[#t + 1] = plr.Name end end return t end,   -- list other players
+		tpPlayer = function(name)  -- teleport just BEHIND a chosen player (setback-resistant)
+			local hrpTarget
+			local plr = name and Players:FindFirstChild(name)
+			if plr and plr.Character then hrpTarget = plr.Character:FindFirstChild("HumanoidRootPart") end
+			if not hrpTarget then local chs = workspace:FindFirstChild("Characters"); local mdl = chs and chs:FindFirstChild(name); hrpTarget = mdl and mdl:FindFirstChild("HumanoidRootPart") end
+			if hrpTarget then vxTeleportHard(hrpTarget.Position - hrpTarget.CFrame.LookVector * 4 + Vector3.new(0, 3, 0), 3); return true end
+			if VX_NOTIFY then VX_NOTIFY("Player '" .. tostring(name) .. "' not found", false) end
+			return false
+		end,
 	}
 end
 
@@ -2100,11 +2112,21 @@ do
 		if o and o:IsA("ObjectValue") and o.Value then return o.Value == myModel() or o.Value == LP.Character or o.Value.Name == LP.Name end
 		return false
 	end
-	local selfHooked = setmetatable({}, { __mode = "k" })  -- hook YOUR animator so we know when YOU cast a domain
+	local SUKUNA_DOMAIN_IDS = { ["125442768208685"] = true, ["134795274895344"] = true, ["121752268008113"] = true }  -- Sukuna domain HIT anims -> spam 4 for 10s
+	local sukunaSpamUntil = 0
+	local selfHooked = setmetatable({}, { __mode = "k" })  -- hook YOUR animator so we know when YOU cast a domain / are caught in Sukuna's
 	local function hookSelfDomain()
 		local m = myModel(); local h = m and m:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
 		if not a or selfHooked[a] then return end
-		selfHooked[a] = a.AnimationPlayed:Connect(function(track) local id = track.Animation and idOf(track.Animation.AnimationId); if id and DOMAINS[id] then selfDomainCast = tick() end end)  -- you played a domain-cast anim -> the active domain is YOURS
+		selfHooked[a] = a.AnimationPlayed:Connect(function(track)
+			local id = track.Animation and idOf(track.Animation.AnimationId); if not id then return end
+			if DOMAINS[id] then selfDomainCast = tick() end                          -- you cast a domain -> the active one is YOURS
+			if SUKUNA_DOMAIN_IDS[id] and domainAdaptOn then                          -- caught in SUKUNA'S domain -> ADAPT: hammer 4 for 10s straight
+				local wasActive = tick() < sukunaSpamUntil
+				sukunaSpamUntil = tick() + 10
+				if not wasActive then task.spawn(function() while tick() < sukunaSpamUntil do pressFour(); task.wait(0.25) end end) end
+			end
+		end)
 	end
 	task.spawn(function()  -- workspace.Domains scan: Anti-Domain escape (ANY domain, incl. vessel - not just anim-id) + Auto-Domain-Adapt spam + black-hole EFFECT scan
 		local lastDom, lastReactedDom, domType, domStart, bhCd, dbgCd = nil, nil, "other", 0, 0, 0
@@ -6754,6 +6776,7 @@ do
         else BFApi.SetEnabled(false); ChainApi.setEnabled(false) end
     end })
     bfSec:Dropdown({ Name = "Approach", Items = { "Teleport", "Jump", "Side Dash", "Back Dash", "M1 Black Flash" }, Default = "Teleport", Callback = function(m) if ChainApi then ChainApi.setMode(m) end end })
+    bfSec:Toggle({ Name = "BF Debug -> F9 console", Default = false, Callback = function(b) _G.VX_BF_DEBUG = b == true end })
     bfSec:Dropdown({ Name = "Auto Feint", Items = { "Off", "Feint Black Flash", "Feint M1" }, Default = "Off", Callback = function(v)
         if ChainApi then ChainApi.setFeintMode(v == "Feint Black Flash" and "BF" or (v == "Feint M1" and "M1" or "Off")) end
     end })
@@ -6889,6 +6912,11 @@ do
     quickSec:Button({ Name = "Go Slot 2", Callback = function() if TPApi then TPApi.goto_(2) end end })
     quickSec:Button({ Name = "Save Slot 3", Callback = function() if TPApi then TPApi.save(3) end end })
     quickSec:Button({ Name = "Go Slot 3", Callback = function() if TPApi then TPApi.goto_(3) end end })
+    local plySec = tpSub:Section({ Name = "Players", Side = 1 })
+    local tpPlyName
+    local plyDrop = plySec:Dropdown({ Name = "Player", Items = (TPApi and TPApi.playerNames and TPApi.playerNames()) or {}, Callback = function(v) tpPlyName = v end })
+    plySec:Button({ Name = "Refresh Players", Callback = function() if plyDrop and TPApi then pcall(function() plyDrop:Refresh(TPApi.playerNames()) end) end end })
+    plySec:Button({ Name = "Teleport To Player", Callback = function() if TPApi and tpPlyName then TPApi.tpPlayer(tpPlyName) end end })
 
     -- ===================== PLAYER =====================
     local PlyPage = Window:Page({ Name = "Player", Icon = "72732892493295" })
