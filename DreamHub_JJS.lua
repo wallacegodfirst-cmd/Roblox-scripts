@@ -514,18 +514,32 @@ end
 -- maxSpeed*dt, so instead of one big jump we glide to the target in capped per-frame steps that stay
 -- under that limit. Lower VX_TP_SPEED (TP Speed slider) if you still get set back.
 local VX_TP_SPEED = 80
+-- Resolve the anti-cheat TELEPORT whitelist remote ROBUSTLY (the hardcoded Knit path goes stale when the
+-- game updates -> teleports set back). Try the known path first, else search for any RemoteEvent named
+-- "Teleport" (preferring an AntiCheat-ish parent). Cached; re-resolves if the cached one is destroyed.
+local vxACRemote = nil
+local function vxResolveAC()
+	if vxACRemote and vxACRemote.Parent then return vxACRemote end
+	local RS = game:GetService("ReplicatedStorage")
+	local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
+	local svc = k and k:FindFirstChild("AntiCheatService"); local re = svc and svc:FindFirstChild("RE"); re = re and re:FindFirstChild("Teleport")
+	if re and re:IsA("RemoteEvent") then vxACRemote = re; return re end
+	local best
+	for _, d in ipairs(RS:GetDescendants()) do
+		if d:IsA("RemoteEvent") and string.lower(d.Name) == "teleport" then
+			if string.find(string.lower(d:GetFullName()), "anticheat") then vxACRemote = d; return d end
+			best = best or d
+		end
+	end
+	vxACRemote = best; return best
+end
+local function vxACPass() local re = vxResolveAC(); if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end end
 local vxTeleGen = 0  -- overlap guard: each teleport takes the next number; a newer one supersedes older holds so rapid teleports (Rika sword) do not fight over your CFrame or leave PlatformStand stuck on (frozen)
 local function vxGlide(target, onArrive, holdTime)  -- faithful port of your forceTeleport: clean constraints, spam CFrame, PlatformStand. holdTime = how long to keep re-asserting (longer = far teleports stick).
 	local LP = game:GetService("Players").LocalPlayer
 	task.spawn(function()
 		local function myChar() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
-		local function acPass()  -- whitelist this teleport with JJS anti-cheat (server timestamp) so it is NOT reverted
-			local RS = game:GetService("ReplicatedStorage")
-			local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
-			local svc = k and k:FindFirstChild("AntiCheatService")
-			local re = svc and svc:FindFirstChild("RE"); re = re and re:FindFirstChild("Teleport")
-			if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end
-		end
+		local acPass = vxACPass   -- robust resolver (survives a stale/changed anti-cheat remote path)
 		local char = myChar(); if not char then return end  -- JJS parents your character under workspace.Characters; LP.Character can lag/differ
 		local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
 		vxTeleGen = vxTeleGen + 1; local gen = vxTeleGen  -- claim the generation ONLY after we have a body: an early-abort call must NOT supersede an in-flight teleport (that orphaned PlatformStand = froze you)
@@ -570,11 +584,7 @@ local function vxTeleportHard(dest, holdTime)
 	task.spawn(function()
 		vxTeleGen = vxTeleGen + 1; local gen = vxTeleGen
 		local function myChar() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
-		local function acPass()
-			local RS = game:GetService("ReplicatedStorage"); local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
-			local svc = k and k:FindFirstChild("AntiCheatService"); local re = svc and svc:FindFirstChild("RE"); re = re and re:FindFirstChild("Teleport")
-			if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end
-		end
+		local acPass = vxACPass   -- robust resolver (survives a stale/changed anti-cheat remote path)
 		local char = myChar(); local hrp = char and char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
 		local hum = char:FindFirstChildOfClass("Humanoid"); local rot = hrp.CFrame.Rotation
 		for _, v in ipairs(hrp:GetChildren()) do
@@ -940,9 +950,10 @@ do
 		local c = myChar(); local hum = c and c:FindFirstChildOfClass("Humanoid")
 		local airborne = hum ~= nil and hum.FloorMaterial == Enum.Material.Air
 		local rising = hrp.AssemblyLinearVelocity.Y > 2                            -- you jumped / are going up
+		local falling = hrp.AssemblyLinearVelocity.Y < -6                          -- DROPPING off a ledge/building (not wall-running up) - don't parkour here
 		local intoWall = UIS:IsKeyDown(Enum.KeyCode.W)                             -- you're actively pushing toward the wall (intent) - not just standing near one in a fight
-		-- parkour when you APPROACH a wall while jumping/airborne + holding W. Ground combat next to a wall (not jumping, not holding W into it) stays quiet.
-		if intoWall and (airborne or rising) and wallNear() and not climbing then
+		-- parkour when you APPROACH a wall while jumping/rising into it + holding W. Falling OFF a building (Y dropping) no longer plays the wall-run anim.
+		if intoWall and (airborne or rising) and not falling and wallNear() and not climbing then
 			-- movement key -> anim (swapped to match in-game: A/going-left uses the right-lean clip, D/going-right uses the left-lean clip)
 			local key = (UIS:IsKeyDown(Enum.KeyCode.A) and "parkRight") or (UIS:IsKeyDown(Enum.KeyCode.D) and "parkLeft") or "parkRight"
 			for k, t in pairs(sideTracks) do if k ~= key and t.IsPlaying then pcall(function() t:Stop() end) end end  -- stop the other side's anim
@@ -1342,7 +1353,11 @@ do
 			if not detonated then detonated = true; flying = false; click() end
 			return
 		end
-		local aimY = (hd > 18) and (tp.Y + HOVER) or (tp.Y + 4)                      -- cruise HIGH, drop only to the target's UPPER BODY when close
+		-- ALTITUDE scales with horizontal distance: far = cruise HIGH (never skim the ground at range),
+		-- close = drop onto the target's upper body. This kills the "aims at the ground when far" bug.
+		local aimY = tp.Y + math.clamp(hd * 0.6, 6, 70)
+		local myY = cp.Y                                                             -- also never fly BELOW your own current height while still far -> no dipping toward distant ground
+		if hd > DET + 6 and aimY < myY then aimY = myY end
 		if aimY < tp.Y + 4 then aimY = tp.Y + 4 end                                  -- HARD FLOOR: never below the target's torso, so the crow can never touch the ground
 		local aim = Vector3.new(tp.X, aimY, tp.Z)
 		local dir = aim - cp
