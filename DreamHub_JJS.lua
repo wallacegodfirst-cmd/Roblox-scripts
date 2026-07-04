@@ -257,20 +257,73 @@ do
 			end
 		end)
 	end
-	local backDashStage = 0  -- Back Dash alternates per E press: E #1 = plain teleport backstab, E #2 = walk forward -> dash back -> flash (handled in the E bind below)
-	local function doApproach(targetHRP, myHRP)  -- PRE-flash movement per mode; the snap-behind + flash + back-lock chain happens right after (in doBackstab)
-		local m = Settings.Mode
-		if m == "Side Dash" then                                                                   -- play the SIDE DASH anims + dash remote, then the snap AIMS you at their back (no weird velocity shove)
-			local function playA(id)
-				pcall(function()
-					local c = myCharResolved(); local h = c and c:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
-					if a then local anim = Instance.new("Animation"); anim.AnimationId = id; local t = a:LoadAnimation(anim); t.Priority = Enum.AnimationPriority.Action2; t:Play(0.04); task.delay(0.5, function() pcall(function() t:Stop() end) end) end
-				end)
+	local backDashStage = 0
+	local function playAnim(id, prio)
+		pcall(function()
+			local c = myCharResolved(); local h = c and c:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
+			if a then local anim = Instance.new("Animation"); anim.AnimationId = id; local t = a:LoadAnimation(anim); t.Priority = prio or Enum.AnimationPriority.Action2; t:Play(0.05); task.delay(0.6, function() pcall(function() t:Stop() end) end) end
+		end)
+	end
+	-- CINEMATIC ORBIT: curve smoothly AROUND the target (no teleport / no snap), easing accel + decel,
+	-- always facing them, radius + angle interpolated, re-reading the target's LIVE position each frame so
+	-- the arc wraps around them if they move. opts: duration, endRadius, endBehind, extraSweep(rad),
+	-- radialBias(push out mid-arc = retreat), yArc(jump arc height).
+	local function orbitAround(targetHRP, opts)
+		opts = opts or {}
+		local dur        = opts.duration or 0.42
+		local endRadius  = opts.endRadius or (Settings.BackDistance + 0.5)
+		local endBehind  = opts.endBehind ~= false
+		local extraSweep = opts.extraSweep or 0
+		local radialBias = opts.radialBias or 0
+		local yArc       = opts.yArc or 0
+		local h0 = getHRP(myCharResolved()); if not (h0 and targetHRP and targetHRP.Parent) then return end
+		local tp0 = targetHRP.Position
+		local rel0 = Vector3.new(h0.Position.X - tp0.X, 0, h0.Position.Z - tp0.Z)
+		local startRadius = rel0.Magnitude; if startRadius < 1.5 then startRadius = 6 end
+		local startAngle = math.atan2(rel0.Z, rel0.X)
+		local baseY = h0.Position.Y
+		-- decide the sweep DIRECTION once (stable arc, no mid-flight flip-flop)
+		local look0 = targetHRP.CFrame.LookVector
+		local flat0 = Vector3.new(look0.X, 0, look0.Z); local mag0 = flat0.Magnitude
+		local behind0 = (mag0 < 0.01) and Vector3.new(0, 0, -1) or (flat0 / mag0)
+		local endAngle0 = endBehind and math.atan2(behind0.Z, behind0.X) or startAngle
+		local diff0 = ((endAngle0 - startAngle + math.pi) % (2 * math.pi)) - math.pi
+		local sweepDir = diff0 >= 0 and 1 or -1
+		local t0 = tick()
+		while true do
+			local h = getHRP(myCharResolved()); if not (h and targetHRP and targetHRP.Parent) then break end
+			local a = math.clamp((tick() - t0) / dur, 0, 1)
+			local e = a * a * (3 - 2 * a)                                     -- smoothstep = smooth accel + decel
+			local tp = targetHRP.Position                                     -- LIVE center -> wraps around them if they move
+			local endAngle = startAngle
+			if endBehind then
+				local look = targetHRP.CFrame.LookVector
+				local flat = Vector3.new(look.X, 0, look.Z); local mag = flat.Magnitude
+				local bd = (mag < 0.01) and Vector3.new(0, 0, -1) or (flat / mag)
+				endAngle = math.atan2(bd.Z, bd.X)
 			end
-			playA("rbxassetid://75203303352791"); playA("rbxassetid://96489184596023")
-			fireDash("Right"); task.wait(0.05)                                                      -- remote dash (i-frames) only; the snap does the aiming
-		elseif m == "Jump" then jumpNow(); task.wait(0.12)                                          -- SMOOTH regular jump (no glitchy teleport-arc), then the snap-behind + flash lands on their BACK
-		end  -- "Teleport"/"M1 Black Flash" = no pre-move; "Back Dash" is a dedicated 2-stage E handler
+			local diff = ((endAngle - startAngle + math.pi) % (2 * math.pi)) - math.pi
+			diff = diff + sweepDir * extraSweep                               -- widen the arc in a stable direction (real circling)
+			local angle = startAngle + diff * e
+			local radius = startRadius + (endRadius - startRadius) * e + radialBias * math.sin(e * math.pi)
+			local y = baseY + (tp.Y - tp0.Y) + yArc * math.sin(e * math.pi)   -- follow their height + optional jump arc
+			local pos = Vector3.new(tp.X + math.cos(angle) * radius, y, tp.Z + math.sin(angle) * radius)
+			if _G.VX_ACPASS then _G.VX_ACPASS() end                           -- whitelist so the anti-cheat can't drag the arc back
+			pcall(function() h.CFrame = CFrame.lookAt(pos, Vector3.new(tp.X, pos.Y, tp.Z)); h.AssemblyLinearVelocity = Vector3.zero end)  -- always FACE the target
+			if a >= 1 then break end
+			task.wait()
+		end
+	end
+	local function doApproach(targetHRP, myHRP)  -- PRE-flash movement per mode; the flash + back-lock happens right after (in doBackstab)
+		local m = Settings.Mode
+		if m == "Side Dash" then                                                                   -- CURVE around them to their back (anime run-around), then flash
+			playAnim("rbxassetid://75203303352791"); playAnim("rbxassetid://96489184596023")
+			fireDash("Right")
+			orbitAround(targetHRP, { duration = 0.42, endRadius = Settings.BackDistance + 0.5, extraSweep = math.pi * 0.35, endBehind = true })
+		elseif m == "Jump" then                                                                    -- JUMP + curve OVER to their back
+			jumpNow()
+			orbitAround(targetHRP, { duration = 0.5, endRadius = Settings.BackDistance + 0.5, extraSweep = math.pi * 0.3, endBehind = true, yArc = 9 })
+		end  -- "Teleport"/"M1 Black Flash" = no pre-move; "Back Dash" is its own handler below
 	end
 	local function doBackstab(fromE)
 		if fromE then burstUntil = tick() + 1.0 end                    -- a MANUAL E press is ALWAYS a valid trigger (this was the bug: E did nothing unless Auto Chain was already on)
@@ -399,38 +452,26 @@ do
 	end
 	if LocalPlayer.Character then setupCharacter(LocalPlayer.Character) end
 	LocalPlayer.CharacterAdded:Connect(setupCharacter)
-	local function handleBackDashE()  -- Back Dash: FIRST black flash; THEN if the target turns to FACE you, dash back (Q) and black flash AGAIN.
+	local function handleBackDashE()  -- Back Dash: curved BACKWARD retreat (drift diagonally OUT while facing them, easing) -> flash back onto their back.
 		task.spawn(function()
-			local tgt = getNearestEnemy(Settings.LockRange)                        -- lock the target so the flashes return to THEM
+			local tgt = getNearestEnemy(Settings.LockRange)
 			if tgt then chainTarget = tgt; chainTargetT = tick() end
-			if runChain then runChain() end                                        -- 1) black flash first
-			task.wait(0.25)                                                        -- let it resolve, give them a moment to turn
-			local tr = getHRP(tgt); local mh = getHRP(myCharResolved())
-			if tr and mh and tr.Parent then
-				local toMe = mh.Position - tr.Position
-				if toMe.Magnitude > 0.1 and tr.CFrame.LookVector:Dot(toMe.Unit) > 0.3 then   -- 2) target is LOOKING at you -> walk in, JUMP, back-dash, flash again
-					pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game) end)   -- walk/sprint forward toward them
-					task.wait(0.12)
-					jumpNow()                                                                                  -- JUMP (space bar)
-					task.wait(0.05)
-					pcall(function() VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game) end)
-					pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Q, false, game); task.wait(0.03); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Q, false, game) end)  -- BACK DASH (Q)
-					pcall(function()   -- play the captured BACK DASH animation
-						local c = myCharResolved(); local h = c and c:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
-						if a then local anim = Instance.new("Animation"); anim.AnimationId = "rbxassetid://134581973800784"; local t = a:LoadAnimation(anim); t.Priority = Enum.AnimationPriority.Action2; t:Play(0.04); task.delay(0.5, function() pcall(function() t:Stop() end) end) end
-					end)
-					fireDash("Back"); clientDash("Back", 62, 0.08)
-					task.wait(0.1)
-					if runChain then runChain() end                                -- 3) black flash again (snaps to their BACK)
-				end
+			local tr = getHRP(tgt)
+			if tr and tr.Parent then
+				playAnim("rbxassetid://134581973800784")                       -- back-dash animation
+				fireDash("Back")                                               -- real dash remote (i-frames), no straight-line shove
+				-- CURVED diagonal retreat: arc OUT to create distance while orbiting ~90deg around them, facing them, eased
+				orbitAround(tr, { duration = 0.4, endRadius = 15, radialBias = 5, extraSweep = math.pi * 0.5, endBehind = false })
 			end
+			task.wait(0.04)
+			if runChain then runChain() end                                    -- flash back onto their BACK
 		end)
 	end
 	local function doEPress()   -- exactly what pressing E does for the current approach (also fired by the mobile tap button)
 			if _G.VX_BF_DEBUG then print("[DreamHub BF] E press -> mode="..Settings.Mode) end
-		if Settings.Mode == "Back Dash" then handleBackDashE()                  -- 2-stage teleport/dash
+		if Settings.Mode == "Back Dash" then handleBackDashE()                  -- already spawned
 		elseif Settings.Mode == "M1 Black Flash" then if runChain then runChain() end  -- E = the same teleport black flash
-		else doBackstab(true) end                                              -- Teleport/Jump/Side Dash
+		else task.spawn(function() doBackstab(true) end) end                   -- Teleport/Jump/Side Dash - spawn so the orbit doesn't stall the input handler
 	end
 	ContextActionService:BindActionAtPriority("VaultixBackstab", function(_, inputState)
 		if inputState == Enum.UserInputState.Begin then doEPress() end
