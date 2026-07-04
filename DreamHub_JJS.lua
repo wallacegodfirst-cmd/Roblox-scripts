@@ -293,7 +293,7 @@ do
 		local behind0 = (mag0 < 0.01) and Vector3.new(0, 0, -1) or (flat0 / mag0)
 		local endAngle0 = endBehind and math.atan2(behind0.Z, behind0.X) or startAngle
 		local diff0 = ((endAngle0 - startAngle + math.pi) % (2 * math.pi)) - math.pi
-		local sweepDir = diff0 >= 0 and 1 or -1
+		local sweepDir = opts.dir or (diff0 >= 0 and 1 or -1)   -- opts.dir forces LEFT(-1)/RIGHT(1) (Side Dash Assist alternates)
 		local t0 = tick()
 		while true do
 			local h = getHRP(myCharResolved()); if not (h and targetHRP and targetHRP.Parent) then break end
@@ -322,6 +322,7 @@ do
 				h.AssemblyLinearVelocity = Vector3.zero                        -- no residual physics = no launch
 				h.AssemblyAngularVelocity = Vector3.zero
 			end)
+			pcall(function() local cam = workspace.CurrentCamera; cam.CFrame = CFrame.lookAt(cam.CFrame.Position, tp) end)  -- camera AIMS at them through the arc (rotation only - zoom untouched)
 			if a >= 1 then break end
 			task.wait()
 		end
@@ -335,11 +336,11 @@ do
 		if m == "Side Dash" then                                                                   -- CURVE around them to their back (anime run-around), then flash
 			playAnim("rbxassetid://75203303352791"); playAnim("rbxassetid://96489184596023")
 			fireDash("Right")
-			orbitAround(targetHRP, { duration = 0.22, endRadius = Settings.BackDistance, extraSweep = math.pi * 0.25, endBehind = true })   -- FAST + ends dead on their back
+			orbitAround(targetHRP, { duration = 0.16, endRadius = Settings.BackDistance, extraSweep = math.pi * 0.25, endBehind = true })   -- FAST + ends dead on their back
 		elseif m == "Jump" then                                                                    -- SHORT hop + quick curve to their back -> flash almost immediately
 			jumpNow()
 			task.wait(0.03)
-			orbitAround(targetHRP, { duration = 0.24, endRadius = Settings.BackDistance, extraSweep = math.pi * 0.2, endBehind = true, yArc = 4.5 })
+			orbitAround(targetHRP, { duration = 0.18, endRadius = Settings.BackDistance, extraSweep = math.pi * 0.2, endBehind = true, yArc = 4 })
 		end  -- "Teleport"/"M1 Black Flash" = no pre-move; "Back Dash" is its own handler below
 	end
 	local function doBackstab(fromE)
@@ -427,7 +428,9 @@ do
 			pcall(function() myChar:PivotTo(snapCF) end)   -- keep the WHOLE model pinned to their back
 			myHRP.AssemblyLinearVelocity = Vector3.zero
 			myHRP.AssemblyAngularVelocity = Vector3.zero
-			-- NO camera hijack: you keep full control of your own camera / zoom (removed the zoom-in lock).
+			-- CAMERA AIM (rotation only): turn the camera to face THEIR BACK so the flash aims true.
+			-- We never touch CameraType or camera position, so your ZOOM keeps working (no zoom-in lock).
+			pcall(function() Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, targetPos) end)
 		end)
 	end
 	local function setupCharacter(character)
@@ -479,7 +482,7 @@ do
 			if tr and tr.Parent then                                            -- 1) normal side-dash black flash
 				playAnim("rbxassetid://75203303352791"); playAnim("rbxassetid://96489184596023")
 				fireDash("Right")
-				orbitAround(tr, { duration = 0.22, endRadius = Settings.BackDistance, extraSweep = math.pi * 0.25, endBehind = true })
+				orbitAround(tr, { duration = 0.16, endRadius = Settings.BackDistance, extraSweep = math.pi * 0.25, endBehind = true })
 			end
 			if runChain then runChain(tgt) end
 			-- 2) BACKGROUND WATCHER on THAT target: when they're FACING you (their back turned away), dash behind + flash
@@ -497,7 +500,7 @@ do
 						chainTarget = tgt; chainTargetT = tick()
 						playAnim("rbxassetid://134581973800784")                -- back-dash anim
 						fireDash("Back")
-						orbitAround(tr2, { duration = 0.22, endRadius = Settings.BackDistance, extraSweep = math.pi * 0.3, endBehind = true })  -- quick dash AROUND to the open back
+						orbitAround(tr2, { duration = 0.18, endRadius = Settings.BackDistance, extraSweep = math.pi * 0.3, endBehind = true })  -- quick dash AROUND to the open back
 						if runChain then runChain(tgt) end                      -- black flash
 						return                                                  -- one counter-flash per E press
 					end
@@ -523,11 +526,19 @@ do
 			UIS_M1.InputBegan:Connect(function(input, gpe)
 				if gpe then return end
 				if input.UserInputType == Enum.UserInputType.MouseButton1 and Settings.Mode == "M1 Black Flash" and tick() - lastM1 > 0.25 then
-					lastM1 = tick()
-					if _G.VX_BF_DEBUG then print("[DreamHub BF] click -> M1 black flash") end
-					-- small delay so YOUR M1 swing registers first - firing the flash key mid-swing was getting
-					-- EATEN by the game ('gets to their back but no flash'). Then the chain snaps + flashes.
-					task.delay(0.18, function() if Settings.Mode == "M1 Black Flash" and runChain then runChain() end end)
+					-- flash ONLY when the M1 actually LANDS: an enemy in melee range, in FRONT of you
+					local mh = getHRP(myCharResolved())
+					local tgt = getNearestEnemy(9)
+					local tr = tgt and getHRP(tgt)
+					if mh and tr then
+						local to = tr.Position - mh.Position
+						if to.Magnitude <= 9 and mh.CFrame.LookVector:Dot(to.Unit) > 0.35 then   -- facing them + close = the M1 connects
+							lastM1 = tick()
+							chainTarget = tgt; chainTargetT = tick()
+							if _G.VX_BF_DEBUG then print("[DreamHub BF] M1 LANDED on "..tgt.Name.." -> black flash") end
+							task.delay(0.18, function() if Settings.Mode == "M1 Black Flash" and runChain then runChain(tgt) end end)  -- swing registers, THEN flash
+						end
+					end
 				end
 			end)
 		end
@@ -969,7 +980,16 @@ do
 	end)
 	SkillsApi = {
 		setEnabled = function(v) enabled = v == true end,
-		setKey = function(n, v) if KC[n] then keys[n] = v == true; if v then enabled = true end end end,  -- turning ANY skill on arms the system ('Auto Skills did nothing' = master toggle was off)
+		setKey = function(n, v)
+			if KC[n] then
+				keys[n] = v == true
+				if v then enabled = true
+				else
+					local any = false; for i = 1, 6 do if keys[i] then any = true break end end
+					if not any then enabled = false end   -- last skill toggled OFF -> the system fully stops (OFF means OFF)
+				end
+			end
+		end,
 		setRate = function(v) if type(v) == "number" then rate = v end end,
 	}
 end
@@ -1086,8 +1106,9 @@ do
 		local c = myChar(); local hum = c and c:FindFirstChildOfClass("Humanoid")
 		local airborne = hum ~= nil and hum.FloorMaterial == Enum.Material.Air
 		local rising = hrp.AssemblyLinearVelocity.Y > 2                            -- you jumped / are going up
-		-- parkour whenever you're airborne/rising near a wall (no longer requires holding W - that's why it 'didn't work').
-		if (airborne or rising) and wallNear() and not climbing then
+		local intoWall = UIS:IsKeyDown(Enum.KeyCode.W) and forwardWall()           -- running INTO a wall on the ground also counts
+		-- parkour when airborne/rising near a wall OR running straight into one.
+		if ((airborne or rising) and wallNear() or intoWall) and not climbing then
 			-- movement key -> anim (swapped to match in-game: A/going-left uses the right-lean clip, D/going-right uses the left-lean clip)
 			local key = (UIS:IsKeyDown(Enum.KeyCode.A) and "parkRight") or (UIS:IsKeyDown(Enum.KeyCode.D) and "parkLeft") or "parkRight"
 			for k, t in pairs(sideTracks) do if k ~= key and t.IsPlaying then pcall(function() t:Stop() end) end end  -- stop the other side's anim
@@ -2173,7 +2194,7 @@ do
 				if _G.VX_RUNCHAIN and r.Parent then task.delay(0.15, function() pcall(function() _G.VX_RUNCHAIN(r.Parent) end) end)   -- black flash the caster (best cancel)
 				else task.spawn(function() local VIM = game:GetService("VirtualInputManager"); for _ = 1, 4 do pcall(function() VIM:SendMouseButtonEvent(0,0,0,true,game,0); task.wait(0.05); VIM:SendMouseButtonEvent(0,0,0,false,game,0) end); task.wait(0.14) end end) end   -- fallback: M1 them
 			end
-		elseif domainMode == "Back Up" then vxTeleportHard(hrp.Position - hrp.CFrame.LookVector * 140 + Vector3.new(0, 10, 0), 3)                  -- back you UP away from the domain
+		elseif domainMode == "Back Up" then vxTeleportHard(hrp.Position - hrp.CFrame.LookVector * 70 + Vector3.new(0, 8, 0), 5)                   -- back you up (shorter hop + LONGER hold = no send-back)
 		else vxTeleportHard(hrp.Position + Vector3.new(0, 300, 0), 3) end  -- Teleport Up (default)
 	end
 	local counterMode, counterEmote = "Jump On Head", 1   -- what to do when an enemy counters: jump on their head OR play a saved emote
@@ -2731,19 +2752,25 @@ do
 		local dir = flat.Magnitude > 0.01 and flat.Unit or Vector3.new(0, 0, -1)
 		return tr.Position - dir * 4
 	end
+	local sdaDir = 1   -- alternate LEFT / RIGHT each landed M1
 	local function trigger()
 		if not on then return end
 		if tick() - last < 0.4 then return end   -- once per M1, not a fling on every frame
-		last = tick()
-		fireKnit("MovementService", "Dash", "Right", true)   -- REAL side dash remote (i-frames + the dash animation)
 		if tick() - (_G.VX_LAUNCHING or 0) < 0.3 then return end   -- don't reposition during an uppercut launch
-		-- SAME cinematic curved sprint as Side Dash BF: eased arc AROUND to their back, facing them,
-		-- adapts to their movement, no glide/teleport look (shared _G.VX_ORBIT engine).
-		local tgt = nearestEnemy(30); local tr = tgt and getHRP(tgt)
-		if tr and _G.VX_ORBIT then
-			task.spawn(function() _G.VX_ORBIT(tr, { duration = 0.24, endRadius = 3.2, extraSweep = math.pi * 0.25, endBehind = true }) end)
+		-- fire ONLY when the M1 LANDED: enemy in melee range, in front of you
+		local mh = getHRP(myModel()); if not mh then return end
+		local tgt = nearestEnemy(9); local tr = tgt and getHRP(tgt)
+		if not tr then return end
+		local to = tr.Position - mh.Position
+		if to.Magnitude > 9 or mh.CFrame.LookVector:Dot(to.Unit) < 0.35 then return end
+		last = tick()
+		fireKnit("MovementService", "Dash", sdaDir > 0 and "Right" or "Left", true)   -- REAL side dash remote (i-frames + anim)
+		-- LANDED M1 -> spin AROUND them (left/right alternating), same cinematic orbit, still facing them
+		if _G.VX_ORBIT then
+			local d = sdaDir; sdaDir = -sdaDir
+			task.spawn(function() _G.VX_ORBIT(tr, { duration = 0.16, endRadius = math.max(to.Magnitude, 3), extraSweep = math.pi * 0.5, endBehind = false, dir = d }) end)
 		end
-		vxLog("SideDash assist (orbit)")
+		vxLog("SideDash assist (turn-around)")
 	end
 	-- PRIMARY: fire the side dash the instant YOUR character plays an M1 animation (works for every character, survives input-processing)
 	local hooked = setmetatable({}, { __mode = "k" })
@@ -2846,22 +2873,57 @@ do
 		local plr = Players:GetPlayerFromCharacter(mdl) or Players:FindFirstChild(mdl.Name)
 		return (plr and plr.Character) or mdl
 	end
+	local function faceTargetNow(tgtModel)  -- AIM at the user before/while the ability fires (Gojo R requires aiming at them)
+		local hrp = myHRP(); local tr = tgtModel and (tgtModel:FindFirstChild("HumanoidRootPart") or tgtModel:FindFirstChildWhichIsA("BasePart"))
+		if hrp and tr then
+			pcall(function() hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(tr.Position.X, hrp.Position.Y, tr.Position.Z)) end)
+			pcall(function() local cam = workspace.CurrentCamera; cam.CFrame = CFrame.lookAt(cam.CFrame.Position, tr.Position) end)
+		end
+	end
+	local function currentTarget()
+		local g = _G.VX_LOCK; local lt = (g and g.get) and g.get() or nil
+		return (lt and lt.Parent) and lt or nearestEnemyChar()
+	end
 	UIS.InputBegan:Connect(function(input, gpe)
 		if gpe then return end
-		if input.KeyCode == Enum.KeyCode.R and gojoOn and tick() - lastGojo > 0.3 then   -- AUTO GOJO TP: R -> fire RightActivated at the locked/nearest enemy -> TP behind them
-			local g = _G.VX_LOCK; local lt = (g and g.get) and g.get() or nil
-			local tgt = asPlayerCharacter((lt and lt.Parent) and lt or nearestEnemyChar())
+		if input.KeyCode == Enum.KeyCode.R and gojoOn and tick() - lastGojo > 0.3 then   -- AUTO GOJO TP: R -> AIM at the locked/nearest enemy, then fire RightActivated -> TP behind them
+			local mdl = currentTarget()
+			local tgt = asPlayerCharacter(mdl)
 			if tgt then
 				lastGojo = tick()
-				local re = gojoRE()
-				if re then pcall(function() re:FireServer(tgt) end)
-				elseif _G.VX_BF_DEBUG then print("[DreamHub] GojoService.RE.RightActivated NOT FOUND (are you Gojo?)") end
+				faceTargetNow(mdl)                                                        -- MUST be aiming at the user for R to take them
+				task.delay(0.05, function()
+					local re = gojoRE()
+					if re then pcall(function() re:FireServer(tgt) end)
+					elseif _G.VX_BF_DEBUG then print("[DreamHub] GojoService.RE.RightActivated NOT FOUND (are you Gojo?)") end
+				end)
 			end
 		end
-		if input.KeyCode == Enum.KeyCode.Three and redOn then                             -- REVERSAL RED: press 3 -> also press R (longer hold so it registers)
+		if input.KeyCode == Enum.KeyCode.Three and redOn then                             -- REVERSAL RED: press 3 -> click R (longer hold so it registers)
 			task.delay(0.12, function() pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.12); VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game) end) end)
 		end
 	end)
+	-- ANIM-DRIVEN backup (your captured ids): keeps aiming through Gojo's R (99920923658527), and the RED
+	-- charge anim (137654778575373) auto-clicks R even if the key-3 press was missed/eaten.
+	local GOJO_R_ANIM, RED_ANIM = "99920923658527", "137654778575373"
+	local lastRedR = 0
+	local hookedA = setmetatable({}, { __mode = "k" })
+	local function hookSelfAnims()
+		local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+		local h = c and c:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
+		if not a or hookedA[a] then return end
+		hookedA[a] = a.AnimationPlayed:Connect(function(track)
+			local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+"); if not id then return end
+			if id == GOJO_R_ANIM and gojoOn then                                          -- Gojo R started: keep AIMING at the target through the grab window
+				task.spawn(function() local mdl = currentTarget(); for _ = 1, 8 do if not (mdl and mdl.Parent) then break end faceTargetNow(mdl); task.wait(0.04) end end)
+			end
+			if id == RED_ANIM and redOn and tick() - lastRedR > 0.6 then                  -- Red charge anim: click R
+				lastRedR = tick()
+				task.spawn(function() pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.12); VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game) end) end)
+			end
+		end)
+	end
+	task.spawn(function() while true do if gojoOn or redOn then pcall(hookSelfAnims) end task.wait(0.7) end end)
 	GojoTpApi = { set = function(v) gojoOn = v == true end }
 	ReversalRedApi = { set = function(v) redOn = v == true end }
 end
@@ -3167,14 +3229,15 @@ local Library do
         ["RightAlt"]          = "RightAlt"
     }
 
+    -- DREAM HUB 4K THEME: pure black panels, crisp WHITE accents + outlines (high-contrast black & white)
     local Themes = {
         ["Preset"] = {
-            ["Background"] = FromRGB(16, 18, 18),
-            ["Inline"] = FromRGB(21, 24, 24),
-            ["Element"] = FromRGB(30, 34, 34),
+            ["Background"] = FromRGB(0, 0, 0),
+            ["Inline"] = FromRGB(6, 6, 6),
+            ["Element"] = FromRGB(14, 14, 14),
             ["Accent"] = FromRGB(255, 255, 255),
-            ["Border"] = FromRGB(30, 34, 34),
-            ["Border 2"] = FromRGB(56, 62, 62)
+            ["Border"] = FromRGB(255, 255, 255),
+            ["Border 2"] = FromRGB(170, 170, 170)
         }
     }
 
@@ -3183,18 +3246,6 @@ local Library do
     Library.Pages.__index = Library.Pages
 
     Library.Theme = TableClone(Themes["Preset"])
-
-    -- per-tier accent (FREE red / PREMIUM gold / PLUS volt-white) over the exact dark theme
-    if VX_TIER == "free" then
-        Library.Theme["Accent"] = FromRGB(240, 45, 58)
-        Library.Theme["Border 2"] = FromRGB(72, 40, 44)
-    elseif VX_TIER == "plus" then
-        Library.Theme["Accent"] = FromRGB(238, 246, 250)
-        Library.Theme["Border 2"] = FromRGB(70, 76, 84)
-    else
-        Library.Theme["Accent"] = FromRGB(245, 190, 70)
-        Library.Theme["Border 2"] = FromRGB(74, 62, 38)
-    end
 
     -- Folders
     pcall(function()
@@ -7225,7 +7276,7 @@ local Camera = Workspace.CurrentCamera -- The local viewport, manipulated for th
 local Config = {
     -- The grace period (in seconds) to hold the block after a threat passes.
     -- 0.22: hold the shield THROUGH fast M1 strings (0.12 dropped it between quick hits and the re-raise came back late = you ate the next M1).
-    ComboDelay = 0.22,
+    ComboDelay = 0.26,
     
     -- Feature toggles linked to the Vaultix Hub UI checkboxes.
     Blocks = BlockFlags,
@@ -7424,7 +7475,7 @@ end
 -- Optimized Global Scan Routine (Strictly Lua 5.1 Compatible / No "continue" syntax)
 -- Scans the map every 0.2s and caches enemies within 150 studs. 
 task.spawn(function()
-    while task.wait(0.08) do  -- was 0.2s: a fast M1 rusher gets cached + hooked ~2.5x sooner
+    while task.wait(0.05) do  -- fast scan: a rushing enemy is hooked before their first M1 lands
         local selfChar = CharactersFolder:FindFirstChild(LocalPlayer.Name) or LocalPlayer.Character  -- JJS live body is under workspace.Characters (LP.Character can lag)
         if IsAnyBlockActive() and selfChar then
             local myHRP = selfChar:FindFirstChild("HumanoidRootPart")
@@ -8176,9 +8227,9 @@ RunService.RenderStepped:Connect(function()
                             local requiredDot = animData.ReqDot or 0.85
                             
                             if animData.Category == "Melee" then
-                                if distance <= 5.5 then
-                                    requiredDot = -1.0 -- All close-quarters melee at <= 5.5 studs ignores DOT (360-degree block)
-                                elseif distance < 7.0 then
+                                if distance <= 7.0 then
+                                    requiredDot = -1.0 -- All close-quarters melee at <= 7 studs ignores DOT (360-degree block)
+                                elseif distance < 9.0 then
                                     requiredDot = 0.100
                                 end
                             end
