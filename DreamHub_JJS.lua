@@ -408,6 +408,10 @@ do
 					task.wait(0.05)
 					pcall(function() VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game) end)
 					pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Q, false, game); task.wait(0.03); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Q, false, game) end)  -- BACK DASH (Q)
+					pcall(function()   -- play the captured BACK DASH animation
+						local c = myCharResolved(); local h = c and c:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
+						if a then local anim = Instance.new("Animation"); anim.AnimationId = "rbxassetid://134581973800784"; local t = a:LoadAnimation(anim); t.Priority = Enum.AnimationPriority.Action2; t:Play(0.04); task.delay(0.5, function() pcall(function() t:Stop() end) end) end
+					end)
 					fireDash("Back"); clientDash("Back", 62, 0.08)
 					task.wait(0.1)
 					if runChain then runChain() end                                -- 3) black flash again (snaps to their BACK)
@@ -2603,19 +2607,21 @@ do
 		if not on then return end
 		if tick() - last < 0.4 then return end   -- once per M1, not a fling on every frame
 		last = tick()
-		fireKnit("MovementService", "Dash", "Right", true)   -- real dash remote = i-frames + the dash animation
-		if tick() - (_G.VX_LAUNCHING or 0) < 0.3 then return end   -- skip the reposition during an M1-combo uppercut launch (it would cancel the lift)
-		local tgt = nearestEnemy(30); local tr = tgt and getHRP(tgt)
-		if not tr then return end
-		task.spawn(function()   -- DASH AROUND to BEHIND them (fast, dash speed - not your walk speed) and end up facing them
-			for _ = 1, 7 do
-				local h = getHRP(myModel()); if not (h and tr and tr.Parent) then break end
-				local newPos = h.Position:Lerp(behindPos(tr), 0.55)
-				pcall(function() h.CFrame = CFrame.lookAt(newPos, Vector3.new(tr.Position.X, newPos.Y, tr.Position.Z)); h.AssemblyLinearVelocity = Vector3.zero end)
-				task.wait(0.02)
-			end
-		end)
-		vxLog("SideDash -> behind " .. tgt.Name)
+		fireKnit("MovementService", "Dash", "Right", true)   -- REAL side dash remote (i-frames + the dash animation)
+		-- client velocity dash so you actually SLIDE sideways - NO CFrame teleport (that's the 'it teleports me' you hated)
+		local h0 = getHRP(myModel())
+		if h0 then
+			local rv = h0.CFrame.RightVector
+			task.spawn(function()
+				local t0 = tick()
+				while tick() - t0 < 0.13 do
+					local h = getHRP(myModel()); if not h then break end
+					pcall(function() h.AssemblyLinearVelocity = Vector3.new(rv.X * 72, math.min(h.AssemblyLinearVelocity.Y, 0), rv.Z * 72) end)
+					task.wait()
+				end
+			end)
+		end
+		vxLog("SideDash (real dash, no teleport)")
 	end
 	-- PRIMARY: fire the side dash the instant YOUR character plays an M1 animation (works for every character, survives input-processing)
 	local hooked = setmetatable({}, { __mode = "k" })
