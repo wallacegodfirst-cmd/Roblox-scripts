@@ -3183,7 +3183,7 @@ do
 			for _, w in ipairs({ ... }) do if string.find(hay, string.lower(w), 1, true) then return true end end
 			return false
 		end
-		local function dbgAir(msg) if _G.VX_BF_DEBUG then print("[DreamHub AutoAir] " .. msg) end end
+		local function dbgAir(msg) print("[DreamHub AutoAir] " .. msg) end   -- always prints to F9 so you can SEE what fired / why it didn't
 		local function holdJump() _G.VX_INJECT_UNTIL = tick() + 0.35; pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.08); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end
 
 		-- GAMBLER: when you M1 (click) -> press 3 + JUMP at the SAME time (launcher)
