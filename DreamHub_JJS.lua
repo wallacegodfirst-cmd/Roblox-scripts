@@ -2638,6 +2638,142 @@ do
 end
 
 -- ============================================================
+-- MODULE: YUTA BLACK FLASH  (manual assist on your Yuta M1 + fully-auto teleport-kill flash)
+-- ============================================================
+do
+	local Players = game:GetService("Players")
+	local LP = Players.LocalPlayer
+	local manualOn, autoOn, last = false, false, 0
+	-- every Yuta / Yuta-Ult M1 anim id (from the M1 database) -> detect YOUR Yuta M1 landing
+	local YUTA_M1 = {
+		["133240987753043"] = true, ["130806585141471"] = true, ["131967150738931"] = true, ["84442064935420"] = true,
+		["109432265703187"] = true, ["137919635923292"] = true, ["135256592475167"] = true, ["121403322067812"] = true,
+	}
+	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
+	local function getHRP(m) return m and (m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("UpperTorso")) end
+	local function nearestEnemy(maxD)
+		local mh = getHRP(myModel()); if not mh then return nil end
+		local best, bd = nil, maxD
+		local function chk(m)
+			if not m or m == myModel() or m.Name == LP.Name then return end
+			local r = getHRP(m); local h = m:FindFirstChildOfClass("Humanoid")
+			if not r or (h and h.Health <= 0) then return end
+			local d = (r.Position - mh.Position).Magnitude; if d < bd then bd = d; best = m end
+		end
+		for _, pl in ipairs(Players:GetPlayers()) do if pl ~= LP then chk(pl.Character) end end
+		local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m:IsA("Model") then chk(m) end end end
+		return best
+	end
+	local function flash(tgt)  -- fire the PROVEN teleport black-flash chain on the target (teleport behind -> flash)
+		if tick() - last < 0.9 then return end
+		if not (tgt and tgt.Parent) then return end
+		last = tick()
+		if _G.VX_RUNCHAIN then pcall(function() _G.VX_RUNCHAIN(tgt) end) end
+	end
+	-- MANUAL "Yuta Black Flash": when ON, your own Yuta M1 landing auto-converts into a black flash on the enemy.
+	local hooked = setmetatable({}, { __mode = "k" })
+	local function hookSelf()
+		local m = myModel(); local h = m and m:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
+		if not a or hooked[a] then return end
+		hooked[a] = a.AnimationPlayed:Connect(function(track)
+			if not manualOn then return end
+			local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+")
+			if id and YUTA_M1[id] then local t = nearestEnemy(22); if t then flash(t) end end
+		end)
+	end
+	task.spawn(function() while true do if manualOn then pcall(hookSelf) end task.wait(0.6) end end)
+	-- AUTO "Yuta Teleport Kill Black Flash": fully automatic - keep finding the nearest enemy and black-flash them.
+	task.spawn(function()
+		while true do
+			if autoOn then local t = nearestEnemy(45); if t then flash(t) end task.wait(0.25) else task.wait(0.3) end
+		end
+	end)
+	YutaBFApi = {
+		setManual = function(v) manualOn = v == true end,
+		setAuto   = function(v) autoOn = v == true end,
+	}
+end
+
+-- ============================================================
+-- MODULE: MISC EXTRAS  (Walk Into Domains, Spam Dash Noises, Unlock Extra Emote Slot, Instant Respawn)
+-- ============================================================
+do
+	local Players = game:GetService("Players")
+	local RS = game:GetService("ReplicatedStorage")
+	local LP = Players.LocalPlayer
+	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
+
+	-- ---------- WALK INTO DOMAINS ----------
+	-- Normally a domain's barrier/collider traps you (sure-hit dome). This drops CanCollide/CanTouch on the
+	-- domain's barrier parts so you can walk straight in/out of any domain.
+	local walkDomOn = false
+	local function isBarrier(n) n = n:lower(); return n:find("collider") or n:find("barrier") or n:find("wall") or n:find("dome") or n:find("border") end
+	task.spawn(function()
+		while true do
+			if walkDomOn then
+				local domains = workspace:FindFirstChild("Domains")
+				if domains then for _, d in ipairs(domains:GetDescendants()) do
+					if d:IsA("BasePart") and (isBarrier(d.Name) or isBarrier((d.Parent and d.Parent.Name) or "")) then
+						pcall(function() d.CanCollide = false; d.CanTouch = false end)
+					end
+				end end
+			end
+			task.wait(0.4)
+		end
+	end)
+
+	-- ---------- SPAM DASH NOISES ----------
+	-- Rapidly fire the game's own dash remote alternating opposite directions (net movement ~0) = the dash
+	-- swoosh spams without launching you across the map.
+	local dashNoiseOn = false
+	task.spawn(function()
+		local flip = true
+		while true do
+			if dashNoiseOn then
+				flip = not flip
+				pcall(function() fireKnit("MovementService", "Dash", flip and "Left" or "Right", false) end)
+				task.wait(0.14)
+			else task.wait(0.3) end
+		end
+	end)
+
+	-- ---------- UNLOCK EXTRA EMOTE SLOT ----------
+	-- Best-effort: ping the EmoteService for the extra slot (some builds gate a bonus slot behind a remote).
+	local function emoteRE(name)
+		local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
+		local s = k and k:FindFirstChild("EmoteService"); local re = s and s:FindFirstChild("RE"); return re and re:FindFirstChild(name)
+	end
+	local function unlockEmoteSlot()
+		for _, nm in ipairs({ "Unlock", "UnlockSlot", "ExtraSlot", "Purchase" }) do
+			local re = emoteRE(nm); if re then pcall(function() re:FireServer() end) end
+		end
+		if VX_NOTIFY then VX_NOTIFY("Emote slot unlock sent", true) end
+	end
+
+	-- ---------- INSTANT RESPAWN ----------
+	-- On death, immediately request a fresh character (skip the death screen wait) via the reset binding.
+	local instaOn = false
+	local function requestRespawn()
+		pcall(function() LP:LoadCharacter() end)  -- executors with elevated context respawn instantly; no-op otherwise
+	end
+	task.spawn(function()
+		while true do
+			if instaOn then
+				local m = LP.Character or myModel()
+				local h = m and m:FindFirstChildOfClass("Humanoid")
+				if h and h.Health <= 0 then requestRespawn(); task.wait(1.2) end
+			end
+			task.wait(0.3)
+		end
+	end)
+
+	WalkDomainApi = { set = function(v) walkDomOn = v == true end }
+	DashNoiseApi  = { set = function(v) dashNoiseOn = v == true end }
+	EmoteSlotApi  = { unlock = unlockEmoteSlot }
+	InstaRespawnApi = { set = function(v) instaOn = v == true end }
+end
+
+-- ============================================================
 -- MODULE: JUMP ON HEAD  (teleport above a target's head, play walk then jump animation)
 -- ============================================================
 do
@@ -7744,6 +7880,8 @@ do
     bfSec:Dropdown({ Name = "Move After Feint", Items = { "1", "2", "3", "4" }, Default = "1", Callback = function(v) if ChainApi then ChainApi.setFeintMove(v) end end })
     bfSec:Toggle({ Name = "Feint Abilities (1-4 -> R)", Default = false, Callback = function(b) if ChainApi and ChainApi.setFeintMoves then ChainApi.setFeintMoves(b) end end })
     bfSec:Toggle({ Name = "Aim Assist (face enemy on every move)", Default = false, Callback = function(b) if AimAssistApi then AimAssistApi.set(b) end end })
+    bfSec:Toggle({ Name = "Yuta Black Flash (your M1 -> flash)", Default = false, Callback = function(b) if YutaBFApi then YutaBFApi.setManual(b) end end })
+    bfSec:Toggle({ Name = "Auto Yuta Black Flash (teleport kill)", Default = false, Callback = function(b) if YutaBFApi then YutaBFApi.setAuto(b) end end })
     bfSec:Slider({ Name = "Cooldown", Min = 0.1, Max = 1, Default = 0.45, Decimals = 0.01, Suffix = "s", Callback = function(v) if BFApi then BFApi.SetCooldown(v) end end })
     bfSec:Toggle({ Name = "Mobile BF Button", Default = false, Callback = function(b)   -- phone: floating tap button that fires the black flash for the current mode
         if ChainApi then ChainApi.setMobile(b) end
@@ -7907,11 +8045,15 @@ do
     farmSec:Toggle({ Name = "Anti-AFK", Default = true, Callback = function(b) if AntiAfkApi then AntiAfkApi.set(b) end end })
     farmSec:Toggle({ Name = "Drink Low HP", Callback = function(b) if DrinkApi then DrinkApi.set(b) end end })
     farmSec:Slider({ Name = "Drink %", Min = 10, Max = 90, Default = 35, Decimals = 1, Suffix = "%", Callback = function(v) if DrinkApi then DrinkApi.setThreshold(v) end end })
+    farmSec:Toggle({ Name = "Walk Into Domains", Callback = function(b) if WalkDomainApi then WalkDomainApi.set(b) end end })
+    farmSec:Toggle({ Name = "Spam Dash Noises", Callback = function(b) if DashNoiseApi then DashNoiseApi.set(b) end end })
     local srvSec = plySub:Section({ Name = "Server", Side = 2 })
     srvSec:Button({ Name = "Rejoin Server", Callback = function() pcall(function() game:GetService("TeleportService"):Teleport(game.PlaceId, LocalPlayer) end) end })
     srvSec:Button({ Name = "Server Hop", Callback = function() pcall(function() game:GetService("TeleportService"):Teleport(game.PlaceId, LocalPlayer) end) end })
     srvSec:Button({ Name = "Copy Discord", Callback = function() if setclipboard then pcall(function() setclipboard("https://discord.gg/fRcGd9bW") end) end if VX_NOTIFY then VX_NOTIFY("Discord copied", true) end end })
     srvSec:Button({ Name = "Force Reset", Callback = function() if ResetApi then ResetApi.reset() end end })
+    srvSec:Toggle({ Name = "Instant Respawn", Callback = function(b) if InstaRespawnApi then InstaRespawnApi.set(b) end end })
+    srvSec:Button({ Name = "Unlock Extra Emote Slot", Callback = function() if EmoteSlotApi then EmoteSlotApi.unlock() end end })
 
     -- ===================== SETTINGS (configs / theming / menu keybind) =====================
     Window:Category("Config")
