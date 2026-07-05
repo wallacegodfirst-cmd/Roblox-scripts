@@ -1,5 +1,6 @@
 --[[  Dream Hub · Prior Extinction  ]]
 
+print("[Dream Hub PE] script fetched OK — booting…")   -- if you see THIS in F9 but no menu, send the red error line under it
 local __gg = (typeof(getgenv)=="function") and getgenv() or _G
 if __gg.__PRIOR_EXT_HUB then pcall(__gg.__PRIOR_EXT_HUB) end
 __gg.__PRIOR_EXT_HUB = nil

@@ -582,7 +582,7 @@ do
 						task.delay(delayTime, function()
 							if Settings.Mode ~= "M1 Black Flash" or humanoid.Health <= 0 then return end
 							local tgt = (chainTarget and chainTarget.Parent) and chainTarget or getNearestEnemy(12)
-							if tgt and fireFlashInPlace then fireFlashInPlace(tgt) end
+							if tgt and fireFlashInPlace then fireFlashInPlace(tgt, true) end   -- conversion re-press: key only, no second facing-hold/capper (one writer per swing)
 						end)
 					end
 				elseif (ScriptEnabled or tick() < burstUntil) and tick() >= bfSuppressUntil then
@@ -677,17 +677,38 @@ do
 		-- damage, then black flash, NOT teleport.)
 		do
 			local UIS_M1 = game:GetService("UserInputService")
-			fireFlashInPlace = function(tgt)   -- (forward-declared) face the target IN PLACE, press the flash key, damp the shove
+			local m1bfGen = 0   -- generation counter: ONE facing-hold + ONE anti-fling capper alive at a time.
+			                    -- (The click press AND the wind-up conversion both call fireFlashInPlace on the same
+			                    -- swing — two competing velocity/CFrame writers on one body was itself a fling source.)
+			fireFlashInPlace = function(tgt, isConversion)   -- (forward-declared) face the target IN PLACE, press the flash key, damp the shove
 				local myChar = myCharResolved()
 				local myHRP = getHRP(myChar)
 				local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
 				local tHRP = tgt and getHRP(tgt)
 				if not (myHRP and hum and tHRP) or hum.Health <= 0 then return end
-				pcall(function()
-					local flat = Vector3.new(tHRP.Position.X, myHRP.Position.Y, tHRP.Position.Z)
-					myHRP.CFrame = CFrame.lookAt(myHRP.Position, flat)   -- turn to face them, same spot (rotation only)
-				end)
-				pcall(function() Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, tHRP.Position) end)  -- aim camera at them
+				m1bfGen = m1bfGen + 1; local gen = m1bfGen
+				-- TURN-AROUND FIX (root cause): one CFrame rotation write lasts ONE frame — AutoRotate + the game's
+				-- movement controller rotate you straight back before the flash key even lands, so you visibly "never
+				-- turn". The fix is OWNERSHIP of rotation for the flash window: AutoRotate off, re-assert a rotation-
+				-- only lookAt every Heartbeat for 0.35s (position is re-read fresh each frame — you are NEVER moved),
+				-- then AutoRotate is restored. The conversion re-press skips this (you're already being held).
+				if not isConversion then
+					task.spawn(function()
+						local savedAuto = hum.AutoRotate
+						pcall(function() hum.AutoRotate = false end)
+						local t0 = tick()
+						while tick() - t0 < 0.35 do
+							if m1bfGen ~= gen then break end
+							local c = myCharResolved(); local r = getHRP(c)
+							local tr = tgt and tgt.Parent and getHRP(tgt)
+							if not (r and tr) then break end
+							pcall(function() r.CFrame = CFrame.lookAt(r.Position, Vector3.new(tr.Position.X, r.Position.Y, tr.Position.Z)) end)
+							task.wait()
+						end
+						pcall(function() if hum and hum.Parent then hum.AutoRotate = savedAuto end end)
+					end)
+					pcall(function() Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, tHRP.Position) end)  -- aim camera at them once
+				end
 				_G.VX_INJECT_UNTIL = tick() + 0.4
 				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Settings.AbilityKey] = tick() + 0.5   -- our flash key press must not chain other features
 				pcall(function()
@@ -695,13 +716,15 @@ do
 					task.wait(Settings.KeyHoldDuration)
 					VirtualInputManager:SendKeyEvent(false, Settings.AbilityKey, false, game)
 				end)
-				task.spawn(function()   -- ANTI-FLING: the move's own launch (Divergent Fist etc) gets speed-capped so it can't yeet you
+				task.spawn(function()   -- ANTI-FLING: cap only a RUNAWAY launch. Y is left alone (clamping Y while the
+					-- move lifts you = the physics fight that stuttered/flung). 45 = above any normal move carry, below a fling.
 					local t0 = tick()
-					while tick() - t0 < 1.0 do
+					while tick() - t0 < 0.8 do
+						if m1bfGen ~= gen then return end   -- a newer flash owns the capper now — exactly one writer at a time
 						local c = myCharResolved(); local r = c and getHRP(c)
 						if r then pcall(function()
 							local v = r.AssemblyLinearVelocity; local flat = Vector3.new(v.X, 0, v.Z)
-							if flat.Magnitude > 32 then local u = flat.Unit * 32; r.AssemblyLinearVelocity = Vector3.new(u.X, math.min(v.Y, 10), u.Z) end
+							if flat.Magnitude > 45 then local u = flat.Unit * 45; r.AssemblyLinearVelocity = Vector3.new(u.X, v.Y, u.Z) end
 						end) end
 						task.wait()
 					end
@@ -1045,11 +1068,58 @@ local function vxLog(msg)  -- prints to console AND shows an on-screen line (top
 	if vxDbgLabel then pcall(function() vxDbgLabel.Text = " [VX] " .. tostring(msg); vxDbgLabel.Visible = true end) end
 end
 local function vxSetDebug(b) VX_DEBUG = b == true; if vxDbgLabel then pcall(function() vxDbgLabel.Visible = VX_DEBUG end) end if VX_DEBUG then vxLog("debug ON") end end
-local function fireKnit(service, reName, ...)
+-- REMOTE RESOLVER — RESILIENT + CACHED. Every remote-based feature (Side Dash, Auto Skills, Uppercut/Downslam,
+-- Dash, Counter…) fires through here. The old code ONLY looked at the exact path
+-- ReplicatedStorage.Knit.Knit.Services.<service>.RE.<reName>; if a game update renamed "Knit"/"Services"/"RE" or
+-- moved the service, EVERY one of those features silently no-op'd (this was the shared root cause of "side dash /
+-- auto skills / uppercut do nothing"). Now we: (1) try the exact path, (2) fall back to searching RS for a service
+-- folder of that name holding the remote, (3) fall back to ANY RemoteEvent named reName under a service-named
+-- ancestor, and cache whatever we find so the search runs at most once per (service,reName).
+local _knitRoot
+local function knitServices()
+	if _knitRoot and _knitRoot.Parent then return _knitRoot end
 	local RS = game:GetService("ReplicatedStorage")
-	local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
-	local svc = k and k:FindFirstChild(service)
-	local re = svc and svc:FindFirstChild("RE"); re = re and re:FindFirstChild(reName)
+	local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); _knitRoot = k and k:FindFirstChild("Services")
+	return _knitRoot
+end
+local _reCache = {}
+local function resolveRemote(service, reName)
+	local key = service .. "\0" .. reName
+	local cached = _reCache[key]
+	if cached and cached.Parent then return cached end
+	local RS = game:GetService("ReplicatedStorage")
+	-- 1) exact captured path
+	local svc = knitServices() and knitServices():FindFirstChild(service)
+	if svc then
+		local container = svc:FindFirstChild("RE") or svc:FindFirstChild("RemoteEvents") or svc:FindFirstChild("Remotes") or svc
+		local re = container and container:FindFirstChild(reName)
+		if re and re:IsA("RemoteEvent") then _reCache[key] = re; return re end
+	end
+	-- 2) any folder named <service> anywhere in RS that holds the remote (renamed/moved Knit tree)
+	local found
+	pcall(function()
+		for _, d in ipairs(RS:GetDescendants()) do
+			if d:IsA("RemoteEvent") and d.Name == reName then
+				local anc = d.Parent
+				while anc and anc ~= RS do
+					if anc.Name == service then found = d; return end
+					anc = anc.Parent
+				end
+			end
+		end
+	end)
+	if found then _reCache[key] = found; return found end
+	-- 3) last resort: the FIRST RemoteEvent named reName anywhere (covers a fully-flattened remote tree)
+	pcall(function()
+		for _, d in ipairs(RS:GetDescendants()) do
+			if d:IsA("RemoteEvent") and d.Name == reName then found = d; return end
+		end
+	end)
+	if found then _reCache[key] = found end
+	return found
+end
+local function fireKnit(service, reName, ...)
+	local re = resolveRemote(service, reName)
 	if not re then vxLog("NOT FOUND " .. tostring(service) .. ".RE." .. tostring(reName)); if VX_DEBUG and VX_NOTIFY then VX_NOTIFY("NOT FOUND: " .. tostring(service) .. "." .. tostring(reName), false) end return false end
 	local ok, err = pcall(re.FireServer, re, ...)  -- fire-and-forget: ok=true only means SENT, not that the server accepted
 	vxLog((ok and "sent " or ("ERR " .. tostring(err) .. " ")) .. service .. "." .. reName)
@@ -3817,6 +3887,15 @@ do
 		-- EVERY M1, which was eating your real 1/2/3/R presses = 'Auto Air doesn't work'). Now a key is only
 		-- ignored if THAT KEY was itself injected.
 		do local injK = _G.VX_INJ_KEYS; if injK and input.KeyCode and injK[input.KeyCode] and tick() < injK[input.KeyCode] then return end end
+		-- ENEMY-PRESENCE GATE (root cause of "Auto Air activates randomly"): every sequence below fires off a real
+		-- key/click (jump, 1/2/3, M1). With no enemy engaged, jumping to move or pressing 1 in the open used to launch
+		-- the whole air combo. Require an enemy within engagement range (40 studs) before ANY sequence runs. This is a
+		-- correctness condition, not a timing tweak — it does not change WHEN a valid air combo fires, only that one is
+		-- actually intended. (The lines ABOVE this guard — Gojo-TP / lastM1Tgt memory — are separate and unaffected.)
+		if autoAirOn then
+			local _am = myHRP(); local _ae = nearestEnemyChar(); local _ar = _ae and _ae:FindFirstChild("HumanoidRootPart")
+			if not (_am and _ar and (_ar.Position - _am.Position).Magnitude <= 40) then return end
+		end
 		-- BULLETPROOF character check: detected name, model name, DISPLAY name, or any Moveset entry containing the word.
 		local function charIs(...)
 			local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
@@ -8468,14 +8547,15 @@ do
     srvSec:Button({ Name = "Copy Discord", Callback = function() if setclipboard then pcall(function() setclipboard("https://discord.gg/fRcGd9bW") end) end if VX_NOTIFY then VX_NOTIFY("Discord copied", true) end end })
     srvSec:Button({ Name = "Force Reset", Callback = function() if ResetApi then ResetApi.reset() end end })
     srvSec:Toggle({ Name = "Instant Respawn", Callback = function(b) if InstaRespawnApi then InstaRespawnApi.set(b) end end })
-    srvSec:Toggle({ Name = "Disable Notifications", Callback = function(b) _G.VX_SILENT = b == true end })
+    srvSec:Toggle({ Name = "Show Notifications (off by default)", Default = false, Callback = function(b) _G.VX_SILENT = (b ~= true) end })   -- user asked: NO toasts. Silent unless you opt back in; F9 console prints stay for debugging.
     srvSec:Button({ Name = "Unlock Extra Emote Slot", Callback = function() if EmoteSlotApi then EmoteSlotApi.unlock() end end })
 
     -- ===================== SETTINGS (configs / theming / menu keybind) =====================
     Window:Category("Config")
     Library:CreateSettingsPage(Window)
 
-    VX_NOTIFY = function(t) if _G.VX_SILENT then return end pcall(function() Library:Notification(tostring(t), 4) end) end   -- 'Disable Notifications' silences EVERY popup through this one choke point
+    if _G.VX_SILENT == nil then _G.VX_SILENT = true end   -- SILENT BY DEFAULT (user: "remove notifications") — every toast in the hub goes through VX_NOTIFY, so this one flag kills them all; F9 prints are untouched
+    VX_NOTIFY = function(t) if _G.VX_SILENT then return end pcall(function() Library:Notification(tostring(t), 4) end) end   -- 'Show Notifications' re-enables; this is the single choke point
     if getgenv then getgenv().Library = Library end
     pcall(function() Library:Notification("Dream Hub " .. string.upper(VX_TIER) .. " loaded", 4) end)
     print("[Vaultix v" .. VX_VERSION .. " | samet UI] loaded (" .. VX_TIER .. ") - RightShift toggle")
