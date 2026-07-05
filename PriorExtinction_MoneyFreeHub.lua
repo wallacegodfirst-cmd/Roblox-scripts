@@ -45,6 +45,7 @@ local CFG = {
 	Aimbot=false, SilentAim=false, AimPart="Head", AimKey="C", AimSmooth=0.4, LockOn=false,
 	HitboxExpand=true, HitboxSize=35, HitboxVisible=true, HitboxOpacity=40, HitboxColor={r=255,g=40,b=60}, HitboxColorName="Red", HitboxBone="All",
 	AutoPlayBot=false,
+	BotFlee=true, BotFleeRange=240, BotRoam=true, BotRoamRadius=350, BotEatAt=80, BotDrinkAt=80, BotSleepHeal=true, BotSpeed=18, BotAnnounce=true,
 	BoneProtect=false, ProtectBone="All",
 	TurnHack=false, TurnSpeed=30,
 	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=30, Noclip=false, Invis=false,
@@ -1413,8 +1414,18 @@ do local p=Pages["Auto Farm"]
 			notify("Teleport","At the nearest gemstone ("..math.floor(bd).."m away).")
 		else notify("Teleport","No gemstone found nearby.") end
 	end, 4)
-	local _,b=mkSec(p,"Auto Play Bot",2)
-	mkToggle(b,"Auto Play Bot (auto eat + drink to stay alive)","AutoPlayBot",1)
+	local _,b=mkSec(p,"Auto Play Bot (full survival AI)",2)
+	mkToggle(b,"Auto Play Bot — plays the game for you","AutoPlayBot",1)
+	mkLabel(b,"The bot SURVIVES on its own: eats (diet-aware), drinks, flees predators, sleeps to heal, roams around its home spot, un-sticks itself, and keeps growing. Turn it on and walk away.")
+	mkToggle(b,"Flee from predators","BotFlee",2)
+	mkSlider(b,"Flee detect range","BotFleeRange",80,600,3,20)
+	mkToggle(b,"Roam / wander (looks human)","BotRoam",4)
+	mkSlider(b,"Roam radius (from home)","BotRoamRadius",50,1200,5,50)
+	mkSlider(b,"Eat when food below %","BotEatAt",30,95,6,5)
+	mkSlider(b,"Drink when water below %","BotDrinkAt",30,95,7,5)
+	mkToggle(b,"Sleep to heal when hurt + safe","BotSleepHeal",8)
+	mkSlider(b,"Bot walk speed","BotSpeed",14,24,9,1)
+	mkToggle(b,"Announce what the bot is doing","BotAnnounce",10)
 end
 do local p=Pages["Teleport"]
 	-- Scans Workspace.Biomes (the ecosystems loaded around you) and lets you teleport to any one. Auto-detects the
@@ -1900,6 +1911,29 @@ end
 -- INF Food's eat then consumes it. Only meat is matched (never plants), and it only moves you when hunger isn't full.
 local MEAT_KW = {"corpse","carcass","carrion","meat","chunk","rotten","flesh","remains","dead","fish","gar","sturgeon","bichir","coelacanth","mawsonia","sawfish","egg","grub","larva","insect","ant"}
 local function isMeatName(n) n=(n or ""):lower(); for _,k in ipairs(MEAT_KW) do if n:find(k,1,true) then return true end end return false end
+-- RED MESHY MEAT DETECTOR (from the screenshot): PE meat chunks are small RED MeshParts/meshed Parts lying on the
+-- ground. Detect by COLOR (red clearly dominates green+blue), a mesh (MeshPart or SpecialMesh child), and a chunk-
+-- sized part (not a giant red rock / not a tiny particle). Name is NOT required — this is what catches the meat
+-- pieces whose names don't say "meat".
+local function isRedMeshMeat(p)
+	if not (p and p:IsA("BasePart")) then return false end
+	if not (p:IsA("MeshPart") or p:FindFirstChildOfClass("SpecialMesh")) then return false end
+	local c=p.Color
+	if not (c.R>0.35 and c.R>c.G*1.6 and c.R>c.B*1.6) then return false end   -- red-dominant (meat/blood tone)
+	local s=p.Size; local mag=s.Magnitude
+	if mag<0.8 or mag>25 then return false end                                 -- chunk-sized only
+	-- never a live dino's body part / our own character
+	local mdl=p:FindFirstAncestorWhichIsA("Model")
+	if mdl then
+		if mdl==getMyModel() or Players:GetPlayerFromCharacter(mdl) then return false end
+		if mdl:FindFirstChildOfClass("Humanoid") or mdl:FindFirstChild("MeshModel") or mdl:FindFirstChild("TurningAnimation") then
+			-- a rigged creature — only meat if the model is a marked corpse
+			local dead=false; pcall(function() dead=(mdl:GetAttribute("DinoType") or mdl:GetAttribute("HintType") or mdl:GetAttribute("CreatedAt"))~=nil or isMeatName(mdl.Name) end)
+			if not dead then return false end
+		end
+	end
+	return true
+end
 local function nearestMeat(range)
 	local me=hrp(); if not me then return nil end
 	local best,bpart,bd=nil,nil,range
@@ -1917,6 +1951,9 @@ local function nearestMeat(range)
 			local isCorpse=isMeatName(d.Name)
 			if not isCorpse then pcall(function() isCorpse=(d:GetAttribute("DinoType") or d:GetAttribute("HintType") or d:GetAttribute("CreatedAt"))~=nil end) end
 			if isCorpse then m=d; part=rootOf(d) end
+		elseif d:IsA("BasePart") and isRedMeshMeat(d) then
+			-- the RED MESHY chunk itself (screenshot look) — teleportable meat even with no prompt/name/marker
+			part=d; m=d:FindFirstAncestorWhichIsA("Model") or d
 		end
 		if m and part and part:IsA("BasePart") then local dd=dist(me.Position,part.Position); if dd<bd then best,bpart,bd=m,part,dd end end
 	end
@@ -1939,6 +1976,20 @@ task.spawn(function() while RUNNING do
 				pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end end)
 				local r=hrp(); if r then pcall(function() r.AssemblyLinearVelocity=Vector3.zero; r.AssemblyAngularVelocity=Vector3.zero end) end
 				local bp; pcall(function() if r then bp=Instance.new("BodyPosition"); bp.MaxForce=Vector3.new(9e9,9e9,9e9); bp.P=2e4; bp.D=2500; bp.Position=Vector3.new(np.X,landY,np.Z); bp.Parent=r end end)
+				-- EAT IT NOW: fire the corpse's own Eat/Investigate prompt directly (instant hold) + a real E hold as
+				-- backup, so the meat is consumed on THIS visit instead of waiting for the food loop's next pass.
+				pcall(function()
+					local prompt
+					if m and m.FindFirstChildWhichIsA then prompt=m:FindFirstChildWhichIsA("ProximityPrompt", true) end
+					if not prompt and part then prompt=part:FindFirstChildWhichIsA("ProximityPrompt") end
+					if prompt then
+						local oh=prompt.HoldDuration
+						prompt.RequiresLineOfSight=false; prompt.HoldDuration=0
+						if fireprox then fireprox(prompt) end
+						prompt.HoldDuration=oh
+					end
+				end)
+				holdKey(Enum.KeyCode.E, 0.6)
 				task.wait(0.7)   -- sit on the meat so INF Food's eat consumes it
 				for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end
 				pcall(function() if bp then bp:Destroy() end end)
@@ -2442,38 +2493,355 @@ end
 runFarm("AutoFarmFossil","fossil","FarmFossilRange")
 runFarm("AutoFarmGem","gem","GemRange")
 
--- AUTO PLAY BOT: plays survival for you. Keeps you fed + hydrated by firing any nearby eat/drink/forage/graze
--- prompt, and pins stamina/food/water via the existing INF flags so you never starve, drown, or exhaust while AFK.
-task.spawn(function()
-	local prevF,prevW,prevS
-	while RUNNING do
-		if CFG.AutoPlayBot and alive() then
-			if prevF==nil then prevF,prevW,prevS = CFG.InfFood,CFG.InfWater,CFG.InfStam end
-			CFG.InfFood=true; CFG.InfWater=true; CFG.InfStam=true   -- never die of the meters while the bot plays
-			local me=hrp()
-			if me then
-				local fired=0
-				for _,d in ipairs(WS:GetDescendants()) do
-					if d:IsA("ProximityPrompt") then
-						local t=((d.ActionText or "").." "..(d.Name or "")):lower()
-						if (t:find("eat")or t:find("consume")or t:find("feed")or t:find("bite")or t:find("forage")or t:find("graze")or t:find("drink")or t:find("sip")or t:find("investigate")) then
-							local pp=d.Parent
-							if pp and pp:IsA("BasePart") and dist(me.Position,pp.Position)<=60 then
-								pcall(function() d.RequiresLineOfSight=false; d.MaxActivationDistance=1e9 end)
-								if fireprox then pcall(function() fireprox(d) end) end
-								fired+=1; if fired>=8 then break end
-							end
-						end
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+-- AUTO PLAY BOT v2 — a full survival AI that PLAYS THE GAME for you.
+-- It runs a priority-driven state machine every tick:
+--   1. FLEE   — a predator (player-controlled carnivore / unknown meat-eater) is inside the flee range →
+--               run directly AWAY from it (biased back toward home), never stopping to eat/sleep.
+--   2. DRINK  — water below your threshold → walk to the nearest known water, then sip until topped up
+--               (the captured per-map Sip ids fire the whole time, so the bar fills even mid-walk).
+--   3. EAT    — food below your threshold → walk to the nearest DIET-LEGAL food (plants for herbivores,
+--               corpses/meat for carnivores, both for omnivores) and fire its eat prompt when in reach.
+--   4. REST   — hurt (HP under 60%) and no predator around → lie down + sleep so the game heals you,
+--               waking instantly if a threat appears.
+--   5. ROAM   — nothing urgent → wander to random points around the HOME position (set where you toggled
+--               the bot on), pausing like a human player, so you keep passive growth ticking.
+-- Movement is a velocity drive at a server-safe walk speed (no CFrame writes = no 267 teleport kick),
+-- with stuck detection (jump + re-path when wedged) and water/void avoidance via the existing guards.
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+do   -- scoped block: the bot's locals live only here (keeps the chunk under Luau's 200-local register cap)
+local BOT = {
+	state="idle",        -- current state name (for the announcer + HUD)
+	home=nil,            -- Vector3 home position, captured when the bot turns on
+	goal=nil,            -- Vector3 current movement goal (nil = stand still)
+	goalWhy="",          -- label for the announcer
+	target=nil,          -- the food model / threat model the goal points at
+	threat=nil,          -- current predator model being fled from
+	lastAnnounce=0,      -- throttle for notify()
+	lastState="",        -- last announced state (announce only on CHANGE)
+	stuckPos=nil,        -- position sample for stuck detection
+	stuckT=0,            -- time of that sample
+	unstuckUntil=0,      -- while now<this, we're doing the unstick jump/strafe
+	roamWait=0,          -- idle-pause end time between roam legs
+	sleeping=false,      -- true while the bot holds the Sleep action
+	waterPos=nil,        -- last place we successfully drank / saw water (remembered)
+	dietSaid=false,      -- one-time diet announcement
+	prevF=nil, prevW=nil, prevS=nil,   -- user's own INF toggles, restored on bot-off
+}
+-- announce a state change (throttled; respects the BotAnnounce toggle)
+local function botSay(msg)
+	if not CFG.BotAnnounce then return end
+	if tick()-BOT.lastAnnounce<1.5 then return end
+	BOT.lastAnnounce=tick()
+	pcall(function() notify("Auto Play Bot", msg) end)
+end
+-- read our vitals as 0..1 fractions (nil when unreadable — treated as "fine" so the bot never panics blind)
+local function botVitals()
+	local foodF, waterF, hpF
+	pcall(function()
+		local s,m=csStats(); if not s then return end
+		local f,mf = tonumber(s.Food or s.Hunger), m and tonumber(m.Food or m.Hunger)
+		if f and mf and mf>0 then foodF=f/mf end
+		local w,mw = tonumber(s.Water or s.Thirst), m and tonumber(m.Water or m.Thirst)
+		if w and mw and mw>0 then waterF=w/mw end
+		local h,mh = tonumber(s.Health or s.HP), m and tonumber(m.Health or m.HP)
+		if h and mh and mh>0 then hpF=h/mh end
+	end)
+	if not hpF then pcall(function() local h=hum(); if h and h.MaxHealth>0 then hpF=h.Health/h.MaxHealth end end) end
+	return foodF, waterF, hpF
+end
+-- self-contained diet helpers: this build doesn't ship the v6 diet module, so the bot carries its own copies.
+local _botDataCtrl
+local function dinoDataController()   -- Knit DataController -> DinosaursData (species stats incl. Diet.Categories)
+	if _botDataCtrl then return _botDataCtrl end
+	pcall(function()
+		local pkg=RS:FindFirstChild("Packages"); local km=pkg and pkg:FindFirstChild("Knit")
+		if km then local K=require(km); if K and K.GetController then _botDataCtrl=K.GetController("DataController") end end
+	end)
+	return _botDataCtrl
+end
+-- classify ANOTHER species' diet from the game's own DinosaurData (cached). Unknown = assumed dangerous.
+local _spDietCache = {}
+local function speciesDiet(species)
+	if not species then return nil end
+	if _spDietCache[species]~=nil then return _spDietCache[species] or nil end
+	local out
+	pcall(function()
+		local dc=dinoDataController(); local dd=dc and dc.DinosaursData
+		local sp=dd and dd[species]; if not (sp and sp.GrowthStages) then return end
+		local st; for _,v in pairs(sp.GrowthStages) do st=v; break end
+		local cats=st and st.Diet and st.Diet.Categories
+		if type(cats)=="table" then
+			local carn,herb=false,false
+			for c in pairs(cats) do local lc=tostring(c):lower()
+				if lc:find("meat",1,true) or lc:find("organ",1,true) or lc:find("fish",1,true) or lc:find("bone",1,true) or lc:find("egg",1,true) or lc:find("insect",1,true) then carn=true else herb=true end
+			end
+			out=(carn and herb and "Omnivore") or (carn and "Carnivore") or (herb and "Herbivore") or nil
+		end
+	end)
+	_spDietCache[species]=out or false
+	return out
+end
+-- OUR OWN diet (cached): the game's GetDiet module first, our species' Diet.Categories second, Omnivore last.
+local _myDietCache
+local function myDiet()
+	if _myDietCache then return _myDietCache end
+	local species
+	pcall(function()
+		if CharacterState and CharacterState.Replica and CharacterState.Replica.Tags then species=CharacterState.Replica.Tags.Character end
+		if not species then local cc=getMyModel(); species=cc and (cc:GetAttribute("Type") or cc:GetAttribute("Character")) end
+	end)
+	pcall(function()
+		local gd=require(RS.Modules.Diet.GetDiet)
+		if gd and species then local d=gd(species)
+			if type(d)=="string" then local lc=d:lower()
+				if lc:find("herb",1,true) then _myDietCache="Herbivore" elseif lc:find("carn",1,true) then _myDietCache="Carnivore" elseif lc:find("omni",1,true) then _myDietCache="Omnivore" end
+			end
+		end
+	end)
+	if not _myDietCache and species then _myDietCache=speciesDiet(tostring(species)) end
+	return _myDietCache or "Omnivore"
+end
+-- classify a food item: corpse/meat vs plant (name + PE's corpse markers + the prompt's "Investigate" action)
+local function isCorpseFood(m, prompt)
+	local nm=tostring(m and m.Name or ""):lower()
+	if nm:find("corpse") or nm:find("carcass") or nm:find("remains") or nm:find("carrion") or nm:find("dead") or nm:find("meat") then return true end
+	if m and m.GetAttribute then local ok,a=pcall(function() return m:GetAttribute("DinoType") or m:GetAttribute("HintType") or m:GetAttribute("CreatedAt") end); if ok and a then return true end end
+	if prompt then local at=(prompt.ActionText or ""):lower(); if at:find("investigate") or at:find("examine") then return true end end
+	return false
+end
+-- diet gate: Herbivore eats ONLY plants, Carnivore ONLY corpses/meat, Omnivore both
+local function edibleFor(diet, corpse)
+	if diet=="Herbivore" then return not corpse
+	elseif diet=="Carnivore" then return corpse and true or false
+	else return true end
+end
+-- find the nearest PREDATOR: another PLAYER's dino inside BotFleeRange whose species eats meat (or is unknown —
+-- assume the worst). Wild/AI dinos count too if they're carnivores. Returns model, root, distance.
+local function botNearestThreat()
+	if not CFG.BotFlee then return nil end
+	local me=hrp(); if not me then return nil end
+	local mine=getMyModel()
+	local best,broot,bd=nil,nil,tonumber(CFG.BotFleeRange) or 240
+	local chars=WS:FindFirstChild("Characters")
+	if chars then for _,m in ipairs(chars:GetChildren()) do
+		if m:IsA("Model") and m~=mine then
+			local r=getHitbox(m) or rootOf(m)
+			if r then
+				local d=dist(me.Position,r.Position)
+				if d<bd then
+					local sp=detectDinoModel(m) or m:GetAttribute("Type") or m:GetAttribute("Character")
+					local diet=speciesDiet(sp and tostring(sp))
+					if diet~="Herbivore" then   -- carnivore/omnivore/UNKNOWN = treat as a predator
+						local h=m:FindFirstChildOfClass("Humanoid")
+						if (not h) or h.Health>0 then best,broot,bd=m,r,d end
 					end
 				end
 			end
-			task.wait(2)
+		end
+	end end
+	return best,broot,bd
+end
+-- nearest DIET-LEGAL food within a generous range. Returns model, part, prompt, distance.
+local function botNearestFood()
+	local me=hrp(); if not me then return nil end
+	local diet=myDiet()
+	local best,bpart,bprompt,bd=nil,nil,nil,900
+	for _,fd in ipairs(nearbyFood(900)) do
+		local m,part,prompt=fd[1],fd[2],fd.prompt
+		if part and part.Parent and edibleFor(diet, isCorpseFood(m,prompt)) then
+			local d=fd[3]
+			if d<bd then best,bpart,bprompt,bd=m,part,prompt,d end
+		end
+	end
+	-- carnivore extra: the red-mesh meat detector (chunks have no prompt/name)
+	if not best and (diet=="Carnivore" or diet=="Omnivore") then
+		local m,part,d=nearestMeat(900)
+		if part then best,bpart,bprompt,bd=m,part,nil,d end
+	end
+	return best,bpart,bprompt,bd
+end
+-- is there water at/near this position? (game's own signals first, remembered spot second)
+local function botNearWater()
+	local nearW=false
+	if CharacterState then pcall(function() nearW = CharacterState.FoundWater==true or typeof(CharacterState.WaterLevel)=="number" end) end
+	return nearW
+end
+-- MOVEMENT DRIVE: velocity-walk toward BOT.goal at the bot speed (server-safe — no CFrame writes), steering the
+-- body with angular velocity so the dino visibly TURNS toward where it walks (looks like a real player).
+conn(RunService.Heartbeat:Connect(function()
+	if not (CFG.AutoPlayBot and alive()) then return end
+	if CFG.Fly or CFG.SpeedHack then return end          -- user-controlled movement wins
+	local r=hrp(); if not r then return end
+	local goal=BOT.goal
+	if BOT.sleeping or not goal then return end          -- resting / no destination = stand still
+	local to=goal-r.Position; local flat=Vector3.new(to.X,0,to.Z)
+	if flat.Magnitude<4 then return end                  -- arrived (state loop decides what's next)
+	local spd=math.clamp(tonumber(CFG.BotSpeed) or 18, 14, 24)
+	if tick()<BOT.unstuckUntil then
+		-- UNSTICK: hop + angled strafe for a moment to clear the rock/tree we're wedged on
+		local side=flat.Unit:Cross(Vector3.yAxis)
+		local v=(flat.Unit*0.5+side*0.85).Unit*spd
+		pcall(function() r.AssemblyLinearVelocity=Vector3.new(v.X, math.max(r.AssemblyLinearVelocity.Y, 24), v.Z) end)
+	else
+		local dir=flat.Unit*spd
+		pcall(function() r.AssemblyLinearVelocity=Vector3.new(dir.X, r.AssemblyLinearVelocity.Y, dir.Z) end)
+	end
+	-- steer the body to face the walk direction (same mechanism as Turn Hack — angular velocity, no CFrame)
+	pcall(function()
+		local cur=r.CFrame.LookVector; local curFlat=Vector3.new(cur.X,0,cur.Z)
+		if curFlat.Magnitude>0.05 then
+			curFlat=curFlat.Unit; local des=flat.Unit
+			local cross=curFlat:Cross(des).Y; local dot=math.clamp(curFlat:Dot(des),-1,1)
+			local ang=math.acos(dot)*((cross<0) and -1 or 1)
+			local v=r.AssemblyAngularVelocity
+			r.AssemblyAngularVelocity=Vector3.new(v.X, math.clamp(ang*4,-6,6), v.Z)
+		end
+	end)
+end))
+-- STUCK WATCCHDOG: if the bot has a goal but has barely moved for ~3s, trigger the unstick hop + re-path.
+task.spawn(function() while RUNNING do task.wait(1)
+	if CFG.AutoPlayBot and alive() and BOT.goal and not BOT.sleeping then
+		local r=hrp()
+		if r then
+			if BOT.stuckPos and tick()-BOT.stuckT>=3 then
+				if (r.Position-BOT.stuckPos).Magnitude<3 then
+					BOT.unstuckUntil=tick()+1.2
+					if BOT.state=="roam" then BOT.goal=nil end   -- roaming into a wall → just pick a new spot
+					botSay("Stuck — hopping around the obstacle.")
+				end
+				BOT.stuckPos=r.Position; BOT.stuckT=tick()
+			elseif not BOT.stuckPos then BOT.stuckPos=r.Position; BOT.stuckT=tick() end
+		end
+	else BOT.stuckPos=nil end
+end end)
+-- SLEEP CONTROL: hold the Sleep action while resting (server heals you), releasing it the instant the bot
+-- stops resting. Mirrors the game's own R-lay-down + Z-sleep report.
+task.spawn(function() local was=false while RUNNING do task.wait(0.4)
+	local want=CFG.AutoPlayBot and alive() and BOT.sleeping or false
+	if want and not was then was=true
+		pcall(function() local r=hrp(); if r then r.AssemblyLinearVelocity=Vector3.new(0,r.AssemblyLinearVelocity.Y,0) end end)
+		pcall(function() replicaAction("SetAction","Sleep",true) end)
+	elseif want then
+		pcall(function() replicaAction("SetAction","Sleep",true) end)   -- re-assert so the heal keeps ticking
+	elseif was then was=false
+		pcall(function() replicaAction("SetAction","Sleep",false) end)
+	end
+end end)
+-- THE BRAIN: priority evaluation ~3x/sec. Sets BOT.state/goal; the drive + sleep loops act on them.
+task.spawn(function()
+	while RUNNING do
+		if CFG.AutoPlayBot and alive() then
+			-- one-time on-enable setup
+			if BOT.prevF==nil then
+				BOT.prevF,BOT.prevW,BOT.prevS = CFG.InfFood,CFG.InfWater,CFG.InfStam
+				CFG.InfFood=true; CFG.InfWater=true; CFG.InfStam=true   -- meter insurance while the bot plays
+				local r=hrp(); BOT.home=r and r.Position or nil
+				BOT.dietSaid=false
+				botSay("Bot ON — home set here. I'll eat, drink, flee, heal and roam for you.")
+			end
+			if not BOT.dietSaid then local d=myDiet(); if d then BOT.dietSaid=true; botSay("Diet detected: "..d..". I'll only eat what you can digest.") end end
+			local me=hrp()
+			if me then
+				if not BOT.home then BOT.home=me.Position end
+				local foodF, waterF, hpF = botVitals()
+				local eatAt=(tonumber(CFG.BotEatAt) or 80)/100
+				local drinkAt=(tonumber(CFG.BotDrinkAt) or 80)/100
+				local threat,throot=botNearestThreat()
+				-- ── 1. FLEE ──────────────────────────────────────────────────────────────
+				if threat and throot then
+					BOT.sleeping=false
+					BOT.state="flee"; BOT.threat=threat
+					local away=(me.Position-throot.Position); away=Vector3.new(away.X,0,away.Z)
+					if away.Magnitude<1 then away=Vector3.new(1,0,0) end
+					-- run away, biased toward home when home is roughly in the escape direction
+					local escape=me.Position+away.Unit*120
+					if BOT.home then
+						local homeDir=(BOT.home-me.Position); homeDir=Vector3.new(homeDir.X,0,homeDir.Z)
+						if homeDir.Magnitude>20 and homeDir.Unit:Dot(away.Unit)>0.2 then escape=me.Position+((away.Unit+homeDir.Unit).Unit)*120 end
+					end
+					BOT.goal=escape
+					if BOT.lastState~="flee" then BOT.lastState="flee"
+						local sp=detectDinoModel(threat) or threat.Name
+						botSay("PREDATOR — "..tostring(sp).." nearby! Running away.")
+					end
+				-- ── 2. DRINK ─────────────────────────────────────────────────────────────
+				elseif waterF and waterF<drinkAt then
+					BOT.sleeping=false; BOT.state="drink"
+					fakeDrink()                                   -- the captured Sip ids work map-wide
+					if botNearWater() then
+						BOT.goal=nil                              -- at water: stand + sip
+						BOT.waterPos=me.Position                  -- remember this watering hole
+						holdKey(Enum.KeyCode.E, 0.3)
+					elseif BOT.waterPos then
+						BOT.goal=BOT.waterPos                     -- walk back to the known water
+					else
+						BOT.goal=nil                              -- no known water: the Sip ids still fill it
+					end
+					if BOT.lastState~="drink" then BOT.lastState="drink"; botSay("Thirsty ("..math.floor(waterF*100).."%) — drinking.") end
+				-- ── 3. EAT ───────────────────────────────────────────────────────────────
+				elseif foodF and foodF<eatAt then
+					BOT.sleeping=false; BOT.state="eat"
+					fakeEat()                                     -- replay captured food ids while travelling
+					local fm,fpart,fprompt,fd=botNearestFood()
+					if fpart then
+						if fd<=14 then
+							BOT.goal=nil                          -- in reach: bite it
+							if not fprompt and fm and fm.FindFirstChildWhichIsA then pcall(function() fprompt=fm:FindFirstChildWhichIsA("ProximityPrompt", true) end) end
+							if fprompt then
+								pcall(function() local oh=fprompt.HoldDuration; fprompt.RequiresLineOfSight=false; fprompt.HoldDuration=0; if fireprox then fireprox(fprompt) end; fprompt.HoldDuration=oh end)
+							end
+							holdKey(Enum.KeyCode.E, 0.6)
+						else
+							BOT.goal=fpart.Position; BOT.target=fm
+						end
+						if BOT.lastState~="eat" then BOT.lastState="eat"; botSay("Hungry ("..math.floor(foodF*100).."%) — heading to food ("..math.floor(fd).."m).") end
+					else
+						-- nothing edible found: roam for food (new random spot each pass widens the search)
+						if not BOT.goal or BOT.state~="eat" then
+							local a=math.random()*math.pi*2
+							BOT.goal=me.Position+Vector3.new(math.cos(a),0,math.sin(a))*150
+						end
+						if BOT.lastState~="eat" then BOT.lastState="eat"; botSay("Hungry — searching for food…") end
+					end
+				-- ── 4. REST / HEAL ───────────────────────────────────────────────────────
+				elseif CFG.BotSleepHeal and hpF and hpF<0.6 then
+					BOT.state="rest"; BOT.goal=nil; BOT.sleeping=true
+					if BOT.lastState~="rest" then BOT.lastState="rest"; botSay("Hurt ("..math.floor(hpF*100).."% HP) — sleeping it off.") end
+				-- ── 5. ROAM ──────────────────────────────────────────────────────────────
+				elseif CFG.BotRoam then
+					BOT.sleeping=false; BOT.state="roam"
+					local arrived = (not BOT.goal) or (Vector3.new(BOT.goal.X-me.Position.X,0,BOT.goal.Z-me.Position.Z).Magnitude<8)
+					if arrived then
+						if tick()>BOT.roamWait then
+							if BOT.goal then BOT.roamWait=tick()+2+math.random()*5; BOT.goal=nil   -- pause like a human
+							else
+								local a=math.random()*math.pi*2
+								local rr=math.random(40, math.max(60, tonumber(CFG.BotRoamRadius) or 350))
+								BOT.goal=(BOT.home or me.Position)+Vector3.new(math.cos(a)*rr, 0, math.sin(a)*rr)
+							end
+						end
+					end
+					if BOT.lastState~="roam" then BOT.lastState="roam"; botSay("All good — roaming near home.") end
+				else
+					BOT.sleeping=false; BOT.state="idle"; BOT.goal=nil
+				end
+			end
+			task.wait(0.35)
 		else
-			if prevF~=nil then CFG.InfFood,CFG.InfWater,CFG.InfStam = prevF,prevW,prevS; prevF=nil end   -- restore your own toggles when the bot is off
+			-- bot off / dead → clean shutdown: wake up, stop moving, restore the user's own INF toggles
+			if BOT.prevF~=nil then
+				CFG.InfFood,CFG.InfWater,CFG.InfStam = BOT.prevF,BOT.prevW,BOT.prevS
+				BOT.prevF,BOT.prevW,BOT.prevS = nil,nil,nil
+				BOT.sleeping=false; BOT.goal=nil; BOT.state="idle"; BOT.lastState=""; BOT.threat=nil; BOT.home=nil
+				pcall(function() replicaAction("SetAction","Sleep",false) end)
+				botSay("Bot OFF — you're back in control.")
+			end
 			task.wait(0.5)
 		end
 	end
 end)
+end   -- end of the Auto Play Bot scoped block
 -- Notification bar: show how many fossils/gems have been collected while farming (updates when the count changes).
 task.spawn(function() local lf,lg=-1,-1 while RUNNING do task.wait(2.5)
 	if CFG.AutoFarmFossil or CFG.AutoFarmGem then
@@ -2619,6 +2987,28 @@ local function readDinoInfo(model)
 	end
 	for _,a in ipairs({"Stamina","Stam","Energy"}) do local v=model:GetAttribute(a); if v then stam=tostring(math.floor(tonumber(v) or 0)); break end end
 	for _,a in ipairs({"Bleed","Bleeding","BleedDamage","Wound","Wounds","Bloodloss","Bleed_Damage"}) do local v=model:GetAttribute(a); if v then bleed=math.floor(tonumber(v) or 0); break end end
+	-- FALLBACK ("i don't see their stam"): other dinos rarely carry attributes — their stats live as Number/IntValues
+	-- inside the model (or on the MeshModel). Scan a bounded slice of descendants for health/stam/bleed value objects.
+	if (not stam) or (not hpFrac) or (not bleed) then
+		local scanned=0
+		for _,v in ipairs(model:GetDescendants()) do
+			scanned+=1; if scanned>400 then break end
+			if v:IsA("NumberValue") or v:IsA("IntValue") then
+				local n=v.Name:lower()
+				if not stam and (n:find("stam",1,true) or n=="energy" or n:find("endur",1,true)) then stam=tostring(math.floor(tonumber(v.Value) or 0))
+				elseif not bleed and (n:find("bleed",1,true) or n:find("bloodloss",1,true) or n:find("wound",1,true)) then bleed=math.floor(tonumber(v.Value) or 0)
+				elseif not hpFrac and (n=="health" or n=="hp") then
+					local mx; local sib=v.Parent and (v.Parent:FindFirstChild("MaxHealth") or v.Parent:FindFirstChild("MaxHP"))
+					if sib then mx=tonumber(sib.Value) end
+					local cur=tonumber(v.Value)
+					if cur then if mx and mx>0 then health=("%d/%d"):format(math.floor(cur),math.floor(mx)); hpFrac=cur/mx else health=health or tostring(math.floor(cur)) end end
+				end
+			end
+			if stam and hpFrac and bleed then break end
+		end
+	end
+	-- last resort for the BAR: no readable HP anywhere → show a FULL bar (so every dino still gets a visible bar)
+	if not hpFrac then hpFrac=1 end
 	return species,growth,health,stam,bleed,hpFrac
 end
 -- ESP is throttled (1.6s) and HARD-CAPPED at 60 objects, and the whole rebuild is pcall-wrapped,

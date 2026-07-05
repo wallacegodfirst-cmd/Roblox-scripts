@@ -228,27 +228,36 @@ do
 		for _, obj in ipairs(workspace:GetChildren()) do if obj:IsA("Model") then checkChar(obj) end end
 		return nearest
 	end
-	local function getBehind(targetHRP)  -- SIMPLE: straight behind them, every time (lead their movement so a running target's back stays in reach)
+	local bhCache = { hrp = nil, dir = nil, dirT = 0, spd = 0 }   -- per-target smoothing memory for getBehind
+	local function getBehind(targetHRP)  -- behind them, with SMOOTHED math so a ragdolling/knocked-back body can't make the lock spasm
 		local tPos = targetHRP.Position
 		local okv, lv = pcall(function() return targetHRP.AssemblyLinearVelocity end)
-		if okv and lv and lv.Magnitude > 1 then tPos = tPos + Vector3.new(lv.X, 0, lv.Z) * Settings.PosLead end
+		if bhCache.hrp ~= targetHRP then bhCache.hrp = targetHRP; bhCache.dir = nil; bhCache.spd = 0 end
+		-- SMOOTHED SPEED (EMA): a Black-Flashed body's velocity spikes forward, then instantly reverses off a wall.
+		-- Chasing the RAW value made the behind-point jump 5 studs back then 10 forward frame-to-frame = the fling.
+		-- The EMA tracks real running speed but barely reacts to one-frame ragdoll spikes.
+		local rawFlat = (okv and lv) and Vector3.new(lv.X, 0, lv.Z) or Vector3.zero
+		bhCache.spd = bhCache.spd + (math.min(rawFlat.Magnitude, 60) - bhCache.spd) * 0.15
+		if rawFlat.Magnitude > 1 and bhCache.spd > 1 then
+			tPos = tPos + rawFlat.Unit * math.min(bhCache.spd, 30) * Settings.PosLead   -- lead with the SMOOTHED speed, capped
+		end
+		-- FACING with HITSTUN FALLBACK: in hitstun/ragdoll the LookVector points up/down or spins with the tumble.
+		-- When its flat part collapses, reuse the last GOOD facing (cached ~1.5s) instead of a random vertical slice —
+		-- this is what keeps you ON their back through the whole Black Flash instead of under/above them.
 		local look = targetHRP.CFrame.LookVector
 		local flat = Vector3.new(look.X, 0, look.Z); local mag = flat.Magnitude
-		local dir = (mag < 0.01) and Vector3.new(0, 0, -1) or (flat / mag)
-		local clear = math.max(Settings.BackDistance, 2.8)
-		local okv2, tv2 = pcall(function() return targetHRP.AssemblyLinearVelocity end)
-		if okv2 and tv2 then clear = clear + math.min(tv2.Magnitude * 0.06, 2.5) end   -- knockback clearance: a flying body gets extra room so it can't slam through you between frames
+		local dir
+		if mag >= 0.35 then dir = flat / mag; bhCache.dir = dir; bhCache.dirT = tick()
+		elseif bhCache.dir and tick() - bhCache.dirT < 1.5 then dir = bhCache.dir
+		else dir = (mag < 0.01) and Vector3.new(0, 0, -1) or (flat / mag) end
+		-- CLEARANCE from the SMOOTHED speed only, small + stable (the old raw-velocity clearance breathed in and out
+		-- every frame = the spastic lock the flings came from).
+		local clear = math.max(Settings.BackDistance, 2.8) + math.min(bhCache.spd * 0.05, 1.6)
 		return tPos - dir * clear, tPos
 	end
 	local function myCharResolved()  -- JJS keeps your live body under workspace.Characters; LP.Character can lag/differ
 		local chs = workspace:FindFirstChild("Characters")
 		return (chs and chs:FindFirstChild(LocalPlayer.Name)) or LocalPlayer.Character
-	end
-	local function fireDash(dir)  -- fire the REAL JJS dash remote (MovementService.RE.Dash) - the user-captured working dash, no held keys
-		local RS = game:GetService("ReplicatedStorage")
-		local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
-		local svc = k and k:FindFirstChild("MovementService"); local re = svc and svc:FindFirstChild("RE"); re = re and re:FindFirstChild("Dash")
-		if re then pcall(function() re:FireServer(dir, true) end) end
 	end
 	local function jumpNow() pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.03); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end
 	local dashGen = 0  -- kill switch: the snap bumps this so a leftover approach-dash can NEVER push you off the target's back
@@ -266,6 +275,34 @@ do
 				task.wait()
 			end
 		end)
+	end
+	-- DASH REMOTE — RESILIENT: the exact captured path (Knit.Knit.Services.MovementService.RE.Dash) is tried first,
+	-- but if the game update renamed/moved anything we fall back to searching ReplicatedStorage for ANY RemoteEvent
+	-- named "Dash" (cached once found). If NO remote exists at all, we do a real client-side velocity dash instead —
+	-- so Side Dash always visibly dashes instead of silently doing nothing.
+	local dashRE
+	local function findDashRemote()
+		if dashRE and dashRE.Parent then return dashRE end
+		dashRE = nil
+		local RS = game:GetService("ReplicatedStorage")
+		pcall(function()
+			local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
+			local svc = k and k:FindFirstChild("MovementService")
+			local re = svc and (svc:FindFirstChild("RE") or svc:FindFirstChild("RemoteEvents") or svc:FindFirstChild("Remotes"))
+			dashRE = re and re:FindFirstChild("Dash") or nil
+		end)
+		if dashRE then return dashRE end
+		pcall(function()
+			for _, d in ipairs(RS:GetDescendants()) do
+				if d:IsA("RemoteEvent") and d.Name == "Dash" then dashRE = d; break end
+			end
+		end)
+		return dashRE
+	end
+	local function fireDash(dir)  -- fire the REAL JJS dash remote; falls back to a client velocity dash if the remote is gone
+		local re = findDashRemote()
+		if re then pcall(function() re:FireServer(dir, true) end)
+		else clientDash(dir, 55, 0.12) end
 	end
 	local backDashStage = 0
 	local function playAnim(id, prio)
@@ -354,8 +391,9 @@ do
 	local function doApproach(targetHRP, myHRP)  -- PRE-flash movement per mode; the flash + back-lock happens right after (in doBackstab)
 		local m = Settings.Mode
 		if m == "Side Dash" then                                                                   -- CURVE around them to their back (anime run-around), then flash
-			playAnim("rbxassetid://75203303352791"); playAnim("rbxassetid://96489184596023")
+			playAnim("rbxassetid://75203303352791"); playAnim("rbxassetid://96489184596023")      -- flourish anims (pcall'd — a character without them just skips the visual)
 			fireDash("Right")
+			task.wait(0.1)   -- let the REAL dash impulse actually move you before the orbit takes over — the orbit's first frame zeroes velocity, which was instantly cancelling the dash (= "side dash does nothing")
 			orbitAround(targetHRP, { duration = 0.24, endRadius = math.max(Settings.BackDistance, 3), extraSweep = math.pi * 0.4, endBehind = true })   -- wider, weightier wrap = reads like a real player circling them
 		elseif m == "Jump" then                                                                    -- SPRINT to them (real movement, NO teleport) -> JUMP over -> flash lands on the back
 			local t0 = tick()
@@ -386,7 +424,7 @@ do
 		local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
 		if not (myHRP and hum) or hum.Health <= 0 then if _G.VX_BF_DEBUG then print("[DreamHub BF] no body/dead - myHRP=", myHRP ~= nil) end return end
 		local targetChar
-		if chainTarget and chainTarget.Parent and getHRP(chainTarget) and tick() - chainTargetT < 1.5 then   -- STAY locked on the same enemy through the chain (TTL so an abandoned lock can't poison a later combo)
+		if chainTarget and chainTarget.Parent and getHRP(chainTarget) and tick() - chainTargetT < 4 then   -- STAY locked on the same enemy through the chain. TTL raised 1.5s -> 4s: a Black Flash chain animates LONGER than 1.5s, so the old TTL expired MID-COMBO and the next hit re-picked "nearest" (a passerby) = the lock visibly broke. 4s covers the slowest chain; an abandoned lock still can't poison a later combo.
 			local ch = chainTarget:FindFirstChildOfClass("Humanoid")
 			if not ch or ch.Health > 0 then targetChar = chainTarget end
 		end
@@ -411,6 +449,14 @@ do
 		end
 		liveLoops = liveLoops + 1
 		dashGen = dashGen + 1  -- KILL any still-running approach dash so nothing pushes you off the back after the snap
+		-- ANTI-FLING (the PivotTo-vs-physics war): if the behind-point clips even slightly INTO the target's hitbox,
+		-- two solid bodies overlap → the engine blasts you out → the snap forces you back in → physics explosion =
+		-- launched across the map. So YOUR collision is OFF for the whole snap+lock (shared across stacked locks via
+		-- bfCollideSaved; the LAST lock to end restores it).
+		bfCollideSaved = bfCollideSaved or {}
+		if myChar then for _, p in ipairs(myChar:GetDescendants()) do
+			if p:IsA("BasePart") and p.CanCollide then bfCollideSaved[p] = true; pcall(function() p.CanCollide = false end) end
+		end end
 		local behindPos, targetPos = getBehind(targetHRP)
 		if _G.VX_ACPASS then _G.VX_ACPASS() end   -- whitelist the snap so the anti-cheat doesn't revert it (= you actually land on their back)
 		local snapCF = CFrame.lookAt(behindPos, targetPos)
@@ -473,6 +519,10 @@ do
 						hum.WalkSpeed = savedWS
 						hum.JumpPower = savedJP
 					end
+					if bfCollideSaved then   -- last lock ended -> give your body its collision back
+						for p in pairs(bfCollideSaved) do if p.Parent then pcall(function() p.CanCollide = true end) end end
+						bfCollideSaved = nil
+					end
 					end
 				return
 			end
@@ -485,7 +535,9 @@ do
 			myHRP.AssemblyAngularVelocity = Vector3.zero
 			-- CAMERA AIM (rotation only): turn the camera to face THEIR BACK so the flash aims true.
 			-- We never touch CameraType or camera position, so your ZOOM keeps working (no zoom-in lock).
-			pcall(function() Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, targetPos) end)
+			-- LERPED (0.5/frame), not hard-set — the hard set left the view one frame behind the body every frame,
+			-- which read as "I'm not locked on their back" jitter even when the math had you exactly there.
+			pcall(function() Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position, targetPos), 0.5) end)
 		end)
 	end
 	local function setupCharacter(character)
@@ -1426,6 +1478,7 @@ do
 	local VIM = game:GetService("VirtualInputManager")
 	local LP = Players.LocalPlayer
 	local mode, lastSwing, count, busy = "Off", 0, 0, false
+	local needHits = 3   -- chain hits before the launcher fires (slider-adjustable: characters have different chain lengths)
 	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
 	local function act(arg)  -- THE uppercut/slam remote (user capture): <YourChar>Service.RE.Activated:FireServer("Up"/"Down")
 		local svc = vxMyCharSvc()
@@ -1535,12 +1588,18 @@ do
 			if now - lastSwing > 1.7 then count = 0 end   -- you stopped swinging -> the chain broke -> restart the count
 			if now - lastSwing < 0.18 then return end     -- one anim event per swing (some rigs fire the track twice)
 			lastSwing = now; count = count + 1
-			print("[DreamHub M1Combo] chain hit " .. count .. "/3")
-			if count >= 3 then finisher() end             -- 3 hits in = the launcher window -> the SCRIPT throws hit #4 with the modifier
+			print("[DreamHub M1Combo] chain hit " .. count .. "/" .. needHits)
+			if count >= needHits then finisher() end      -- N hits in = the launcher window -> the SCRIPT throws the next hit with the modifier
 		end)
 	end
 	task.spawn(function() while true do if mode ~= "Off" then pcall(hookSelf) end task.wait(0.6) end end)
-	M1ComboApi = { setMode = function(m) mode = m or "Off"; count = 0; busy = false end, setDelay = function() end }
+	M1ComboApi = {
+		setMode = function(m) mode = m or "Off"; count = 0; busy = false end,
+		setDelay = function() end,
+		-- PER-CHARACTER chain length ("every character has a different number of M1s before the launch"):
+		-- the slider sets how many chain hits open the launcher window (2 for short-chain characters, 4 for long).
+		setCount = function(n) needHits = math.clamp(math.floor(tonumber(n) or 3), 2, 5); count = 0 end,
+	}
 end
 
 -- MODULE: DASH  (no-cooldown directional dash via MovementService; forward = Itadori Chase)
@@ -8272,6 +8331,7 @@ do
     acSec:Toggle({ Name = "Auto Ult", Callback = function(b) if AutoUltApi then AutoUltApi.set(b) end end })
     acSec:Toggle({ Name = "Auto Air", Callback = function(b) if AutoAirApi_set then AutoAirApi_set(b) end end })
     acSec:Dropdown({ Name = "Auto Slam / Uppercut", Items = { "Off", "Down Slam", "Uppercut" }, Default = "Off", Callback = function(m) if M1ComboApi then M1ComboApi.setMode(m) end end })
+    acSec:Slider({ Name = "Launcher after N hits", Min = 2, Max = 5, Default = 3, Decimals = 1, Callback = function(v) if M1ComboApi and M1ComboApi.setCount then M1ComboApi.setCount(v) end end })   -- per-character chain length (some launch on the 3rd M1, some on the 4th)
     pcall(function() acSec:Label("Uppercut soon: Crow, Mangaka, Black Death, Disaster Plants") end)
     acSec:Toggle({ Name = "Auto Adapt", Callback = function(b) if AutoAdaptApi then AutoAdaptApi.set(b) end end })
     acSec:Toggle({ Name = "Auto Domain Adapt", Callback = function(b) if AutoDomainAdaptApi then AutoDomainAdaptApi.set(b) end end })
