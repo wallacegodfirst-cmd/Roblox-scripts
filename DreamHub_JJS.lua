@@ -8275,6 +8275,75 @@ do
     end
 
     local tierNice = (VX_TIER == "free" and "Free") or (VX_TIER == "plus" and "Plus") or "Premium"
+
+    -- ════════ ABILITY-ARENA GUI PORT (Fluriore) ════════
+    -- The hub uses the "Ability Arena" GUI library (Fluriore) instead of the embedded Vaultix UI, per request.
+    -- SAFETY: this is a drop-in ADAPTER — every existing `sec:Toggle{...}` / `:Slider` / `:Dropdown` call below is
+    -- UNCHANGED; we only swap what `Library` points at. The adapter maps JJS's API
+    -- (Window:Category/Page -> Page:SubPage -> SubPage:Section -> Section:Toggle/Slider/Dropdown/Button/Label/Textbox)
+    -- onto Fluriore's MakeGui/CreateTab/AddSection/AddToggle/... Each adapter method is TOTAL: it pcall-wraps the
+    -- Fluriore call and ALWAYS returns a valid stub object, so a signature mismatch degrades to "that one control is
+    -- missing" — it can never crash the wiring. If Fluriore fails to load at all, we keep the original working GUI
+    -- (Library is left untouched), so the menu can never end up bricked.
+    do
+        local FluLib
+        pcall(function() FluLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mc4121ban/Fluriore-UI/main/source.lua"))() end)
+        if type(FluLib) == "table" and type(FluLib.MakeGui) == "function" then
+            local RED = Color3.fromRGB(255, 45, 45)   -- Ability Arena accent
+            local function arr(t) local o = {}; if type(t) == "table" then for _, v in ipairs(t) do o[#o + 1] = v end elseif t ~= nil then o[1] = t end return o end
+            local function asTable(v) if type(v) == "table" then return v elseif v ~= nil then return { v } else return {} end end
+            local flWin
+            local STUB = {}   -- returned for any element; every sub-method is a safe no-op so chained calls never error
+            setmetatable(STUB, { __index = function() return function() end end })
+            local function elemWrap(el)   -- wrap a real Fluriore element so :Refresh/:Set/:Get/:Colorpicker/:Keybind never error
+                return setmetatable({
+                    Refresh = function(_, opts) if el and type(el.Refresh) == "function" then pcall(function() el:Refresh(arr(opts)) end) end end,
+                    Set = function(_, v) if el and type(el.Set) == "function" then pcall(function() el:Set(v) end) end end,
+                    Get = function() if el and type(el.Get) == "function" then local ok, r = pcall(function() return el:Get() end); if ok then return r end end end,
+                    SetText = function(_, t) if el and type(el.SetText) == "function" then pcall(function() el:SetText(t) end) end end,
+                    Colorpicker = function() return STUB end,   -- Fluriore has no colorpicker; theming falls back silently
+                    Keybind = function() return STUB end,       -- menu keybind still works via the RightShift handler
+                }, { __index = function() return function() return STUB end end })
+            end
+            local adapter = {}
+            local function guard(o) return setmetatable(o, { __index = function() return function() return STUB end end }) end   -- any UNDEFINED method -> safe stub (menu can never crash on a missing method)
+            function adapter:Window(cfg)
+                cfg = cfg or {}
+                pcall(function() flWin = FluLib:MakeGui({ NameHub = cfg.Name or "Dream Hub", Description = cfg.SubTitle or "", Color = RED }) end)
+                local W = {}
+                function W:Category() end   -- Fluriore has no categories; wiring calls this as a bare statement
+                function W:SetOpen() end    -- minimize button calls this; Fluriore has its own toggle key
+                function W:Page(pc)
+                    pc = pc or {}
+                    local flTab; pcall(function() flTab = flWin:CreateTab({ Name = pc.Name or "Tab", Icon = pc.Icon and ("rbxassetid://" .. tostring(pc.Icon)) or nil }) end)
+                    local P = {}
+                    function P:SubPage()   -- Fluriore has no sub-pages; a SubPage just forwards to the tab
+                        local SP = {}
+                        function SP:Section(sc)
+                            sc = sc or {}
+                            local flSec; pcall(function() flSec = flTab:AddSection(sc.Name or "Section") end)
+                            local S = {}
+                            local function sec() return flSec or flTab end
+                            function S:Toggle(c) c = c or {}; local el; pcall(function() el = sec():AddToggle({ Title = c.Name or "Toggle", Content = c.Info or "", Default = c.Default and true or false, Callback = c.Callback or function() end }) end); return elemWrap(el) end
+                            function S:Slider(c) c = c or {}; local el; pcall(function() el = sec():AddSlider({ Title = c.Name or "Slider", Content = c.Suffix or "", Min = c.Min or 0, Max = c.Max or 100, Increment = c.Decimals or 1, Default = c.Default or c.Min or 0, Callback = c.Callback or function() end }) end); return elemWrap(el) end
+                            function S:Dropdown(c) c = c or {}; local el; pcall(function() el = sec():AddDropdown({ Title = c.Name or "Dropdown", Content = "", Multi = false, Options = arr(c.Items), Default = asTable(c.Default), Callback = c.Callback or function() end }) end); return elemWrap(el) end
+                            function S:Button(c) c = c or {}; pcall(function() sec():AddButton({ Title = c.Name or "Button", Content = "", Callback = c.Callback or function() end }) end); return elemWrap(nil) end
+                            function S:Label(t) local el; pcall(function() el = sec():AddParagraph({ Title = tostring(t or ""), Content = "" }) end); return elemWrap(el) end
+                            function S:Textbox(c) c = c or {}; local el; pcall(function() el = sec():AddInput({ Title = c.Name or "Input", Content = c.Default or "", Callback = c.Callback or function() end }) end); return elemWrap(el) end
+                            return guard(S)
+                        end
+                        return guard(SP)
+                    end
+                    return guard(P)
+                end
+                return guard(W)
+            end
+            function adapter:CreateSettingsPage() end   -- config/theming page is skipped under the ported GUI (non-critical)
+            function adapter:Notification(msg) pcall(function() if flWin and flWin.MakeNotify then flWin:MakeNotify({ Title = "Dream Hub", Description = tostring(msg), Time = 3 }) end end) end
+            Library = adapter   -- take over; all the wiring below now builds on the Ability Arena GUI
+        end
+    end
+
     local Window = Library:Window({ Name = "Dream Hub", SubTitle = "JJS  -  " .. tierNice, ExpiresIn = "lifetime" })
 
     -- MINIMIZE button (PC + mobile): a small floating, draggable tap button that hides/shows the whole menu.
