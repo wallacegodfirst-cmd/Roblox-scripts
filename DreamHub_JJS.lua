@@ -827,10 +827,9 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 	end)
 end
 
--- TP METHOD: "Instant" snaps straight there (the SAME whitelisted-snap mechanism the black-flash teleport
--- uses, which works in-game) and holds. "Glide" steps there at the speed cap. Instant is the default because
--- the glide's long travel is what the anti-cheat has been reverting (= 'teleport doesn't work').
-local VX_TP_METHOD = "Instant"
+-- TP METHOD: "Glide" (DEFAULT - the PROVEN stepped glide that works in-game) steps there at the speed cap,
+-- whitelisting every frame. "Instant" snaps straight there in one whitelisted jump (optional).
+local VX_TP_METHOD = "Glide"
 
 -- HARDENED teleport for FAR spots that a one-frame snap gets set back on: glide there in whitelisted STEPS
 -- (each step is small enough to stay under the anti-cheat's per-tick distance limit) then HOLD + re-whitelist.
@@ -854,11 +853,10 @@ local function vxTeleportHard(dest, holdTime)
 		if hum then pcall(function() hum.PlatformStand = true end) end
 		local dt = 1/60
 		local startT = tick()
-		acPass(); acPass()  -- whitelist HARD before the first move (some anti-cheats only accept a move if a fresh Teleport call already landed)
 		while tick() - startT < 25 do   -- STEP toward the spot at a SPEED CAP (studs/sec), whitelisting each frame, so the anti-cheat never flags a too-fast move -> no set-back
 			if vxTeleGen ~= gen then return end
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
-			acPass(); acPass()   -- fire the whitelist twice per step: one call can be dropped and the step gets reverted (= 'teleport doesn't work')
+			acPass()   -- EXACTLY one whitelist per step - this is the version that works in-game; extra calls made it flag
 			local to = dest - hrp.Position; local d = to.Magnitude
 			if d < 3 then break end
 			local step = math.max(VX_TP_SPEED, 12) * dt   -- studs THIS frame = speed * real frame time; stays under the per-tick distance limit -> no snap-back
@@ -871,7 +869,7 @@ local function vxTeleportHard(dest, holdTime)
 		while tick() - h0 < (holdTime or 3) do
 			if vxTeleGen ~= gen then return end
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
-			acPass(); acPass()
+			acPass()
 			local destCF = CFrame.new(dest) * rot
 			pcall(function() hrp.CFrame = destCF; hrp.AssemblyLinearVelocity = Vector3.zero end)
 			pcall(function() cc:PivotTo(destCF) end)
@@ -1285,7 +1283,7 @@ do
 	end
 	TPApi = {
 		setSpeed = function(v) if type(v) == "number" then VX_TP_SPEED = v end end,
-		setMethod = function(m) VX_TP_METHOD = (m == "Glide") and "Glide" or "Instant" end,   -- Instant (proven snap) / Glide (stepped)
+		setMethod = function(m) VX_TP_METHOD = (m == "Instant") and "Instant" or "Glide" end,   -- Glide (default, proven) / Instant (one snap)
 		up = function() local r = hrp(); if r then vxTeleportHard(r.Position + Vector3.new(0, 120, 0), 3) end end,
 		spawn = function() local sp = workspace:FindFirstChildOfClass("SpawnLocation"); if sp then vxTeleportHard(sp.Position + Vector3.new(0, 4, 0), 3) end end,
 		nearest = function()
@@ -1314,65 +1312,77 @@ do
 	}
 end
 
--- MODULE: M1 COMBO  (Down Slam / Uppercut - rides YOUR real M1 clicks: on the 3rd click it injects jump + the finisher remote)
+-- MODULE: M1 COMBO  (Down Slam / Uppercut for EVERY character)
+-- Counts your REAL M1 hits by ANIMATION using the full per-character M1 id database (_G.VX_M1_IDS - all 20
+-- characters), not raw clicks. Clicks lie: whiffs count, our own injected clicks count, and the finisher
+-- fires at the wrong combo step ('auto uppercut no work'). An M1 ANIM only plays when your character
+-- actually swings - so hit #3 is exactly when the launcher window is open, on any character.
 do
 	local Players = game:GetService("Players")
 	local UIS = game:GetService("UserInputService")
 	local VIM = game:GetService("VirtualInputManager")
 	local LP = Players.LocalPlayer
-	local mode, lastClick, count, busy = "Off", 0, 0, false
+	local mode, lastSwing, count, busy = "Off", 0, 0, false
+	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
 	local function act(arg)  -- fire ONLY your character's Activated(arg) when detected ("Down"=slam, "Up"=uptilt); else fall back to all
 		local svc = vxMyCharSvc()
 		if svc then fireKnit(svc, "Activated", arg) else for _, c in ipairs(CHAR_NAMES) do fireKnit(c .. "Service", "Activated", arg) end end
 	end
-	local function jump()  -- three ways to guarantee air-state, since the slam/uptilt finisher is rejected on the ground
+	local function realM1()  -- a REAL M1 click at screen center: the game's own input converts held-space M1 -> uptilt / airborne falling M1 -> slam
+		local cam = workspace.CurrentCamera; local v = (cam and cam.ViewportSize) or Vector2.new(800, 600)
+		pcall(function() VIM:SendMouseButtonEvent(v.X / 2, v.Y / 2, 0, true, game, 0); task.wait(0.04); VIM:SendMouseButtonEvent(v.X / 2, v.Y / 2, 0, false, game, 0) end)
+	end
+	local function jump()  -- guarantee air-state for the DOWN SLAM (the slam M1 is rejected on the ground)
 		_G.VX_LAUNCHING = tick()  -- tell Side Dash (its flat dash clamps Y) to stand down for a moment so it can't cancel this lift
-		local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+		local c = myModel()
 		local h = c and c:FindFirstChildOfClass("Humanoid"); local hrp = c and c:FindFirstChild("HumanoidRootPart")
 		pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.02); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)  -- real Space press
 		if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end                                          -- force jump state
 		if hrp then pcall(function() hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, 50, hrp.AssemblyLinearVelocity.Z) end) end  -- physically lift off
 	end
-	local function onClick()  -- runs on EACH of your real M1 clicks; turns your natural combo into a slam / uppercut
-		if mode == "Off" then return end
-		local now = tick()
-		if now - lastClick < 0.05 then return end   -- one physical click reaches us from BOTH input sources; drop the echo
-		if now - lastClick > 1.0 then count = 0 end  -- combo resets if you paused clicking
-		lastClick = now; count = count + 1
-		if count >= 3 and not busy then              -- after 3 of your M1s, finish with the slam / uppercut
-			count = 0; busy = true
-			task.spawn(function()
-				local function realM1()  -- a REAL M1 click at screen center: the game's own input converts airborne M1 -> slam / held-space M1 -> uptilt
-					local cam = workspace.CurrentCamera; local v = (cam and cam.ViewportSize) or Vector2.new(800, 600)
-					pcall(function() VIM:SendMouseButtonEvent(v.X / 2, v.Y / 2, 0, true, game, 0); task.wait(0.04); VIM:SendMouseButtonEvent(v.X / 2, v.Y / 2, 0, false, game, 0) end)
-				end
-				if mode == "Down Slam" then
-					jump()
-					local chs2 = workspace:FindFirstChild("Characters"); local c2 = (chs2 and chs2:FindFirstChild(LP.Name)) or LP.Character
-					local r2 = c2 and c2:FindFirstChild("HumanoidRootPart")
-					local t0 = tick()
-					repeat task.wait(0.03) until not r2 or r2.AssemblyLinearVelocity.Y < 2 or tick() - t0 > 0.6   -- wait for the APEX/fall - the slam window
-					realM1()                                                                 -- airborne M1 while coming down = the game's own DOWN SLAM
-					act("Down")                                                              -- remote as backup
-				else
-					-- Uppercut / Uptilt: HOLD space while GROUNDED, then M1 = the launcher (do NOT jump - jumping
-					-- leaves the ground and cancels the uptilt; that was the bug 'auto uppercut no work').
-					_G.VX_LAUNCHING = tick()
-					pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)   -- HOLD space (grounded)
-					task.wait(0.1)                                                            -- let the held-space uptilt state arm
-					realM1()                                                                 -- grounded held-space M1 = the UPTILT launcher
-					task.wait(0.05); realM1()                                                -- second tap catches the window
-					act("Up")                                                                -- remote as backup
-					task.wait(0.14); pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)  -- release space
-				end
-				vxLog(mode)
-				task.wait(0.15); busy = false
-			end)
-		end
+	local function finisher()
+		busy = true
+		task.spawn(function()
+			_G.VX_INJECT_UNTIL = tick() + 0.8   -- our injected Space/M1 must not re-trigger this (or any other) feature
+			if mode == "Down Slam" then
+				jump()
+				local c2 = myModel(); local r2 = c2 and c2:FindFirstChild("HumanoidRootPart")
+				local t0 = tick()
+				repeat task.wait(0.03) until not r2 or r2.AssemblyLinearVelocity.Y < 2 or tick() - t0 > 0.6   -- wait for the APEX/fall - the slam window
+				realM1()                                                                 -- airborne M1 while coming down = the game's own DOWN SLAM
+				act("Down")                                                              -- remote as backup
+			else
+				-- UPTILT (uppercut): stay GROUNDED, HOLD space, then M1 = the launcher on every character.
+				_G.VX_LAUNCHING = tick()
+				pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)   -- HOLD space (grounded)
+				task.wait(0.12)                                                           -- let the held-space uptilt state arm
+				realM1()                                                                 -- grounded held-space M1 = the UPTILT launcher
+				task.wait(0.06); realM1()                                                -- second tap catches the window
+				act("Up")                                                                -- remote as backup
+				task.wait(0.14); pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)  -- release space
+			end
+			vxLog(mode)
+			task.wait(0.2); busy = false
+		end)
 	end
-	pcall(function() LP:GetMouse().Button1Down:Connect(onClick) end)
-	UIS.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then onClick() end end)
-	M1ComboApi = { setMode = function(m) mode = m or "Off" end, setDelay = function() end }
+	-- TRIGGER: your own M1 ANIMATION (every character - full per-char database in _G.VX_M1_IDS)
+	local hooked = setmetatable({}, { __mode = "k" })
+	local function hookSelf()
+		local m = myModel(); local h = m and m:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
+		if not a or hooked[a] then return end
+		hooked[a] = a.AnimationPlayed:Connect(function(track)
+			if mode == "Off" or busy then return end
+			if tick() < (_G.VX_INJECT_UNTIL or 0) then return end   -- an anim from OUR injected finisher M1 must not count as a combo hit
+			local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+")
+			if not (id and _G.VX_M1_IDS and _G.VX_M1_IDS[id]) then return end
+			local now = tick()
+			if now - lastSwing > 1.4 then count = 0 end   -- combo dropped -> restart the count
+			lastSwing = now; count = count + 1
+			if count >= 3 then count = 0; finisher() end   -- 3 REAL M1 swings -> the launcher window is open NOW
+		end)
+	end
+	task.spawn(function() while true do if mode ~= "Off" then pcall(hookSelf) end task.wait(0.6) end end)
+	M1ComboApi = { setMode = function(m) mode = m or "Off"; count = 0 end, setDelay = function() end }
 end
 
 -- MODULE: DASH  (no-cooldown directional dash via MovementService; forward = Itadori Chase)
@@ -8067,8 +8077,8 @@ do
     local locSec = tpSub:Section({ Name = "Locations", Side = 1 })
     if TPApi and TPApi.spotNames then for _, n in ipairs(TPApi.spotNames()) do locSec:Button({ Name = n, Callback = function() if TPApi then TPApi.spot(n) end end }) end end
     local quickSec = tpSub:Section({ Name = "Quick", Side = 2 })
-    quickSec:Dropdown({ Name = "TP Method", Items = { "Instant", "Glide" }, Default = "Instant", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
-    quickSec:Slider({ Name = "TP Speed (Glide only)", Min = 16, Max = 400, Default = 80, Decimals = 0, Callback = function(v) if TPApi then TPApi.setSpeed(v) end end })
+    quickSec:Dropdown({ Name = "TP Method", Items = { "Glide", "Instant" }, Default = "Glide", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
+    quickSec:Slider({ Name = "TP Speed (studs/sec - lower = safer)", Min = 16, Max = 400, Default = 80, Decimals = 0, Callback = function(v) if TPApi then TPApi.setSpeed(v) end end })
     quickSec:Button({ Name = "Print TP Remote (F9)", Callback = function()
         local RS = game:GetService("ReplicatedStorage"); local found = 0
         for _, d in ipairs(RS:GetDescendants()) do
