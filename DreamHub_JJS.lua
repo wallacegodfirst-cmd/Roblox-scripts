@@ -430,10 +430,24 @@ do
 			end
 			pcall(function() myHRP.AssemblyLinearVelocity = Vector3.zero end)
 		end
+		_G.VX_INJECT_UNTIL = tick() + 0.4; vxMarkKey(Settings.AbilityKey)   -- OUR flash press: Feint Abilities must NOT see this 3 and feint the flash away
 		pcall(function()
 			VirtualInputManager:SendKeyEvent(true, Settings.AbilityKey, false, game)
 			task.wait(Settings.KeyHoldDuration)
 			VirtualInputManager:SendKeyEvent(false, Settings.AbilityKey, false, game)
+		end)
+		-- ANTI-FLING: the flash move itself (e.g. Divergent Fist) launches YOU forward past the target. For a
+		-- short window after the flash, cap your horizontal speed so the move's shove can't yeet you across the map.
+		task.spawn(function()
+			local t0 = tick()
+			while tick() - t0 < 0.7 do
+				local c = myCharResolved(); local r = c and getHRP(c)
+				if r then pcall(function()
+					local v = r.AssemblyLinearVelocity; local flat = Vector3.new(v.X, 0, v.Z)
+					if flat.Magnitude > 38 then local u = flat.Unit * 38; r.AssemblyLinearVelocity = Vector3.new(u.X, math.min(v.Y, 12), u.Z) end
+				end) end
+				task.wait()
+			end
 		end)
 		local lockEnd = tick() + Settings.LockDuration
 		local lockLoop
@@ -585,8 +599,10 @@ do
 			end
 			-- Feint Abilities: you cast ANY skill (1/2/3/4) -> R right after = feint the move (own toggle OR the dropdown mode)
 			-- (skips OUR OWN injected keys - they were re-triggering this and breaking Feint M1 / Feint BF)
-			if (feintMovesOn or feintMode == "Moves") and MOVEKEYS[input.KeyCode] and tick() >= (_G.VX_INJECT_UNTIL or 0) then
-				task.delay(0.14, function() pressR() end)
+			local injKeys = _G.VX_INJ_KEYS
+			local keyInjected = injKeys and injKeys[input.KeyCode] and tick() < injKeys[input.KeyCode]
+			if (feintMovesOn or feintMode == "Moves") and MOVEKEYS[input.KeyCode] and tick() >= (_G.VX_INJECT_UNTIL or 0) and not keyInjected then
+				task.delay(0.14, function() pressR() end)   -- (the BF chain's own flash-key press is marked injected now, so this can NO LONGER feint your black flash)
 			end
 		end)
 	end
@@ -1393,31 +1409,41 @@ do
 		if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end                                          -- force jump state
 		if hrp then pcall(function() local v = hrp.AssemblyLinearVelocity; hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 26), v.Z) end) end  -- nudge to hop height only = natural bunny hop
 	end
+	local function note(m) if VX_NOTIFY then pcall(function() VX_NOTIFY(m, nil) end) end print("[DreamHub M1Combo] " .. m) end   -- VISIBLE feedback: you SEE when/why it fires
 	local function finisher()
 		busy = true
 		task.spawn(function()
 			_G.VX_INJECT_UNTIL = tick() + 0.8   -- our injected Space/M1 must not re-trigger this (or any other) feature
 			if mode == "Down Slam" then
+				note("Down Slam: hop -> falling M1")
 				jump()
 				local c2 = myModel(); local r2 = c2 and c2:FindFirstChild("HumanoidRootPart")
 				local t0 = tick()
 				repeat task.wait(0.03) until not r2 or r2.AssemblyLinearVelocity.Y < 2 or tick() - t0 > 0.6   -- wait for the APEX/fall - the slam window
 				realM1()                                                                 -- airborne M1 while coming down = the game's own DOWN SLAM
+				task.wait(0.07); realM1()                                                -- second tap in case the first was a frame early
 				act("Down")                                                              -- remote as backup
 			else
-				-- UPTILT (uppercut): held-space M1 = the launcher, but with the humanoid's JUMP state DISABLED
-				-- while space is down, so the press can NEVER hop you ('it should not make em jump').
+				-- UPTILT (uppercut): the game's own input = SPACE HELD + M1 while grounded. We hold the real key
+				-- (so the game's uptilt check sees it) and CLAMP your upward velocity for the window instead of
+				-- disabling the jump state - disabling it also hid the held-space from the game = no uptilt at all.
+				note("Uppercut: held-space M1")
 				_G.VX_LAUNCHING = tick()
-				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 0.6
-				local c2 = myModel(); local hum2 = c2 and c2:FindFirstChildOfClass("Humanoid")
-				if hum2 then pcall(function() hum2:SetStateEnabled(Enum.HumanoidStateType.Jumping, false) end) end   -- space can't jump you now
-				pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)   -- HOLD space (the game reads the KEY for uptilt, not the jump)
-				task.wait(0.1)
+				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 0.7
+				local c2 = myModel(); local r2 = c2 and c2:FindFirstChild("HumanoidRootPart")
+				task.spawn(function()   -- no visible hop: pin the Y velocity down while space is held
+					local t0 = tick()
+					while tick() - t0 < 0.45 do
+						if r2 then pcall(function() local v = r2.AssemblyLinearVelocity; if v.Y > 2 then r2.AssemblyLinearVelocity = Vector3.new(v.X, 0, v.Z) end end) end
+						task.wait()
+					end
+				end)
+				pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)   -- HOLD the real space key
+				task.wait(0.18)                                                          -- give the game time to register 'jump held'
 				realM1()                                                                 -- held-space M1 = the UPTILT launcher
-				task.wait(0.06); realM1()                                                -- second tap catches the window
+				task.wait(0.07); realM1()                                                -- second tap catches the window
 				act("Up")                                                                -- remote as backup
 				task.wait(0.12); pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)  -- release space
-				if hum2 then pcall(function() hum2:SetStateEnabled(Enum.HumanoidStateType.Jumping, true) end) end    -- give your jump back
 			end
 			vxLog(mode)
 			task.wait(0.2); busy = false
@@ -2830,18 +2856,30 @@ do
 			pcall(function() VIMy:SendKeyEvent(true, Enum.KeyCode.Two, false, game); task.wait(0.06); VIMy:SendKeyEvent(false, Enum.KeyCode.Two, false, game) end)
 		end)
 	end
-	-- MANUAL "Yuta Black Flash": when ON, your own Yuta M1 landing auto-converts into a black flash on the enemy.
-	local hooked = setmetatable({}, { __mode = "k" })
-	local function hookSelf()
-		local m = myModel(); local h = m and m:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
-		if not a or hooked[a] then return end
-		hooked[a] = a.AnimationPlayed:Connect(function(track)
-			if not manualOn then return end
-			local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+")
-			if id and YUTA_M1[id] then local t = nearestEnemy(22); if t then flash(t, false) end end   -- manual: ANY HP - your M1 converts
-		end)
+	-- MANUAL "Yuta Black Flash" (user spec): when YOU press 2 as Yuta, the script presses 2 ONE more time
+	-- for you = the double-tap that black-flashes. That's it. No anim detection, no HP gate.
+	local function charIsYuta()
+		local c = myModel(); if not c then return false end
+		local h = c:FindFirstChildOfClass("Humanoid")
+		local hay = string.lower((c.Name or "") .. " " .. (h and h.DisplayName or ""))
+		local mv = c:FindFirstChild("Moveset"); if mv then for _, m in ipairs(mv:GetChildren()) do hay = hay .. " " .. string.lower(m.Name) end end
+		return hay:find("yuta", 1, true) or hay:find("resolute", 1, true) or hay:find("severing", 1, true) or hay:find("true love", 1, true) or hay:find("cursed partner", 1, true)
 	end
-	task.spawn(function() while true do if manualOn then pcall(hookSelf) end task.wait(0.6) end end)
+	local UISy = game:GetService("UserInputService")
+	UISy.InputBegan:Connect(function(input)
+		if not manualOn or UISy:GetFocusedTextBox() then return end
+		if input.KeyCode ~= Enum.KeyCode.Two then return end
+		local injK = _G.VX_INJ_KEYS
+		if injK and injK[Enum.KeyCode.Two] and tick() < injK[Enum.KeyCode.Two] then return end   -- that 2 was OUR OWN re-press - don't loop
+		if not charIsYuta() then return end
+		if tick() - last < 1.2 then return end
+		last = tick()
+		task.delay(0.45, function()   -- your 2 fired Resolute Slash -> the script presses 2 AGAIN = black flash
+			_G.VX_INJECT_UNTIL = tick() + 0.5
+			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Two] = tick() + 0.5
+			pcall(function() VIMy:SendKeyEvent(true, Enum.KeyCode.Two, false, game); task.wait(0.06); VIMy:SendKeyEvent(false, Enum.KeyCode.Two, false, game) end)
+		end)
+	end)
 	-- AUTO "Yuta Teleport Kill Black Flash": fully automatic - hunt the nearest LOW-HP enemy and finish them.
 	local function nearestLowEnemy(maxD)
 		local mh = getHRP(myModel()); if not mh then return nil end
@@ -3649,7 +3687,7 @@ do
 			for _, w in ipairs({ ... }) do if string.find(hay, string.lower(w), 1, true) then return true end end
 			return false
 		end
-		local function dbgAir(msg) print("[DreamHub AutoAir] " .. msg) end   -- always prints to F9 so you can SEE what fired / why it didn't
+		local function dbgAir(msg) print("[DreamHub AutoAir] " .. msg) if VX_NOTIFY then pcall(function() VX_NOTIFY("AutoAir: " .. msg, nil) end) end end   -- F9 print + ON-SCREEN toast so you SEE it fire
 		local function holdJump() _G.VX_INJECT_UNTIL = tick() + 0.35; _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 0.5; pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.08); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end
 
 		-- GAMBLER: when you M1 (click) -> press 3 + JUMP at the SAME time (launcher)
@@ -3663,18 +3701,28 @@ do
 		-- KEY 1
 		if autoAirOn and input.KeyCode == Enum.KeyCode.One then
 			if charIs("gojo") then
-				-- GOJO Lapse Blue: you press 1 -> press R
+				-- GOJO Lapse Blue: you press 1 -> press R (key + the R remote as backup, aimed at your target)
 				_G.VX_BUSY = tick() + 1.6; dbgAir("Gojo: 1 (Lapse Blue) -> R")
-				task.delay(0.4, function() if autoAirOn then tapKey(Enum.KeyCode.R) end end)
+				task.delay(0.4, function()
+					if not autoAirOn then return end
+					tapKey(Enum.KeyCode.R)
+					local mdl = lastM1Tgt or nearestEnemyChar()
+					if mdl then faceTargetNow(mdl); local re = gojoRE(); if re then pcall(function() re:FireServer(asPlayerCharacter(mdl)) end) end end
+				end)
 			end
 		end
 
 		-- KEY 2
 		if autoAirOn and input.KeyCode == Enum.KeyCode.Two then
 			if charIs("gojo") then
-				-- GOJO Twofold Kick: you press 2 -> press R
+				-- GOJO Twofold Kick: you press 2 -> press R (key + the R remote as backup)
 				_G.VX_BUSY = tick() + 1.6; dbgAir("Gojo: 2 (Twofold) -> R")
-				task.delay(0.35, function() if autoAirOn then tapKey(Enum.KeyCode.R) end end)
+				task.delay(0.35, function()
+					if not autoAirOn then return end
+					tapKey(Enum.KeyCode.R)
+					local mdl = lastM1Tgt or nearestEnemyChar()
+					if mdl then faceTargetNow(mdl); local re = gojoRE(); if re then pcall(function() re:FireServer(asPlayerCharacter(mdl)) end) end end
+				end)
 			elseif charIs("megumi", "nue", "rabbit") then
 				-- TEN SHADOWS: you press 2 (Nue) -> press R
 				_G.VX_BUSY = tick() + 1.5; dbgAir("Shadows: 2 -> R")
@@ -4470,16 +4518,15 @@ local Library do
                 Image = "rbxassetid://",
 				AnchorPoint = Vector2New(1, 1),
 				BorderColor3 = FromRGB(0, 0, 0),
-				Size = UDim2New(0, 18, 0, 18),
-				Position = UDim2New(1, -3, 1, -3),
+				Size = UDim2New(0, 22, 0, 22),
+				Position = UDim2New(1, -2, 1, -2),
                 Name = "\0",
 				BorderSizePixel = 0,
-				BackgroundTransparency = 0.35,
+				BackgroundTransparency = 1,
                 ZIndex = 5,
 				AutoButtonColor = false,
                 Visible = true,
-			})  ResizeButton:AddToTheme({BackgroundColor3 = "Accent"})
-            Instances:Create("UICorner", { Parent = ResizeButton.Instance, Name = "\0", CornerRadius = UDimNew(0, 5) })
+			})  -- INVISIBLE corner grip (22px hit area): drag the bottom-right corner to scale the menu; no yellow square
 
             local InputChanged
 
