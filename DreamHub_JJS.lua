@@ -688,14 +688,13 @@ do
 				if not (myHRP and hum and tHRP) or hum.Health <= 0 then return end
 				if _G.VX_BF_DEBUG then print("[DreamHub BF] fireFlashInPlace on "..tostring(tgt and tgt.Name).." conv="..tostring(isConversion).." key="..tostring(Settings.AbilityKey)) end
 				m1bfGen = m1bfGen + 1; local gen = m1bfGen
-				-- 1) FACE THEM ONCE, immediately (rotation only, no AutoRotate change) — this is the exact write the
-				--    working build used, so the flash aims true and the M1/flash is never delayed or blocked.
+				-- FACE THEM ONCE (rotation only) then PRESS THE FLASH KEY. This is the exact minimal path that WORKED —
+				-- nothing between the face and the press, no AutoRotate change, no re-face loop (both of those broke it).
 				pcall(function()
 					local flat = Vector3.new(tHRP.Position.X, myHRP.Position.Y, tHRP.Position.Z)
 					myHRP.CFrame = CFrame.lookAt(myHRP.Position, flat)
 				end)
 				pcall(function() Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, tHRP.Position) end)  -- aim camera at them
-				-- 2) PRESS THE FLASH KEY (unchanged working path)
 				_G.VX_INJECT_UNTIL = tick() + 0.4
 				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Settings.AbilityKey] = tick() + 0.5   -- our flash key press must not chain other features
 				pcall(function()
@@ -703,32 +702,14 @@ do
 					task.wait(Settings.KeyHoldDuration)
 					VirtualInputManager:SendKeyEvent(false, Settings.AbilityKey, false, game)
 				end)
-				-- 3) TURN-AROUND (additive, AFTER the press so it can NEVER delay/eat the flash): keep re-facing the
-				--    target for ~0.3s so you visibly turn to them even though AutoRotate tries to correct. We DON'T
-				--    disable AutoRotate (that was what broke the flash) — we just out-write it for a moment. Position
-				--    is re-read every frame, so you are only rotated, never moved.
-				if not isConversion then
-					task.spawn(function()
-						local t0 = tick()
-						while tick() - t0 < 0.3 do
-							if m1bfGen ~= gen then break end
-							local r = getHRP(myCharResolved())
-							local tr = tgt and tgt.Parent and getHRP(tgt)
-							if not (r and tr) then break end
-							pcall(function() r.CFrame = CFrame.lookAt(r.Position, Vector3.new(tr.Position.X, r.Position.Y, tr.Position.Z)) end)
-							task.wait()
-						end
-					end)
-				end
-				task.spawn(function()   -- ANTI-FLING: cap only a RUNAWAY launch. Y is left alone (clamping Y while the
-					-- move lifts you = the physics fight that stuttered/flung). 45 = above any normal move carry, below a fling.
+				task.spawn(function()   -- ANTI-FLING: cap only a RUNAWAY launch; Y untouched (clamping Y = the stutter/fling)
 					local t0 = tick()
-					while tick() - t0 < 0.8 do
-						if m1bfGen ~= gen then return end   -- a newer flash owns the capper now — exactly one writer at a time
+					while tick() - t0 < 0.7 do
+						if m1bfGen ~= gen then return end
 						local c = myCharResolved(); local r = c and getHRP(c)
 						if r then pcall(function()
 							local v = r.AssemblyLinearVelocity; local flat = Vector3.new(v.X, 0, v.Z)
-							if flat.Magnitude > 45 then local u = flat.Unit * 45; r.AssemblyLinearVelocity = Vector3.new(u.X, v.Y, u.Z) end
+							if flat.Magnitude > 50 then local u = flat.Unit * 50; r.AssemblyLinearVelocity = Vector3.new(u.X, v.Y, u.Z) end
 						end) end
 						task.wait()
 					end
@@ -1184,7 +1165,17 @@ do
 	if not espFolder.Parent then espFolder.Parent = LP:WaitForChild("PlayerGui") end
 	local boards = {}
 
-	local function itemsFolder() return workspace:FindFirstChild("Items") end
+	-- RESILIENT: the game may not keep drops in workspace.Items. Try the common folder names; cache the first that
+	-- actually has children so grab/ESP find items regardless of the exact folder name.
+	local _itemsF
+	local function itemsFolder()
+		if _itemsF and _itemsF.Parent and #_itemsF:GetChildren() > 0 then return _itemsF end
+		for _, nm in ipairs({ "Items", "Drops", "ItemDrops", "Pickups", "Loot", "WorldItems", "DroppedItems", "Collectables", "Collectibles" }) do
+			local f = workspace:FindFirstChild(nm)
+			if f and #f:GetChildren() > 0 then _itemsF = f; return f end
+		end
+		return workspace:FindFirstChild("Items")
+	end
 	local function itemPart(m)
 		if not m then return nil end
 		if m:IsA("BasePart") then return m end
@@ -2028,16 +2019,24 @@ do
 	screen.Name = "VX_LockOn"; screen.ResetOnSpawn = false; screen.IgnoreGuiInset = true; screen.DisplayOrder = 9001
 	pcall(function() screen.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
 	if not screen.Parent then pcall(function() screen.Parent = LP:WaitForChild("PlayerGui") end) end
-	-- CLEAN lock-on icon: a smooth purple ring + soft outer glow + center dot (matches the Dream Hub theme;
-	-- replaces the old harsh red brackets)
+	-- LOCK-ON ICON: clean WHITE corner brackets + a small center dot (no more purple circle). Classic "target
+	-- locked" look, matches the black/white theme.
 	local ret = Instance.new("Frame"); ret.BackgroundTransparency = 1; ret.AnchorPoint = Vector2.new(0.5, 0.5); ret.Visible = false; ret.Parent = screen
-	local ring = Instance.new("Frame"); ring.BackgroundTransparency = 1; ring.Size = UDim2.fromScale(1, 1); ring.Parent = ret
-	Instance.new("UICorner", ring).CornerRadius = UDim.new(1, 0)
-	local rs = Instance.new("UIStroke"); rs.Color = Color3.fromRGB(150, 95, 255); rs.Thickness = 2.4; rs.Transparency = 0.05; rs.Parent = ring
-	local glow = Instance.new("Frame"); glow.BackgroundTransparency = 1; glow.AnchorPoint = Vector2.new(0.5, 0.5); glow.Position = UDim2.fromScale(0.5, 0.5); glow.Size = UDim2.new(1, 8, 1, 8); glow.Parent = ret
-	Instance.new("UICorner", glow).CornerRadius = UDim.new(1, 0)
-	local gs = Instance.new("UIStroke"); gs.Color = Color3.fromRGB(150, 95, 255); gs.Thickness = 5; gs.Transparency = 0.82; gs.Parent = glow
-	local dot = Instance.new("Frame"); dot.Size = UDim2.fromOffset(5, 5); dot.AnchorPoint = Vector2.new(0.5, 0.5); dot.Position = UDim2.fromScale(0.5, 0.5); dot.BackgroundColor3 = Color3.fromRGB(255, 255, 255); dot.BorderSizePixel = 0; dot.Parent = ret
+	local WHT = Color3.fromRGB(255, 255, 255)
+	-- four L-shaped corner brackets built from thin frames
+	local function bracket(hx, hy)   -- hx/hy = -1 (left/top) or 1 (right/bottom)
+		local armLen = 0.32
+		local ax = (hx < 0) and 0 or (1 - armLen)
+		local ay = (hy < 0) and 0 or (1 - armLen)
+		-- horizontal arm
+		local h = Instance.new("Frame"); h.BorderSizePixel = 0; h.BackgroundColor3 = WHT; h.Size = UDim2.new(armLen, 0, 0, 2)
+		h.Position = UDim2.new(ax, 0, (hy < 0) and 0 or 1, (hy < 0) and 0 or -2); h.Parent = ret
+		-- vertical arm
+		local v = Instance.new("Frame"); v.BorderSizePixel = 0; v.BackgroundColor3 = WHT; v.Size = UDim2.new(0, 2, armLen, 0)
+		v.Position = UDim2.new((hx < 0) and 0 or 1, (hx < 0) and 0 or -2, ay, 0); v.Parent = ret
+	end
+	bracket(-1, -1); bracket(1, -1); bracket(-1, 1); bracket(1, 1)
+	local dot = Instance.new("Frame"); dot.Size = UDim2.fromOffset(4, 4); dot.AnchorPoint = Vector2.new(0.5, 0.5); dot.Position = UDim2.fromScale(0.5, 0.5); dot.BackgroundColor3 = WHT; dot.BorderSizePixel = 0; dot.Parent = ret
 	Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
 	local function layoutReticle(size)
 		ret.Size = UDim2.fromOffset(size, size)
@@ -3605,54 +3604,52 @@ do
 		local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m:IsA("Model") then chk(m) end end end
 		return best
 	end
-	local function behindPos(tr)  -- a spot right behind their back
-		local look = tr.CFrame.LookVector; local flat = Vector3.new(look.X, 0, look.Z)
-		local dir = flat.Magnitude > 0.01 and flat.Unit or Vector3.new(0, 0, -1)
-		return tr.Position - dir * 4
+	-- play a client animation (the flourish the user asked for) so the left dash LOOKS like the real curve-around
+	local function playAnim(id)
+		pcall(function()
+			local m = myModel(); local h = m and m:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
+			if not a then return end
+			local anim = Instance.new("Animation"); anim.AnimationId = id
+			local t = a:LoadAnimation(anim); t.Priority = Enum.AnimationPriority.Action2; t:Play(0.05)
+			task.delay(0.5, function() pcall(function() t:Stop() end) end)
+		end)
 	end
-	local sdaDir = 1            -- alternate LEFT / RIGHT approach side
-	local sdaNeed = 2           -- how many landed M1s before the dash-behind (1-3, dropdown)
-	local sdaCount, sdaLastHit = 0, 0
-	-- SIDE DASH ASSIST: when YOUR M1 lands (any character - full per-char anim list), the script presses
-	-- Q FOR you with LEFT held, so the GAME does its own LEFT dash. No custom movement at all.
 	local sdaInjecting = 0
+	-- SIDE DASH ASSIST (user spec): the instant a REAL M1 anim plays, CURVE LEFT AROUND the enemy — fast — then
+	-- face them so you can immediately M1 again. Just the two anim ids + a fast leftward curve dash. No orbit math,
+	-- no long steer loop (that was the "shit/fucked" version).
 	local function trigger()
 		if not on then return end
-		if tick() - last < 0.55 then return end                    -- one dash per swing
+		if tick() - last < 0.5 then return end                     -- one dash per swing
 		if tick() < sdaInjecting then return end                   -- never chain off our own injected inputs
 		if tick() - (_G.VX_LAUNCHING or 0) < 0.3 then return end   -- not during an uppercut launch
 		if tick() < (_G.VX_BUSY or 0) then return end              -- not during an Auto Air sequence
-		if _G.VX_M1BF_ON then return end                           -- M1 Black Flash mode is on: BF owns every landed M1 - dashing left mid-flash was yanking you out of range
-		if tick() < (_G.VX_SDA_HOLD or 0) then return end          -- (belt & suspenders: BF claimed this exact swing)
+		if _G.VX_M1BF_ON then return end                           -- M1 Black Flash owns landed M1s
+		if tick() < (_G.VX_SDA_HOLD or 0) then return end
 		local mh = getHRP(myModel()); if not mh then return end
-		local tgt = nearestEnemy(15); local tr = tgt and getHRP(tgt)
+		local tgt = nearestEnemy(16); local tr = tgt and getHRP(tgt)
 		if not tr then return end
-		local to = tr.Position - mh.Position
-		if to.Magnitude > 15 or mh.CFrame.LookVector:Dot(to.Unit) < 0.15 then return end   -- lenient: fire for any character whose M1 anim played with an enemy roughly in front
-		last = tick()
-		sdaInjecting = tick() + 0.4
-		_G.VX_INJECT_UNTIL = tick() + 0.4                          -- guard so this dash doesn't trigger other features
-		-- The game's own LEFT dash, STEERED so it ends BEHIND their back: while the dash runs we bend the
-		-- horizontal velocity toward the spot behind the target. No teleport, no jump - the dash itself
-		-- carries you left and around to their back, then you face them for the follow-up M1.
+		last = tick(); sdaInjecting = tick() + 0.35
+		_G.VX_INJECT_UNTIL = tick() + 0.35
+		-- the two anim ids the user gave (curve-around flourish)
+		playAnim("rbxassetid://95295463826732"); playAnim("rbxassetid://75203303352791")
+		-- FAST left curve: fire the game's own Left dash AND drive a leftward-and-slightly-forward velocity so it
+		-- visibly whips you around the enemy's left side. Short + fast (0.16s), re-reading facing each frame so
+		-- "left" stays left as you turn. Then snap to face them = instant follow-up M1.
 		fireKnit("MovementService", "Dash", "Left", true)
 		task.spawn(function()
-			task.wait(0.05)                                        -- let the dash start (its own velocity kicks in first)
 			local t0 = tick()
-			while tick() - t0 < 0.3 do
-				local mh2 = getHRP(myModel()); local tr2 = tgt and tgt.Parent and getHRP(tgt)
-				if not (mh2 and tr2) then break end
-				local dest = behindPos(tr2)
-				local flat = Vector3.new(dest.X - mh2.Position.X, 0, dest.Z - mh2.Position.Z)
-				if flat.Magnitude < 2.2 then break end             -- arrived behind them
-				local sp = math.min(flat.Magnitude / 0.22, 72)     -- fast enough to make it around, capped (no fling)
-				pcall(function() mh2.AssemblyLinearVelocity = Vector3.new(flat.Unit.X * sp, mh2.AssemblyLinearVelocity.Y, flat.Unit.Z * sp) end)
+			while tick() - t0 < 0.16 do
+				local mh2 = getHRP(myModel()); if not mh2 then break end
+				local cf = mh2.CFrame
+				local v = (-cf.RightVector * 1.0 + cf.LookVector * 0.35).Unit * 105   -- left + a touch forward = curve, FAST
+				pcall(function() mh2.AssemblyLinearVelocity = Vector3.new(v.X, math.min(mh2.AssemblyLinearVelocity.Y, 0), v.Z) end)
 				task.wait()
 			end
 			local mh3 = getHRP(myModel()); local tr3 = tgt and tgt.Parent and getHRP(tgt)
-			if mh3 and tr3 then pcall(function() mh3.CFrame = CFrame.lookAt(mh3.Position, Vector3.new(tr3.Position.X, mh3.Position.Y, tr3.Position.Z)) end) end   -- face their back = your next M1 lands
+			if mh3 and tr3 then pcall(function() mh3.CFrame = CFrame.lookAt(mh3.Position, Vector3.new(tr3.Position.X, mh3.Position.Y, tr3.Position.Z)) end) end   -- face them = your next M1 lands
 		end)
-		vxLog("SideDash assist: M1 -> Dash Left behind " .. (tgt and tgt.Name or "?"))
+		if _G.VX_BF_DEBUG then print("[DreamHub SideDash] M1 detected -> fast Left curve around "..(tgt and tgt.Name or "?")) end
 	end
 	-- TRIGGER: your own M1 ANIMATION (every character's ids are in _G.VX_M1_IDS now)
 	local hooked = setmetatable({}, { __mode = "k" })
