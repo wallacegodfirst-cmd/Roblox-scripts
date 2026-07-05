@@ -582,6 +582,7 @@ local function restoreHitboxes()
             part.CanCollide = orig.collide; part.Massless = orig.massless
             part.CanTouch = orig.touch; part.CanQuery = orig.query
             part.Color = orig.color; part.Material = orig.material
+            if orig.shape ~= nil and part:IsA("Part") then part.Shape = orig.shape end
         end) end
     end
     hbOriginal = {}
@@ -603,17 +604,38 @@ end
 -- BasePart in the character for maximum reach.
 local function hitboxParts(char)
     local out = {}
-    local hb = char:FindFirstChild("Hitbox")
-    if hb then
-        if hb:IsA("BasePart") then out[#out+1] = hb
-        elseif hb:IsA("Model") then
-            for _,d in ipairs(hb:GetDescendants()) do if d:IsA("BasePart") then out[#out+1] = d end end
+    -- Check every case/name variant of the hit container (FindFirstChild is case-sensitive, so "Hitbox" and
+    -- "HitBox" are DIFFERENT lookups — missing a variant is why some enemies never grew). Ported from PE's
+    -- working hitbox, which checks all of these.
+    for _, nm in ipairs({ "Hitbox", "HitBox", "HitboxPart", "Hit" }) do
+        local hb = char:FindFirstChild(nm)
+        if hb then
+            if hb:IsA("BasePart") then out[#out+1] = hb
+            elseif hb:IsA("Model") then
+                for _,d in ipairs(hb:GetDescendants()) do if d:IsA("BasePart") then out[#out+1] = d end end
+            end
         end
     end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if hrp and hrp:IsA("BasePart") then out[#out+1] = hrp end
     if S.HitboxAllParts then
         for _,d in ipairs(char:GetDescendants()) do if d:IsA("BasePart") then out[#out+1] = d end end
+    end
+    return out
+end
+-- Every enemy character to grow: players AND non-player models under workspace.Characters (training dummies /
+-- NPCs have no Player, so the players-only loop skipped them = "hitbox doesn't work on dummies"). PE scans the
+-- same way. Excludes YOU.
+local function hitboxTargets()
+    local out = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LP and p.Character and isAlive(p.Character) then out[#out+1] = p.Character end
+    end
+    local chars = Workspace:FindFirstChild("Characters")
+    if chars then
+        for _, m in ipairs(chars:GetChildren()) do
+            if m:IsA("Model") and m.Name ~= LP.Name and not Players:FindFirstChild(m.Name) and isAlive(m) then out[#out+1] = m end
+        end
     end
     return out
 end
@@ -628,28 +650,33 @@ hook(RunService.Heartbeat, function()
     for part in pairs(hbOriginal) do
         if not part or not part.Parent then hbOriginal[part] = nil end
     end
-    for _,p in ipairs(Players:GetPlayers()) do
-        if p ~= LP and p.Character and isAlive(p.Character) then
-            for _,part in ipairs(hitboxParts(p.Character)) do
-                if not hbOriginal[part] then
-                    hbOriginal[part] = {
-                        size=part.Size, transp=part.Transparency,
-                        collide=part.CanCollide, massless=part.Massless,
-                        touch=part.CanTouch, query=part.CanQuery,
-                        color=part.Color, material=part.Material
-                    }
-                end
-                pcall(function()
-                    part.Massless    = true
-                    part.CanCollide  = false
-                    part.CanQuery    = true
-                    part.CanTouch    = true
-                    if part.Size.X ~= sz then part.Size = Vector3.new(sz, sz, sz) end
-                    part.Transparency = 0.55
-                    part.Color        = Color3.fromRGB(255, 60, 60)
-                    part.Material     = Enum.Material.ForceField
-                end)
+    local cube = Vector3.new(sz, sz, sz)
+    for _,char in ipairs(hitboxTargets()) do
+        for _,part in ipairs(hitboxParts(char)) do
+            if not hbOriginal[part] then
+                hbOriginal[part] = {
+                    size=part.Size, transp=part.Transparency,
+                    collide=part.CanCollide, massless=part.Massless,
+                    touch=part.CanTouch, query=part.CanQuery,
+                    color=part.Color, material=part.Material,
+                    shape=(part:IsA("Part") and part.Shape or nil)
+                }
             end
+            pcall(function()
+                part.Massless    = true
+                part.CanCollide  = false
+                part.CanQuery    = true
+                part.CanTouch    = true
+                -- Force a BLOCK shape so a Ball/Cylinder hitbox part becomes a proper cube (a Ball renders as a
+                -- circle AND its overlap volume is smaller than a cube of the same size = weaker reach).
+                if part:IsA("Part") and part.Shape ~= Enum.PartType.Block then part.Shape = Enum.PartType.Block end
+                -- Compare ALL 3 axes (was X-only): a part whose X already matched sz but was thin on Y/Z used to
+                -- stay flat = no real reach. THIS was the core "hitbox doesn't work" bug (same one PE fixed).
+                if part.Size ~= cube then part.Size = cube end
+                part.Transparency = 0.55
+                part.Color        = Color3.fromRGB(255, 60, 60)
+                part.Material     = Enum.Material.ForceField
+            end)
         end
     end
 end)
