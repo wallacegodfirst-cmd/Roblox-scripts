@@ -589,10 +589,30 @@ do
 			end
 		end)
 	end
-		-- M1 BLACK FLASH (reliable): in "M1 Black Flash" mode, EVERY left-click fires the flash (debounced).
-		-- The old anim-only detection caught only the FIRST M1 (one anim id) then stopped - this fixes 'works once'.
+		-- M1 BLACK FLASH (IN PLACE - no teleport): in "M1 Black Flash" mode, your M1 lands FIRST (deals damage),
+		-- THEN the black flash fires WHERE YOU STAND. It does NOT snap/teleport behind the enemy - it just faces
+		-- them and presses the flash key, so the M1 hit registers, then the flash converts. (User: M1 first, deal
+		-- damage, then black flash, NOT teleport.)
 		do
 			local UIS_M1 = game:GetService("UserInputService")
+			local function fireFlashInPlace(tgt)
+				-- face the target (rotate in place - NO position change = no teleport), then press the flash key.
+				local myChar = myCharResolved()
+				local myHRP = getHRP(myChar)
+				local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+				local tHRP = tgt and getHRP(tgt)
+				if not (myHRP and hum and tHRP) or hum.Health <= 0 then return end
+				pcall(function()
+					local flat = Vector3.new(tHRP.Position.X, myHRP.Position.Y, tHRP.Position.Z)
+					myHRP.CFrame = CFrame.lookAt(myHRP.Position, flat)   -- turn to face them, same spot (rotation only)
+				end)
+				pcall(function() Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, tHRP.Position) end)  -- aim camera at them
+				pcall(function()
+					VirtualInputManager:SendKeyEvent(true, Settings.AbilityKey, false, game)
+					task.wait(Settings.KeyHoldDuration)
+					VirtualInputManager:SendKeyEvent(false, Settings.AbilityKey, false, game)
+				end)
+			end
 			UIS_M1.InputBegan:Connect(function(input, gpe)
 				if gpe then return end
 				if input.UserInputType == Enum.UserInputType.MouseButton1 and Settings.Mode == "M1 Black Flash" and tick() - lastM1 > 0.25 then
@@ -604,9 +624,8 @@ do
 						local to = tr.Position - mh.Position
 						if to.Magnitude <= 9 and mh.CFrame.LookVector:Dot(to.Unit) > 0.35 then   -- facing them + close = the M1 connects
 							lastM1 = tick()
-							chainTarget = tgt; chainTargetT = tick()
-							if _G.VX_BF_DEBUG then print("[DreamHub BF] M1 LANDED on "..tgt.Name.." -> black flash") end
-							task.delay(0.18, function() if Settings.Mode == "M1 Black Flash" and runChain then runChain(tgt) end end)  -- swing registers, THEN flash
+							if _G.VX_BF_DEBUG then print("[DreamHub BF] M1 LANDED on "..tgt.Name.." -> black flash IN PLACE (no TP)") end
+							task.delay(0.18, function() if Settings.Mode == "M1 Black Flash" then fireFlashInPlace(tgt) end end)  -- swing lands (damage), THEN flash where you stand
 						end
 					end
 				end
@@ -2926,17 +2945,11 @@ do
 		if to.Magnitude > 10 or mh.CFrame.LookVector:Dot(to.Unit) < 0.3 then return end   -- only when the M1 actually LANDED
 		last = tick()
 		sdaInjecting = tick() + 0.4
-		_G.VX_INJECT_UNTIL = tick() + 0.4                          -- our A/Q must not trigger other features
-		fireKnit("MovementService", "Dash", "Left", true)         -- the RELIABLE left dash (remote) - always left, instant
-		task.spawn(function()
-			local VIMs = game:GetService("VirtualInputManager")
-			pcall(function() VIMs:SendKeyEvent(true, Enum.KeyCode.A, false, game) end)    -- hold LEFT so the Q keybind also dashes left...
-			task.wait(0.02)
-			pcall(function() VIMs:SendKeyEvent(true, Enum.KeyCode.Q, false, game); task.wait(0.04); VIMs:SendKeyEvent(false, Enum.KeyCode.Q, false, game) end)  -- ...tap Q for you
-			task.wait(0.06)                                                                -- SHORT hold = tight/snappy, no left-drift
-			pcall(function() VIMs:SendKeyEvent(false, Enum.KeyCode.A, false, game) end)
-		end)
-		vxLog("SideDash assist: M1 -> Dash Left + auto Q")
+		_G.VX_INJECT_UNTIL = tick() + 0.4                          -- guard so this dash doesn't trigger other features
+		-- JUST the game's own LEFT dash. One remote, nothing else. No A/Q key spam, no velocity curl,
+		-- no glide, no jump, no teleport - so it can't drift forward. When you M1, you dash LEFT. Period.
+		fireKnit("MovementService", "Dash", "Left", true)
+		vxLog("SideDash assist: M1 -> Dash Left")
 	end
 	-- TRIGGER: your own M1 ANIMATION (every character's ids are in _G.VX_M1_IDS now)
 	local hooked = setmetatable({}, { __mode = "k" })
