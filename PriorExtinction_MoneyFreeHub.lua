@@ -1,4 +1,4 @@
---[[  Money / Free Hub · Prior Extinction  ]]
+--[[  Dream Hub · Prior Extinction  ]]
 
 local __gg = (typeof(getgenv)=="function") and getgenv() or _G
 if __gg.__PRIOR_EXT_HUB then pcall(__gg.__PRIOR_EXT_HUB) end
@@ -54,7 +54,7 @@ local CFG = {
 	SaveDino=false, SaveHP=30, NoSleep=true,
 	AutoFarmPlayer=false, FarmPlayerRange=120, AutoFarmFossil=false, FarmFossilRange=1000000,
 	ESPPlayers=false, ESPCorpses=false, FoodESP=false, FishESP=false, GemESP=false, ESPRange=900, ESPColor="Default",
-	AlertEnabled=false, AlertDino="", AlertRange=350,
+	AlertEnabled=false, AlertDino="", AlertRange=350, CarnMeatTP=false,
 	FullBright=false, NightVision=false, NoDarkWater=true, InfLight=false, UnlockMouse=false,
 	SkinDino="", SkinName="", SkinWet=false, ProgSlot="",
 	Waypoints={}, TPName="", TPX=0, TPY=0, TPZ=0,
@@ -97,7 +97,7 @@ if not (tonumber(CFG.FarmReach) and CFG.FarmReach>=30 and CFG.FarmReach<=120) th
 for _,key in ipairs({
 	"Aimbot","SilentAim","LockOn","BoneProtect","TurnHack","Fly","SpeedHack","Noclip","InfJump",
 	"InfFood","InfWater","InfStam","InfOxygen","SaveDino","AutoFarmPlayer","AutoFarmFossil","AutoFarmGem","AutoPlayBot",
-	"ESPPlayers","ESPCorpses","FoodESP","FishESP","GemESP","AlertEnabled","FullBright","NightVision","NoDarkWater","WaterClear","NoClouds","AlwaysDamage","NoGrabLimit",
+	"ESPPlayers","ESPCorpses","FoodESP","FishESP","GemESP","AlertEnabled","CarnMeatTP","FullBright","NightVision","NoDarkWater","WaterClear","NoClouds","AlwaysDamage","NoGrabLimit",
 	"Float","GodMode","InfLight","UnlockFOV","InfZoom","AntiDrown","WalkWater","AutoClean","AntiFracture","AntiBleed","AntiFall","Invis",
 	"AntiBreakHead","AntiBreakNeck","AntiBreakLeg","AntiBreakTail","AntiBreakTorso","NoSleep","AntiAFK","UnlockMouse","__SpyOn",
 	"AutoClick","AutoEatFood","DebugPanel","LogRemotes","BypassTP","SafeTP",
@@ -144,7 +144,7 @@ local function rootOf(m)
 	return nil
 end
 local function notify(title, text)
-	pcall(function() game:GetService("StarterGui"):SetCore("SendNotification",{Title=title or "Money Hub", Text=text or "", Duration=3}) end)
+	pcall(function() game:GetService("StarterGui"):SetCore("SendNotification",{Title=title or "Dream Hub", Text=text or "", Duration=3}) end)
 end
 local function pressKey(kc)
 	pcall(function() VIM:SendKeyEvent(true, kc, false, game); task.wait(); VIM:SendKeyEvent(false, kc, false, game) end)
@@ -983,7 +983,7 @@ local MF = C("Frame",{Parent=SG, Size=UDim2.fromOffset(650,440), Position=UDim2.
 C("UIScale",{Parent=MF, Scale=tonumber(CFG.UIScale) or 1})  -- scale up for crisp HiDPI / 4K (Settings > UI Scale)
 local TB = C("Frame",{Parent=MF, Size=UDim2.new(1,0,0,46), BackgroundColor3=T.Top, BorderSizePixel=0})
 local accentBar = C("Frame",{Parent=TB, Size=UDim2.new(1,0,0,2), Position=UDim2.new(0,0,1,-2), BackgroundColor3=T.Accent, BorderSizePixel=0})
-C("TextLabel",{Parent=TB, Position=UDim2.fromOffset(16,0), Size=UDim2.new(0,170,1,0), BackgroundTransparency=1, Text="Money / Free Hub", TextColor3=T.Text, TextSize=14, Font=UIFONT, TextXAlignment=Enum.TextXAlignment.Left})
+C("TextLabel",{Parent=TB, Position=UDim2.fromOffset(16,0), Size=UDim2.new(0,170,1,0), BackgroundTransparency=1, Text="Dream Hub", TextColor3=T.Text, TextSize=14, Font=UIFONT, TextXAlignment=Enum.TextXAlignment.Left})
 C("TextLabel",{Parent=TB, Position=UDim2.fromOffset(160,0), Size=UDim2.new(0,170,1,0), BackgroundTransparency=1, Text="| Prior Extinction", TextColor3=T.Accent, TextSize=11, Font=UIFONT, TextXAlignment=Enum.TextXAlignment.Left})
 local chf = C("Frame",{Parent=TB, Size=UDim2.fromOffset(64,28), Position=UDim2.new(1,-74,0.5,-14), BackgroundTransparency=1}); lay(chf,4,Enum.FillDirection.Horizontal)
 local minBtn = C("TextButton",{Parent=chf, Size=UDim2.fromOffset(28,28), BackgroundColor3=T.Panel2, Text="-", TextColor3=T.Sub, TextSize=16, Font=UIFONT, AutoButtonColor=false, BorderSizePixel=0, LayoutOrder=1}); corner(minBtn,3); stroke(minBtn,T.Stroke,1)
@@ -991,7 +991,7 @@ local closeBtn = C("TextButton",{Parent=chf, Size=UDim2.fromOffset(28,28), Backg
 closeBtn.MouseButton1Click:Connect(function() SG.Enabled=false end)
 local Ftr = C("Frame",{Parent=MF, Position=UDim2.new(0,0,1,-20), Size=UDim2.new(1,0,0,20), BackgroundColor3=T.Top, BorderSizePixel=0})
 C("Frame",{Parent=Ftr, Size=UDim2.new(1,0,0,1), BackgroundColor3=T.DarkRed, BorderSizePixel=0})
-C("TextLabel",{Parent=Ftr, Size=UDim2.fromScale(1,1), BackgroundTransparency=1, Text="Money / Free Hub · Prior Extinction · RightShift to toggle", TextColor3=T.Muted, TextSize=10, Font=UIFONT, TextXAlignment=Enum.TextXAlignment.Center})
+C("TextLabel",{Parent=Ftr, Size=UDim2.fromScale(1,1), BackgroundTransparency=1, Text="Dream Hub · Prior Extinction · RightShift to toggle", TextColor3=T.Muted, TextSize=10, Font=UIFONT, TextXAlignment=Enum.TextXAlignment.Center})
 local Bod = C("Frame",{Parent=MF, Position=UDim2.fromOffset(0,46), Size=UDim2.new(1,0,1,-66), BackgroundTransparency=1})
 local Side = C("Frame",{Parent=Bod, Size=UDim2.new(0,158,1,0), BackgroundColor3=T.Top, BorderSizePixel=0})
 C("Frame",{Parent=Bod, Size=UDim2.new(0,1,1,0), Position=UDim2.fromOffset(158,0), BackgroundColor3=T.DarkRed, BorderSizePixel=0})
@@ -1252,7 +1252,7 @@ end
 local Fluent, FWindow, USE_FLUENT = nil, nil, false
 pcall(function()
 	Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
-	FWindow = Fluent:CreateWindow({ Title="Money / Free Hub", SubTitle="Prior Extinction", TabWidth=150, Size=UDim2.fromOffset(580,460), Acrylic=true, Theme="Light", MinimizeKey=Enum.KeyCode.RightShift })
+	FWindow = Fluent:CreateWindow({ Title="Dream Hub", SubTitle="Prior Extinction", TabWidth=150, Size=UDim2.fromOffset(580,460), Acrylic=true, Theme="Light", MinimizeKey=Enum.KeyCode.RightShift })
 end)
 if FWindow then
 	USE_FLUENT = true
@@ -1322,8 +1322,9 @@ end
 do local p=Pages["Survival"]
 	local _,f=mkSec(p,"Food / Water / Stamina",1)
 	mkToggle(f,"INF Food","InfFood",1)
-	mkToggle(f,"INF Water","InfWater",2)
-	mkToggle(f,"INF Stamina","InfStam",3)
+	mkToggle(f,"Carnivore Meat TP (TP to nearest meat/corpse)","CarnMeatTP",2)
+	mkToggle(f,"INF Water","InfWater",3)
+	mkToggle(f,"INF Stamina","InfStam",4)
 	local _,pr=mkSec(p,"Protection",2)
 	mkToggle(pr,"Anti Drown","AntiDrown",1)
 	mkToggle(pr,"Walk on Water","WalkWater",2)
@@ -1532,7 +1533,7 @@ do local p=Pages["Info"]
 		notify("Dump", #out.." lines to console"..(setclip and " + clipboard" or ""))
 	end,3)
 	local _,c=mkSec(p,"Hub",3)
-	mkLabel(c,"Money / Free Hub · Prior Extinction",1)
+	mkLabel(c,"Dream Hub · Prior Extinction",1)
 	mkBtn(c,"Unload Hub",function() if G.__PRIOR_EXT_HUB then G.__PRIOR_EXT_HUB() end end,2)
 end
 if USE_FLUENT then
@@ -1882,6 +1883,58 @@ local function nearbyFood(range)
 	FARM.food={t=tick(), list=out}
 	return out
 end
+-- CARNIVORE MEAT TP: herbivores keep their bar up just eating any plant food-id (plants are everywhere), but a
+-- CARNIVORE needs MEAT. When this is on it finds the NEAREST corpse / meat / fish and teleports you ONTO it so
+-- INF Food's eat then consumes it. Only meat is matched (never plants), and it only moves you when hunger isn't full.
+local MEAT_KW = {"corpse","carcass","carrion","meat","chunk","rotten","flesh","remains","dead","fish","gar","sturgeon","bichir","coelacanth","mawsonia","sawfish","egg","grub","larva","insect","ant"}
+local function isMeatName(n) n=(n or ""):lower(); for _,k in ipairs(MEAT_KW) do if n:find(k,1,true) then return true end end return false end
+local function nearestMeat(range)
+	local me=hrp(); if not me then return nil end
+	local best,bpart,bd=nil,nil,range
+	local cnt=0
+	for _,d in ipairs(WS:GetDescendants()) do
+		cnt+=1; if cnt>4000 then break end
+		local m,part
+		if d:IsA("ProximityPrompt") then
+			local at=((d.ActionText or "").." "..(d.Name or "")):lower()
+			if at:find("investigate") or at:find("eat") or at:find("consume") then
+				local p=d.Parent; part=(p and p:IsA("BasePart") and p) or (p and p:FindFirstChildWhichIsA("BasePart")); m=(p and p:IsA("Model")) and p or (part and part:FindFirstAncestorWhichIsA("Model")) or p
+			end
+		elseif d:IsA("Model") and d~=getMyModel() and not Players:GetPlayerFromCharacter(d) then
+			-- a corpse either NAME-matches meat OR carries PE's corpse markers (DinoType/HintType/CreatedAt)
+			local isCorpse=isMeatName(d.Name)
+			if not isCorpse then pcall(function() isCorpse=(d:GetAttribute("DinoType") or d:GetAttribute("HintType") or d:GetAttribute("CreatedAt"))~=nil end) end
+			if isCorpse then m=d; part=rootOf(d) end
+		end
+		if m and part and part:IsA("BasePart") then local dd=dist(me.Position,part.Position); if dd<bd then best,bpart,bd=m,part,dd end end
+	end
+	return best,bpart,bd
+end
+local carnMeatCd=0
+task.spawn(function() while RUNNING do
+	if CFG.CarnMeatTP and CFG.InfFood and alive() then
+		-- only travel when actually hungry (don't yank you around at full bar)
+		local hungry=true; pcall(function() local s,m=csStats(); if s and m then local h=tonumber(s.Food or s.Hunger); local mh=tonumber(m.Food or m.Hunger or m.MaxFood); if h and mh then hungry = h < mh*0.9 end end end)
+		if hungry and tick()-carnMeatCd>3 then
+			local m,part=nearestMeat(4000)
+			if part then
+				carnMeatCd=tick()
+				if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
+				local np=part.Position; local landY=np.Y+2; pcall(function() if __gg.MH_landY then landY=__gg.MH_landY(np, m) end end)
+				local cc=getMyModel(); local goal=CFrame.new(np.X, landY, np.Z)
+				-- stepped/whitelisted-style move: noclip through, snap, then hold with a BodyPosition so it can't rubber-band
+				local noclip={}; if cc then pcall(function() for _,dd in ipairs(cc:GetDescendants()) do if dd:IsA("BasePart") and dd.CanCollide then dd.CanCollide=false; noclip[#noclip+1]=dd end end end) end
+				pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end end)
+				local r=hrp(); if r then pcall(function() r.AssemblyLinearVelocity=Vector3.zero; r.AssemblyAngularVelocity=Vector3.zero end) end
+				local bp; pcall(function() if r then bp=Instance.new("BodyPosition"); bp.MaxForce=Vector3.new(9e9,9e9,9e9); bp.P=2e4; bp.D=2500; bp.Position=Vector3.new(np.X,landY,np.Z); bp.Parent=r end end)
+				task.wait(0.7)   -- sit on the meat so INF Food's eat consumes it
+				for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end
+				pcall(function() if bp then bp:Destroy() end end)
+			end
+		end
+		task.wait(0.4)
+	else task.wait(0.5) end
+end end)
 task.spawn(function() while RUNNING do
 	if CFG.InfFood and alive() then
 		fakeEat()
@@ -2297,15 +2350,26 @@ local function runFarm(enabledKey, kind, rangeKey)
 						task.wait(0.2)
 						local prompt=part:FindFirstChildWhichIsA("ProximityPrompt")
 						if not prompt then for _,d in ipairs(holder:GetDescendants()) do if d:IsA("ProximityPrompt") then prompt=d; break end end end
-						if prompt and fireprox then
-							pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=1e9 end)
-							pcall(function() fireprox(prompt) end)  -- simulates the prompt's full hold
-						end
-						if FARM.dig and FARM.dig.Parent then pcall(function() fireRemoteMulti(FARM.dig, holder) end) end
 						pending[holder]=part
+						-- HOLD for the node's REAL duration (gems channel ~12s, fossils ~3s). The old 2.5s cap gave up
+						-- before a gem finished = "auto farm doesn't collect". Keep planted with a BodyPosition (no fall),
+						-- fire the prompt ONCE (it auto-holds), AND hold the real E key + listen for Triggered = done.
+						local hold = (kind=="gem") and 12 or 3
+						local done=false
+						local tconn; if prompt then pcall(function() tconn=prompt.Triggered:Connect(function() done=true end) end) end
+						local me=hrp(); local bp; pcall(function() if me then bp=Instance.new("BodyPosition"); bp.MaxForce=Vector3.new(9e9,9e9,9e9); bp.P=2e4; bp.D=2500; bp.Position=me.Position; bp.Parent=me end end)
+						if prompt then pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=1e9; prompt.KeyboardKeyCode=Enum.KeyCode.E; prompt.Enabled=true end) end
+						if prompt and fireprox then pcall(function() fireprox(prompt) end) end
+						pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game) end)   -- hold E the whole channel (backup for no-fireprox)
+						if FARM.dig and FARM.dig.Parent then pcall(function() fireRemoteMulti(FARM.dig, holder) end) end
 						local t0=tick()
-						while CFG[enabledKey] and tick()-t0<2.5 and holder.Parent and part.Parent do task.wait(0.1) end
-						task.wait(0.15)
+						while CFG[enabledKey] and tick()-t0<hold+2 and holder.Parent and part.Parent and not done do task.wait(0.15) end
+						pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game) end)
+						if tconn then pcall(function() tconn:Disconnect() end) end
+						if prompt and fireprox then pcall(function() fireprox(prompt) end) end   -- backup: complete it now
+						pcall(function() if bp then bp:Destroy() end end)
+						if done or not (part and part.Parent) then FARM.count[kind]=(FARM.count[kind] or 0)+1; FARM.tried[holder]=nil end
+						task.wait(0.2)
 					else task.wait(0.6) end
 				else
 					-- STAND-STILL mode (zero movement = the anti-cheat never sees you move): fire prompts remotely, 6/pass.
@@ -2667,5 +2731,5 @@ G.__PRIOR_EXT_HUB = function()
 	saveCfg()
 	G.__PRIOR_EXT_HUB=nil
 end
-notify("Money / Free Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
-print("[Money / Free Hub · Prior Extinction v6.1] Loaded — enemy-only hitbox (never yours), fixed restore camera+controls, BodyVelocity walk-on-water/anti-drown, server-side INF stam, food ESP highlights corpses, teleport farm, anti-injury report-block")
+notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
+print("[Dream Hub · Prior Extinction v6.1] Loaded — enemy-only hitbox (never yours), fixed restore camera+controls, BodyVelocity walk-on-water/anti-drown, server-side INF stam, food ESP highlights corpses, teleport farm, anti-injury report-block")

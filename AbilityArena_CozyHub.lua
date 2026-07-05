@@ -1937,14 +1937,34 @@ hook(RunService.RenderStepped, function()
         if root then pcall(function() root.AssemblyLinearVelocity = Vector3.zero; root.CFrame = _holdCF end) end
     end
 end)
+-- JJS-STYLE BYPASS TELEPORT: an instant snap leaves the SERVER thinking you're still at the old spot for a beat,
+-- so enemies keep hitting your old position ("i teleport but people can still hit me"). Instead we GLIDE there in
+-- speed-capped steps, zeroing velocity every frame and moving the WHOLE model — the server tracks each step, so your
+-- real (server) position actually moves with you. Then we HOLD the destination so it can't rubber-band back.
+local _tpGen = 0
 local function tpTo(cf, holdSec)
     local root = getRoot(); if not (root and cf) then return false end
-    pcall(function()
-        root.AssemblyLinearVelocity  = Vector3.zero
-        root.AssemblyAngularVelocity = Vector3.zero
-        root.CFrame = cf
+    local dest = cf.Position
+    _tpGen = _tpGen + 1; local gen = _tpGen
+    local char = getChar()
+    -- clear any body-movers that would drag you back
+    pcall(function() for _,v in ipairs(root:GetChildren()) do if v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("AlignPosition") or v:IsA("LinearVelocity") or v:IsA("VectorForce") then v:Destroy() end end end)
+    task.spawn(function()
+        local dt, t0 = 1/60, tick()
+        local rot = root.CFrame.Rotation
+        while tick() - t0 < 6 do                      -- glide up to 6s (far pads)
+            if _tpGen ~= gen then return end
+            local r = getRoot(); if not r then break end
+            local to = dest - r.Position; local d = to.Magnitude
+            if d < 3 then break end
+            local step = 140 * dt                     -- 140 studs/sec = fast but per-tick small enough that the server accepts each move
+            local stepCF = CFrame.new(r.Position + to.Unit * math.min(d, step)) * rot
+            pcall(function() r.CFrame = stepCF; r.AssemblyLinearVelocity = Vector3.zero; r.AssemblyAngularVelocity = Vector3.zero end)
+            if char then pcall(function() char:PivotTo(stepCF) end) end
+            dt = RunService.Heartbeat:Wait()
+        end
     end)
-    _holdCF = cf; _holdUntil = tick() + (holdSec or 0.5)
+    _holdCF = cf; _holdUntil = tick() + (holdSec or 1.2)   -- longer hold so the server settles on the new spot
     return true
 end
 local function tpToPlayer(name, behind)
