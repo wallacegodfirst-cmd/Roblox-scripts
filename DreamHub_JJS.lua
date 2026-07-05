@@ -520,8 +520,10 @@ do
 					end
 				end
 				-- the wind-up re-press = the BLACK FLASH + chain extension (suppressed right after a Mode-A feint)
-				if (ScriptEnabled or tick() < burstUntil) and tick() >= bfSuppressUntil then
-					task.delay(delayTime, function() if humanoid.Health > 0 and (ScriptEnabled or tick() < burstUntil) and tick() >= bfSuppressUntil then doBackstab() end end)
+				-- NEVER in "M1 Black Flash" mode: the in-place flash triggers this wind-up anim, and this path was
+				-- firing the full TELEPORT chain on top of it - that was the '1 click = 4 black flashes' + the delay.
+				if Settings.Mode ~= "M1 Black Flash" and (ScriptEnabled or tick() < burstUntil) and tick() >= bfSuppressUntil then
+					task.delay(delayTime, function() if humanoid.Health > 0 and Settings.Mode ~= "M1 Black Flash" and (ScriptEnabled or tick() < burstUntil) and tick() >= bfSuppressUntil then doBackstab() end end)
 				end
 			end
 		end)
@@ -648,7 +650,7 @@ do
 					flashSuppress = tick() + 1.0   -- lock out further flashes for 1s (kills the 4x repeat)
 					_G.VX_SDA_HOLD = tick() + 0.9  -- tell Side Dash Assist to SKIP this swing
 					if _G.VX_BF_DEBUG then print("[DreamHub BF] M1 LANDED on "..tgt.Name.." -> ONE black flash") end
-					task.delay(0.18, function() if Settings.Mode == "M1 Black Flash" then fireFlashInPlace(tgt) end end)  -- swing lands (damage), THEN flash where you stand
+					task.delay(0.1, function() if Settings.Mode == "M1 Black Flash" then fireFlashInPlace(tgt) end end)  -- TIGHT: swing registers, flash right behind it (0.18 felt delayed)
 				end
 			end
 			UIS_M1.InputBegan:Connect(function(input)   -- no gpe bail: the game marks combat clicks processed (same bug that killed Auto Air)
@@ -1392,9 +1394,13 @@ do
 	local LP = Players.LocalPlayer
 	local mode, lastSwing, count, busy = "Off", 0, 0, false
 	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
-	local function act(arg)  -- fire ONLY your character's Activated(arg) when detected ("Down"=slam, "Up"=uptilt); else fall back to all
+	local function act(arg)  -- THE uppercut/slam remote (user capture): <YourChar>Service.RE.Activated:FireServer("Up"/"Down")
 		local svc = vxMyCharSvc()
-		if svc then fireKnit(svc, "Activated", arg) else for _, c in ipairs(CHAR_NAMES) do fireKnit(c .. "Service", "Activated", arg) end end
+		if svc then
+			fireKnit(svc, "Activated", arg)
+		else
+			for _, c in ipairs(CHAR_NAMES) do fireKnit(c .. "Service", "Activated", arg) end   -- char not detected: hit all 21 - only YOURS exists server-side
+		end
 	end
 	local function realM1()  -- a REAL M1 click at screen center: the game's own input converts held-space M1 -> uptilt / airborne falling M1 -> slam
 		local cam = workspace.CurrentCamera; local v = (cam and cam.ViewportSize) or Vector2.new(800, 600)
@@ -1413,40 +1419,18 @@ do
 	local function finisher()
 		busy = true
 		task.spawn(function()
-			_G.VX_INJECT_UNTIL = tick() + 0.8   -- our injected Space/M1 must not re-trigger this (or any other) feature
+			_G.VX_INJECT_UNTIL = tick() + 0.6
+			-- THE REMOTE IS THE MOVE (user capture): <YourChar>Service.RE.Activated:FireServer("Up"/"Down").
+			-- No space holds, no injected clicks, no hops - the server does the launcher itself.
 			if mode == "Down Slam" then
-				note("Down Slam: hop -> falling M1")
-				jump()
-				local c2 = myModel(); local r2 = c2 and c2:FindFirstChild("HumanoidRootPart")
-				local t0 = tick()
-				repeat task.wait(0.03) until not r2 or r2.AssemblyLinearVelocity.Y < 2 or tick() - t0 > 0.6   -- wait for the APEX/fall - the slam window
-				realM1()                                                                 -- airborne M1 while coming down = the game's own DOWN SLAM
-				task.wait(0.07); realM1()                                                -- second tap in case the first was a frame early
-				act("Down")                                                              -- remote as backup
+				note("Down Slam -> Activated('Down')")
+				act("Down")
 			else
-				-- UPTILT (uppercut): the game's own input = SPACE HELD + M1 while grounded. We hold the real key
-				-- (so the game's uptilt check sees it) and CLAMP your upward velocity for the window instead of
-				-- disabling the jump state - disabling it also hid the held-space from the game = no uptilt at all.
-				note("Uppercut: held-space M1")
-				_G.VX_LAUNCHING = tick()
-				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 0.7
-				local c2 = myModel(); local r2 = c2 and c2:FindFirstChild("HumanoidRootPart")
-				task.spawn(function()   -- no visible hop: pin the Y velocity down while space is held
-					local t0 = tick()
-					while tick() - t0 < 0.45 do
-						if r2 then pcall(function() local v = r2.AssemblyLinearVelocity; if v.Y > 2 then r2.AssemblyLinearVelocity = Vector3.new(v.X, 0, v.Z) end end) end
-						task.wait()
-					end
-				end)
-				pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)   -- HOLD the real space key
-				task.wait(0.18)                                                          -- give the game time to register 'jump held'
-				realM1()                                                                 -- held-space M1 = the UPTILT launcher
-				task.wait(0.07); realM1()                                                -- second tap catches the window
-				act("Up")                                                                -- remote as backup
-				task.wait(0.12); pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)  -- release space
+				note("Uppercut -> Activated('Up')")
+				act("Up")
 			end
 			vxLog(mode)
-			task.wait(0.2); busy = false
+			task.wait(0.25); busy = false
 		end)
 	end
 	-- FULL per-character UPPERCUT M1 database (user-captured): every swing of every character's M1 chain,
@@ -2856,30 +2840,32 @@ do
 			pcall(function() VIMy:SendKeyEvent(true, Enum.KeyCode.Two, false, game); task.wait(0.06); VIMy:SendKeyEvent(false, Enum.KeyCode.Two, false, game) end)
 		end)
 	end
-	-- MANUAL "Yuta Black Flash" (user spec): when YOU press 2 as Yuta, the script presses 2 ONE more time
-	-- for you = the double-tap that black-flashes. That's it. No anim detection, no HP gate.
-	local function charIsYuta()
-		local c = myModel(); if not c then return false end
-		local h = c:FindFirstChildOfClass("Humanoid")
-		local hay = string.lower((c.Name or "") .. " " .. (h and h.DisplayName or ""))
-		local mv = c:FindFirstChild("Moveset"); if mv then for _, m in ipairs(mv:GetChildren()) do hay = hay .. " " .. string.lower(m.Name) end end
-		return hay:find("yuta", 1, true) or hay:find("resolute", 1, true) or hay:find("severing", 1, true) or hay:find("true love", 1, true) or hay:find("cursed partner", 1, true)
-	end
-	local UISy = game:GetService("UserInputService")
-	UISy.InputBegan:Connect(function(input)
-		if not manualOn or UISy:GetFocusedTextBox() then return end
-		if input.KeyCode ~= Enum.KeyCode.Two then return end
-		local injK = _G.VX_INJ_KEYS
-		if injK and injK[Enum.KeyCode.Two] and tick() < injK[Enum.KeyCode.Two] then return end   -- that 2 was OUR OWN re-press - don't loop
-		if not charIsYuta() then return end
-		if tick() - last < 1.2 then return end
+	-- MANUAL "Yuta Black Flash" (user spec): when YOUR animator plays rbxassetid://89582140026963 (the
+	-- black-flash-ready anim), the script presses 2 TWICE for you = the flash. No HP gate.
+	local YUTA_BF_ANIM = "89582140026963"
+	local function doubleTapTwo()
+		if tick() - last < 1.4 then return end
 		last = tick()
-		task.delay(0.45, function()   -- your 2 fired Resolute Slash -> the script presses 2 AGAIN = black flash
-			_G.VX_INJECT_UNTIL = tick() + 0.5
-			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Two] = tick() + 0.5
+		_G.VX_INJECT_UNTIL = tick() + 1.2
+		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Two] = tick() + 1.2
+		task.spawn(function()
+			pcall(function() VIMy:SendKeyEvent(true, Enum.KeyCode.Two, false, game); task.wait(0.06); VIMy:SendKeyEvent(false, Enum.KeyCode.Two, false, game) end)
+			task.wait(0.4)
 			pcall(function() VIMy:SendKeyEvent(true, Enum.KeyCode.Two, false, game); task.wait(0.06); VIMy:SendKeyEvent(false, Enum.KeyCode.Two, false, game) end)
 		end)
-	end)
+		if VX_NOTIFY then pcall(function() VX_NOTIFY("Yuta BF: 2 + 2", nil) end) end
+	end
+	local hookedY = setmetatable({}, { __mode = "k" })
+	local function hookSelfY()
+		local m = myModel(); local h = m and m:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
+		if not a or hookedY[a] then return end
+		hookedY[a] = a.AnimationPlayed:Connect(function(track)
+			if not manualOn then return end
+			local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+")
+			if id == YUTA_BF_ANIM then doubleTapTwo() end
+		end)
+	end
+	task.spawn(function() while true do if manualOn then pcall(hookSelfY) end task.wait(0.6) end end)
 	-- AUTO "Yuta Teleport Kill Black Flash": fully automatic - hunt the nearest LOW-HP enemy and finish them.
 	local function nearestLowEnemy(maxD)
 		local mh = getHRP(myModel()); if not mh then return nil end
@@ -3814,12 +3800,27 @@ do
 		local r = myR(); if r and ghostRoot then pcall(function() ghost:PivotTo(r.CFrame) end) end
 		pcall(function() workspace.CurrentCamera.CameraSubject = h or ghostRoot end)   -- your camera follows the ghost
 	end
+	local attackUntil = 0   -- while attacking from the ghost, the real body rides AT the ghost (unanchored) so the hit comes from where YOU are
+	-- GHOST CAN FIGHT: M1 / Q dash / 1-4 / R / G / F block while ghosting -> blink the real body to the ghost,
+	-- let the attack come out there, then re-freeze at the ghost's spot.
+	local ATTACK_KEYS = { [Enum.KeyCode.One]=1,[Enum.KeyCode.Two]=1,[Enum.KeyCode.Three]=1,[Enum.KeyCode.Four]=1,[Enum.KeyCode.R]=1,[Enum.KeyCode.G]=1,[Enum.KeyCode.F]=1,[Enum.KeyCode.Q]=1 }
+	UIS.InputBegan:Connect(function(input)
+		if not on or UIS:GetFocusedTextBox() then return end
+		local isAtk = input.UserInputType == Enum.UserInputType.MouseButton1 or (input.KeyCode and ATTACK_KEYS[input.KeyCode])
+		if not isAtk then return end
+		if ghostRoot then freezeCF = ghostRoot.CFrame end   -- the body now freezes WHERE THE GHOST IS (your attack fires from you)
+		attackUntil = tick() + 0.7                          -- unfrozen window so the move actually comes out
+	end)
 	RunService.RenderStepped:Connect(function(dt)
 		if not on then return end
 		local r = myR()
 		if r then
 			if not freezeCF then freezeCF = r.CFrame end   -- capture the freeze point ONCE
-			pcall(function() r.Anchored = true; r.AssemblyLinearVelocity = Vector3.zero; r.AssemblyAngularVelocity = Vector3.zero; r.CFrame = freezeCF end)  -- HARD pin: the real body never moves from where you froze
+			if tick() < attackUntil then
+				pcall(function() r.Anchored = false; r.CFrame = freezeCF; r.AssemblyLinearVelocity = Vector3.zero end)   -- attack window: body live at the ghost spot so hits register
+			else
+				pcall(function() r.Anchored = true; r.AssemblyLinearVelocity = Vector3.zero; r.AssemblyAngularVelocity = Vector3.zero; r.CFrame = freezeCF end)  -- HARD pin otherwise
+			end
 		end
 		if not (ghost and ghost.Parent and ghostRoot) then makeGhost(); if not ghostRoot then return end end
 		local cam = workspace.CurrentCamera; if not cam then return end
@@ -4507,65 +4508,55 @@ local Library do
             end
 
             local Gui = self.Instance
-
-            local Resizing = false
-            local Start = UDim2New()
-            local Delta = UDim2New()
-            local ResizeMax = Gui.Parent.AbsoluteSize - Gui.AbsoluteSize
-
-            local ResizeButton = Instances:Create("ImageButton", {
-				Parent = Gui,
-                Image = "rbxassetid://",
-				AnchorPoint = Vector2New(1, 1),
-				BorderColor3 = FromRGB(0, 0, 0),
-				Size = UDim2New(0, 22, 0, 22),
-				Position = UDim2New(1, -2, 1, -2),
-                Name = "\0",
-				BorderSizePixel = 0,
-				BackgroundTransparency = 1,
-                ZIndex = 5,
-				AutoButtonColor = false,
-                Visible = true,
-			})  -- INVISIBLE corner grip (22px hit area): drag the bottom-right corner to scale the menu; no yellow square
-
-            local InputChanged
-
-            ResizeButton:Connect("InputBegan", function(Input)
-                if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
-
-                    Resizing = true
-
-                    Start = Gui.Size - UDim2New(0, Input.Position.X, 0, Input.Position.Y)
-
-                    if InputChanged then
-                        return
+            -- INVISIBLE grips in ALL 4 CORNERS (24px hit areas): drag ANY corner to scale the menu up/down.
+            local Corners = {
+                { Pos = UDim2New(1, -2, 1, -2), Anchor = Vector2New(1, 1), Sign = Vector2New(1, 1) },    -- bottom-right
+                { Pos = UDim2New(0, 2, 1, -2),  Anchor = Vector2New(0, 1), Sign = Vector2New(-1, 1) },   -- bottom-left
+                { Pos = UDim2New(1, -2, 0, 2),  Anchor = Vector2New(1, 0), Sign = Vector2New(1, -1) },   -- top-right
+                { Pos = UDim2New(0, 2, 0, 2),   Anchor = Vector2New(0, 0), Sign = Vector2New(-1, -1) },  -- top-left
+            }
+            for _, C in ipairs(Corners) do
+                local Grip = Instances:Create("ImageButton", {
+                    Parent = Gui,
+                    Image = "rbxassetid://",
+                    AnchorPoint = C.Anchor,
+                    BorderColor3 = FromRGB(0, 0, 0),
+                    Size = UDim2New(0, 24, 0, 24),
+                    Position = C.Pos,
+                    Name = "\0",
+                    BorderSizePixel = 0,
+                    BackgroundTransparency = 1,
+                    ZIndex = 5,
+                    AutoButtonColor = false,
+                    Visible = true,
+                })
+                local Resizing = false
+                local StartMouse, StartSize
+                local InputChanged
+                Grip:Connect("InputBegan", function(Input)
+                    if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+                        Resizing = true
+                        StartMouse = Input.Position
+                        StartSize = Gui.AbsoluteSize
+                        if InputChanged then return end
+                        InputChanged = Input.Changed:Connect(function()
+                            if Input.UserInputState == Enum.UserInputState.End then
+                                Resizing = false
+                                InputChanged:Disconnect()
+                                InputChanged = nil
+                            end
+                        end)
                     end
-
-                    InputChanged = Input.Changed:Connect(function()
-                        if Input.UserInputState == Enum.UserInputState.End then
-                            Resizing = false
-
-                            InputChanged:Disconnect()
-                            InputChanged = nil
-                        end
-                    end)
-                end
-            end)
-
-            Library:Connect(UserInputService.InputChanged, function(Input)
-                if Input.UserInputType == Enum.UserInputType.MouseMovement or Input.UserInputType == Enum.UserInputType.Touch then
-                    if Resizing then
-                        ResizeMax = Maximum or Gui.Parent.AbsoluteSize - Gui.AbsoluteSize
-
-                        Delta = Start + UDim2New(0, Input.Position.X, 0, Input.Position.Y)
-                        Delta = UDim2New(0, math.clamp(Delta.X.Offset, Minimum.X, ResizeMax.X), 0, math.clamp(Delta.Y.Offset, Minimum.Y, ResizeMax.Y))
-
-                        Tween:Create(Gui, TweenInfo.new(0.17, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = Delta}, true)
+                end)
+                Library:Connect(UserInputService.InputChanged, function(Input)
+                    if Resizing and (Input.UserInputType == Enum.UserInputType.MouseMovement or Input.UserInputType == Enum.UserInputType.Touch) then
+                        local D = Input.Position - StartMouse
+                        local W = math.clamp(StartSize.X + D.X * C.Sign.X, Minimum.X, (Maximum and Maximum.X) or 9999)
+                        local H = math.clamp(StartSize.Y + D.Y * C.Sign.Y, Minimum.Y, (Maximum and Maximum.Y) or 9999)
+                        Gui.Size = UDim2New(0, W, 0, H)
                     end
-                end
-            end)
-
-            return Resizing
+                end)
+            end
         end
 
         Instances.OnHover = function(self, Function)
