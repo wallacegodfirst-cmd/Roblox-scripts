@@ -2517,6 +2517,127 @@ do
 end
 
 -- ============================================================
+-- MODULE: MAHORAGA SAFE TP + AUTO EARTHQUAKE + AUTO KILL-EMOTE
+-- ============================================================
+do
+	local Players = game:GetService("Players")
+	local RS = game:GetService("ReplicatedStorage")
+	local LP = Players.LocalPlayer
+	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
+	local function myHRP() local m = myModel(); return m and m:FindFirstChild("HumanoidRootPart") end
+	local function emoteRE(name)
+		local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
+		local s = k and k:FindFirstChild("EmoteService"); local re = s and s:FindFirstChild("RE"); return re and re:FindFirstChild(name)
+	end
+
+	-- ---------- MAHORAGA SAFE TP ----------
+	-- When ANY enemy summons Mahoraga (the model appears, or they play the Mahoraga summon anim), bolt
+	-- straight UP out of harm's way. Mahoraga adapts to attacks + its wheel hits hard - getting airborne
+	-- and far is the safe play.
+	local mahoOn, mahoCd = false, 0
+	local MAHO_ANIM = { ["127843796051633"] = true }  -- Mahoraga summon/cast id (from the domain-cast capture)
+	local function mahoNameHit(n) n = n:lower(); return n:find("mahoraga") or n:find("mahoro") or n:find("divine") and n:find("general") end
+	local function scanMahoraga()  -- a Mahoraga model present in the world near you
+		local hrp = myHRP(); if not hrp then return false end
+		local function chkList(parent)
+			if not parent then return false end
+			for _, m in ipairs(parent:GetChildren()) do
+				if m:IsA("Model") and mahoNameHit(m.Name) then
+					local r = m:FindFirstChild("HumanoidRootPart") or m:FindFirstChildWhichIsA("BasePart")
+					if r and (r.Position - hrp.Position).Magnitude <= 260 then return true end
+				end
+			end
+			return false
+		end
+		return chkList(workspace) or chkList(workspace:FindFirstChild("Characters")) or chkList(workspace:FindFirstChild("Summons")) or chkList(workspace:FindFirstChild("Shadows"))
+	end
+	local function mahoEscape()
+		local hrp = myHRP(); if not hrp then return end
+		if VX_NOTIFY then VX_NOTIFY("Mahoraga - teleporting UP (safe)", false) end
+		vxTeleportHard(hrp.Position + Vector3.new(0, 260, 0), 3)   -- straight up + hold, out of Mahoraga's reach
+	end
+	-- anim path: catch the summon the instant an enemy plays it (earlier than the model streaming in)
+	local mahoHooked = setmetatable({}, { __mode = "k" })
+	local function hookMahoAnim(char)
+		if not char or char.Name == LP.Name or char == LP.Character then return end
+		local h = char:FindFirstChildOfClass("Humanoid") or char:FindFirstChildOfClass("AnimationController")
+		local a = h and h:FindFirstChildOfClass("Animator")
+		if a and not mahoHooked[a] then mahoHooked[a] = a.AnimationPlayed:Connect(function(track)
+			if not mahoOn then return end
+			local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+")
+			if id and MAHO_ANIM[id] and tick() - mahoCd > 5 then mahoCd = tick(); mahoEscape() end
+		end) end
+	end
+	task.spawn(function()
+		while true do
+			if mahoOn then
+				local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do hookMahoAnim(m) end end
+				for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then hookMahoAnim(plr.Character) end end
+				if tick() - mahoCd > 5 and scanMahoraga() then mahoCd = tick(); mahoEscape() end   -- model-appearance fallback
+			end
+			task.wait(0.4)
+		end
+	end)
+
+	-- ---------- AUTO EARTHQUAKE ----------
+	-- Spam the game's own Earthquake move remote (needs the Earthquake moveset object as the arg).
+	local quakeOn = false
+	local function quakeRE()
+		local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
+		local s = k and k:FindFirstChild("EarthquakeService"); local re = s and s:FindFirstChild("RE"); return re and re:FindFirstChild("Activated")
+	end
+	local function fireQuake()
+		local m = myModel(); local ms = m and m:FindFirstChild("Moveset"); local eq = ms and ms:FindFirstChild("Earthquake")
+		local re = quakeRE()
+		if re and eq then pcall(function() re:FireServer(eq) end) end
+	end
+	task.spawn(function()
+		while true do
+			if quakeOn then fireQuake(); task.wait(1.4) else task.wait(0.3) end   -- ~1.4s between quakes (respects the move cooldown)
+		end
+	end)
+
+	-- ---------- AUTO KILL-EMOTE ----------
+	-- When a nearby enemy DIES, teleport onto their corpse and play your emote (taunt on the kill),
+	-- then end the emote after a couple seconds.
+	local killEmoteOn, killEmoteSlot, keCd = false, 1, 0
+	local watched = setmetatable({}, { __mode = "k" })   -- humanoid -> Died connection (weak so GC'd)
+	local function doKillEmote(corpseHRP)
+		if tick() - keCd < 1.5 then return end
+		keCd = tick()
+		if corpseHRP then pcall(function() vxTeleportHard(corpseHRP.Position + Vector3.new(0, 3, 0), 1.5) end) end
+		task.delay(0.15, function()
+			local re = emoteRE("Emote"); if re then pcall(function() re:FireServer(killEmoteSlot) end) end
+		end)
+		task.delay(2.8, function()
+			local re2 = emoteRE("EmoteEnd"); if re2 then pcall(function() re2:FireServer() end) end
+		end)
+	end
+	local function watchEnemy(char)
+		if not char or char.Name == LP.Name or char == LP.Character then return end
+		local hum = char:FindFirstChildOfClass("Humanoid"); if not hum or watched[hum] then return end
+		watched[hum] = hum.Died:Connect(function()
+			if not killEmoteOn then return end
+			local mh = myHRP(); local r = char:FindFirstChild("HumanoidRootPart")
+			if mh and r and (r.Position - mh.Position).Magnitude <= 120 then doKillEmote(r) end   -- only taunt a kill that's near you (yours)
+		end)
+	end
+	task.spawn(function()
+		while true do
+			if killEmoteOn then
+				for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then watchEnemy(plr.Character) end end
+				local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do watchEnemy(m) end end
+			end
+			task.wait(0.6)
+		end
+	end)
+
+	MahoTpApi   = { set = function(v) mahoOn = v == true end }
+	AutoQuakeApi = { set = function(v) quakeOn = v == true end }
+	KillEmoteApi = { set = function(v) killEmoteOn = v == true end, setSlot = function(n) killEmoteSlot = tonumber(n) or 1 end }
+end
+
+-- ============================================================
 -- MODULE: JUMP ON HEAD  (teleport above a target's head, play walk then jump animation)
 -- ============================================================
 do
@@ -7684,6 +7805,10 @@ do
     antiSec:Toggle({ Name = "Auto Adapt", Callback = function(b) if AutoAdaptApi then AutoAdaptApi.set(b) end end })
     antiSec:Toggle({ Name = "Auto Domain Adapt", Callback = function(b) if AutoDomainAdaptApi then AutoDomainAdaptApi.set(b) end end })
     antiSec:Toggle({ Name = "Anti Black Hole", Callback = function(b) if AntiBlackHoleApi then AntiBlackHoleApi.set(b) end end })
+    antiSec:Toggle({ Name = "Mahoraga Safe TP (bolt UP on summon)", Callback = function(b) if MahoTpApi then MahoTpApi.set(b) end end })
+    antiSec:Toggle({ Name = "Auto Earthquake", Callback = function(b) if AutoQuakeApi then AutoQuakeApi.set(b) end end })
+    antiSec:Toggle({ Name = "Auto Kill-Emote (emote on kills)", Callback = function(b) if KillEmoteApi then KillEmoteApi.set(b) end end })
+    antiSec:Slider({ Name = "Kill-Emote Slot", Min = 1, Max = 8, Default = 1, Decimals = 0, Callback = function(v) if KillEmoteApi then KillEmoteApi.setSlot(v) end end })
 
     -- ===================== MOVEMENT =====================
     local MovePage = Window:Page({ Name = "Movement", Icon = "94627324690861" })
