@@ -613,21 +613,38 @@ do
 					VirtualInputManager:SendKeyEvent(false, Settings.AbilityKey, false, game)
 				end)
 			end
-			UIS_M1.InputBegan:Connect(function(input, gpe)
-				if gpe then return end
-				if input.UserInputType == Enum.UserInputType.MouseButton1 and Settings.Mode == "M1 Black Flash" and tick() - lastM1 > 0.25 then
-					-- flash ONLY when the M1 actually LANDS: an enemy in melee range, in FRONT of you
-					local mh = getHRP(myCharResolved())
-					local tgt = getNearestEnemy(9)
-					local tr = tgt and getHRP(tgt)
-					if mh and tr then
-						local to = tr.Position - mh.Position
-						if to.Magnitude <= 9 and mh.CFrame.LookVector:Dot(to.Unit) > 0.35 then   -- facing them + close = the M1 connects
-							lastM1 = tick()
-							if _G.VX_BF_DEBUG then print("[DreamHub BF] M1 LANDED on "..tgt.Name.." -> black flash IN PLACE (no TP)") end
-							task.delay(0.18, function() if Settings.Mode == "M1 Black Flash" then fireFlashInPlace(tgt) end end)  -- swing lands (damage), THEN flash where you stand
-						end
-					end
+			local function tryM1Flash()  -- shared by BOTH triggers (click + your M1 anim): flash if the M1 actually lands
+				if Settings.Mode ~= "M1 Black Flash" or tick() - lastM1 < 0.25 then return end
+				if tick() < (_G.VX_INJECT_UNTIL or 0) then return end   -- never fire off our own injected inputs
+				local mh = getHRP(myCharResolved())
+				local tgt = getNearestEnemy(9)
+				local tr = tgt and getHRP(tgt)
+				if not (mh and tr) then return end
+				local to = tr.Position - mh.Position
+				if to.Magnitude <= 9 and mh.CFrame.LookVector:Dot(to.Unit) > 0.35 then   -- facing them + close = the M1 connects
+					lastM1 = tick()
+					_G.VX_SDA_HOLD = tick() + 0.7   -- tell Side Dash Assist to SKIP this swing (its left dash was yanking you out of flash range when both were on)
+					if _G.VX_BF_DEBUG then print("[DreamHub BF] M1 LANDED on "..tgt.Name.." -> black flash IN PLACE (no TP)") end
+					task.delay(0.18, function() if Settings.Mode == "M1 Black Flash" then fireFlashInPlace(tgt) end end)  -- swing lands (damage), THEN flash where you stand
+				end
+			end
+			UIS_M1.InputBegan:Connect(function(input)   -- no gpe bail: the game marks combat clicks processed (same bug that killed Auto Air)
+				if UIS_M1:GetFocusedTextBox() then return end
+				if input.UserInputType == Enum.UserInputType.MouseButton1 then tryM1Flash() end
+			end)
+			-- BACKUP TRIGGER: your own M1 ANIMATION (per-character database) - fires even if the click never reaches us
+			local bfHooked = setmetatable({}, { __mode = "k" })
+			task.spawn(function()
+				while true do
+					if Settings.Mode == "M1 Black Flash" then pcall(function()
+						local m = myCharResolved(); local h = m and m:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
+						if a and not bfHooked[a] then bfHooked[a] = a.AnimationPlayed:Connect(function(track)
+							if Settings.Mode ~= "M1 Black Flash" then return end
+							local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+")
+							if id and _G.VX_M1_IDS and _G.VX_M1_IDS[id] then tryM1Flash() end
+						end) end
+					end) end
+					task.wait(0.6)
 				end
 			end)
 		end
@@ -686,7 +703,7 @@ do
 		setBackDistance = function(v) if type(v) == "number" then Settings.BackDistance = v end end,
 		setLockRange = function(v) if type(v) == "number" then Settings.LockRange = v end end,
 		setKey = function(kc) if typeof(kc) == "EnumItem" then Settings.AbilityKey = kc end end,
-		setMode = function(m) if type(m) == "string" then Settings.Mode = m; backDashStage = 0; chainTarget = nil; if mobileBtn then mobileBtn.Text = mobileLabel() end end end,   -- Teleport / Jump / Side Dash / Back Dash (2-stage E) / M1 Black Flash (M1 fires the chain)
+		setMode = function(m) if type(m) == "string" then Settings.Mode = m; _G.VX_M1BF_ON = (m == "M1 Black Flash"); backDashStage = 0; chainTarget = nil; if mobileBtn then mobileBtn.Text = mobileLabel() end end end,   -- Teleport / Jump / Side Dash / Back Dash (2-stage E) / M1 Black Flash (M1 fires the chain)
 		setFeintMode = function(m) feintMode = (m == "BF" or m == "M1" or m == "Moves") and m or "Off"; bfCount = 0; m1FeintCount = 0; bfSuppressUntil = 0 end,  -- Off / BF / M1 / Moves
 		setFeintBFStop = function(n) feintBFStop = tonumber(n) or 2 end,                  -- Mode A: press R after this many black flashes
 		setFeintM1Count = function(n) feintM1Count = tonumber(n) or 2 end,                -- Mode B: press R after this many of your M1s
@@ -831,6 +848,18 @@ end
 -- whitelisting every frame. "Instant" snaps straight there in one whitelisted jump (optional).
 local VX_TP_METHOD = "Glide"
 
+local function vxTpToast(msg)  -- visible red warning when a teleport FAILS (VX_NOTIFY isn't built yet at this point in the file)
+	pcall(function()
+		local g = Instance.new("ScreenGui"); g.Name = "\0"; g.ResetOnSpawn = false; g.DisplayOrder = 99999
+		g.Parent = (gethui and gethui()) or game:GetService("CoreGui")
+		local l = Instance.new("TextLabel"); l.Size = UDim2.fromOffset(420, 30); l.Position = UDim2.new(0.5, -210, 0, 64)
+		l.BackgroundColor3 = Color3.fromRGB(140, 30, 30); l.BackgroundTransparency = 0.15; l.BorderSizePixel = 0
+		l.Font = Enum.Font.GothamBold; l.TextSize = 14; l.TextColor3 = Color3.fromRGB(255, 255, 255); l.Text = msg; l.Parent = g
+		local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 8); c.Parent = l
+		task.delay(4, function() pcall(function() g:Destroy() end) end)
+	end)
+end
+
 -- HARDENED teleport for FAR spots that a one-frame snap gets set back on: glide there in whitelisted STEPS
 -- (each step is small enough to stay under the anti-cheat's per-tick distance limit) then HOLD + re-whitelist.
 local function vxTeleportHard(dest, holdTime)
@@ -876,6 +905,22 @@ local function vxTeleportHard(dest, holdTime)
 			task.wait(0.03)
 		end
 		if vxTeleGen == gen and hum then pcall(function() hum.PlatformStand = false end) end
+		-- SETBACK DETECTOR: if we did NOT end up at the spot, retry once with an instant whitelisted snap,
+		-- and if that ALSO fails, show WHY on screen (whitelist remote gone = the game updated its anti-cheat).
+		task.wait(0.15)
+		if vxTeleGen ~= gen then return end
+		local cEnd = myChar(); local hEnd = cEnd and cEnd:FindFirstChild("HumanoidRootPart")
+		if hEnd and (hEnd.Position - dest).Magnitude > 15 then
+			vxGlide(dest, nil, 2)   -- retry: one instant snap + 2s hold
+			task.delay(2.4, function()
+				local c3 = myChar(); local h3 = c3 and c3:FindFirstChild("HumanoidRootPart")
+				if h3 and (h3.Position - dest).Magnitude > 15 then
+					local re = vxResolveAC()
+					vxTpToast(re and "TP set back by anti-cheat - lower TP Speed & retry" or "TP whitelist remote GONE - game updated, send F9 print")
+					print("[DreamHub TP] FAILED to hold destination. whitelist remote:", re and re:GetFullName() or "NOT FOUND (game update - run Print TP Remote)")
+				end
+			end)
+		end
 	end)
 end
 
@@ -1251,7 +1296,7 @@ do
 	local slots = { nil, nil, nil }
 	local SPOTS = {  -- user-saved coordinate spots (ordered so the dropdown keeps this order)
 		{ "Main Map", Vector3.new(-16.2, 24.4, 14.1) },
-		{ "Leaderboard (who's better)", Vector3.new(51.8, 23.6, -96.0) },
+		{ "Leaderboard", Vector3.new(51.8, 23.6, -96.0) },
 		{ "Cute", Vector3.new(261.7, 61.8, 467.6) },
 		{ "Green screen", Vector3.new(292.8, 23.7, 169.2) },
 		{ "Mall", Vector3.new(76.4, -60.2, -262.6) },
@@ -1365,7 +1410,37 @@ do
 			task.wait(0.2); busy = false
 		end)
 	end
-	-- TRIGGER: your own M1 ANIMATION (every character - full per-char database in _G.VX_M1_IDS)
+	-- FULL per-character UPPERCUT M1 database (user-captured): every swing of every character's M1 chain,
+	-- so the 3-swing count works on ALL of them. The old DB only had SOME swings per character -> the count
+	-- never reached 3 on most characters ('auto uppercut/downslam no work').
+	-- NOT captured yet (uppercut coming soon): Crow (Mei Mei), Mangaka, Black Death, Disaster Plants.
+	local UPPERCUT_M1 = {
+		-- Vessel                Gojo                    Restless
+		"95295463826732","105077924973072","124862357369335","134243365075812",
+		"127851700400958","72548435296350","84547415708554",
+		"94588892125071","97868312130612","140588454098230","109299799610861",
+		-- Ten Shadows           Perfection              Blood Main
+		"75337033003776","138489871864252","96185406489877",
+		"126277739156443","99710481887795","121322029260156","98845475810982",
+		"119042572747325",
+		-- Switcher              Defense Attorney        Cursed Part (Yuta)
+		"96327114254575","107029561762376","117831239064143",
+		"133936641185614","122573730331631","82400997593751","115586282387431",
+		"133240987753043","130806585141471","131967150738931","73456086297777",
+		-- Puppet Master         Head of Hei             Salary Man
+		"98783064085844","85148168523745","108686045412945",
+		"101283990868172","108708446862011","77583711129628","116910683335467",
+		"84359513001979","79436586236026","102285403332509","78540777177847",
+		-- True Cannon           Locust                  Star Rage             Lucky Coward
+		"139479927693015","85068785050521","120133391090244","79086910454958","108027796023968","138196552148011",
+		"131909724908049","72575786212990","119248903710146",
+		"133447840605824","113963875117859","106282708121342",
+	}
+	local COMBO_IDS = {}
+	for _, id in ipairs(UPPERCUT_M1) do COMBO_IDS[id] = true end
+	if _G.VX_M1_IDS then for id in pairs(_G.VX_M1_IDS) do COMBO_IDS[id] = true end end   -- merge with the master DB (never clobber)
+	for id in pairs(COMBO_IDS) do if _G.VX_M1_IDS then _G.VX_M1_IDS[id] = true end end   -- and feed the new ids BACK so every module sees them
+	-- TRIGGER: your own M1 ANIMATION (every character - the merged full database)
 	local hooked = setmetatable({}, { __mode = "k" })
 	local function hookSelf()
 		local m = myModel(); local h = m and m:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
@@ -1374,7 +1449,7 @@ do
 			if mode == "Off" or busy then return end
 			if tick() < (_G.VX_INJECT_UNTIL or 0) then return end   -- an anim from OUR injected finisher M1 must not count as a combo hit
 			local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+")
-			if not (id and _G.VX_M1_IDS and _G.VX_M1_IDS[id]) then return end
+			if not (id and COMBO_IDS[id]) then return end
 			local now = tick()
 			if now - lastSwing > 1.4 then count = 0 end   -- combo dropped -> restart the count
 			lastSwing = now; count = count + 1
@@ -3249,6 +3324,8 @@ do
 		if tick() < sdaInjecting then return end                   -- never chain off our own injected inputs
 		if tick() - (_G.VX_LAUNCHING or 0) < 0.3 then return end   -- not during an uppercut launch
 		if tick() < (_G.VX_BUSY or 0) then return end              -- not during an Auto Air sequence
+		if _G.VX_M1BF_ON then return end                           -- M1 Black Flash mode is on: BF owns every landed M1 - dashing left mid-flash was yanking you out of range
+		if tick() < (_G.VX_SDA_HOLD or 0) then return end          -- (belt & suspenders: BF claimed this exact swing)
 		local mh = getHRP(myModel()); if not mh then return end
 		local tgt = nearestEnemy(10); local tr = tgt and getHRP(tgt)
 		if not tr then return end
@@ -4732,7 +4809,7 @@ local Library do
                     AutoButtonColor = false,
                     Size = UDim2New(0, 14, 0, 14),
                     BorderSizePixel = 0,
-                    TextSize = 14,
+                    TextSize = 15,
                     BackgroundColor3 = FromRGB(164, 229, 255)
                 })
 
@@ -4801,7 +4878,7 @@ local Library do
                     Position = UDim2New(0, 6, 0, 6),
                     Size = UDim2New(1, -12, 1, -40),
                     BorderSizePixel = 0,
-                    TextSize = 14,
+                    TextSize = 15,
                     BackgroundColor3 = FromRGB(164, 229, 255)
                 })
 
@@ -4891,7 +4968,7 @@ local Library do
                     Position = UDim2New(0, 6, 1, -6),
                     Size = UDim2New(1, -12, 0, 18),
                     BorderSizePixel = 0,
-                    TextSize = 14,
+                    TextSize = 15,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
 
@@ -5201,7 +5278,7 @@ local Library do
                     Size = UDim2New(0, 0, 1, 0),
                     BorderSizePixel = 0,
                     AutomaticSize = Enum.AutomaticSize.X,
-                    TextSize = 12,
+                    TextSize = 13,
                     BackgroundColor3 = FromRGB(30, 34, 34)
                 })  Items["KeyButton"]:AddToTheme({BackgroundColor3 = "Element"})
 
@@ -5269,7 +5346,7 @@ local Library do
                     BackgroundTransparency = 1,
                     Size = UDim2New(1, 0, 0, 20),
                     BorderSizePixel = 0,
-                    TextSize = 14,
+                    TextSize = 15,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
 
@@ -5297,7 +5374,7 @@ local Library do
                     BackgroundTransparency = 1,
                     Size = UDim2New(1, 0, 0, 20),
                     BorderSizePixel = 0,
-                    TextSize = 14,
+                    TextSize = 15,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
 
@@ -5312,7 +5389,7 @@ local Library do
                     BackgroundTransparency = 1,
                     Size = UDim2New(1, 0, 0, 20),
                     BorderSizePixel = 0,
-                    TextSize = 14,
+                    TextSize = 15,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
             end
@@ -5686,7 +5763,7 @@ local Library do
                     Position = UDim2New(0, Icon and 24 or 0, 0.5, 0),
                     BorderSizePixel = 0,
                     AutomaticSize = Enum.AutomaticSize.X,
-                    TextSize = 14,
+                    TextSize = 15,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
             end
@@ -5766,7 +5843,7 @@ local Library do
                     AnchorPoint = Vector2New(0.5, 0.5),
                     Position = UDim2New(0.5, 0, 0.5, 0),
                     BorderColor3 = FromRGB(0, 0, 0),
-                    Size = UDim2New(0, 798, 0, 599),
+                    Size = UDim2New(0, 920, 0, 665),
                     BorderSizePixel = 0,
                     BackgroundColor3 = FromRGB(16, 18, 18)
                 })  Items["MainFrame"]:AddToTheme({BackgroundColor3 = "Background"})
@@ -5883,7 +5960,7 @@ local Library do
                     Position = UDim2New(0, 14, 0, 36),
                     BorderColor3 = FromRGB(0, 0, 0),
                     AutomaticSize = Enum.AutomaticSize.X,
-                    TextSize = 13,
+                    TextSize = 14,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
 
@@ -5971,7 +6048,7 @@ local Library do
                     Position = UDim2New(0, 10, 0, 8),
                     BorderColor3 = FromRGB(0, 0, 0),
                     AutomaticSize = Enum.AutomaticSize.X,
-                    TextSize = 12,
+                    TextSize = 13,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
 
@@ -5987,7 +6064,7 @@ local Library do
                     Position = UDim2New(0, 10, 0, 23),
                     BorderSizePixel = 0,
                     AutomaticSize = Enum.AutomaticSize.X,
-                    TextSize = 12,
+                    TextSize = 13,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
 
@@ -6095,7 +6172,7 @@ local Library do
                     BackgroundTransparency = 1,
                     Size = UDim2New(0, 200, 0, 30),
                     BorderSizePixel = 0,
-                    TextSize = 14,
+                    TextSize = 15,
                     BackgroundColor3 = FromRGB(21, 24, 24)
                 })  Items["Inactive"]:AddToTheme({BackgroundColor3 = "Inline"})
 
@@ -6140,7 +6217,7 @@ local Library do
                     Position = UDim2New(0, 38, 0.5, 0),
                     BorderSizePixel = 0,
                     AutomaticSize = Enum.AutomaticSize.X,
-                    TextSize = 14,
+                    TextSize = 15,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
 
@@ -6280,7 +6357,7 @@ local Library do
                     BorderSizePixel = 0,
                     BorderColor3 = FromRGB(0, 0, 0),
                     AutomaticSize = Enum.AutomaticSize.X,
-                    TextSize = 12,
+                    TextSize = 13,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
             end
@@ -6317,7 +6394,7 @@ local Library do
                     BorderSizePixel = 0,
                     BorderColor3 = FromRGB(0, 0, 0),
                     AutomaticSize = Enum.AutomaticSize.X,
-                    TextSize = 14,
+                    TextSize = 15,
                     BackgroundColor3 = FromRGB(30, 34, 34)
                 })  Items["Inactive"]:AddToTheme({BackgroundColor3 = "Element"})
 
@@ -6510,7 +6587,7 @@ local Library do
                     Position = UDim2New(0, 35, 0, 12),
                     BorderSizePixel = 0,
                     AutomaticSize = Enum.AutomaticSize.X,
-                    TextSize = 14,
+                    TextSize = 15,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
 
@@ -6567,7 +6644,7 @@ local Library do
                     BackgroundTransparency = 1,
                     Size = UDim2New(1, 0, 0, 16),
                     BorderSizePixel = 0,
-                    TextSize = 14,
+                    TextSize = 15,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
 
@@ -6584,7 +6661,7 @@ local Library do
                     Position = UDim2New(0, 0, 0.5, 0),
                     BorderSizePixel = 0,
                     AutomaticSize = Enum.AutomaticSize.X,
-                    TextSize = 14,
+                    TextSize = 15,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
 
@@ -6783,7 +6860,7 @@ local Library do
                     AutoButtonColor = false,
                     Size = UDim2New(1, 0, 0, 25),
                     BorderSizePixel = 0,
-                    TextSize = 14,
+                    TextSize = 15,
                     BackgroundColor3 = FromRGB(30, 34, 34)
                 })  Items["Button"]:AddToTheme({BackgroundColor3 = "Element"})
 
@@ -6874,7 +6951,7 @@ local Library do
                     Size = UDim2New(0, 0, 0, 15),
                     BorderSizePixel = 0,
                     AutomaticSize = Enum.AutomaticSize.X,
-                    TextSize = 14,
+                    TextSize = 15,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
 
@@ -6891,7 +6968,7 @@ local Library do
                     Position = UDim2New(1, 0, 0, 0),
                     BorderSizePixel = 0,
                     AutomaticSize = Enum.AutomaticSize.X,
-                    TextSize = 14,
+                    TextSize = 15,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
 
@@ -7088,7 +7165,7 @@ local Library do
                     Position = UDim2New(0, 0, 0.5, 0),
                     BorderSizePixel = 0,
                     AutomaticSize = Enum.AutomaticSize.X,
-                    TextSize = 14,
+                    TextSize = 15,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
 
@@ -7104,7 +7181,7 @@ local Library do
                     Position = UDim2New(1, 0, 0.5, 0),
                     Size = UDim2New(0, 110, 0, 25),
                     BorderSizePixel = 0,
-                    TextSize = 14,
+                    TextSize = 15,
                     BackgroundColor3 = FromRGB(30, 34, 34)
                 })  Items["RealDropdown"]:AddToTheme({BackgroundColor3 = "Element"})
 
@@ -7126,7 +7203,7 @@ local Library do
                     BackgroundTransparency = 1,
                     Position = UDim2New(0, 6, 0.5, 0),
                     BorderSizePixel = 0,
-                    TextSize = 12,
+                    TextSize = 13,
                     TextXAlignment = Enum.TextXAlignment.Left,
                     TextTruncate = Enum.TextTruncate.AtEnd,
                     BackgroundColor3 = FromRGB(255, 255, 255)
@@ -7337,7 +7414,7 @@ local Library do
                     Size = UDim2New(1, 0, 0, 25),
                     BorderSizePixel = 0,
                     AutomaticSize = Enum.AutomaticSize.X,
-                    TextSize = 14,
+                    TextSize = 15,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })  OptionButton:AddToTheme({BackgroundColor3 = "Accent"})
 
@@ -7496,7 +7573,7 @@ local Library do
                     TextXAlignment = Enum.TextXAlignment.Left,
                     TextWrapped = true,
                     AutomaticSize = Enum.AutomaticSize.Y,
-                    TextSize = 14,
+                    TextSize = 15,
                     BackgroundColor3 = FromRGB(255, 255, 255)
                 })
 
@@ -7630,7 +7707,7 @@ local Library do
                     PlaceholderColor3 = FromRGB(190, 196, 202),
                     TextXAlignment = Enum.TextXAlignment.Left,
                     PlaceholderText = Textbox.Placeholder,
-                    TextSize = 14,
+                    TextSize = 15,
                     BackgroundColor3 = FromRGB(30, 34, 34)
                 })  Items["Input"]:AddToTheme({BackgroundColor3 = "Element"})
 
@@ -7941,12 +8018,12 @@ do
     bfSec:Dropdown({ Name = "Auto Feint", Items = { "Off", "Feint Black Flash", "Feint M1", "Feint Moves" }, Default = "Off", Callback = function(v)
         if ChainApi then ChainApi.setFeintMode(v == "Feint Black Flash" and "BF" or (v == "Feint M1" and "M1" or (v == "Feint Moves" and "Moves" or "Off"))) end
     end })
-    bfSec:Dropdown({ Name = "Stop After (flashes)", Items = { "1", "2", "3", "4" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintBFStop(v) end end })
-    bfSec:Dropdown({ Name = "Feint After (M1s)", Items = { "1", "2", "3" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintM1Count(v) end end })
+    bfSec:Dropdown({ Name = "Stop After", Items = { "1", "2", "3", "4" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintBFStop(v) end end })
+    bfSec:Dropdown({ Name = "Feint After", Items = { "1", "2", "3" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintM1Count(v) end end })
     bfSec:Dropdown({ Name = "Move After Feint", Items = { "1", "2", "3", "4" }, Default = "1", Callback = function(v) if ChainApi then ChainApi.setFeintMove(v) end end })
-    bfSec:Toggle({ Name = "Feint Abilities (1-4 -> R)", Default = false, Callback = function(b) if ChainApi and ChainApi.setFeintMoves then ChainApi.setFeintMoves(b) end end })
-    bfSec:Toggle({ Name = "Aim Assist (face enemy on every move)", Default = false, Callback = function(b) if AimAssistApi then AimAssistApi.set(b) end end })
-    bfSec:Toggle({ Name = "Yuta Black Flash (your M1 -> flash)", Default = false, Callback = function(b) if YutaBFApi then YutaBFApi.setManual(b) end end })
+    bfSec:Toggle({ Name = "Feint Abilities", Default = false, Callback = function(b) if ChainApi and ChainApi.setFeintMoves then ChainApi.setFeintMoves(b) end end })
+    bfSec:Toggle({ Name = "Aim Assist", Default = false, Callback = function(b) if AimAssistApi then AimAssistApi.set(b) end end })
+    bfSec:Toggle({ Name = "Yuta Black Flash", Default = false, Callback = function(b) if YutaBFApi then YutaBFApi.setManual(b) end end })
     bfSec:Slider({ Name = "Cooldown", Min = 0.1, Max = 1, Default = 0.45, Decimals = 0.01, Suffix = "s", Callback = function(v) if BFApi then BFApi.SetCooldown(v) end end })
     bfSec:Toggle({ Name = "Mobile BF Button", Default = false, Callback = function(b)   -- phone: floating tap button that fires the black flash for the current mode
         if ChainApi then ChainApi.setMobile(b) end
@@ -7963,15 +8040,15 @@ do
 
     local skSub = CombatPage:SubPage({ Name = "Skills", Columns = 2 })
     local skSec = skSub:Section({ Name = "Skills & M1", Side = 1 })
-    skSec:Toggle({ Name = "Gojo TP Back (mid-M1 auto R)", Callback = function(b) if GojoTpApi then GojoTpApi.set(b) end end })
-    skSec:Toggle({ Name = "Reversal Red (press 3 -> R)", Callback = function(b) if ReversalRedApi then ReversalRedApi.set(b) end end })
+    skSec:Toggle({ Name = "Gojo TP Back", Callback = function(b) if GojoTpApi then GojoTpApi.set(b) end end })
+    skSec:Toggle({ Name = "Reversal Red", Callback = function(b) if ReversalRedApi then ReversalRedApi.set(b) end end })
     skSec:Button({ Name = "Rika Down Slam", Callback = function()
         local chs = workspace:FindFirstChild("Characters"); local ch = (chs and chs:FindFirstChild(LocalPlayer.Name)) or LocalPlayer.Character
         local mv = ch and ch:FindFirstChild("Moveset"); local slam = mv and mv:FindFirstChild("Rika Slam")
         if slam then fireKnit("RikaSlamService", "Activated", slam) elseif VX_NOTIFY then VX_NOTIFY("No 'Rika Slam' in your Moveset", false) end
     end })
     local ultSec = skSub:Section({ Name = "Ults", Side = 2 })
-    ultSec:Toggle({ Name = "Crow Ult (G)", Callback = function(b) if CrowUltApi then CrowUltApi.set(b) end end })
+    ultSec:Toggle({ Name = "Crow Ult", Callback = function(b) if CrowUltApi then CrowUltApi.set(b) end end })
     ultSec:Toggle({ Name = "Crow Lock On", Callback = function(b) if CrowHitApi then CrowHitApi.set(b) end end })
     ultSec:Toggle({ Name = "Head of Hei Ult", Callback = function(b) if HeadUltApi then HeadUltApi.set(b) end end })
     ultSec:Slider({ Name = "Hei Ult Timing", Min = 0.05, Max = 0.6, Default = 0.26, Decimals = 0.01, Suffix = "s", Callback = function(v) if HeadUltApi and HeadUltApi.setLead then HeadUltApi.setLead(v) end end })
@@ -7992,7 +8069,7 @@ do
     antiSec:Toggle({ Name = "Anti-Domain", Callback = function(b) if AntiDomainApi then AntiDomainApi.set(b) end end })
     antiSec:Dropdown({ Name = "Domain React", Items = { "Safe Teleport", "To User + Hit" }, Default = "Safe Teleport", Callback = function(v) if AntiDomainApi then AntiDomainApi.setMode(v) end end })
     antiSec:Toggle({ Name = "Anti Black Hole", Callback = function(b) if AntiBlackHoleApi then AntiBlackHoleApi.set(b) end end })
-    antiSec:Toggle({ Name = "Mahoraga Safe TP (bolt UP on summon)", Callback = function(b) if MahoTpApi then MahoTpApi.set(b) end end })
+    antiSec:Toggle({ Name = "Mahoraga Safe TP", Callback = function(b) if MahoTpApi then MahoTpApi.set(b) end end })
 
     -- ===================== AUTO (all the automation toggles in one tab) =====================
     local AutoPage = Window:Page({ Name = "Auto", Icon = "136879043989014" })
@@ -8002,14 +8079,15 @@ do
     acSec:Toggle({ Name = "Locked Only", Callback = function(b) if CounterApi then CounterApi.setLockedOnly(b) end end })
     acSec:Toggle({ Name = "Auto Evasive", Callback = function(b) if EvasiveApi then EvasiveApi.set(b) end end })
     acSec:Dropdown({ Name = "Evasive Dir", Items = { "Cycle", "Back", "Left", "Right", "Toward Target" }, Default = "Cycle", Callback = function(v) if EvasiveApi then EvasiveApi.setDir(v) end end })
-    acSec:Toggle({ Name = "Auto Yuta Black Flash (teleport kill)", Default = false, Callback = function(b) if YutaBFApi then YutaBFApi.setAuto(b) end end })
+    acSec:Toggle({ Name = "Auto Yuta Black Flash", Default = false, Callback = function(b) if YutaBFApi then YutaBFApi.setAuto(b) end end })
     acSec:Toggle({ Name = "Auto Ult", Callback = function(b) if AutoUltApi then AutoUltApi.set(b) end end })
-    acSec:Toggle({ Name = "Auto Air (Gojo/Locust/Gambler/Shadows)", Callback = function(b) if AutoAirApi_set then AutoAirApi_set(b) end end })
+    acSec:Toggle({ Name = "Auto Air", Callback = function(b) if AutoAirApi_set then AutoAirApi_set(b) end end })
     acSec:Dropdown({ Name = "Auto Slam / Uppercut", Items = { "Off", "Down Slam", "Uppercut" }, Default = "Off", Callback = function(m) if M1ComboApi then M1ComboApi.setMode(m) end end })
+    pcall(function() acSec:Label("Uppercut soon: Crow, Mangaka, Black Death, Disaster Plants") end)
     acSec:Toggle({ Name = "Auto Adapt", Callback = function(b) if AutoAdaptApi then AutoAdaptApi.set(b) end end })
     acSec:Toggle({ Name = "Auto Domain Adapt", Callback = function(b) if AutoDomainAdaptApi then AutoDomainAdaptApi.set(b) end end })
     acSec:Toggle({ Name = "Auto Earthquake", Callback = function(b) if AutoQuakeApi then AutoQuakeApi.set(b) end end })
-    acSec:Toggle({ Name = "Auto Kill-Emote (emote on kills)", Callback = function(b) if KillEmoteApi then KillEmoteApi.set(b) end end })
+    acSec:Toggle({ Name = "Auto Kill Emote", Callback = function(b) if KillEmoteApi then KillEmoteApi.set(b) end end })
     acSec:Slider({ Name = "Kill-Emote Slot", Min = 1, Max = 8, Default = 1, Decimals = 0, Callback = function(v) if KillEmoteApi then KillEmoteApi.setSlot(v) end end })
     local askSec = autoSub:Section({ Name = "Auto Skills", Side = 2 })
     askSec:Toggle({ Name = "Auto Skills", Callback = function(b) if SkillsApi then SkillsApi.setEnabled(b) end end })
@@ -8031,11 +8109,11 @@ do
     local MovePage = Window:Page({ Name = "Movement", Icon = "94627324690861" })
     local mvSub = MovePage:SubPage({ Name = "Movement", Columns = 2 })
     local coreSec = mvSub:Section({ Name = "Core", Side = 1 })
-    coreSec:Toggle({ Name = "Remove Trees (see better)", Callback = function(b) if RemoveTreesApi then RemoveTreesApi.set(b) end end })
+    coreSec:Toggle({ Name = "Remove Trees", Callback = function(b) if RemoveTreesApi then RemoveTreesApi.set(b) end end })
     coreSec:Toggle({ Name = "Infinite Jump", Callback = function(b) if InfJumpApi then InfJumpApi.set(b) end end })
     coreSec:Button({ Name = "Dash Forward", Callback = function() if DashApi then DashApi.forward() end end })
     coreSec:Toggle({ Name = "Invisible", Callback = function(b) if InvisApi then InvisApi.set(b) end end })   -- always visible now
-    coreSec:Toggle({ Name = "Desync Freeze (they see you frozen)", Callback = function(b) if DesyncFreezeApi then DesyncFreezeApi.set(b) end end })
+    coreSec:Toggle({ Name = "Desync Freeze", Callback = function(b) if DesyncFreezeApi then DesyncFreezeApi.set(b) end end })
     if tier("plus") then
         coreSec:Toggle({ Name = "No Dash CD", Callback = function(b) if DashApi then DashApi.setNoCd(b) end end })
     end
@@ -8078,8 +8156,8 @@ do
     if TPApi and TPApi.spotNames then for _, n in ipairs(TPApi.spotNames()) do locSec:Button({ Name = n, Callback = function() if TPApi then TPApi.spot(n) end end }) end end
     local quickSec = tpSub:Section({ Name = "Quick", Side = 2 })
     quickSec:Dropdown({ Name = "TP Method", Items = { "Glide", "Instant" }, Default = "Glide", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
-    quickSec:Slider({ Name = "TP Speed (studs/sec - lower = safer)", Min = 16, Max = 400, Default = 80, Decimals = 0, Callback = function(v) if TPApi then TPApi.setSpeed(v) end end })
-    quickSec:Button({ Name = "Print TP Remote (F9)", Callback = function()
+    quickSec:Slider({ Name = "TP Speed", Min = 16, Max = 400, Default = 80, Decimals = 0, Callback = function(v) if TPApi then TPApi.setSpeed(v) end end })
+    quickSec:Button({ Name = "Print TP Remote", Callback = function()
         local RS = game:GetService("ReplicatedStorage"); local found = 0
         for _, d in ipairs(RS:GetDescendants()) do
             if d:IsA("RemoteEvent") and string.find(string.lower(d.Name), "teleport") then print("[DreamHub TP] remote:", d:GetFullName()); found = found + 1 end
