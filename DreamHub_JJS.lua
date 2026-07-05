@@ -175,11 +175,12 @@ do
 	local lastM1 = 0      -- M1 Black Flash: debounce so a fast M1 burst only starts the chain once per click
 	local burstUntil = 0  -- self-driving modes (M1 Black Flash / Back Dash / Auto Counter) run the PROVEN teleport chain even if the master "Auto Chain" toggle is off, for a short burst after each trigger
 	local runChain        -- forward-declared: fires the proven teleport black-flash chain (doBackstab), optionally snapping to a specific attacker first (Auto Counter)
-	local function pressR() _G.VX_INJECT_UNTIL = tick() + 0.35; pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.05); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game) end) end
+	local function vxMarkKey(kc) _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[kc] = tick() + 0.5 end  -- per-key injection marker (Auto Air ignores a key only if THAT key was injected)
+	local function pressR() _G.VX_INJECT_UNTIL = tick() + 0.35; vxMarkKey(Enum.KeyCode.R); pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.05); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game) end) end
 	local FEINT_MOVE_KEYS = { [1] = Enum.KeyCode.One, [2] = Enum.KeyCode.Two, [3] = Enum.KeyCode.Three, [4] = Enum.KeyCode.Four }
 	-- GLOBAL injection guard: EVERY module that injects keys stamps this; every key-triggered feature ignores
 	-- injected keys. (Feint's move-press was triggering Auto Air; Auto Air's taps were triggering the feints.)
-	local function pressKeyTap(kc) _G.VX_INJECT_UNTIL = tick() + 0.35; pcall(function() VirtualInputManager:SendKeyEvent(true, kc, false, game); task.wait(0.045); VirtualInputManager:SendKeyEvent(false, kc, false, game) end) end
+	local function pressKeyTap(kc) _G.VX_INJECT_UNTIL = tick() + 0.35; vxMarkKey(kc); pcall(function() VirtualInputManager:SendKeyEvent(true, kc, false, game); task.wait(0.045); VirtualInputManager:SendKeyEvent(false, kc, false, game) end) end
 	local function pressMove(n) local kc = FEINT_MOVE_KEYS[tonumber(n) or 0]; if kc then pressKeyTap(kc) end end
 	local savedWS, savedJP, savedAR, bfCollideSaved
 	local liveLoops = 0
@@ -607,6 +608,8 @@ do
 					myHRP.CFrame = CFrame.lookAt(myHRP.Position, flat)   -- turn to face them, same spot (rotation only)
 				end)
 				pcall(function() Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, tHRP.Position) end)  -- aim camera at them
+				_G.VX_INJECT_UNTIL = tick() + 0.4
+				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Settings.AbilityKey] = tick() + 0.5   -- our flash key press must not chain other features
 				pcall(function()
 					VirtualInputManager:SendKeyEvent(true, Settings.AbilityKey, false, game)
 					task.wait(Settings.KeyHoldDuration)
@@ -1383,6 +1386,7 @@ do
 	end
 	local function jump()  -- small BUNNY HOP for the DOWN SLAM (a 50-stud rocket looked obvious)
 		_G.VX_LAUNCHING = tick()  -- tell Side Dash (its flat dash clamps Y) to stand down for a moment so it can't cancel this lift
+		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 0.5
 		local c = myModel()
 		local h = c and c:FindFirstChildOfClass("Humanoid"); local hrp = c and c:FindFirstChild("HumanoidRootPart")
 		pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.02); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)  -- real Space press
@@ -1401,14 +1405,19 @@ do
 				realM1()                                                                 -- airborne M1 while coming down = the game's own DOWN SLAM
 				act("Down")                                                              -- remote as backup
 			else
-				-- UPTILT (uppercut): stay GROUNDED, HOLD space, then M1 = the launcher on every character.
+				-- UPTILT (uppercut): held-space M1 = the launcher, but with the humanoid's JUMP state DISABLED
+				-- while space is down, so the press can NEVER hop you ('it should not make em jump').
 				_G.VX_LAUNCHING = tick()
-				pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)   -- HOLD space (grounded)
-				task.wait(0.12)                                                           -- let the held-space uptilt state arm
-				realM1()                                                                 -- grounded held-space M1 = the UPTILT launcher
+				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 0.6
+				local c2 = myModel(); local hum2 = c2 and c2:FindFirstChildOfClass("Humanoid")
+				if hum2 then pcall(function() hum2:SetStateEnabled(Enum.HumanoidStateType.Jumping, false) end) end   -- space can't jump you now
+				pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)   -- HOLD space (the game reads the KEY for uptilt, not the jump)
+				task.wait(0.1)
+				realM1()                                                                 -- held-space M1 = the UPTILT launcher
 				task.wait(0.06); realM1()                                                -- second tap catches the window
 				act("Up")                                                                -- remote as backup
-				task.wait(0.14); pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)  -- release space
+				task.wait(0.12); pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)  -- release space
+				if hum2 then pcall(function() hum2:SetStateEnabled(Enum.HumanoidStateType.Jumping, true) end) end    -- give your jump back
 			end
 			vxLog(mode)
 			task.wait(0.2); busy = false
@@ -1452,7 +1461,7 @@ do
 		hooked[a] = a.AnimationPlayed:Connect(function(track)
 			if mode == "Off" or busy then return end
 			if tick() < (_G.VX_INJECT_UNTIL or 0) then return end   -- an anim from OUR injected finisher M1 must not count
-			if tick() - lastSwing < 1.3 then return end             -- cooldown: one launcher per ~1.3s (was 'needs 3 hits' - that never completed = no work)
+			if tick() - lastSwing < 0.9 then return end             -- one launcher per swing, continuous while toggled ('it should not stop')
 			local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+")
 			if not (id and COMBO_IDS[id]) then return end
 			-- only when an enemy is actually in melee range (don't uppercut air)
@@ -2667,13 +2676,22 @@ do
 		if mahoBusy then return end
 		mahoBusy = true
 		if VX_NOTIFY then VX_NOTIFY("Mahoraga sensed - safe teleport", false) end
-		vxGlide(MAHO_SAFE + Vector3.new(0, 4, 0), nil, 5)            -- instant whitelisted snap to the safe spot + hold 5s (forceful for an emergency)
-		task.delay(5.4, function()
-			vxGlide(MAHO_RETURN + Vector3.new(0, 4, 0), nil, 3)       -- summon done -> back to the main map
+		vxTeleportHard(MAHO_SAFE + Vector3.new(0, 4, 0), 5)          -- the WORKING glide teleport (same engine as the Teleports tab) to the safe spot + hold 5s
+		task.delay(7, function()
+			vxTeleportHard(MAHO_RETURN + Vector3.new(0, 4, 0), 3)     -- summon done -> back to the main map
 			if VX_NOTIFY then VX_NOTIFY("Back to main map", true) end
 			task.delay(1.5, function() mahoBusy = false end)
 		end)
 	end
+	-- CATCH THE SPAWN ANYWHERE: the Mahoraga model can stream in under any folder - a workspace-wide
+	-- DescendantAdded listener catches it wherever it lands (the 4-folder poll kept missing it).
+	pcall(function()
+		workspace.DescendantAdded:Connect(function(d)
+			if not mahoOn then return end
+			if not (d:IsA("Model") and mahoNameHit(d.Name)) then return end
+			if tick() - mahoCd > 5 then mahoCd = tick(); mahoEscape() end
+		end)
+	end)
 	-- anim path: catch the summon the instant an enemy plays it (earlier than the model streaming in)
 	local mahoHooked = setmetatable({}, { __mode = "k" })
 	local function hookMahoAnim(char)
@@ -2799,16 +2817,17 @@ do
 	-- YUTA BLACK FLASH mechanic (user): press move "2" TWICE and it black-flashes. Anim rbxassetid://89582140026963
 	-- is the black-flash itself. So we double-tap the 2 key (its own move), not a custom teleport chain.
 	local VIMy = game:GetService("VirtualInputManager")
-	local function flash(tgt)
-		if tick() - last < 1.2 then return end
+	local function flash(tgt, requireLow)
+		if tick() - last < 1.6 then return end
 		if not (tgt and tgt.Parent) then return end
-		if not isLow(tgt) then return end   -- ONLY when they're low HP (kill/finisher), never on a full-HP enemy
+		if requireLow and not isLow(tgt) then return end   -- low-HP gate is ONLY for the auto kill mode (it blocked the manual toggle on full-HP targets = 'don't work')
 		last = tick()
-		_G.VX_INJECT_UNTIL = tick() + 0.6   -- our 2-taps must not trigger other features
-		task.spawn(function()               -- press 2, then 2 again = the Yuta black flash
-			pcall(function() VIMy:SendKeyEvent(true, Enum.KeyCode.Two, false, game); task.wait(0.05); VIMy:SendKeyEvent(false, Enum.KeyCode.Two, false, game) end)
-			task.wait(0.14)
-			pcall(function() VIMy:SendKeyEvent(true, Enum.KeyCode.Two, false, game); task.wait(0.05); VIMy:SendKeyEvent(false, Enum.KeyCode.Two, false, game) end)
+		_G.VX_INJECT_UNTIL = tick() + 1.2   -- our 2-taps must not trigger other features
+		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Two] = tick() + 1.2
+		task.spawn(function()               -- Resolute Slash: press 2, wait for the slash, press 2 AGAIN = the black flash
+			pcall(function() VIMy:SendKeyEvent(true, Enum.KeyCode.Two, false, game); task.wait(0.06); VIMy:SendKeyEvent(false, Enum.KeyCode.Two, false, game) end)
+			task.wait(0.45)                  -- 'USE AGAIN' window: the first slash has to come out before the re-press converts
+			pcall(function() VIMy:SendKeyEvent(true, Enum.KeyCode.Two, false, game); task.wait(0.06); VIMy:SendKeyEvent(false, Enum.KeyCode.Two, false, game) end)
 		end)
 	end
 	-- MANUAL "Yuta Black Flash": when ON, your own Yuta M1 landing auto-converts into a black flash on the enemy.
@@ -2819,7 +2838,7 @@ do
 		hooked[a] = a.AnimationPlayed:Connect(function(track)
 			if not manualOn then return end
 			local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+")
-			if id and YUTA_M1[id] then local t = nearestEnemy(22); if t then flash(t) end end
+			if id and YUTA_M1[id] then local t = nearestEnemy(22); if t then flash(t, false) end end   -- manual: ANY HP - your M1 converts
 		end)
 	end
 	task.spawn(function() while true do if manualOn then pcall(hookSelf) end task.wait(0.6) end end)
@@ -2838,7 +2857,7 @@ do
 	end
 	task.spawn(function()
 		while true do
-			if autoOn then local t = nearestLowEnemy(45); if t then flash(t) end task.wait(0.25) else task.wait(0.3) end
+			if autoOn then local t = nearestLowEnemy(45); if t then flash(t, true) end task.wait(0.25) else task.wait(0.3) end
 		end
 	end)
 	YutaBFApi = {
@@ -3358,10 +3377,27 @@ do
 		last = tick()
 		sdaInjecting = tick() + 0.4
 		_G.VX_INJECT_UNTIL = tick() + 0.4                          -- guard so this dash doesn't trigger other features
-		-- JUST the game's own LEFT dash. One remote, nothing else. No A/Q key spam, no velocity curl,
-		-- no glide, no jump, no teleport - so it can't drift forward. When you M1, you dash LEFT. Period.
+		-- The game's own LEFT dash, STEERED so it ends BEHIND their back: while the dash runs we bend the
+		-- horizontal velocity toward the spot behind the target. No teleport, no jump - the dash itself
+		-- carries you left and around to their back, then you face them for the follow-up M1.
 		fireKnit("MovementService", "Dash", "Left", true)
-		vxLog("SideDash assist: M1 -> Dash Left")
+		task.spawn(function()
+			task.wait(0.05)                                        -- let the dash start (its own velocity kicks in first)
+			local t0 = tick()
+			while tick() - t0 < 0.3 do
+				local mh2 = getHRP(myModel()); local tr2 = tgt and tgt.Parent and getHRP(tgt)
+				if not (mh2 and tr2) then break end
+				local dest = behindPos(tr2)
+				local flat = Vector3.new(dest.X - mh2.Position.X, 0, dest.Z - mh2.Position.Z)
+				if flat.Magnitude < 2.2 then break end             -- arrived behind them
+				local sp = math.min(flat.Magnitude / 0.22, 72)     -- fast enough to make it around, capped (no fling)
+				pcall(function() mh2.AssemblyLinearVelocity = Vector3.new(flat.Unit.X * sp, mh2.AssemblyLinearVelocity.Y, flat.Unit.Z * sp) end)
+				task.wait()
+			end
+			local mh3 = getHRP(myModel()); local tr3 = tgt and tgt.Parent and getHRP(tgt)
+			if mh3 and tr3 then pcall(function() mh3.CFrame = CFrame.lookAt(mh3.Position, Vector3.new(tr3.Position.X, mh3.Position.Y, tr3.Position.Z)) end) end   -- face their back = your next M1 lands
+		end)
+		vxLog("SideDash assist: M1 -> Dash Left behind " .. (tgt and tgt.Name or "?"))
 	end
 	-- TRIGGER: your own M1 ANIMATION (every character's ids are in _G.VX_M1_IDS now)
 	local hooked = setmetatable({}, { __mode = "k" })
@@ -3596,9 +3632,13 @@ do
 		end
 		local function tapKey(kc, hold)
 			_G.VX_INJECT_UNTIL = tick() + 0.35   -- injected: other key-triggered features must ignore this
+			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[kc] = tick() + 0.5   -- and remember WHICH key we injected
 			pcall(function() VIM:SendKeyEvent(true, kc, false, game); task.wait(hold or 0.09); VIM:SendKeyEvent(false, kc, false, game) end)
 		end
-		if tick() < (_G.VX_INJECT_UNTIL or 0) then return end   -- this key was INJECTED by a feature - never chain off it
+		-- PER-KEY injection check (was the global VX_INJECT_UNTIL window - Side Dash / M1 BF stamp that global on
+		-- EVERY M1, which was eating your real 1/2/3/R presses = 'Auto Air doesn't work'). Now a key is only
+		-- ignored if THAT KEY was itself injected.
+		do local injK = _G.VX_INJ_KEYS; if injK and input.KeyCode and injK[input.KeyCode] and tick() < injK[input.KeyCode] then return end end
 		-- BULLETPROOF character check: detected name, model name, DISPLAY name, or any Moveset entry containing the word.
 		local function charIs(...)
 			local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
@@ -3610,7 +3650,7 @@ do
 			return false
 		end
 		local function dbgAir(msg) print("[DreamHub AutoAir] " .. msg) end   -- always prints to F9 so you can SEE what fired / why it didn't
-		local function holdJump() _G.VX_INJECT_UNTIL = tick() + 0.35; pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.08); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end
+		local function holdJump() _G.VX_INJECT_UNTIL = tick() + 0.35; _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 0.5; pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.08); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end
 
 		-- GAMBLER: when you M1 (click) -> press 3 + JUMP at the SAME time (launcher)
 		if autoAirOn and input.UserInputType == Enum.UserInputType.MouseButton1 and charIs("hakari", "rough energy", "gambler") then
@@ -4430,15 +4470,16 @@ local Library do
                 Image = "rbxassetid://",
 				AnchorPoint = Vector2New(1, 1),
 				BorderColor3 = FromRGB(0, 0, 0),
-				Size = UDim2New(0, 8, 0, 8),
-				Position = UDim2New(1, -4, 1, -4),
+				Size = UDim2New(0, 18, 0, 18),
+				Position = UDim2New(1, -3, 1, -3),
                 Name = "\0",
 				BorderSizePixel = 0,
-				BackgroundTransparency = 1,
+				BackgroundTransparency = 0.35,
                 ZIndex = 5,
 				AutoButtonColor = false,
                 Visible = true,
-			})  ResizeButton:AddToTheme({ImageColor3 = "Accent"})
+			})  ResizeButton:AddToTheme({BackgroundColor3 = "Accent"})
+            Instances:Create("UICorner", { Parent = ResizeButton.Instance, Name = "\0", CornerRadius = UDimNew(0, 5) })
 
             local InputChanged
 
@@ -5877,7 +5918,7 @@ local Library do
                 })  Items["MainFrame"]:AddToTheme({BackgroundColor3 = "Background"})
 
                 Items["MainFrame"]:MakeDraggable()
-                Items["MainFrame"]:MakeResizeable(Vector2New(Items["MainFrame"].Instance.AbsoluteSize.X, Items["MainFrame"].Instance.AbsoluteSize.Y), Vector2New(9999, 9999))
+                Items["MainFrame"]:MakeResizeable(Vector2New(540, 400), Vector2New(9999, 9999))   -- min 540x400 so the corner grip can scale the menu DOWN as well as up
 
                 Instances:Create("UICorner", {
                     Parent = Items["MainFrame"].Instance,
@@ -8116,7 +8157,21 @@ do
     acSec:Toggle({ Name = "Auto Domain Adapt", Callback = function(b) if AutoDomainAdaptApi then AutoDomainAdaptApi.set(b) end end })
     acSec:Toggle({ Name = "Auto Earthquake", Callback = function(b) if AutoQuakeApi then AutoQuakeApi.set(b) end end })
     acSec:Toggle({ Name = "Auto Kill Emote", Callback = function(b) if KillEmoteApi then KillEmoteApi.set(b) end end })
-    acSec:Slider({ Name = "Kill-Emote Slot", Min = 1, Max = 8, Default = 1, Decimals = 0, Callback = function(v) if KillEmoteApi then KillEmoteApi.setSlot(v) end end })
+    local keItems = {}   -- slot list with REAL emote names read from PlayerGui.Emotes.Emote.Page1/Page2 (the 'nan' slider is gone)
+    for i = 1, 16 do
+        local nm
+        pcall(function()
+            local pg = LocalPlayer:FindFirstChild("PlayerGui"); local em = pg and pg:FindFirstChild("Emotes"); em = em and em:FindFirstChild("Emote")
+            for _, page in ipairs({ "Page1", "Page2" }) do
+                local p = em and em:FindFirstChild(page); local b = p and p:FindFirstChild(tostring(i)); local t = b and b:FindFirstChild("EmoteName")
+                if t and t:IsA("TextLabel") and t.Text ~= "" and t.Text ~= "EmoteName" then nm = t.Text end
+            end
+        end)
+        keItems[i] = nm and (i .. " - " .. nm) or tostring(i)
+    end
+    acSec:Dropdown({ Name = "Kill-Emote Slot", Items = keItems, Default = keItems[1], Callback = function(v)
+        local n = tonumber(tostring(v):match("^%d+")); if KillEmoteApi and n then KillEmoteApi.setSlot(n) end
+    end })
     local askSec = autoSub:Section({ Name = "Auto Skills", Side = 2 })
     askSec:Toggle({ Name = "Auto Skills", Callback = function(b) if SkillsApi then SkillsApi.setEnabled(b) end end })
     askSec:Toggle({ Name = "Skill 1", Callback = function(b) if SkillsApi then SkillsApi.setKey(1, b) end end })
