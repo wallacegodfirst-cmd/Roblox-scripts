@@ -2913,64 +2913,45 @@ do
 	local sdaDir = 1            -- alternate LEFT / RIGHT approach side
 	local sdaNeed = 2           -- how many landed M1s before the dash-behind (1-3, dropdown)
 	local sdaCount, sdaLastHit = 0, 0
-	local function playDashAnim(id)   -- play a captured TBO dash animation on your character
-		local m = myModel(); local h = m and m:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
-		if not a then return end
-		pcall(function() local anim = Instance.new("Animation"); anim.AnimationId = id; local t = a:LoadAnimation(anim); t.Priority = Enum.AnimationPriority.Action2; t:Play(0.05); task.delay(0.5, function() pcall(function() t:Stop() end) end) end)
-	end
-	-- SIDE DASH ASSIST (TBO): press Q -> dash BEHIND them on their LEFT (real dash + captured anims) -> M1.
+	-- SIDE DASH ASSIST: when YOUR M1 lands (any character - full per-char anim list), the script presses
+	-- Q FOR you with LEFT held, so the GAME does its own LEFT dash. No custom movement at all.
+	local sdaInjecting = 0
 	local function trigger()
 		if not on then return end
-		if tick() - last < 0.35 then return end
+		if tick() - last < 0.55 then return end                    -- one dash per swing
+		if tick() < sdaInjecting then return end                   -- never chain off our own injected inputs
 		if tick() - (_G.VX_LAUNCHING or 0) < 0.3 then return end   -- not during an uppercut launch
 		if tick() < (_G.VX_BUSY or 0) then return end              -- not during an Auto Air sequence
 		local mh = getHRP(myModel()); if not mh then return end
-		local tgt = nearestEnemy(28); local tr = tgt and getHRP(tgt)   -- Q reaches them even from a short distance away
+		local tgt = nearestEnemy(10); local tr = tgt and getHRP(tgt)
 		if not tr then return end
+		local to = tr.Position - mh.Position
+		if to.Magnitude > 10 or mh.CFrame.LookVector:Dot(to.Unit) < 0.3 then return end   -- only when the M1 actually LANDED
 		last = tick()
-		playDashAnim("rbxassetid://117223862448096"); playDashAnim("rbxassetid://95295463826732")   -- the captured dash anims
-		fireKnit("MovementService", "Dash", "Left", true)                                            -- the real i-frame LEFT dash
-		local hz = getHRP(myModel()); if hz then pcall(function() hz.AssemblyLinearVelocity = Vector3.zero end) end   -- kill the remote's own burst so ONLY the curl moves you (the burst + curl fighting = 'it goes forward')
+		sdaInjecting = tick() + 0.6
+		_G.VX_INJECT_UNTIL = tick() + 0.6                          -- our A/Q must not trigger other features
 		task.spawn(function()
-			local dur = 0.26
-			local t0 = tick()
-			while tick() - t0 < dur do
-				local h = getHRP(myModel()); local trl = getHRP(tgt); if not (h and trl and trl.Parent) then break end
-				local e = (tick() - t0) / dur; e = e * e * (3 - 2 * e)                               -- smoothstep = weighty, legit
-				local look = trl.CFrame.LookVector; local flat = Vector3.new(look.X, 0, look.Z)
-				local bdir = flat.Magnitude > 0.01 and flat.Unit or Vector3.new(0, 0, -1)
-				local sdir = Vector3.new(bdir.Z, 0, -bdir.X)                                          -- their RIGHT = YOUR LEFT while facing them (matches the left dash - no more forward drift)
-				local okv, tv = pcall(function() return trl.AssemblyLinearVelocity end)
-				local lead = (okv and tv and tv.Magnitude > 1) and Vector3.new(tv.X, 0, tv.Z) * 0.12 * e or Vector3.zero
-				local aim = trl.Position + lead - bdir * 3 + sdir * (3.6 * (1 - e))                   -- slide LEFT around them, end DIRECTLY BEHIND their back (>=3 studs = no fling)
-				local h2 = getHRP(myModel()); local toA = aim - h2.Position
-				pcall(function()
-					h2.AssemblyLinearVelocity = Vector3.new(toA.X * 14, math.min(h2.AssemblyLinearVelocity.Y, 0), toA.Z * 14)   -- firmer pull so the curl WINS and lands behind
-					h2.CFrame = CFrame.lookAt(h2.Position, Vector3.new(trl.Position.X, h2.Position.Y, trl.Position.Z))
-				end)
-				task.wait()
-			end
-			-- settle: pin the last two frames on the behind point so the M1 comes out AT their back
-			for _ = 1, 2 do
-				local h = getHRP(myModel()); local trl = getHRP(tgt); if not (h and trl and trl.Parent) then break end
-				local look = trl.CFrame.LookVector; local flat = Vector3.new(look.X, 0, look.Z)
-				local bdir = flat.Magnitude > 0.01 and flat.Unit or Vector3.new(0, 0, -1)
-				local aim = trl.Position - bdir * 3
-				pcall(function()
-					h.AssemblyLinearVelocity = Vector3.new((aim - h.Position).X * 14, math.min(h.AssemblyLinearVelocity.Y, 0), (aim - h.Position).Z * 14)
-					h.CFrame = CFrame.lookAt(h.Position, Vector3.new(trl.Position.X, h.Position.Y, trl.Position.Z))
-				end)
-				task.wait()
-			end
-			local h = getHRP(myModel()); if h then pcall(function() h.AssemblyLinearVelocity = Vector3.new(0, math.min(h.AssemblyLinearVelocity.Y, 0), 0) end) end
-			pcall(function()   -- and M1 at their exposed back
-				local cam = workspace.CurrentCamera; local v = (cam and cam.ViewportSize) or Vector2.new(800, 600)
-				local VIMs = game:GetService("VirtualInputManager")
-				VIMs:SendMouseButtonEvent(v.X / 2, v.Y / 2, 0, true, game, 0); task.wait(0.04); VIMs:SendMouseButtonEvent(v.X / 2, v.Y / 2, 0, false, game, 0)
-			end)
+			local VIMs = game:GetService("VirtualInputManager")
+			pcall(function() VIMs:SendKeyEvent(true, Enum.KeyCode.A, false, game) end)    -- hold LEFT...
+			task.wait(0.04)
+			pcall(function() VIMs:SendKeyEvent(true, Enum.KeyCode.Q, false, game); task.wait(0.05); VIMs:SendKeyEvent(false, Enum.KeyCode.Q, false, game) end)  -- ...tap Q = the game's LEFT dash
+			task.wait(0.22)                                                                -- keep LEFT held through the dash startup so the direction is ALWAYS left
+			pcall(function() VIMs:SendKeyEvent(false, Enum.KeyCode.A, false, game) end)
 		end)
-		vxLog("SideDash assist: Q -> left around to the back + M1")
+		vxLog("SideDash assist: M1 -> auto Q (left dash)")
 	end
+	-- TRIGGER: your own M1 ANIMATION (every character's ids are in _G.VX_M1_IDS now)
+	local hooked = setmetatable({}, { __mode = "k" })
+	local function hookSelf()
+		local m = myModel(); local h = m and m:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
+		if not a or hooked[a] then return end
+		hooked[a] = a.AnimationPlayed:Connect(function(track)
+			if not on then return end
+			local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+")
+			if id and _G.VX_M1_IDS and _G.VX_M1_IDS[id] then trigger() end
+		end)
+	end
+	task.spawn(function() while true do if on then pcall(hookSelf) end task.wait(0.6) end end)
 	-- BLOCK PUNISH (part of Side Dash Assist): the enemy you're hitting raises BLOCK -> instantly get BEHIND
 	-- them and M1 (their block faces the wrong way = free hit). This is the 'escape their block and hit them'.
 	local lastPunish = 0
@@ -3014,12 +2995,6 @@ do
 				end
 			end
 		end
-	end)
-	-- TRIGGER: pressing Q (with Side Dash Assist on) does the dash-behind-left + M1. Ignores injected Q's.
-	game:GetService("UserInputService").InputBegan:Connect(function(input, gpe)
-		if not on then return end
-		if game:GetService("UserInputService"):GetFocusedTextBox() then return end
-		if input.KeyCode == Enum.KeyCode.Q and tick() >= (_G.VX_INJECT_UNTIL or 0) then trigger() end
 	end)
 	SideDashApi = { set = function(v) on = v == true end }
 end
