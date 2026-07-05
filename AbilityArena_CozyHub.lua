@@ -1,5 +1,10 @@
--- Dream Hub | Ability Arena | v2.15.0
+-- Dream Hub | Ability Arena | v2.16.0
 -- by Dream Hub Owner
+-- v2.16.0: NEW ANTI-CHEAT NEUTRALIZED - the game added client-side anti-cheat initializers
+--          (ReplicatedStorage.Files.Client._Client_Initializers._Client_AntiFling etc). They run on
+--          YOUR client, so we disable the running copies AND pre-disable the templates (clones of a
+--          Disabled script spawn dead) - teleports/velocity features work again. Notifications
+--          rebuilt: small fast toasts (no more doubled text, gone in ~2s).
 -- v2.8.0: Kill Aura fixed (crash bug killed the loop), real clicking, One Shot Punch
 --         remote wired into every M1, fixed M1 packet bytes, buffer sends, hitbox
 --         expanders reworked (M1 + Ability share one engine), Teleports tab added.
@@ -63,6 +68,37 @@
 -- v2.13.6: added M1 Packet Spy (Utility>Debug) to capture a real damaging M1 packet so buildM1
 --          can be rebuilt to carry the target (fixes Auto Farm M1 dealing no damage).
 
+-- ════════ ANTI-CHEAT NEUTRALIZER ════════
+-- The game's new anti-cheat is CLIENT-side (LocalScripts under ReplicatedStorage.Files.Client.
+-- _Client_Initializers, e.g. _Client_AntiFling). Client scripts are ours to disable:
+--  1) pre-disable the TEMPLATES (a clone of a Disabled script never runs), and
+--  2) kill every RUNNING copy in PlayerScripts / PlayerGui / your character, now and on respawn.
+task.spawn(function()
+    local Players = game:GetService("Players")
+    local RS = game:GetService("ReplicatedStorage")
+    local LP = Players.LocalPlayer
+    local function isAC(o)
+        if not (o:IsA("LocalScript") or o:IsA("Script")) then return false end
+        local n = o.Name:lower()
+        return n:find("anti", 1, true) ~= nil   -- _Client_AntiFling, AntiCheat, AntiTeleport, ...
+    end
+    local function kill(o) pcall(function() o.Disabled = true end) end
+    local function sweep(root)
+        if not root then return end
+        pcall(function() for _, d in ipairs(root:GetDescendants()) do if isAC(d) then kill(d) end end end)
+        pcall(function() root.DescendantAdded:Connect(function(d) if isAC(d) then task.defer(kill, d) end end) end)
+    end
+    pcall(function()   -- templates first: everything cloned from here spawns already-disabled
+        local files = RS:WaitForChild("Files", 9)
+        local client = files and files:FindFirstChild("Client")
+        sweep(client)
+    end)
+    sweep(LP:FindFirstChild("PlayerScripts") or LP:WaitForChild("PlayerScripts", 5))
+    sweep(LP:FindFirstChild("PlayerGui"))
+    if LP.Character then sweep(LP.Character) end
+    LP.CharacterAdded:Connect(function(c) task.wait(0.2); sweep(c) end)
+end)
+
 -- ════════ UI: Fluriore (Rayfield-compatible shim) with a Rayfield FALLBACK ════════
 -- The hub was written against Rayfield's API. We load Fluriore and expose a tiny `Rayfield`
 -- adapter mapping CreateWindow/CreateTab/CreateSection/CreateToggle/... onto Fluriore's real
@@ -114,9 +150,55 @@ do
         local function arr(t) local o={}; if type(t)=="table" then for _,v in ipairs(t) do o[#o+1]=v end end; return o end
         local function asTable(v) if type(v)=="table" then return v elseif v~=nil then return {v} else return {} end end
         local shim = {}
+        -- CUSTOM fast toasts. Fluriore's MakeNotify printed the message TWICE (once next to the title,
+        -- once as the body) and hung around too long. These are small, single-text, gone in ~2s.
+        local notifList
+        local function ensureNotif()
+            if notifList and notifList.Parent then return end
+            local g = Instance.new("ScreenGui")
+            g.Name = "DreamNotif"; g.ResetOnSpawn = false; g.DisplayOrder = 99999; g.IgnoreGuiInset = true
+            pcall(function() g.Parent = (gethui and gethui()) or CoreGuiSvc end)
+            if not g.Parent then g.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui") end
+            notifList = Instance.new("Frame")
+            notifList.BackgroundTransparency = 1; notifList.AnchorPoint = Vector2.new(1, 1)
+            notifList.Position = UDim2.new(1, -14, 1, -14); notifList.Size = UDim2.fromOffset(290, 420); notifList.Parent = g
+            local lay = Instance.new("UIListLayout")
+            lay.VerticalAlignment = Enum.VerticalAlignment.Bottom; lay.HorizontalAlignment = Enum.HorizontalAlignment.Right
+            lay.Padding = UDim.new(0, 6); lay.Parent = notifList
+        end
         function shim:Notify(cfg)
             cfg = cfg or {}
-            pcall(function() FluLib:MakeNotify({ Title=cfg.Title or "Notice", Description=cfg.Content or cfg.Description or "", Content=cfg.Content or cfg.Description or "", Time=cfg.Duration }) end)
+            pcall(function()
+                ensureNotif()
+                local TS = game:GetService("TweenService")
+                local msg = tostring(cfg.Content or cfg.Description or "")
+                local f = Instance.new("Frame")
+                f.BackgroundColor3 = Color3.fromRGB(6, 6, 6); f.BorderSizePixel = 0; f.Size = UDim2.new(1, 0, 0, 42); f.Parent = notifList
+                Instance.new("UICorner", f).CornerRadius = UDim.new(0, 8)
+                local st = Instance.new("UIStroke"); st.Color = ACCENT; st.Thickness = 1.3; st.Parent = f
+                local t = Instance.new("TextLabel")
+                t.BackgroundTransparency = 1; t.Font = Enum.Font.GothamBold; t.TextSize = 12; t.TextColor3 = ACCENT
+                t.TextXAlignment = Enum.TextXAlignment.Left; t.Position = UDim2.fromOffset(10, 4); t.Size = UDim2.new(1, -20, 0, 14)
+                t.Text = tostring(cfg.Title or "Dream Hub"); t.Parent = f
+                local b = Instance.new("TextLabel")
+                b.BackgroundTransparency = 1; b.Font = Enum.Font.Gotham; b.TextSize = 12; b.TextColor3 = Color3.fromRGB(235, 235, 235)
+                b.TextXAlignment = Enum.TextXAlignment.Left; b.TextWrapped = true; b.TextTruncate = Enum.TextTruncate.AtEnd
+                b.Position = UDim2.fromOffset(10, 19); b.Size = UDim2.new(1, -20, 0, 20); b.Text = msg; b.Parent = f
+                f.BackgroundTransparency = 1; st.Transparency = 1; t.TextTransparency = 1; b.TextTransparency = 1
+                TS:Create(f, TweenInfo.new(0.12), { BackgroundTransparency = 0.05 }):Play()
+                TS:Create(st, TweenInfo.new(0.12), { Transparency = 0.2 }):Play()
+                TS:Create(t, TweenInfo.new(0.12), { TextTransparency = 0 }):Play()
+                TS:Create(b, TweenInfo.new(0.12), { TextTransparency = 0 }):Play()
+                task.delay(math.min(cfg.Duration or 2, 2.4), function()   -- FAST: visible ~2s max, then fades
+                    pcall(function()
+                        TS:Create(f, TweenInfo.new(0.18), { BackgroundTransparency = 1 }):Play()
+                        TS:Create(st, TweenInfo.new(0.18), { Transparency = 1 }):Play()
+                        TS:Create(t, TweenInfo.new(0.18), { TextTransparency = 1 }):Play()
+                        TS:Create(b, TweenInfo.new(0.18), { TextTransparency = 1 }):Play()
+                    end)
+                    task.delay(0.2, function() pcall(function() f:Destroy() end) end)
+                end)
+            end)
         end
         function shim:Destroy()
             pcall(function() if _FluWindow then (_FluWindow.DestroyGui or _FluWindow.Destroy)(_FluWindow) end end)
