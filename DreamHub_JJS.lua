@@ -933,18 +933,19 @@ do
 		for _, m in ipairs(f:GetChildren()) do
 			local part = itemPart(m)
 			if part then
-				local hl = Instance.new("Highlight")
-				hl.FillColor = Color3.fromRGB(255, 200, 70); hl.OutlineColor = Color3.fromRGB(255, 225, 140); hl.FillTransparency = 0.78; hl.OutlineTransparency = 0.2
-				hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; hl.Adornee = m; hl.Parent = m
-				local bb = Instance.new("BillboardGui")
-				bb.Adornee = part; bb.Size = UDim2.fromOffset(150, 20); bb.AlwaysOnTop = true; bb.StudsOffset = Vector3.new(0, 1.7, 0); bb.MaxDistance = 700; bb.Parent = espFolder
-				local cardF = Instance.new("Frame"); cardF.Size = UDim2.fromScale(1, 1); cardF.BackgroundColor3 = Color3.fromRGB(16, 16, 19); cardF.BackgroundTransparency = 0.18; cardF.BorderSizePixel = 0; cardF.Parent = bb
-				local cc = Instance.new("UICorner"); cc.CornerRadius = UDim.new(0, 5); cc.Parent = cardF
-				local cs = Instance.new("UIStroke"); cs.Color = Color3.fromRGB(255, 200, 70); cs.Thickness = 1; cs.Transparency = 0.4; cs.Parent = cardF
-				local dot = Instance.new("Frame"); dot.Size = UDim2.fromOffset(6, 6); dot.Position = UDim2.new(0, 8, 0.5, -3); dot.BackgroundColor3 = Color3.fromRGB(255, 205, 80); dot.BorderSizePixel = 0; dot.Parent = cardF
-				local dotc = Instance.new("UICorner"); dotc.CornerRadius = UDim.new(1, 0); dotc.Parent = dot
-				local lbl = Instance.new("TextLabel"); lbl.BackgroundTransparency = 1; lbl.Size = UDim2.new(1, -24, 1, 0); lbl.Position = UDim2.fromOffset(18, 0); lbl.Font = Enum.Font.GothamMedium; lbl.TextSize = 12; lbl.RichText = true; lbl.TextColor3 = Color3.fromRGB(255, 212, 96); lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.TextYAlignment = Enum.TextYAlignment.Center; lbl.TextTruncate = Enum.TextTruncate.AtEnd; lbl.Text = m.Name; lbl.Parent = cardF
-				boards[m] = { bb = bb, hl = hl, lbl = lbl, name = m.Name }
+					-- clean floating PILL:  [dot]  Name  200m  (auto-width, dark rounded, like the game's own tracker)
+					local bb = Instance.new("BillboardGui")
+					bb.Adornee = part; bb.Size = UDim2.fromOffset(0, 24); bb.AlwaysOnTop = true; bb.StudsOffset = Vector3.new(0, 2, 0); bb.MaxDistance = 800; bb.Parent = espFolder
+					local pill = Instance.new("Frame"); pill.AutomaticSize = Enum.AutomaticSize.X; pill.Size = UDim2.new(0, 0, 1, 0); pill.AnchorPoint = Vector2.new(0.5, 0.5); pill.Position = UDim2.fromScale(0.5, 0.5)
+					pill.BackgroundColor3 = Color3.fromRGB(22, 22, 26); pill.BackgroundTransparency = 0.06; pill.BorderSizePixel = 0; pill.Parent = bb
+					Instance.new("UICorner", pill).CornerRadius = UDim.new(1, 0)
+					local ps = Instance.new("UIStroke"); ps.Color = Color3.fromRGB(255, 190, 60); ps.Thickness = 1.4; ps.Transparency = 0.35; ps.Parent = pill
+					local pad = Instance.new("UIPadding"); pad.PaddingLeft = UDim.new(0, 9); pad.PaddingRight = UDim.new(0, 11); pad.Parent = pill
+					local row = Instance.new("UIListLayout"); row.FillDirection = Enum.FillDirection.Horizontal; row.VerticalAlignment = Enum.VerticalAlignment.Center; row.SortOrder = Enum.SortOrder.LayoutOrder; row.Padding = UDim.new(0, 6); row.Parent = pill
+					local dot = Instance.new("Frame"); dot.LayoutOrder = 1; dot.Size = UDim2.fromOffset(7, 7); dot.BackgroundColor3 = Color3.fromRGB(255, 190, 60); dot.BorderSizePixel = 0; dot.Parent = pill
+					Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+					local lbl = Instance.new("TextLabel"); lbl.LayoutOrder = 2; lbl.AutomaticSize = Enum.AutomaticSize.X; lbl.Size = UDim2.new(0, 0, 1, 0); lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.GothamSemibold; lbl.TextSize = 13; lbl.RichText = true; lbl.TextColor3 = Color3.fromRGB(245, 245, 250); lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.Text = m.Name; lbl.Parent = pill
+					boards[m] = { bb = bb, hl = nil, lbl = lbl, name = m.Name }
 			end
 		end
 	end
@@ -1303,16 +1304,15 @@ do
 					realM1()                                                                 -- airborne M1 while coming down = the game's own DOWN SLAM
 					act("Down")                                                              -- remote as backup
 				else
-					-- Uppercut = HOLD the jump key THROUGH the M1 (JJS mechanic)
+					-- Uppercut / Uptilt: HOLD space while GROUNDED, then M1 = the launcher (do NOT jump - jumping
+					-- leaves the ground and cancels the uptilt; that was the bug 'auto uppercut no work').
 					_G.VX_LAUNCHING = tick()
-					local c = (workspace:FindFirstChild("Characters") and workspace:FindFirstChild("Characters"):FindFirstChild(LP.Name)) or LP.Character
-					local h = c and c:FindFirstChildOfClass("Humanoid")
-					pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)   -- HOLD space
-					if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end
-					task.wait(0.08)
-					realM1()                                                                 -- held-space M1 = the game's own UPTILT input
+					pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)   -- HOLD space (grounded)
+					task.wait(0.1)                                                            -- let the held-space uptilt state arm
+					realM1()                                                                 -- grounded held-space M1 = the UPTILT launcher
+					task.wait(0.05); realM1()                                                -- second tap catches the window
 					act("Up")                                                                -- remote as backup
-					task.wait(0.12); pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)  -- release
+					task.wait(0.14); pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)  -- release space
 				end
 				vxLog(mode)
 				task.wait(0.15); busy = false
@@ -2960,13 +2960,24 @@ do
 				local tgt = nearestEnemy(10); local tr = tgt and getHRP(tgt)
 				if mh and tr and targetBlocking(tgt) then
 					lastPunish = tick()
-					if _G.VX_ORBIT then _G.VX_ORBIT(tr, { duration = 0.14, endRadius = 3, extraSweep = math.pi * 0.2, endBehind = true }) end   -- slip around their guard
-					task.wait(0.05)
-					pcall(function()   -- and HIT: real M1 at their exposed back
+					-- DASH around their guard (real dash remote + velocity), NO CFrame teleport
+					local side = math.random(1, 2) == 1 and "Left" or "Right"
+					fireKnit("MovementService", "Dash", side, true)
+					local rv = side == "Left" and -mh.CFrame.RightVector or mh.CFrame.RightVector
+					task.spawn(function()
+						local t0 = tick()
+						while tick() - t0 < 0.16 do
+							local h = getHRP(myModel()); if not h then break end
+							pcall(function() h.AssemblyLinearVelocity = Vector3.new(rv.X * 70, math.min(h.AssemblyLinearVelocity.Y, 0), rv.Z * 70); h.CFrame = CFrame.lookAt(h.Position, Vector3.new(tr.Position.X, h.Position.Y, tr.Position.Z)) end)
+							task.wait()
+						end
+					end)
+					task.wait(0.16)
+					pcall(function()   -- and HIT
 						local cam = workspace.CurrentCamera; local v = (cam and cam.ViewportSize) or Vector2.new(800, 600)
 						VIMs:SendMouseButtonEvent(v.X / 2, v.Y / 2, 0, true, game, 0); task.wait(0.04); VIMs:SendMouseButtonEvent(v.X / 2, v.Y / 2, 0, false, game, 0)
 					end)
-					vxLog("Block punish -> behind + M1")
+					vxLog("Block punish -> dash + M1")
 				end
 			end
 		end
@@ -3130,7 +3141,9 @@ do
 	end
 	local lastThree = 0   -- you pressed 3 (Lapse Blue etc): R now means REVERSAL RED, so the mid-M1 auto-R must stand down
 	UIS.InputBegan:Connect(function(input, gpe)
-		if gpe then return end
+		-- DON'T bail on gpe: pressing 1/2/3/R to use a move sets gpe=true (the game bound the key), and those
+		-- are EXACTLY the presses Auto Air chains off. Only skip while you're TYPING in a textbox.
+		if UIS:GetFocusedTextBox() then return end
 		if input.KeyCode == Enum.KeyCode.Three then lastThree = tick() end
 		-- GOJO TP BACK MID-BATTLE: while you're M1ing, it presses R FOR you (Gojo TP behind) so the combo continues from their back
 		if input.UserInputType == Enum.UserInputType.MouseButton1 and gojoOn and tick() - lastGojo > 1.1 and tick() - lastThree > 4 then
