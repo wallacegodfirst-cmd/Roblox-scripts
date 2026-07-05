@@ -747,11 +747,8 @@ local function vxResolveAC()
 	return nil
 end
 local vxTeleLastActive = 0  -- last time a teleport actually moved you; the safety loop uses it to know when NO teleport is running
-local vxACLastFire = 0
-local function vxACPass()
+local function vxACPass()   -- fire the whitelist EVERY call (the teleport glide needs it per-step or the step gets set back). No throttle.
 	vxTeleLastActive = tick()
-	if tick() - vxACLastFire < 0.2 then return end   -- THROTTLE: combat was firing this ~60x/s and the server rate-limited it -> the whitelist went dead -> teleports set back
-	vxACLastFire = tick()
 	local re = vxResolveAC()
 	if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end
 end
@@ -2928,17 +2925,18 @@ do
 		local to = tr.Position - mh.Position
 		if to.Magnitude > 10 or mh.CFrame.LookVector:Dot(to.Unit) < 0.3 then return end   -- only when the M1 actually LANDED
 		last = tick()
-		sdaInjecting = tick() + 0.6
-		_G.VX_INJECT_UNTIL = tick() + 0.6                          -- our A/Q must not trigger other features
+		sdaInjecting = tick() + 0.4
+		_G.VX_INJECT_UNTIL = tick() + 0.4                          -- our A/Q must not trigger other features
+		fireKnit("MovementService", "Dash", "Left", true)         -- the RELIABLE left dash (remote) - always left, instant
 		task.spawn(function()
 			local VIMs = game:GetService("VirtualInputManager")
-			pcall(function() VIMs:SendKeyEvent(true, Enum.KeyCode.A, false, game) end)    -- hold LEFT...
-			task.wait(0.04)
-			pcall(function() VIMs:SendKeyEvent(true, Enum.KeyCode.Q, false, game); task.wait(0.05); VIMs:SendKeyEvent(false, Enum.KeyCode.Q, false, game) end)  -- ...tap Q = the game's LEFT dash
-			task.wait(0.22)                                                                -- keep LEFT held through the dash startup so the direction is ALWAYS left
+			pcall(function() VIMs:SendKeyEvent(true, Enum.KeyCode.A, false, game) end)    -- hold LEFT so the Q keybind also dashes left...
+			task.wait(0.02)
+			pcall(function() VIMs:SendKeyEvent(true, Enum.KeyCode.Q, false, game); task.wait(0.04); VIMs:SendKeyEvent(false, Enum.KeyCode.Q, false, game) end)  -- ...tap Q for you
+			task.wait(0.06)                                                                -- SHORT hold = tight/snappy, no left-drift
 			pcall(function() VIMs:SendKeyEvent(false, Enum.KeyCode.A, false, game) end)
 		end)
-		vxLog("SideDash assist: M1 -> auto Q (left dash)")
+		vxLog("SideDash assist: M1 -> Dash Left + auto Q")
 	end
 	-- TRIGGER: your own M1 ANIMATION (every character's ids are in _G.VX_M1_IDS now)
 	local hooked = setmetatable({}, { __mode = "k" })
