@@ -2893,50 +2893,50 @@ do
 	local sdaDir = 1            -- alternate LEFT / RIGHT approach side
 	local sdaNeed = 2           -- how many landed M1s before the dash-behind (1-3, dropdown)
 	local sdaCount, sdaLastHit = 0, 0
+	local function playDashAnim(id)   -- play a captured TBO dash animation on your character
+		local m = myModel(); local h = m and m:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
+		if not a then return end
+		pcall(function() local anim = Instance.new("Animation"); anim.AnimationId = id; local t = a:LoadAnimation(anim); t.Priority = Enum.AnimationPriority.Action2; t:Play(0.05); task.delay(0.5, function() pcall(function() t:Stop() end) end) end)
+	end
+	-- SIDE DASH ASSIST (TBO): press Q -> dash BEHIND them on their LEFT (real dash + captured anims) -> M1.
 	local function trigger()
 		if not on then return end
-		if tick() - last < 0.4 then return end   -- once per swing, not a fling on every frame
-		if tick() - (_G.VX_LAUNCHING or 0) < 0.3 then return end   -- don't reposition during an uppercut launch
-		if tick() < (_G.VX_BUSY or 0) then return end              -- an Auto Air / special sequence is running - do NOT move the player mid-sequence (this was 'it messes up every character')
-		-- count ONLY landed M1s: enemy in melee range, in front of you
+		if tick() - last < 0.35 then return end
+		if tick() - (_G.VX_LAUNCHING or 0) < 0.3 then return end   -- not during an uppercut launch
+		if tick() < (_G.VX_BUSY or 0) then return end              -- not during an Auto Air sequence
 		local mh = getHRP(myModel()); if not mh then return end
-		local tgt = nearestEnemy(9); local tr = tgt and getHRP(tgt)
+		local tgt = nearestEnemy(28); local tr = tgt and getHRP(tgt)   -- Q reaches them even from a short distance away
 		if not tr then return end
-		local to = tr.Position - mh.Position
-		if to.Magnitude > 9 or mh.CFrame.LookVector:Dot(to.Unit) < 0.35 then return end
-		if tick() - sdaLastHit > 1.2 then sdaCount = 0 end   -- string reset if you paused
-		sdaLastHit = tick(); sdaCount = sdaCount + 1
-		if sdaCount < sdaNeed then return end                 -- fires on hit #sdaNeed (1-3, your dropdown)
-		sdaCount = 0
 		last = tick()
-		-- PRO SWEAT: dash to the RIGHT and curl BEHIND them (like a 10k+ player spacing their string) - the game's
-		-- real dash (i-frames + anim) + a SOFT eased velocity curl to the back. No teleport, no snap, no glide.
-		fireKnit("MovementService", "Dash", "Right", true)
-		local h0 = getHRP(myModel()); if h0 then pcall(function() h0.AssemblyLinearVelocity = Vector3.zero end) end
+		playDashAnim("rbxassetid://117223862448096"); playDashAnim("rbxassetid://95295463826732")   -- the captured dash anims
+		fireKnit("MovementService", "Dash", "Left", true)                                            -- the real i-frame dash
 		task.spawn(function()
-			local dur = 0.26
+			local dur = 0.22
 			local t0 = tick()
 			while tick() - t0 < dur do
 				local h = getHRP(myModel()); local trl = getHRP(tgt); if not (h and trl and trl.Parent) then break end
-				local e = (tick() - t0) / dur; e = e * e * (3 - 2 * e)                          -- smoothstep = soft accel/decel
-				-- aim point curls from 'to their right side' to 'directly behind them', led by their velocity
+				local e = (tick() - t0) / dur; e = e * e * (3 - 2 * e)                               -- smoothstep = weighty, legit
 				local look = trl.CFrame.LookVector; local flat = Vector3.new(look.X, 0, look.Z)
 				local bdir = flat.Magnitude > 0.01 and flat.Unit or Vector3.new(0, 0, -1)
-				local rdir = Vector3.new(bdir.Z, 0, -bdir.X)                                     -- their right
+				local ldir = Vector3.new(-bdir.Z, 0, bdir.X)                                          -- THEIR LEFT
 				local okv, tv = pcall(function() return trl.AssemblyLinearVelocity end)
 				local lead = (okv and tv and tv.Magnitude > 1) and Vector3.new(tv.X, 0, tv.Z) * 0.12 * e or Vector3.zero
-				local aim = trl.Position + lead - bdir * 3 + rdir * (3.2 * (1 - e))              -- side -> back, always >=3 studs out (no overlap)
-				local h2 = getHRP(myModel())
-				local to = aim - h2.Position
+				local aim = trl.Position + lead - bdir * 3 + ldir * (3.2 * (1 - e))                   -- enter from the LEFT, end directly behind (>=3 studs = no overlap/fling)
+				local h2 = getHRP(myModel()); local toA = aim - h2.Position
 				pcall(function()
-					h2.AssemblyLinearVelocity = Vector3.new(to.X * 9, math.min(h2.AssemblyLinearVelocity.Y, 0), to.Z * 9)   -- SOFT pull (velocity, not CFrame) = weighty + legit
-					h2.CFrame = CFrame.lookAt(h2.Position, Vector3.new(trl.Position.X, h2.Position.Y, trl.Position.Z))       -- always face them
+					h2.AssemblyLinearVelocity = Vector3.new(toA.X * 11, math.min(h2.AssemblyLinearVelocity.Y, 0), toA.Z * 11)   -- SOFT velocity pull, no teleport
+					h2.CFrame = CFrame.lookAt(h2.Position, Vector3.new(trl.Position.X, h2.Position.Y, trl.Position.Z))
 				end)
 				task.wait()
 			end
 			local h = getHRP(myModel()); if h then pcall(function() h.AssemblyLinearVelocity = Vector3.new(0, math.min(h.AssemblyLinearVelocity.Y, 0), 0) end) end
+			pcall(function()   -- and M1 at their exposed back
+				local cam = workspace.CurrentCamera; local v = (cam and cam.ViewportSize) or Vector2.new(800, 600)
+				local VIMs = game:GetService("VirtualInputManager")
+				VIMs:SendMouseButtonEvent(v.X / 2, v.Y / 2, 0, true, game, 0); task.wait(0.04); VIMs:SendMouseButtonEvent(v.X / 2, v.Y / 2, 0, false, game, 0)
+			end)
 		end)
-		vxLog("SideDash assist: sweat -> back")
+		vxLog("SideDash assist: Q -> behind-left + M1")
 	end
 	-- BLOCK PUNISH (part of Side Dash Assist): the enemy you're hitting raises BLOCK -> instantly get BEHIND
 	-- them and M1 (their block faces the wrong way = free hit). This is the 'escape their block and hit them'.
@@ -2982,18 +2982,13 @@ do
 			end
 		end
 	end)
-	-- PRIMARY: fire the side dash the instant YOUR character plays an M1 animation (works for every character, survives input-processing)
-	local hooked = setmetatable({}, { __mode = "k" })
-	local function hookSelf()
-		local m = myModel(); local h = m and m:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
-		if not a or hooked[a] then return end
-		hooked[a] = a.AnimationPlayed:Connect(function(track)
-			if _G.VX_IS_M1 and _G.VX_IS_M1(track) then trigger() end  -- strict: real M1 swings only (looped walk anims filtered out)
-		end)
-	end
-	task.spawn(function() while true do if on then hookSelf() end task.wait(0.7) end end)
-	-- ANIM-ONLY on purpose: the old mouse-click "backup" fired on EVERY left click (GUI, camera drags) = dashing when you never M1'd
-	SideDashApi = { set = function(v) on = v == true; sdaCount = 0 end, setHits = function(n) sdaNeed = math.clamp(tonumber(n) or 2, 1, 3); sdaCount = 0 end }
+	-- TRIGGER: pressing Q (with Side Dash Assist on) does the dash-behind-left + M1. Ignores injected Q's.
+	game:GetService("UserInputService").InputBegan:Connect(function(input, gpe)
+		if not on then return end
+		if game:GetService("UserInputService"):GetFocusedTextBox() then return end
+		if input.KeyCode == Enum.KeyCode.Q and tick() >= (_G.VX_INJECT_UNTIL or 0) then trigger() end
+	end)
+	SideDashApi = { set = function(v) on = v == true end }
 end
 
 -- ============================================================
@@ -7656,8 +7651,7 @@ do
     local counterSec = defSub:Section({ Name = "Counter", Side = 1 })
     counterSec:Toggle({ Name = "Auto Counter", Callback = function(b) if CounterApi then CounterApi.set(b) end end })
     counterSec:Toggle({ Name = "Locked Only", Callback = function(b) if CounterApi then CounterApi.setLockedOnly(b) end end })
-    counterSec:Toggle({ Name = "Side Dash Assist", Callback = function(b) if SideDashApi then SideDashApi.set(b) end end })   -- always visible now
-    counterSec:Dropdown({ Name = "Dash After (M1s)", Items = { "1", "2", "3" }, Default = "2", Callback = function(v) if SideDashApi and SideDashApi.setHits then SideDashApi.setHits(v) end end })
+    counterSec:Toggle({ Name = "Side Dash Assist (press Q)", Callback = function(b) if SideDashApi then SideDashApi.set(b) end end })   -- always visible now
     counterSec:Toggle({ Name = "Anti Counter", Callback = function(b) if AntiCounterApi then AntiCounterApi.set(b) end end })
     counterSec:Dropdown({ Name = "On Counter", Items = { "Jump On Head", "Emote" }, Default = "Jump On Head", Callback = function(v) if AntiCounterApi then AntiCounterApi.setMode(v) end end })
     counterSec:Dropdown({ Name = "Emote #", Items = { "1", "2", "3", "4", "5", "6", "7", "8" }, Default = "1", Callback = function(v) if AntiCounterApi then AntiCounterApi.setEmote(v) end end })
