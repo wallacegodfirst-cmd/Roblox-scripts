@@ -64,7 +64,7 @@ local CFG = {
 	AntiBreakHead=true, AntiBreakNeck=true, AntiBreakLeg=true, AntiBreakTail=true, AntiBreakTorso=true, NoClouds=false, Float=false,
 	GodMode=false, AutoFarmGem=false, GemRange=1000000,
 	FarmReach=200, FarmTeleport=true, FarmSpeed=55, TpBiome="(scan)",
-	InfStamRun=true, AutoEatFood=true, FoodEatRange=120,
+	InfStamRun=true, AutoEatFood=true, FoodEatRange=120, FoodEatSpeed=3,
 	AlwaysDamage=false, DamageRange=120, DamageRate=4, DamagePart="Auto", NoGrabLimit=false,
 }
 
@@ -332,7 +332,7 @@ local function installHook()
 				-- SOURCE id (e.g. water 3028) — recording those as myReplicaId would break Attack. Source ids → seenIds only.
 				if typeof(id)=="number" then
 					if action=="Sip" or action=="Bite" or action=="Eat" or action=="Consume" then
-						if not seenSet[id] then seenSet[id]=true; seenIds[#seenIds+1]=id end if action=="Bite" and a.n>=3 then __gg.MH_eat={id=id,buf=a[3]} end
+						if not seenSet[id] then seenSet[id]=true; seenIds[#seenIds+1]=id end if action=="Bite" and a.n>=3 then __gg.MH_eat={id=id,buf=a[3]}; __gg.MH_foodIds=__gg.MH_foodIds or {}; if id~=myReplicaId then __gg.MH_foodIds[id]=true; __gg.MH_eatBuf=a[3] end end   -- collect EVERY food id you bite (multi-id) so INF Food replays them all
 					else
 						noteReplicaId(id)  -- self action = our dino id
 					end
@@ -572,9 +572,19 @@ local function fakeEat()
 	--   (1) the LIVE-captured eat (real source id + real buffer the game last sent), (2) every per-land water/source
 	--   id, (3) every replica id the hook has seen. The captured buffer is preferred; falls back to the known buffer.
 	local cap = __gg.MH_eat
-	local buf = (type(cap)=="table" and cap.buf~=nil) and cap.buf or EAT_BUFFER
+	local buf = (type(cap)=="table" and cap.buf~=nil) and cap.buf or __gg.MH_eatBuf or EAT_BUFFER
 	if type(buf)=="string" and buffer and buffer.fromstring then pcall(function() buf = buffer.fromstring(buf) end) end
 	if type(cap)=="table" and cap.id then pcall(function() rs:FireServer(cap.id, "Bite", cap.buf or buf) end) end
+	-- MULTI-ID REPLAY (eat once -> it does the rest): re-fire Bite to EVERY food id you've bitten this session,
+	-- FoodEatSpeed times each, so a single plant keeps the bar topped up across the whole map. Capped so it never bursts.
+	local foodIds = __gg.MH_foodIds
+	if type(foodIds)=="table" and next(foodIds) then
+		local fired=0; local speed=math.clamp(tonumber(CFG.FoodEatSpeed) or 3, 1, 10)
+		for foodId in pairs(foodIds) do
+			for _=1,speed do pcall(function() rs:FireServer(foodId, "Bite", buf) end); fired+=1; task.wait(0.03); if fired>=12 then break end end
+			if fired>=12 then break end
+		end
+	end
 	for _,id in pairs(WATER_IDS) do pcall(function() rs:FireServer(id, "Bite", buf) end) end  -- every land's source id
 	replicaActionAll("Bite", buf)                          -- + every captured source id (use-many-ids)
 	replicaFire("SetAction","Consuming",false)             -- dino: stop consuming
@@ -1269,7 +1279,7 @@ if FWindow then
 	mkBtn = function(par, txt, cb) pcall(function() par:AddButton({Title=txt, Callback=function() pcall(cb) end}) end) end
 	mkTextbox = function(par, lbl, key, _o, numeric) pcall(function() par:AddInput(key,{Title=lbl, Default=tostring(CFG[key] or ""), Numeric=numeric and true or false, Finished=true, Callback=function(v) if numeric then CFG[key]=tonumber(v) or CFG[key] else CFG[key]=v end saveCfg() end}) end) end
 	mkStatus = function() return nil end
-	mkLabel = function() return nil end
+	mkLabel = function(par, txt) pcall(function() local title,content=tostring(txt),""; local nl=title:find("\n"); if nl then content=title:sub(nl+1); title=title:sub(1,nl-1) end par:AddParagraph({Title=title, Content=content}) end) end
 	mkDropdown = function(par, label, getOptions, getSelected, onSelect)
 		local dd; pcall(function() dd=par:AddDropdown(label,{Title=label, Values=getOptions() or {"Default"}, Multi=false, Default=getSelected() or 1}); dd:OnChanged(function(v) onSelect(v); saveCfg() end) end)
 		return {refresh=function() pcall(function() if dd and dd.SetValues then dd:SetValues(getOptions() or {}) end end) end}
@@ -1322,9 +1332,11 @@ end
 do local p=Pages["Survival"]
 	local _,f=mkSec(p,"Food / Water / Stamina",1)
 	mkToggle(f,"INF Food","InfFood",1)
-	mkToggle(f,"Carnivore Meat TP (TP to nearest meat/corpse)","CarnMeatTP",2)
-	mkToggle(f,"INF Water","InfWater",3)
-	mkToggle(f,"INF Stamina","InfStam",4)
+	mkLabel(f,"HERB ONLY: turn INF Food ON, then EAT ONE plant (walk up + press E). It captures that food id + scans the whole map and keeps replaying it to hold your bar. If you're a CARNIVORE, use Carnivore Meat TP below instead.")
+	mkSlider(f,"INF Food grow speed (bites/cycle)","FoodEatSpeed",1,10,3,1)
+	mkToggle(f,"Carnivore Meat TP (TP to nearest meat/corpse)","CarnMeatTP",4)
+	mkToggle(f,"INF Water","InfWater",5)
+	mkToggle(f,"INF Stamina","InfStam",6)
 	local _,pr=mkSec(p,"Protection",2)
 	mkToggle(pr,"Anti Drown","AntiDrown",1)
 	mkToggle(pr,"Walk on Water","WalkWater",2)
@@ -2206,21 +2218,38 @@ end))
 -- SILENT AIM: silently fire the captured Attack remote at the locked target (no camera movement). This is what
 -- makes Silent Aim genuinely "silent" — your view never snaps, but the nearest dino takes hits.
 task.spawn(function() while RUNNING do if CFG.SilentAim and alive() then local t=aimTarget or nearestTarget(CFG.FarmPlayerRange*3, true); if t then local sr=getSoundRemote(); if sr then pcall(function() sr:FireServer("PVP","Attacks/Primary",false,nil,1) end) end; fireAttack(t, true) end; task.wait(1/math.max(1,CFG.DamageRate)) else task.wait(0.15) end end end)
--- NO GRAB WEIGHT LIMIT: the server releases a grab if the target is too heavy for your size. We RE-ASSERT the
--- captured grab state (IsGrabbing=true + GrabJawAngle) continuously so the grab STICKS — small dino holds big things.
-task.spawn(function() while RUNNING do
-	if CFG.NoGrabLimit and alive() then
-		-- ONLY re-assert the grab while you're ALREADY grabbing (so a too-heavy target doesn't get dropped). Do NOT
-		-- force IsGrabbing when you're not — that blocked NEW grabs / eating corpses (the bug you hit in sandbox+surv).
-		local grabbing=false
-		if CharacterState then pcall(function() grabbing = CharacterState.IsGrabbing==true or CharacterState.Grabbing==true or (CharacterState.Replica and CharacterState.Replica.Data and (CharacterState.Replica.Data.IsGrabbing==true or CharacterState.Replica.Data.Grabbing==true)) end) end
-		if grabbing then
-			pcall(function() setReplicaProp("IsGrabbing", true) end)
-			pcall(function() setReplicaProp("GrabJawAngle", 16.29032258064516) end)
+-- NO GRAB WEIGHT LIMIT — the strong version from the decompiled LIVEGrab module (3k-line build). The "above your
+-- weight limit!" check is CLIENT-side: CanBind() calls CharacterState.Grab:MeetsWeightLimit() and each grab ability
+-- has a WeightLimit (% of YOUR Weight). We patch MeetsWeightLimit -> always true AND set every grab ability's
+-- WeightLimit -> 1e9 (originals saved, restored on toggle-off so normal grabs are never broken). No IsGrabbing
+-- re-assert (that froze your movement), so you keep full movement and can grab anything + release normally.
+task.spawn(function()
+	local origMeets, origLimits = nil, nil
+	while RUNNING do
+		if CFG.NoGrabLimit then
+			pcall(function()
+				local Gr = CharacterState and CharacterState.Grab
+				if Gr and type(Gr.MeetsWeightLimit)=="function" and not origMeets then origMeets=Gr.MeetsWeightLimit; Gr.MeetsWeightLimit=function() return true end end
+				local ab = CharacterState and CharacterState.Data and CharacterState.Data.Abilities
+				if ab then origLimits=origLimits or {}
+					for name,data in pairs(ab) do
+						if type(name)=="string" and name:lower():find("grab",1,true) and type(data)=="table" then
+							if type(data.WeightLimit)=="number" and data.WeightLimit<1e8 then if origLimits[data]==nil then origLimits[data]=data.WeightLimit end data.WeightLimit=1e9 end
+							for _,v in pairs(data) do
+								if type(v)=="table" and type(v.WeightLimit)=="number" and v.WeightLimit<1e8 then if origLimits[v]==nil then origLimits[v]=v.WeightLimit end v.WeightLimit=1e9 end
+							end
+						end
+					end
+				end
+			end)
+			task.wait(0.2)
+		else
+			if origMeets then pcall(function() if CharacterState and CharacterState.Grab then CharacterState.Grab.MeetsWeightLimit=origMeets end end); origMeets=nil end
+			if origLimits then pcall(function() for t,lim in pairs(origLimits) do t.WeightLimit=lim end end); origLimits=nil end
+			task.wait(0.4)
 		end
-		task.wait(0.08)
-	else task.wait(0.4) end
-end end)
+	end
+end)
 -- UNLOCK MOUSE + CAMERA: free the cursor (so you can click/move freely) and keep it visible. Re-applied because the
 -- game re-locks it. Works the same in Sandbox + Survival (pure client UIS).
 task.spawn(function() while RUNNING do
@@ -2552,16 +2581,25 @@ local function espColor(def)
 	if c and M[c] then return M[c] end
 	return def
 end
-local function addESP(model, color, label)
+local function addESP(model, color, label, hpFrac)
 	if ESP.objs[model] then return end
 	local r=getHitbox(model) or rootOf(model); if not r then return end
 	color = espColor(color)
 	-- Highlight MUST be parented into the workspace/model to render — inside a ScreenGui it shows NOTHING (that was the bug).
 	local h = Instance.new("Highlight"); h.FillColor=color; h.OutlineColor=Color3.new(1,1,1); h.FillTransparency=0.6; h.OutlineTransparency=0; h.DepthMode=Enum.HighlightDepthMode.AlwaysOnTop; h.Adornee=model; h.Parent=model
 	local lines=1; for _ in label:gmatch("\n") do lines=lines+1 end
-	local bb = Instance.new("BillboardGui"); bb.Adornee=r; bb.Size=UDim2.fromOffset(180, 13*lines+6); bb.AlwaysOnTop=true; bb.StudsOffset=Vector3.new(0,3,0); bb.Parent=ESP.folder
-	local tl = Instance.new("TextLabel"); tl.BackgroundTransparency=1; tl.Size=UDim2.fromScale(1,1); tl.Text=label; tl.TextColor3=color; tl.TextStrokeTransparency=0.3; tl.TextSize=12; tl.Font=UIFONT; tl.TextYAlignment=Enum.TextYAlignment.Top; tl.Parent=bb
-	ESP.objs[model]={h,bb,tl}
+	local barH = hpFrac and 7 or 0   -- room for the HEALTH BAR under the text
+	local bb = Instance.new("BillboardGui"); bb.Adornee=r; bb.Size=UDim2.fromOffset(180, 13*lines+6+barH); bb.AlwaysOnTop=true; bb.StudsOffset=Vector3.new(0,3,0); bb.Parent=ESP.folder
+	local tl = Instance.new("TextLabel"); tl.BackgroundTransparency=1; tl.Size=UDim2.new(1,0,1,-barH); tl.Text=label; tl.TextColor3=color; tl.TextStrokeTransparency=0.3; tl.TextSize=12; tl.Font=UIFONT; tl.TextYAlignment=Enum.TextYAlignment.Top; tl.Parent=bb
+	local fill
+	if hpFrac then   -- HEALTH BAR: green->red by HP %, sits at the bottom of the billboard
+		local f=math.clamp(hpFrac,0,1)
+		local bg=Instance.new("Frame"); bg.AnchorPoint=Vector2.new(0.5,1); bg.Position=UDim2.new(0.5,0,1,-1); bg.Size=UDim2.new(1,-20,0,5); bg.BackgroundColor3=Color3.fromRGB(20,20,20); bg.BackgroundTransparency=0.2; bg.BorderSizePixel=0; bg.Parent=bb
+		local uc=Instance.new("UICorner"); uc.CornerRadius=UDim.new(0,2); uc.Parent=bg
+		fill=Instance.new("Frame"); fill.Size=UDim2.new(f,0,1,0); fill.BorderSizePixel=0; fill.BackgroundColor3=Color3.fromRGB(math.floor(220*(1-f))+40, math.floor(200*f)+40, 55); fill.Parent=bg
+		local uc2=Instance.new("UICorner"); uc2.CornerRadius=UDim.new(0,2); uc2.Parent=fill
+	end
+	ESP.objs[model]={h,bb,tl,fill}
 end
 -- RAINBOW animation: re-colour every active ESP highlight + label each frame while Rainbow is selected.
 task.spawn(function() while RUNNING do
@@ -2599,7 +2637,7 @@ task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
 					if body then
 						local d=dist(me.Position, body.Position)
 						if d<=CFG.ESPRange then
-							local sp,gr,hp,st,bl = readDinoInfo(m)
+							local sp,gr,hp,st,bl,hpf = readDinoInfo(m)
 							local pl = Players:GetPlayerFromCharacter(m)
 							-- always show the DINO SPECIES; for a player-controlled dino show their name on top + species under
 							local label
@@ -2608,8 +2646,8 @@ task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
 							if gr then label=label.."\nStage: "..gr end
 							if hp then label=label.."\nHP: "..hp end
 							if st then label=label.."\nStam: "..st end
-							if bl and bl>0 then label=label.."\nBleed: "..bl end
-							addESP(m, pl and Color3.fromRGB(90,170,255) or Color3.fromRGB(120,220,120), label); count+=1
+							if bl and bl>0 then label=label.."\nBlood: "..bl end
+							addESP(m, pl and Color3.fromRGB(90,170,255) or Color3.fromRGB(120,220,120), label, hpf); count+=1
 						end
 					end
 				end
