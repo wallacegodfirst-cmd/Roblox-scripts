@@ -1910,6 +1910,8 @@ end
 -- CARNIVORE MEAT TP: herbivores keep their bar up just eating any plant food-id (plants are everywhere), but a
 -- CARNIVORE needs MEAT. When this is on it finds the NEAREST corpse / meat / fish and teleports you ONTO it so
 -- INF Food's eat then consumes it. Only meat is matched (never plants), and it only moves you when hunger isn't full.
+do   -- SCOPED (Luau 200-local cap): meat helpers + the Carnivore Meat TP loop live here, so their 5 locals don't
+     -- persist in the main chunk. nearestMeat is exposed via __gg so the Auto Play Bot (its own do-block) can reuse it.
 local MEAT_KW = {"corpse","carcass","carrion","meat","chunk","rotten","flesh","remains","dead","fish","gar","sturgeon","bichir","coelacanth","mawsonia","sawfish","egg","grub","larva","insect","ant"}
 local function isMeatName(n) n=(n or ""):lower(); for _,k in ipairs(MEAT_KW) do if n:find(k,1,true) then return true end end return false end
 -- RED MESHY MEAT DETECTOR (from the screenshot): PE meat chunks are small RED MeshParts/meshed Parts lying on the
@@ -1960,6 +1962,7 @@ local function nearestMeat(range)
 	end
 	return best,bpart,bd
 end
+__gg.MH_nearestMeat = nearestMeat   -- expose so the Auto Play Bot (separate do-block) can reuse it without a 2nd top-level local
 local carnMeatCd=0
 task.spawn(function() while RUNNING do
 	if CFG.CarnMeatTP and CFG.InfFood and alive() then
@@ -1999,6 +2002,7 @@ task.spawn(function() while RUNNING do
 		task.wait(0.4)
 	else task.wait(0.5) end
 end end)
+end   -- end of the scoped meat-helpers + Carnivore Meat TP block
 task.spawn(function() while RUNNING do
 	if CFG.InfFood and alive() then
 		fakeEat()
@@ -2655,9 +2659,10 @@ local function botNearestFood()
 			if d<bd then best,bpart,bprompt,bd=m,part,prompt,d end
 		end
 	end
-	-- carnivore extra: the red-mesh meat detector (chunks have no prompt/name)
-	if not best and (diet=="Carnivore" or diet=="Omnivore") then
-		local m,part,d=nearestMeat(900)
+	-- carnivore extra: the red-mesh meat detector (chunks have no prompt/name). nearestMeat lives in another
+	-- do-block now (Luau local cap), so call it through the __gg handle.
+	if not best and (diet=="Carnivore" or diet=="Omnivore") and __gg.MH_nearestMeat then
+		local m,part,d=__gg.MH_nearestMeat(900)
 		if part then best,bpart,bprompt,bd=m,part,nil,d end
 	end
 	return best,bpart,bprompt,bd
@@ -2878,7 +2883,7 @@ do
 	A.left   = C("Frame",{Parent=A.frame, Size=UDim2.new(0,12,1,0), BackgroundColor3=Color3.fromRGB(255,30,30), BorderSizePixel=0})
 	A.right  = C("Frame",{Parent=A.frame, Size=UDim2.new(0,12,1,0), Position=UDim2.new(1,-12,0,0), BackgroundColor3=Color3.fromRGB(255,30,30), BorderSizePixel=0})
 	A.banner = C("Frame",{Parent=A.frame, AnchorPoint=Vector2.new(0.5,0), Size=UDim2.fromOffset(460,56), Position=UDim2.new(0.5,0,0,26), BackgroundColor3=Color3.fromRGB(40,0,0), BorderSizePixel=0}); corner(A.banner,8); stroke(A.banner,Color3.fromRGB(255,40,40),2)
-	A.icon = C("TextLabel",{Parent=A.banner, Position=UDim2.fromOffset(16,0), Size=UDim2.fromOffset(42,56), BackgroundTransparency=1, Text="\u{26A0}", TextColor3=Color3.fromRGB(255,210,40), TextSize=32, Font=Enum.Font.GothamBold})
+	A.icon = C("TextLabel",{Parent=A.banner, Position=UDim2.fromOffset(16,0), Size=UDim2.fromOffset(42,56), BackgroundTransparency=1, Text="!", TextColor3=Color3.fromRGB(255,210,40), TextSize=36, Font=Enum.Font.GothamBold})
 	A.text = C("TextLabel",{Parent=A.banner, Position=UDim2.fromOffset(60,0), Size=UDim2.new(1,-72,1,0), BackgroundTransparency=1, Text="DINO NEAR - RUN!", TextColor3=Color3.fromRGB(255,90,90), TextSize=20, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Left})
 	task.spawn(function() local on=false while RUNNING do
 		local show,who,dd=false,nil,nil
