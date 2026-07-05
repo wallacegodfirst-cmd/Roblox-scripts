@@ -613,9 +613,12 @@ do
 					VirtualInputManager:SendKeyEvent(false, Settings.AbilityKey, false, game)
 				end)
 			end
+			local flashSuppress = 0  -- after ONE flash, ignore every M1/anim for a full second so 1 M1 = exactly 1 flash (not 4)
 			local function tryM1Flash()  -- shared by BOTH triggers (click + your M1 anim): flash if the M1 actually lands
-				if Settings.Mode ~= "M1 Black Flash" or tick() - lastM1 < 0.25 then return end
-				if tick() < (_G.VX_INJECT_UNTIL or 0) then return end   -- never fire off our own injected inputs
+				if Settings.Mode ~= "M1 Black Flash" then return end
+				if tick() < flashSuppress then return end                 -- HARD gate: one flash per swing, no re-fire from the flash's own anim
+				if tick() - lastM1 < 1.0 then return end                  -- 1s debounce = 1 M1 -> 1 black flash chain
+				if tick() < (_G.VX_INJECT_UNTIL or 0) then return end     -- never fire off our own injected inputs
 				local mh = getHRP(myCharResolved())
 				local tgt = getNearestEnemy(9)
 				local tr = tgt and getHRP(tgt)
@@ -623,8 +626,9 @@ do
 				local to = tr.Position - mh.Position
 				if to.Magnitude <= 9 and mh.CFrame.LookVector:Dot(to.Unit) > 0.35 then   -- facing them + close = the M1 connects
 					lastM1 = tick()
-					_G.VX_SDA_HOLD = tick() + 0.7   -- tell Side Dash Assist to SKIP this swing (its left dash was yanking you out of flash range when both were on)
-					if _G.VX_BF_DEBUG then print("[DreamHub BF] M1 LANDED on "..tgt.Name.." -> black flash IN PLACE (no TP)") end
+					flashSuppress = tick() + 1.0   -- lock out further flashes for 1s (kills the 4x repeat)
+					_G.VX_SDA_HOLD = tick() + 0.9  -- tell Side Dash Assist to SKIP this swing
+					if _G.VX_BF_DEBUG then print("[DreamHub BF] M1 LANDED on "..tgt.Name.." -> ONE black flash") end
 					task.delay(0.18, function() if Settings.Mode == "M1 Black Flash" then fireFlashInPlace(tgt) end end)  -- swing lands (damage), THEN flash where you stand
 				end
 			end
@@ -1377,13 +1381,13 @@ do
 		local cam = workspace.CurrentCamera; local v = (cam and cam.ViewportSize) or Vector2.new(800, 600)
 		pcall(function() VIM:SendMouseButtonEvent(v.X / 2, v.Y / 2, 0, true, game, 0); task.wait(0.04); VIM:SendMouseButtonEvent(v.X / 2, v.Y / 2, 0, false, game, 0) end)
 	end
-	local function jump()  -- guarantee air-state for the DOWN SLAM (the slam M1 is rejected on the ground)
+	local function jump()  -- small BUNNY HOP for the DOWN SLAM (a 50-stud rocket looked obvious)
 		_G.VX_LAUNCHING = tick()  -- tell Side Dash (its flat dash clamps Y) to stand down for a moment so it can't cancel this lift
 		local c = myModel()
 		local h = c and c:FindFirstChildOfClass("Humanoid"); local hrp = c and c:FindFirstChild("HumanoidRootPart")
 		pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.02); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)  -- real Space press
 		if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end                                          -- force jump state
-		if hrp then pcall(function() hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, 50, hrp.AssemblyLinearVelocity.Z) end) end  -- physically lift off
+		if hrp then pcall(function() local v = hrp.AssemblyLinearVelocity; hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 26), v.Z) end) end  -- nudge to hop height only = natural bunny hop
 	end
 	local function finisher()
 		busy = true
@@ -1447,13 +1451,17 @@ do
 		if not a or hooked[a] then return end
 		hooked[a] = a.AnimationPlayed:Connect(function(track)
 			if mode == "Off" or busy then return end
-			if tick() < (_G.VX_INJECT_UNTIL or 0) then return end   -- an anim from OUR injected finisher M1 must not count as a combo hit
+			if tick() < (_G.VX_INJECT_UNTIL or 0) then return end   -- an anim from OUR injected finisher M1 must not count
+			if tick() - lastSwing < 1.3 then return end             -- cooldown: one launcher per ~1.3s (was 'needs 3 hits' - that never completed = no work)
 			local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+")
 			if not (id and COMBO_IDS[id]) then return end
-			local now = tick()
-			if now - lastSwing > 1.4 then count = 0 end   -- combo dropped -> restart the count
-			lastSwing = now; count = count + 1
-			if count >= 3 then count = 0; finisher() end   -- 3 REAL M1 swings -> the launcher window is open NOW
+			-- only when an enemy is actually in melee range (don't uppercut air)
+			local me = myModel(); local mr = me and me:FindFirstChild("HumanoidRootPart"); if not mr then return end
+			local near = false
+			for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local rr = plr.Character:FindFirstChild("HumanoidRootPart"); if rr and (rr.Position - mr.Position).Magnitude <= 12 then near = true break end end end
+			if not near then local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local rr = m:FindFirstChild("HumanoidRootPart"); local hh = m:FindFirstChildOfClass("Humanoid"); if rr and hh and hh.Health > 0 and (rr.Position - mr.Position).Magnitude <= 12 then near = true break end end end end end
+			if not near then return end
+			lastSwing = tick(); finisher()   -- YOUR M1 landed on someone -> launcher (uptilt / down slam) right now
 		end)
 	end
 	task.spawn(function() while true do if mode ~= "Off" then pcall(hookSelf) end task.wait(0.6) end end)
@@ -2658,10 +2666,10 @@ do
 	local function mahoEscape()
 		if mahoBusy then return end
 		mahoBusy = true
-		if VX_NOTIFY then VX_NOTIFY("Mahoraga - safe teleport", false) end
-		vxTeleportHard(MAHO_SAFE + Vector3.new(0, 4, 0), 5)          -- go to the safe spot + stay pinned ~5s
+		if VX_NOTIFY then VX_NOTIFY("Mahoraga sensed - safe teleport", false) end
+		vxGlide(MAHO_SAFE + Vector3.new(0, 4, 0), nil, 5)            -- instant whitelisted snap to the safe spot + hold 5s (forceful for an emergency)
 		task.delay(5.4, function()
-			vxTeleportHard(MAHO_RETURN + Vector3.new(0, 4, 0), 3)     -- summon done -> back to the main map
+			vxGlide(MAHO_RETURN + Vector3.new(0, 4, 0), nil, 3)       -- summon done -> back to the main map
 			if VX_NOTIFY then VX_NOTIFY("Back to main map", true) end
 			task.delay(1.5, function() mahoBusy = false end)
 		end)
@@ -2690,7 +2698,9 @@ do
 	end)
 
 	-- ---------- AUTO EARTHQUAKE ----------
-	-- Spam the game's own Earthquake move remote (needs the Earthquake moveset object as the arg).
+	-- Fire the Earthquake move ONCE, then WAIT for its real cooldown before firing again (the old 1.4s loop
+	-- machine-gunned the remote = 'just spams the moves'). The move only lands when you're GROUNDED and it's
+	-- off cooldown, so we gate on both.
 	local quakeOn = false
 	local function quakeRE()
 		local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
@@ -2698,12 +2708,18 @@ do
 	end
 	local function fireQuake()
 		local m = myModel(); local ms = m and m:FindFirstChild("Moveset"); local eq = ms and ms:FindFirstChild("Earthquake")
+		local hum = m and m:FindFirstChildOfClass("Humanoid")
+		if not eq then return false end                                    -- your character has no Earthquake move -> no-op
+		if hum and hum.FloorMaterial == Enum.Material.Air then return false end   -- must be grounded for the quake to land
 		local re = quakeRE()
-		if re and eq then pcall(function() re:FireServer(eq) end) end
+		if re then pcall(function() re:FireServer(eq) end); return true end
+		return false
 	end
 	task.spawn(function()
 		while true do
-			if quakeOn then fireQuake(); task.wait(1.4) else task.wait(0.3) end   -- ~1.4s between quakes (respects the move cooldown)
+			if quakeOn then
+				if fireQuake() then task.wait(6) else task.wait(0.4) end   -- fired -> wait the cooldown; couldn't fire (airborne/no move) -> retry soon
+			else task.wait(0.3) end
 		end
 	end)
 
@@ -2780,12 +2796,20 @@ do
 		if not h or h.MaxHealth <= 0 then return false end
 		return (h.Health / h.MaxHealth) <= LOW_HP and h.Health > 0
 	end
-	local function flash(tgt)  -- fire the PROVEN teleport black-flash chain on the target (teleport behind -> flash)
-		if tick() - last < 0.9 then return end
+	-- YUTA BLACK FLASH mechanic (user): press move "2" TWICE and it black-flashes. Anim rbxassetid://89582140026963
+	-- is the black-flash itself. So we double-tap the 2 key (its own move), not a custom teleport chain.
+	local VIMy = game:GetService("VirtualInputManager")
+	local function flash(tgt)
+		if tick() - last < 1.2 then return end
 		if not (tgt and tgt.Parent) then return end
 		if not isLow(tgt) then return end   -- ONLY when they're low HP (kill/finisher), never on a full-HP enemy
 		last = tick()
-		if _G.VX_RUNCHAIN then pcall(function() _G.VX_RUNCHAIN(tgt) end) end
+		_G.VX_INJECT_UNTIL = tick() + 0.6   -- our 2-taps must not trigger other features
+		task.spawn(function()               -- press 2, then 2 again = the Yuta black flash
+			pcall(function() VIMy:SendKeyEvent(true, Enum.KeyCode.Two, false, game); task.wait(0.05); VIMy:SendKeyEvent(false, Enum.KeyCode.Two, false, game) end)
+			task.wait(0.14)
+			pcall(function() VIMy:SendKeyEvent(true, Enum.KeyCode.Two, false, game); task.wait(0.05); VIMy:SendKeyEvent(false, Enum.KeyCode.Two, false, game) end)
+		end)
 	end
 	-- MANUAL "Yuta Black Flash": when ON, your own Yuta M1 landing auto-converts into a black flash on the enemy.
 	local hooked = setmetatable({}, { __mode = "k" })
@@ -3327,10 +3351,10 @@ do
 		if _G.VX_M1BF_ON then return end                           -- M1 Black Flash mode is on: BF owns every landed M1 - dashing left mid-flash was yanking you out of range
 		if tick() < (_G.VX_SDA_HOLD or 0) then return end          -- (belt & suspenders: BF claimed this exact swing)
 		local mh = getHRP(myModel()); if not mh then return end
-		local tgt = nearestEnemy(10); local tr = tgt and getHRP(tgt)
+		local tgt = nearestEnemy(15); local tr = tgt and getHRP(tgt)
 		if not tr then return end
 		local to = tr.Position - mh.Position
-		if to.Magnitude > 10 or mh.CFrame.LookVector:Dot(to.Unit) < 0.3 then return end   -- only when the M1 actually LANDED
+		if to.Magnitude > 15 or mh.CFrame.LookVector:Dot(to.Unit) < 0.15 then return end   -- lenient: fire for any character whose M1 anim played with an enemy roughly in front
 		last = tick()
 		sdaInjecting = tick() + 0.4
 		_G.VX_INJECT_UNTIL = tick() + 0.4                          -- guard so this dash doesn't trigger other features
@@ -3680,7 +3704,7 @@ do
 	local UIS = game:GetService("UserInputService")
 	local LP = Players.LocalPlayer
 	local on = false
-	local ghost, ghostRoot = nil, nil
+	local ghost, ghostRoot, freezeCF = nil, nil, nil
 	local function myC() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
 	local function myR() local c = myC(); return c and c:FindFirstChild("HumanoidRootPart") end
 	-- GHOST method: your REAL body stays put (server + everyone genuinely sees you frozen, because you
@@ -3705,7 +3729,10 @@ do
 	RunService.RenderStepped:Connect(function(dt)
 		if not on then return end
 		local r = myR()
-		if r then pcall(function() r.Anchored = true; r.AssemblyLinearVelocity = Vector3.zero end) end   -- the real body stays exactly where you froze
+		if r then
+			if not freezeCF then freezeCF = r.CFrame end   -- capture the freeze point ONCE
+			pcall(function() r.Anchored = true; r.AssemblyLinearVelocity = Vector3.zero; r.AssemblyAngularVelocity = Vector3.zero; r.CFrame = freezeCF end)  -- HARD pin: the real body never moves from where you froze
+		end
 		if not (ghost and ghost.Parent and ghostRoot) then makeGhost(); if not ghostRoot then return end end
 		local cam = workspace.CurrentCamera; if not cam then return end
 		local fwd = cam.CFrame.LookVector; fwd = Vector3.new(fwd.X, 0, fwd.Z); if fwd.Magnitude > 0 then fwd = fwd.Unit end
@@ -3727,6 +3754,7 @@ do
 			on = true
 		else
 			on = false
+			freezeCF = nil
 			if ghost then pcall(function() ghost:Destroy() end) end
 			ghost, ghostRoot = nil, nil
 			local c = myC(); local r = myR(); local h = c and c:FindFirstChildOfClass("Humanoid")
