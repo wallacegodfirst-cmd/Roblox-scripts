@@ -7555,13 +7555,13 @@ do
         mmGui.Name = "DreamMin"; mmGui.ResetOnSpawn = false; mmGui.IgnoreGuiInset = false; mmGui.DisplayOrder = 9600
         pcall(function() mmGui.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
         if not mmGui.Parent then mmGui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui") end
-        local btn = Instance.new("ImageButton")
-        -- top-CENTER, small, NOT draggable (draggable was capturing touch input = the "can't move for a few seconds" freeze).
-        btn.Size = UDim2.fromOffset(40, 40); btn.Position = UDim2.new(0.5, -20, 0, 6); btn.AnchorPoint = Vector2.new(0, 0)
-        btn.BackgroundColor3 = Color3.fromRGB(10, 10, 12); btn.Image = "rbxassetid://82151574125055"   -- the Dream logo (real IMAGE asset id)
-        btn.ScaleType = Enum.ScaleType.Fit; btn.AutoButtonColor = true
+        local btn = Instance.new("TextButton")
+        -- clean PURPLE pill, top-center. No image asset (it didn't render = the grey block you saw).
+        btn.Size = UDim2.fromOffset(72, 30); btn.Position = UDim2.new(0.5, -36, 0, 6); btn.AnchorPoint = Vector2.new(0, 0)
+        btn.BackgroundColor3 = Color3.fromRGB(120, 80, 255); btn.Text = "Dream"; btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        btn.Font = Enum.Font.GothamBold; btn.TextSize = 13; btn.AutoButtonColor = true
         btn.Active = true; btn.ZIndex = 10; btn.Parent = mmGui
-        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 10)
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(1, 0)
         local us = Instance.new("UIStroke"); us.Color = Color3.fromRGB(255, 255, 255); us.Thickness = 1.2; us.Transparency = 0.5; us.Parent = btn
         -- DRAG (custom - won't capture-freeze movement) + TAP toggles the menu only if you didn't drag
         do
