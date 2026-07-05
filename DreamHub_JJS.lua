@@ -1449,15 +1449,41 @@ do
 		if hrp then pcall(function() local v = hrp.AssemblyLinearVelocity; hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 26), v.Z) end) end  -- nudge to hop height only = natural bunny hop
 	end
 	local function note(m) if VX_NOTIFY then pcall(function() VX_NOTIFY(m, nil) end) end print("[DreamHub M1Combo] " .. m) end   -- VISIBLE feedback: you SEE when/why it fires
-	-- THE FIX: the "Up"/"Down" remote is NOT a standalone move - the server only honors it as the VARIANT of an
-	-- M1 that is happening RIGHT NOW (your capture was recorded mid-swing). So we fire it the INSTANT your M1
-	-- goes out - click AND anim triggers, zero delay - so the server treats YOUR OWN swing as the launcher.
-	local function fireLauncher()
-		if mode == "Off" then return end
-		if tick() - lastSwing < 0.45 then return end
-		lastSwing = tick()
-		act(mode == "Down Slam" and "Down" or "Up")   -- rides the in-flight M1
-		note(mode .. " sent with your M1")
+	-- ══════════ FULL REWORK: a real COMBO STATE MACHINE ══════════
+	-- How the game ACTUALLY does it: the launcher is the FINAL HIT of your M1 chain.
+	--   UPTILT   = SPACE IS HELD while the last chain hit goes out (mid-combo you can't jump, so no hop).
+	--   DOWNSLAM = you are AIRBORNE above them and throw the hit.
+	-- So: count YOUR chain (M1 anims, per-character database). After hit #3, the SCRIPT throws hit #4
+	-- itself with the right modifier - held space (uptilt) or after a hop (slam) - plus the Activated
+	-- remote at the exact same moment. Every character, same chain rule.
+	local function finisher()
+		busy = true
+		count = 0
+		task.spawn(function()
+			_G.VX_INJECT_UNTIL = tick() + 1.2
+			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}
+			_G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 1.2
+			_G.VX_LAUNCHING = tick()
+			if mode == "Uppercut" then
+				note("Uppercut: 3 hits in -> space + 4th hit")
+				pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)   -- HOLD space: mid-combo this can't jump you
+				task.wait(0.22)                                                                  -- the game must SEE space held before the hit
+				realM1()                                                                        -- the 4th hit, thrown BY the script, space held = UPTILT
+				act("Up")                                                                       -- the variant remote with the in-flight hit
+				task.wait(0.06); realM1()                                                       -- safety tap if the first was a frame early
+				task.wait(0.2)
+				pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
+			else
+				note("Down Slam: 3 hits in -> hop + air hit")
+				jump()                                                                          -- small real hop = airborne
+				task.wait(0.28)                                                                 -- rising above them
+				realM1()                                                                        -- airborne hit = DOWN SLAM
+				act("Down")
+				task.wait(0.07); realM1()
+			end
+			task.wait(0.6)
+			busy = false
+		end)
 	end
 	-- FULL per-character UPPERCUT M1 database (user-captured): every swing of every character's M1 chain,
 	-- so the 3-swing count works on ALL of them. The old DB only had SOME swings per character -> the count
@@ -1495,30 +1521,26 @@ do
 		local m = myModel(); local h = m and m:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
 		if not a or hooked[a] then return end
 		hooked[a] = a.AnimationPlayed:Connect(function(track)
-			if mode == "Off" then return end
+			if mode == "Off" or busy then return end
+			if tick() < (_G.VX_INJECT_UNTIL or 0) then return end   -- the finisher's OWN 4th hit must not count as a chain hit
 			local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+")
 			if not (id and COMBO_IDS[id]) then return end
-			-- only when an enemy is actually in melee range (don't uppercut air)
+			-- only count hits with an enemy actually in melee range (whiffs into air don't build a chain)
 			local me = myModel(); local mr = me and me:FindFirstChild("HumanoidRootPart"); if not mr then return end
 			local near = false
 			for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local rr = plr.Character:FindFirstChild("HumanoidRootPart"); if rr and (rr.Position - mr.Position).Magnitude <= 14 then near = true break end end end
 			if not near then local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local rr = m:FindFirstChild("HumanoidRootPart"); local hh = m:FindFirstChildOfClass("Humanoid"); if rr and hh and hh.Health > 0 and (rr.Position - mr.Position).Magnitude <= 14 then near = true break end end end end end
 			if not near then return end
-			fireLauncher()   -- YOUR M1 is going out RIGHT NOW -> send the Up/Down variant with it (no delay)
+			local now = tick()
+			if now - lastSwing > 1.7 then count = 0 end   -- you stopped swinging -> the chain broke -> restart the count
+			if now - lastSwing < 0.18 then return end     -- one anim event per swing (some rigs fire the track twice)
+			lastSwing = now; count = count + 1
+			print("[DreamHub M1Combo] chain hit " .. count .. "/3")
+			if count >= 3 then finisher() end             -- 3 hits in = the launcher window -> the SCRIPT throws hit #4 with the modifier
 		end)
 	end
 	task.spawn(function() while true do if mode ~= "Off" then pcall(hookSelf) end task.wait(0.6) end end)
-	-- CLICK trigger too (fires even if the anim id is missing for a skin): your left-click IS the M1 - send the variant with it
-	UIS.InputBegan:Connect(function(input)
-		if mode == "Off" or UIS:GetFocusedTextBox() then return end
-		if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-		local me = myModel(); local mr = me and me:FindFirstChild("HumanoidRootPart"); if not mr then return end
-		local near = false
-		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local rr = plr.Character:FindFirstChild("HumanoidRootPart"); if rr and (rr.Position - mr.Position).Magnitude <= 14 then near = true break end end end
-		if not near then local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local rr = m:FindFirstChild("HumanoidRootPart"); local hh = m:FindFirstChildOfClass("Humanoid"); if rr and hh and hh.Health > 0 and (rr.Position - mr.Position).Magnitude <= 14 then near = true break end end end end end
-		if near then task.delay(0.04, fireLauncher) end   -- a beat after the click so the M1 is in flight when the variant arrives
-	end)
-	M1ComboApi = { setMode = function(m) mode = m or "Off"; count = 0 end, setDelay = function() end }
+	M1ComboApi = { setMode = function(m) mode = m or "Off"; count = 0; busy = false end, setDelay = function() end }
 end
 
 -- MODULE: DASH  (no-cooldown directional dash via MovementService; forward = Itadori Chase)
