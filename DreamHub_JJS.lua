@@ -686,29 +686,16 @@ do
 				local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
 				local tHRP = tgt and getHRP(tgt)
 				if not (myHRP and hum and tHRP) or hum.Health <= 0 then return end
+				if _G.VX_BF_DEBUG then print("[DreamHub BF] fireFlashInPlace on "..tostring(tgt and tgt.Name).." conv="..tostring(isConversion).." key="..tostring(Settings.AbilityKey)) end
 				m1bfGen = m1bfGen + 1; local gen = m1bfGen
-				-- TURN-AROUND FIX (root cause): one CFrame rotation write lasts ONE frame — AutoRotate + the game's
-				-- movement controller rotate you straight back before the flash key even lands, so you visibly "never
-				-- turn". The fix is OWNERSHIP of rotation for the flash window: AutoRotate off, re-assert a rotation-
-				-- only lookAt every Heartbeat for 0.35s (position is re-read fresh each frame — you are NEVER moved),
-				-- then AutoRotate is restored. The conversion re-press skips this (you're already being held).
-				if not isConversion then
-					task.spawn(function()
-						local savedAuto = hum.AutoRotate
-						pcall(function() hum.AutoRotate = false end)
-						local t0 = tick()
-						while tick() - t0 < 0.35 do
-							if m1bfGen ~= gen then break end
-							local c = myCharResolved(); local r = getHRP(c)
-							local tr = tgt and tgt.Parent and getHRP(tgt)
-							if not (r and tr) then break end
-							pcall(function() r.CFrame = CFrame.lookAt(r.Position, Vector3.new(tr.Position.X, r.Position.Y, tr.Position.Z)) end)
-							task.wait()
-						end
-						pcall(function() if hum and hum.Parent then hum.AutoRotate = savedAuto end end)
-					end)
-					pcall(function() Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, tHRP.Position) end)  -- aim camera at them once
-				end
+				-- 1) FACE THEM ONCE, immediately (rotation only, no AutoRotate change) — this is the exact write the
+				--    working build used, so the flash aims true and the M1/flash is never delayed or blocked.
+				pcall(function()
+					local flat = Vector3.new(tHRP.Position.X, myHRP.Position.Y, tHRP.Position.Z)
+					myHRP.CFrame = CFrame.lookAt(myHRP.Position, flat)
+				end)
+				pcall(function() Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, tHRP.Position) end)  -- aim camera at them
+				-- 2) PRESS THE FLASH KEY (unchanged working path)
 				_G.VX_INJECT_UNTIL = tick() + 0.4
 				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Settings.AbilityKey] = tick() + 0.5   -- our flash key press must not chain other features
 				pcall(function()
@@ -716,6 +703,23 @@ do
 					task.wait(Settings.KeyHoldDuration)
 					VirtualInputManager:SendKeyEvent(false, Settings.AbilityKey, false, game)
 				end)
+				-- 3) TURN-AROUND (additive, AFTER the press so it can NEVER delay/eat the flash): keep re-facing the
+				--    target for ~0.3s so you visibly turn to them even though AutoRotate tries to correct. We DON'T
+				--    disable AutoRotate (that was what broke the flash) — we just out-write it for a moment. Position
+				--    is re-read every frame, so you are only rotated, never moved.
+				if not isConversion then
+					task.spawn(function()
+						local t0 = tick()
+						while tick() - t0 < 0.3 do
+							if m1bfGen ~= gen then break end
+							local r = getHRP(myCharResolved())
+							local tr = tgt and tgt.Parent and getHRP(tgt)
+							if not (r and tr) then break end
+							pcall(function() r.CFrame = CFrame.lookAt(r.Position, Vector3.new(tr.Position.X, r.Position.Y, tr.Position.Z)) end)
+							task.wait()
+						end
+					end)
+				end
 				task.spawn(function()   -- ANTI-FLING: cap only a RUNAWAY launch. Y is left alone (clamping Y while the
 					-- move lifts you = the physics fight that stuttered/flung). 45 = above any normal move carry, below a fling.
 					local t0 = tick()
@@ -737,11 +741,14 @@ do
 				if tick() - lastM1 < 1.0 then return end                  -- 1s debounce = 1 M1 -> 1 black flash chain
 				if tick() < (_G.VX_INJECT_UNTIL or 0) then return end     -- never fire off our own injected inputs
 				local mh = getHRP(myCharResolved())
-				local tgt = getNearestEnemy(9)
+				local tgt = getNearestEnemy(14)
 				local tr = tgt and getHRP(tgt)
-				if not (mh and tr) then return end
+				if not (mh and tr) then if _G.VX_BF_DEBUG then print("[DreamHub BF] tryM1Flash: no target in 14 studs") end return end
 				local to = tr.Position - mh.Position
-				if to.Magnitude <= 9 and mh.CFrame.LookVector:Dot(to.Unit) > 0.35 then   -- facing them + close = the M1 connects
+				-- LOOSENED gate: range 14 + a WIDE cone (dot > -0.25 ≈ 105°). The old 9-stud / dot>0.35 required you to
+				-- ALREADY be facing them — circular, since fireFlashInPlace is what turns you. Now proximity is enough;
+				-- fireFlashInPlace faces them. (M1 range in JJS is generous, so 14 covers a landed swing.)
+				if to.Magnitude <= 14 and mh.CFrame.LookVector:Dot(to.Unit) > -0.25 then
 					lastM1 = tick()
 					flashSuppress = tick() + 1.0   -- lock out further click-triggers for 1s
 					_G.VX_SDA_HOLD = tick() + 0.9  -- tell Side Dash Assist to SKIP this swing
@@ -969,7 +976,7 @@ end
 
 -- TP METHOD: "Glide" (DEFAULT - the PROVEN stepped glide that works in-game) steps there at the speed cap,
 -- whitelisting every frame. "Instant" snaps straight there in one whitelisted jump (optional).
-local VX_TP_METHOD = "Glide"
+local VX_TP_METHOD = "Instant"   -- user: "i just want to tp" (no glide). Instant = one whitelisted snap. Dropdown can switch back to Glide.
 
 local function vxTpToast(msg)  -- visible red warning when a teleport FAILS (VX_NOTIFY isn't built yet at this point in the file)
 	pcall(function()
@@ -4483,17 +4490,14 @@ local Library do
 
     Library.Theme = TableClone(Themes["Preset"])
 
-    -- per-tier accent (FREE red / PREMIUM gold / PLUS volt-white) over the exact dark theme
-    if VX_TIER == "free" then
-        Library.Theme["Accent"] = FromRGB(240, 45, 58)
-        Library.Theme["Border 2"] = FromRGB(72, 40, 44)
-    elseif VX_TIER == "plus" then
-        Library.Theme["Accent"] = FromRGB(238, 246, 250)
-        Library.Theme["Border 2"] = FromRGB(70, 76, 84)
-    else
-        Library.Theme["Accent"] = FromRGB(245, 190, 70)
-        Library.Theme["Border 2"] = FromRGB(74, 62, 38)
-    end
+    -- BLACK & WHITE theme (user request): pure grayscale for every tier — near-black panels, white accent/text,
+    -- grey borders. No coloured accents.
+    Library.Theme["Background"] = FromRGB(10, 10, 10)
+    Library.Theme["Inline"]     = FromRGB(16, 16, 16)
+    Library.Theme["Element"]    = FromRGB(26, 26, 26)
+    Library.Theme["Accent"]     = FromRGB(255, 255, 255)
+    Library.Theme["Border"]     = FromRGB(34, 34, 34)
+    Library.Theme["Border 2"]   = FromRGB(70, 70, 70)
 
     -- Folders
     pcall(function()
@@ -8390,9 +8394,13 @@ do
             end)
             UISm.InputEnded:Connect(function(i)
                 if (i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch) and dragging then
-                    dragging = false
-                    if not moved then pcall(function() Window:SetOpen(not Window.IsOpen) end) end
+                    dragging = false   -- just end the drag; the toggle is handled by Activated below (one path = no double-toggle)
                 end
+            end)
+            -- SINGLE toggle path (the old InputEnded toggle sometimes never fired = "clicking Dream did nothing").
+            -- Activated fires once per genuine click/tap; guarded by `moved` so a drag doesn't toggle.
+            btn.Activated:Connect(function()
+                if not moved then pcall(function() Window:SetOpen(not Window.IsOpen) end) end
             end)
         end
     end)
@@ -8429,6 +8437,12 @@ do
         bfSec:Slider({ Name = "Range", Min = 10, Max = 60, Default = 30, Decimals = 1, Callback = function(v) if ChainApi then ChainApi.setLockRange(v) end end })
     end
     local blockSec = bfSub:Section({ Name = "Auto Block", Side = 2 })
+    -- DEBUG COMBAT: one switch that turns on EVERY combat trace (BF, uppercut/downslam, air, skills, dash, yuta).
+    -- Turn it ON, do the broken action once, open F9 — the console shows exactly which step fired and which returned.
+    blockSec:Toggle({ Name = "Debug Combat (F9 trace)", Default = false, Callback = function(b)
+        _G.VX_BF_DEBUG = b == true
+        if vxSetDebug then pcall(function() vxSetDebug(b == true) end) end
+    end })
     blockSec:Toggle({ Name = "Dash Block", Default = false, Callback = function(b) BlockFlags.Dash = b end })
     blockSec:Toggle({ Name = "M1 Block", Default = false, Callback = function(b) BlockFlags.M1 = b end })
     blockSec:Toggle({ Name = "Abilities Block", Default = false, Callback = function(b) BlockFlags.Abilities = b end })
@@ -8566,7 +8580,7 @@ do
     local locSec = tpSub:Section({ Name = "Locations", Side = 1 })
     if TPApi and TPApi.spotNames then for _, n in ipairs(TPApi.spotNames()) do locSec:Button({ Name = n, Callback = function() if TPApi then TPApi.spot(n) end end }) end end
     local quickSec = tpSub:Section({ Name = "Quick", Side = 2 })
-    quickSec:Dropdown({ Name = "TP Method", Items = { "Glide", "Instant" }, Default = "Glide", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
+    quickSec:Dropdown({ Name = "TP Method", Items = { "Instant", "Glide" }, Default = "Instant", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
     quickSec:Slider({ Name = "TP Speed", Min = 16, Max = 400, Default = 130, Decimals = 0, Callback = function(v) if TPApi then TPApi.setSpeed(v) end end })
     quickSec:Button({ Name = "Print TP Remote", Callback = function()
         local RS = game:GetService("ReplicatedStorage"); local found = 0
