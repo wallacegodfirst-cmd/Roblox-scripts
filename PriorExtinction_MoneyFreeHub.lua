@@ -43,7 +43,8 @@ end
 -- ═══ CONFIG ═══ (all features START OFF below so executing can never freeze you)
 local CFG = {
 	Aimbot=false, SilentAim=false, AimPart="Head", AimKey="C", AimSmooth=0.4, LockOn=false,
-	HitboxExpand=true, HitboxSize=35, HitboxVisible=true, HitboxColor={r=255,g=40,b=60}, HitboxColorName="Red", HitboxBone="All",
+	HitboxExpand=true, HitboxSize=35, HitboxVisible=true, HitboxOpacity=40, HitboxColor={r=255,g=40,b=60}, HitboxColorName="Red", HitboxBone="All",
+	AutoPlayBot=false,
 	BoneProtect=false, ProtectBone="All",
 	TurnHack=false, TurnSpeed=30,
 	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=30, Noclip=false, Invis=false,
@@ -94,7 +95,7 @@ if not (tonumber(CFG.FarmReach) and CFG.FarmReach>=30 and CFG.FarmReach<=120) th
 -- still persist — only the boolean feature toggles (incl. protections) are forced off here.
 for _,key in ipairs({
 	"Aimbot","SilentAim","LockOn","BoneProtect","TurnHack","Fly","SpeedHack","Noclip","InfJump",
-	"InfFood","InfWater","InfStam","InfOxygen","SaveDino","AutoFarmPlayer","AutoFarmFossil","AutoFarmGem",
+	"InfFood","InfWater","InfStam","InfOxygen","SaveDino","AutoFarmPlayer","AutoFarmFossil","AutoFarmGem","AutoPlayBot",
 	"ESPPlayers","ESPCorpses","FoodESP","FishESP","GemESP","FullBright","NightVision","NoDarkWater","WaterClear","NoClouds","AlwaysDamage","NoGrabLimit",
 	"Float","GodMode","InfLight","UnlockFOV","InfZoom","AntiDrown","WalkWater","AutoClean","AntiFracture","AntiBleed","AntiFall","Invis",
 	"AntiBreakHead","AntiBreakNeck","AntiBreakLeg","AntiBreakTail","AntiBreakTorso","NoSleep","AntiAFK","UnlockMouse","__SpyOn",
@@ -1286,7 +1287,7 @@ do local p=Pages["Combat"]
 	local _,a=mkSec(p,"Aim",1)
 	mkToggle(a,"Silent Aim","SilentAim",1)
 	mkToggle(a,"Lock On","LockOn",2)
-	mkDropdown(a,"Aim Part", function() return {"Hitbox","Head","Spine","Neck","Hip","Body"} end, function() return CFG.AimPart~="" and CFG.AimPart or "Hitbox" end, function(opt) CFG.AimPart=opt; saveCfg() end, 3)
+	mkDropdown(a,"Aim Part", function() return {"Hitbox","Head","Spine","Neck","Hip","Body","Leg","Tail"} end, function() return CFG.AimPart~="" and CFG.AimPart or "Hitbox" end, function(opt) CFG.AimPart=opt; saveCfg() end, 3)
 	mkSlider(a,"Aim Smoothness","AimSmooth",0,1,4)
 end
 do local p=Pages["PvP"]
@@ -1299,8 +1300,9 @@ do local p=Pages["PvP"]
 	local _,h=mkSec(p,"Hitbox",2)
 	mkToggle(h,"Hitbox Expander","HitboxExpand",1)
 	mkToggle(h,"Show Hitbox","HitboxVisible",2)
-	mkSlider(h,"Hitbox Size","HitboxSize",4,150,3,1)
-	mkDropdown(h,"Expand Bone", function() return {"All","Head","Neck","Arm","Leg","Body"} end, function() return CFG.HitboxBone~="" and CFG.HitboxBone or "All" end, function(opt) CFG.HitboxBone=opt; saveCfg() end, 25)
+	mkSlider(h,"Hitbox Size","HitboxSize",4,300,3,1)
+	mkSlider(h,"Hitbox Opacity %","HitboxOpacity",0,100,3,1)
+	mkDropdown(h,"Expand Bone", function() return {"All","Head","Neck","Arm","Leg","Body","Tail","Hip"} end, function() return CFG.HitboxBone~="" and CFG.HitboxBone or "All" end, function(opt) CFG.HitboxBone=opt; saveCfg() end, 25)
 	local HBCOL={Red={255,40,60},Green={60,255,90},Blue={60,120,255},Yellow={255,230,40},Purple={180,70,255},Cyan={50,230,230},Orange={255,150,30},Pink={255,105,180},White={255,255,255},Black={20,20,20}}
 	mkDropdown(h,"Hitbox Color", function() return {"Red","Green","Blue","Yellow","Purple","Cyan","Orange","Pink","White","Black"} end, function() return CFG.HitboxColorName or "Red" end, function(opt) local c=HBCOL[opt] or {255,40,60}; CFG.HitboxColor={r=c[1],g=c[2],b=c[3]}; CFG.HitboxColorName=opt; saveCfg() end, 4)
 	local _,t=mkSec(p,"Turn",3)
@@ -1375,6 +1377,29 @@ do local p=Pages["Auto Farm"]
 	mkToggle(f,"Auto Farm Fossil","AutoFarmFossil",1)
 	mkToggle(f,"Auto Farm Gemstone","AutoFarmGem",2)
 	mkToggle(f,"Teleport Farm (TP to each node, TP back when off)","FarmTeleport",3)
+	mkBtn(f,"Teleport to Nearest Gemstone", function()
+		local me=hrp(); if not me then return end
+		local best,bd
+		local KW={"gem","topaz","amethyst","emerald","ruby","sapphire","diamond","quartz","crystal","opal","garnet","jade","cracklegem"}
+		local function isGem(n) n=n:lower(); for _,k in ipairs(KW) do if n:find(k,1,true) then return true end end return false end
+		local roots={ WS:FindFirstChild("GemstoneSpawns"), WS:FindFirstChild("Gems"), WS }
+		for _,root in ipairs(roots) do if root then
+			local sc=0
+			for _,d in ipairs(root:GetDescendants()) do
+				sc+=1; if sc>4000 then break end
+				if (d:IsA("BasePart")) and isGem(d.Name) then local dd=dist(me.Position,d.Position); if not bd or dd<bd then best,bd=d,dd end end
+			end
+			if best then break end
+		end end
+		if best then
+			local cc=getMyModel(); local goal=CFrame.new(best.Position+Vector3.new(0,3,0))
+			pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else me.CFrame=goal end end)
+			pcall(function() local r=hrp(); if r then r.AssemblyLinearVelocity=Vector3.zero end end)
+			notify("Teleport","At the nearest gemstone ("..math.floor(bd).."m away).")
+		else notify("Teleport","No gemstone found nearby.") end
+	end, 4)
+	local _,b=mkSec(p,"Auto Play Bot",2)
+	mkToggle(b,"Auto Play Bot (auto eat + drink to stay alive)","AutoPlayBot",1)
 end
 do local p=Pages["Teleport"]
 	-- Scans Workspace.Biomes (the ecosystems loaded around you) and lets you teleport to any one. Auto-detects the
@@ -2001,6 +2026,8 @@ local function boneMatch(name)
 	if sel=="Arm"  then return n:find("arm",1,true) or n:find("hand",1,true) or n:find("claw",1,true) or n:find("finger",1,true) or n:find("humerus",1,true) or n:find("wing",1,true) end
 	if sel=="Leg"  then return n:find("leg",1,true) or n:find("foot",1,true) or n:find("femur",1,true) or n:find("tibia",1,true) or n:find("thigh",1,true) or n:find("toe",1,true) end
 	if sel=="Body" then return n:find("spine",1,true) or n:find("body",1,true) or n:find("hip",1,true) or n:find("torso",1,true) or n:find("chest",1,true) or n:find("tail",1,true) end
+	if sel=="Tail" then return n:find("tail",1,true) end
+	if sel=="Hip"  then return n:find("hip",1,true) or n:find("pelvis",1,true) end
 	return false
 end
 local function expandPart(p)
@@ -2012,7 +2039,7 @@ local function expandPart(p)
 		p.CanQuery   = true     -- raycast / M1 hit checks read it
 		p.CanTouch   = false    -- the working build uses FALSE (this is what made it land)
 		if p.Size.X ~= CFG.HitboxSize then p.Size = Vector3.new(CFG.HitboxSize, CFG.HitboxSize, CFG.HitboxSize) end
-		if CFG.HitboxVisible then p.Transparency=0.6; p.Material=Enum.Material.ForceField; local c=CFG.HitboxColor or {}; p.Color=Color3.fromRGB(c.r or 255,c.g or 50,c.b or 50)
+		if CFG.HitboxVisible then p.Transparency=math.clamp(1-((tonumber(CFG.HitboxOpacity) or 40)/100),0,1); p.Material=Enum.Material.ForceField; local c=CFG.HitboxColor or {}; p.Color=Color3.fromRGB(c.r or 255,c.g or 50,c.b or 50)   -- Opacity slider drives how much you see (0=invisible, 100=solid)
 		else p.Transparency=1 end
 	end)
 end
@@ -2257,10 +2284,10 @@ local function runFarm(enabledKey, kind, rangeKey)
 						local holder,part=nd[1],nd[2]
 						FARM.tried[holder]=tick()
 						pcall(function()
-							local cc=getMyModel(); local goal=CFrame.new(part.Position+Vector3.new(0,4,0))
+							local cc=getMyModel(); local goal=CFrame.new(part.Position+Vector3.new(0,1.5,0))   -- SAFER: land right ON the node (was +4 = a visible high pop between every dig)
 							if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end
 						end)
-						local r0=hrp(); if r0 then pcall(function() r0.AssemblyLinearVelocity=Vector3.zero end) end
+						local r0=hrp(); if r0 then pcall(function() r0.AssemblyLinearVelocity=Vector3.zero; r0.AssemblyAngularVelocity=Vector3.zero end) end
 						task.wait(0.2)
 						local prompt=part:FindFirstChildWhichIsA("ProximityPrompt")
 						if not prompt then for _,d in ipairs(holder:GetDescendants()) do if d:IsA("ProximityPrompt") then prompt=d; break end end end
@@ -2315,6 +2342,39 @@ local function runFarm(enabledKey, kind, rangeKey)
 end
 runFarm("AutoFarmFossil","fossil","FarmFossilRange")
 runFarm("AutoFarmGem","gem","GemRange")
+
+-- AUTO PLAY BOT: plays survival for you. Keeps you fed + hydrated by firing any nearby eat/drink/forage/graze
+-- prompt, and pins stamina/food/water via the existing INF flags so you never starve, drown, or exhaust while AFK.
+task.spawn(function()
+	local prevF,prevW,prevS
+	while RUNNING do
+		if CFG.AutoPlayBot and alive() then
+			if prevF==nil then prevF,prevW,prevS = CFG.InfFood,CFG.InfWater,CFG.InfStam end
+			CFG.InfFood=true; CFG.InfWater=true; CFG.InfStam=true   -- never die of the meters while the bot plays
+			local me=hrp()
+			if me then
+				local fired=0
+				for _,d in ipairs(WS:GetDescendants()) do
+					if d:IsA("ProximityPrompt") then
+						local t=((d.ActionText or "").." "..(d.Name or "")):lower()
+						if (t:find("eat")or t:find("consume")or t:find("feed")or t:find("bite")or t:find("forage")or t:find("graze")or t:find("drink")or t:find("sip")or t:find("investigate")) then
+							local pp=d.Parent
+							if pp and pp:IsA("BasePart") and dist(me.Position,pp.Position)<=60 then
+								pcall(function() d.RequiresLineOfSight=false; d.MaxActivationDistance=1e9 end)
+								if fireprox then pcall(function() fireprox(d) end) end
+								fired+=1; if fired>=8 then break end
+							end
+						end
+					end
+				end
+			end
+			task.wait(2)
+		else
+			if prevF~=nil then CFG.InfFood,CFG.InfWater,CFG.InfStam = prevF,prevW,prevS; prevF=nil end   -- restore your own toggles when the bot is off
+			task.wait(0.5)
+		end
+	end
+end)
 -- Notification bar: show how many fossils/gems have been collected while farming (updates when the count changes).
 task.spawn(function() local lf,lg=-1,-1 while RUNNING do task.wait(2.5)
 	if CFG.AutoFarmFossil or CFG.AutoFarmGem then
@@ -2424,6 +2484,7 @@ task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
 							local label = nm.."\n["..math.floor(d).."m]"
 							if gr then label=label.."\nStage: "..gr end
 							if hp then label=label.."\nHP: "..hp end
+							if st then label=label.."\nStam: "..st end
 							addESP(m, pl and Color3.fromRGB(90,170,255) or Color3.fromRGB(120,220,120), label); count+=1
 						end
 					end
