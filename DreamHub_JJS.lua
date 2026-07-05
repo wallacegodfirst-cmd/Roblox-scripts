@@ -827,9 +827,19 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 	end)
 end
 
+-- TP METHOD: "Instant" snaps straight there (the SAME whitelisted-snap mechanism the black-flash teleport
+-- uses, which works in-game) and holds. "Glide" steps there at the speed cap. Instant is the default because
+-- the glide's long travel is what the anti-cheat has been reverting (= 'teleport doesn't work').
+local VX_TP_METHOD = "Instant"
+
 -- HARDENED teleport for FAR spots that a one-frame snap gets set back on: glide there in whitelisted STEPS
 -- (each step is small enough to stay under the anti-cheat's per-tick distance limit) then HOLD + re-whitelist.
 local function vxTeleportHard(dest, holdTime)
+	if VX_TP_METHOD == "Instant" then   -- proven path: instant whitelisted snap + long hold (what the black flash does)
+		if typeof(dest) == "CFrame" then dest = dest.Position end
+		vxGlide(dest, nil, math.max(holdTime or 3, 2))
+		return
+	end
 	local LP = game:GetService("Players").LocalPlayer
 	if typeof(dest) == "CFrame" then dest = dest.Position end
 	task.spawn(function()
@@ -1275,6 +1285,7 @@ do
 	end
 	TPApi = {
 		setSpeed = function(v) if type(v) == "number" then VX_TP_SPEED = v end end,
+		setMethod = function(m) VX_TP_METHOD = (m == "Glide") and "Glide" or "Instant" end,   -- Instant (proven snap) / Glide (stepped)
 		up = function() local r = hrp(); if r then vxTeleportHard(r.Position + Vector3.new(0, 120, 0), 3) end end,
 		spawn = function() local sp = workspace:FindFirstChildOfClass("SpawnLocation"); if sp then vxTeleportHard(sp.Position + Vector3.new(0, 4, 0), 3) end end,
 		nearest = function()
@@ -7858,17 +7869,26 @@ do
         mmGui.Name = "DreamMin"; mmGui.ResetOnSpawn = false; mmGui.IgnoreGuiInset = false; mmGui.DisplayOrder = 9600
         pcall(function() mmGui.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
         if not mmGui.Parent then mmGui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui") end
-        local btn = Instance.new("TextButton")
-        -- DREAM LOGO pill, top-center: purple->blue gradient wordmark. Pure-UI (no image asset = no grey block).
-        btn.Size = UDim2.fromOffset(96, 34); btn.Position = UDim2.new(0.5, -48, 0, 6); btn.AnchorPoint = Vector2.new(0, 0)
-        btn.BackgroundColor3 = Color3.fromRGB(120, 80, 255); btn.Text = "Dream"; btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        btn.Font = Enum.Font.GothamBold; btn.TextSize = 15; btn.AutoButtonColor = true
+        local btn = Instance.new("ImageButton")
+        -- IMAGE LOGO, top-center. A raw decal id doesn't render in an ImageButton (that was the grey block) -
+        -- the rbxthumb:// endpoint DOES render decals, so we load it through that. Text fallback only if it fails.
+        local LOGO_ID = "82151574125055"
+        btn.Size = UDim2.fromOffset(52, 52); btn.Position = UDim2.new(0.5, -26, 0, 4); btn.AnchorPoint = Vector2.new(0, 0)
+        btn.BackgroundTransparency = 1; btn.AutoButtonColor = true
+        btn.Image = "rbxthumb://type=Asset&id=" .. LOGO_ID .. "&w=150&h=150"
+        btn.ScaleType = Enum.ScaleType.Fit
         btn.Active = true; btn.ZIndex = 10; btn.Parent = mmGui
         Instance.new("UICorner", btn).CornerRadius = UDim.new(1, 0)
-        local grad = Instance.new("UIGradient")   -- the logo look: purple -> blue sweep
-        grad.Color = ColorSequence.new(Color3.fromRGB(150, 90, 255), Color3.fromRGB(70, 120, 255))
-        grad.Rotation = 25; grad.Parent = btn
-        local us = Instance.new("UIStroke"); us.Color = Color3.fromRGB(255, 255, 255); us.Thickness = 1.4; us.Transparency = 0.35; us.Parent = btn
+        task.delay(3, function()   -- if the thumbnail never loaded, fall back to a visible label (never an invisible/grey button)
+            if btn.Parent and not btn.IsLoaded then
+                pcall(function()
+                    btn.Image = ""
+                    btn.BackgroundTransparency = 0; btn.BackgroundColor3 = Color3.fromRGB(120, 80, 255)
+                    local tl = Instance.new("TextLabel"); tl.Size = UDim2.fromScale(1, 1); tl.BackgroundTransparency = 1
+                    tl.Font = Enum.Font.GothamBold; tl.Text = "Dream"; tl.TextSize = 12; tl.TextColor3 = Color3.fromRGB(255, 255, 255); tl.Parent = btn
+                end)
+            end
+        end)
         -- DRAG (custom - won't capture-freeze movement) + TAP toggles the menu only if you didn't drag
         do
             local dragging, moved, startPos, startMouse = false, false, nil, nil
@@ -8047,7 +8067,8 @@ do
     local locSec = tpSub:Section({ Name = "Locations", Side = 1 })
     if TPApi and TPApi.spotNames then for _, n in ipairs(TPApi.spotNames()) do locSec:Button({ Name = n, Callback = function() if TPApi then TPApi.spot(n) end end }) end end
     local quickSec = tpSub:Section({ Name = "Quick", Side = 2 })
-    quickSec:Slider({ Name = "TP Speed (studs/sec - lower = safer)", Min = 16, Max = 400, Default = 80, Decimals = 0, Callback = function(v) if TPApi then TPApi.setSpeed(v) end end })
+    quickSec:Dropdown({ Name = "TP Method", Items = { "Instant", "Glide" }, Default = "Instant", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
+    quickSec:Slider({ Name = "TP Speed (Glide only)", Min = 16, Max = 400, Default = 80, Decimals = 0, Callback = function(v) if TPApi then TPApi.setSpeed(v) end end })
     quickSec:Button({ Name = "Print TP Remote (F9)", Callback = function()
         local RS = game:GetService("ReplicatedStorage"); local found = 0
         for _, d in ipairs(RS:GetDescendants()) do
