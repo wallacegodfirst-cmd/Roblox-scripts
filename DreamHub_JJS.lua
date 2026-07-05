@@ -688,9 +688,28 @@ local ItemsApi, SkillsApi, InvisApi, ParkourApi, TPApi, M1ComboApi, CounterApi, 
 do
 	local ids = {}
 	for _, id in ipairs({
-		"133240987753043","127851700400958","120133391090244","94588892125071","75337033003776","126277739156443","96185406489877",
-		"96327114254575","133936641185614","98783064085844","101283990868172","9443519528","84359513001979","89537672683114",
-		"105077924973072","85068785050521","131909724908049","125689391910002","133447840605824","114985590391235","86519781516542",
+		-- FULL per-character M1 capture (user-provided, every character):
+		"127851700400958","72548435296350","84547415708554",                        -- Gojo
+		"95295463826732","105077924973072","124862357369335",                       -- Vessel
+		"94588892125071","97868312130612","140588454098230",                        -- Restless Gambler
+		"75337033003776","138489871864252","96185406489877",                        -- Ten Shadows
+		"126277739156443","99710481887795","121322029260156",                       -- Perfection
+		"119042572747325",                                                          -- Blood Manipulator (uniques)
+		"96327114254575","107029561762376","117831239064143",                       -- Switcher
+		"133936641185614","122573730331631","82400997593751",                       -- Defense Attorney
+		"133240987753043","130806585141471","131967150738931",                      -- Cursed Partners
+		"98783064085844","85148168523745","108686045412945",                        -- Puppet Master
+		"101283990868172","108708446862011","77583711129628",                       -- Head of Hei
+		"84359513001979","79436586236026","102285403332509",                        -- Salaryman
+		"89537672683114",                                                           -- Disaster Plants
+		"116910683335467","92698956945928",                                         -- True Cannon (uniques)
+		"139479927693015","85068785050521","79086910454958","108027796023968",      -- Locust
+		"131909724908049","72575786212990","119248903710146",                       -- Star Rage
+		"82881042739459","125689391910002","84080901810314","139833047658617",      -- Mangaka
+		"133447840605824","113963875117859","138196552148011",                      -- Lucky Coward
+		"105961366724096","86519781516542","123591522021548",                       -- Black Death
+		"78418813242411","114985590391235","108449614447004",                       -- Crow (MeiMei)
+		"120133391090244","9443519528",                                             -- legacy extras
 	}) do ids[id] = true end
 	_G.VX_M1_IDS = ids
 	-- real-M1 detection: the anim id ALONE false-fires (a walk anim id is in the list) and clicks alone false-fire (GUI clicks).
@@ -2868,7 +2887,8 @@ do
 		"96327114254575","133936641185614","98783064085844","101283990868172","9443519528","84359513001979","89537672683114",
 		"105077924973072","85068785050521","131909724908049","125689391910002","133447840605824","114985590391235","86519781516542",
 	}) do M1_IDS[id] = true end
-	_G.VX_M1_IDS = M1_IDS  -- shared M1-by-animation detection for any feature that needs it
+	if _G.VX_M1_IDS then for id in pairs(_G.VX_M1_IDS) do M1_IDS[id] = true end end
+	_G.VX_M1_IDS = M1_IDS  -- MERGED with the master per-character list (this module used to clobber it with its short list = detection missing for most characters)
 	-- RIGHT dash anim = rbxassetid://75203303352791 (what plays when you dash right; kept for reference)
 	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
 	local function getHRP(m) return m and (m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("Torso") or m:FindFirstChild("UpperTorso")) end
