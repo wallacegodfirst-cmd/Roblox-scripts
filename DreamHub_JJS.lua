@@ -175,6 +175,8 @@ do
 	local lastM1 = 0      -- M1 Black Flash: debounce so a fast M1 burst only starts the chain once per click
 	local burstUntil = 0  -- self-driving modes (M1 Black Flash / Back Dash / Auto Counter) run the PROVEN teleport chain even if the master "Auto Chain" toggle is off, for a short burst after each trigger
 	local runChain        -- forward-declared: fires the proven teleport black-flash chain (doBackstab), optionally snapping to a specific attacker first (Auto Counter)
+	local fireFlashInPlace  -- forward-declared: the NO-teleport flash press (M1 Black Flash mode) - the wind-up conversion below needs it
+	local m1bfArmed = 0     -- M1 BF: the click ARMS exactly ONE wind-up conversion press (this is what makes the timing right and stops the 4x chain)
 	local function vxMarkKey(kc) _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[kc] = tick() + 0.5 end  -- per-key injection marker (Auto Air ignores a key only if THAT key was injected)
 	local function pressR() _G.VX_INJECT_UNTIL = tick() + 0.35; vxMarkKey(Enum.KeyCode.R); pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.05); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game) end) end
 	local FEINT_MOVE_KEYS = { [1] = Enum.KeyCode.One, [2] = Enum.KeyCode.Two, [3] = Enum.KeyCode.Three, [4] = Enum.KeyCode.Four }
@@ -519,10 +521,19 @@ do
 						task.delay(delayTime + 0.05, pressR)
 					end
 				end
-				-- the wind-up re-press = the BLACK FLASH + chain extension (suppressed right after a Mode-A feint)
-				-- NEVER in "M1 Black Flash" mode: the in-place flash triggers this wind-up anim, and this path was
-				-- firing the full TELEPORT chain on top of it - that was the '1 click = 4 black flashes' + the delay.
-				if Settings.Mode ~= "M1 Black Flash" and (ScriptEnabled or tick() < burstUntil) and tick() >= bfSuppressUntil then
+				-- the wind-up re-press = the BLACK FLASH conversion.
+				if Settings.Mode == "M1 Black Flash" then
+					-- M1 BF: the conversion happens IN PLACE (no teleport) and ONLY once per armed click.
+					-- delayTime comes from the per-anim timing table = pressed at the exact flash frame.
+					if tick() < m1bfArmed then
+						m1bfArmed = 0   -- disarm: exactly ONE conversion per M1 (kills the 4x chain for good)
+						task.delay(delayTime, function()
+							if Settings.Mode ~= "M1 Black Flash" or humanoid.Health <= 0 then return end
+							local tgt = (chainTarget and chainTarget.Parent) and chainTarget or getNearestEnemy(12)
+							if tgt and fireFlashInPlace then fireFlashInPlace(tgt) end
+						end)
+					end
+				elseif (ScriptEnabled or tick() < burstUntil) and tick() >= bfSuppressUntil then
 					task.delay(delayTime, function() if humanoid.Health > 0 and Settings.Mode ~= "M1 Black Flash" and (ScriptEnabled or tick() < burstUntil) and tick() >= bfSuppressUntil then doBackstab() end end)
 				end
 			end
@@ -614,8 +625,7 @@ do
 		-- damage, then black flash, NOT teleport.)
 		do
 			local UIS_M1 = game:GetService("UserInputService")
-			local function fireFlashInPlace(tgt)
-				-- face the target (rotate in place - NO position change = no teleport), then press the flash key.
+			fireFlashInPlace = function(tgt)   -- (forward-declared) face the target IN PLACE, press the flash key, damp the shove
 				local myChar = myCharResolved()
 				local myHRP = getHRP(myChar)
 				local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
@@ -633,6 +643,17 @@ do
 					task.wait(Settings.KeyHoldDuration)
 					VirtualInputManager:SendKeyEvent(false, Settings.AbilityKey, false, game)
 				end)
+				task.spawn(function()   -- ANTI-FLING: the move's own launch (Divergent Fist etc) gets speed-capped so it can't yeet you
+					local t0 = tick()
+					while tick() - t0 < 1.0 do
+						local c = myCharResolved(); local r = c and getHRP(c)
+						if r then pcall(function()
+							local v = r.AssemblyLinearVelocity; local flat = Vector3.new(v.X, 0, v.Z)
+							if flat.Magnitude > 32 then local u = flat.Unit * 32; r.AssemblyLinearVelocity = Vector3.new(u.X, math.min(v.Y, 10), u.Z) end
+						end) end
+						task.wait()
+					end
+				end)
 			end
 			local flashSuppress = 0  -- after ONE flash, ignore every M1/anim for a full second so 1 M1 = exactly 1 flash (not 4)
 			local function tryM1Flash()  -- shared by BOTH triggers (click + your M1 anim): flash if the M1 actually lands
@@ -647,10 +668,12 @@ do
 				local to = tr.Position - mh.Position
 				if to.Magnitude <= 9 and mh.CFrame.LookVector:Dot(to.Unit) > 0.35 then   -- facing them + close = the M1 connects
 					lastM1 = tick()
-					flashSuppress = tick() + 1.0   -- lock out further flashes for 1s (kills the 4x repeat)
+					flashSuppress = tick() + 1.0   -- lock out further click-triggers for 1s
 					_G.VX_SDA_HOLD = tick() + 0.9  -- tell Side Dash Assist to SKIP this swing
-					if _G.VX_BF_DEBUG then print("[DreamHub BF] M1 LANDED on "..tgt.Name.." -> ONE black flash") end
-					task.delay(0.1, function() if Settings.Mode == "M1 Black Flash" then fireFlashInPlace(tgt) end end)  -- TIGHT: swing registers, flash right behind it (0.18 felt delayed)
+					chainTarget = tgt; chainTargetT = tick()
+					if _G.VX_BF_DEBUG then print("[DreamHub BF] M1 LANDED on "..tgt.Name.." -> press + armed conversion") end
+					m1bfArmed = tick() + 1.5       -- ARM the wind-up conversion: the anim's timing table fires the flash at the exact frame
+					task.delay(0.08, function() if Settings.Mode == "M1 Black Flash" then fireFlashInPlace(tgt) end end)  -- start the move right after the swing registers
 				end
 			end
 			UIS_M1.InputBegan:Connect(function(input)   -- no gpe bail: the game marks combat clicks processed (same bug that killed Auto Air)
@@ -791,7 +814,7 @@ end
 -- Shared anti-setback teleport BYPASS: JJS snaps you back if a single frame moves you faster than
 -- maxSpeed*dt, so instead of one big jump we glide to the target in capped per-frame steps that stay
 -- under that limit. Lower VX_TP_SPEED (TP Speed slider) if you still get set back.
-local VX_TP_SPEED = 80
+local VX_TP_SPEED = 130   -- studs/sec for the glide (80 was so slow a far spot took 6+s = felt like 'nothing happened'; drop the slider if you get set back)
 -- Resolve the anti-cheat TELEPORT whitelist remote ROBUSTLY (the hardcoded Knit path goes stale when the
 -- game updates -> teleports set back). Try the known path first, else search for any RemoteEvent named
 -- "Teleport" (preferring an AntiCheat-ish parent). Cached; re-resolves if the cached one is destroyed.
@@ -1149,7 +1172,11 @@ do
 		return best
 	end
 	local function faceEnemy(tr) local hrp = myHRP(); if hrp and tr and tr.Parent then pcall(function() hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(tr.Position.X, hrp.Position.Y, tr.Position.Z)) end) end end  -- aim at them so the skill lands on the RIGHT target
-	local function press(kc) pcall(function() VIM:SendKeyEvent(true, kc, false, game); task.wait(0.09); VIM:SendKeyEvent(false, kc, false, game) end) end  -- longer hold so the game reliably registers the key
+	local function press(kc)
+		_G.VX_INJECT_UNTIL = tick() + 0.35   -- OUR press: feints / Auto Air / Reversal Red must not chain off it
+		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[kc] = tick() + 0.5
+		pcall(function() VIM:SendKeyEvent(true, kc, false, game); task.wait(0.09); VIM:SendKeyEvent(false, kc, false, game) end)  -- longer hold so the game reliably registers the key
+	end
 	local cycleIdx = 0
 	task.spawn(function()
 		while true do
@@ -1168,7 +1195,13 @@ do
 		end
 	end)
 	SkillsApi = {
-		setEnabled = function(v) enabled = v == true end,
+		setEnabled = function(v)
+			enabled = v == true
+			if enabled then   -- master ON with no skills picked did NOTHING ('auto skills no work') -> default to skills 1-4
+				local any = false; for i = 1, 6 do if keys[i] then any = true break end end
+				if not any then keys[1], keys[2], keys[3], keys[4] = true, true, true, true end
+			end
+		end,
 		setKey = function(n, v)
 			if KC[n] then
 				keys[n] = v == true
@@ -1368,7 +1401,7 @@ do
 		save = function(n) local r = hrp(); if r then slots[n] = r.Position end end,
 		goto_ = function(n) if slots[n] then vxTeleportHard(slots[n], 3) end end,
 		spotNames = function() local t = {}; for _, s in ipairs(SPOTS) do t[#t + 1] = s[1] end return t end,
-		spot = function(name) for _, s in ipairs(SPOTS) do if s[1] == name then vxTeleportHard(s[2] + Vector3.new(0, 4, 0), 4); return true end end return false end,  -- HARDENED stepped teleport, 4s hold so a far spot can't be set back
+		spot = function(name) for _, s in ipairs(SPOTS) do if s[1] == name then vxTeleportHard(s[2] + Vector3.new(0, 4, 0), 2); return true end end return false end,  -- stepped teleport + 2s hold (4s of being pinned after arriving felt broken)
 		playerNames = function() local t = {}; for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP then t[#t + 1] = plr.Name end end return t end,   -- list other players
 		tpPlayer = function(name)  -- teleport just BEHIND a chosen player (setback-resistant)
 			local hrpTarget
@@ -1416,22 +1449,15 @@ do
 		if hrp then pcall(function() local v = hrp.AssemblyLinearVelocity; hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 26), v.Z) end) end  -- nudge to hop height only = natural bunny hop
 	end
 	local function note(m) if VX_NOTIFY then pcall(function() VX_NOTIFY(m, nil) end) end print("[DreamHub M1Combo] " .. m) end   -- VISIBLE feedback: you SEE when/why it fires
-	local function finisher()
-		busy = true
-		task.spawn(function()
-			_G.VX_INJECT_UNTIL = tick() + 0.6
-			-- THE REMOTE IS THE MOVE (user capture): <YourChar>Service.RE.Activated:FireServer("Up"/"Down").
-			-- No space holds, no injected clicks, no hops - the server does the launcher itself.
-			if mode == "Down Slam" then
-				note("Down Slam -> Activated('Down')")
-				act("Down")
-			else
-				note("Uppercut -> Activated('Up')")
-				act("Up")
-			end
-			vxLog(mode)
-			task.wait(0.25); busy = false
-		end)
+	-- THE FIX: the "Up"/"Down" remote is NOT a standalone move - the server only honors it as the VARIANT of an
+	-- M1 that is happening RIGHT NOW (your capture was recorded mid-swing). So we fire it the INSTANT your M1
+	-- goes out - click AND anim triggers, zero delay - so the server treats YOUR OWN swing as the launcher.
+	local function fireLauncher()
+		if mode == "Off" then return end
+		if tick() - lastSwing < 0.45 then return end
+		lastSwing = tick()
+		act(mode == "Down Slam" and "Down" or "Up")   -- rides the in-flight M1
+		note(mode .. " sent with your M1")
 	end
 	-- FULL per-character UPPERCUT M1 database (user-captured): every swing of every character's M1 chain,
 	-- so the 3-swing count works on ALL of them. The old DB only had SOME swings per character -> the count
@@ -1469,21 +1495,29 @@ do
 		local m = myModel(); local h = m and m:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
 		if not a or hooked[a] then return end
 		hooked[a] = a.AnimationPlayed:Connect(function(track)
-			if mode == "Off" or busy then return end
-			if tick() < (_G.VX_INJECT_UNTIL or 0) then return end   -- an anim from OUR injected finisher M1 must not count
-			if tick() - lastSwing < 0.9 then return end             -- one launcher per swing, continuous while toggled ('it should not stop')
+			if mode == "Off" then return end
 			local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+")
 			if not (id and COMBO_IDS[id]) then return end
 			-- only when an enemy is actually in melee range (don't uppercut air)
 			local me = myModel(); local mr = me and me:FindFirstChild("HumanoidRootPart"); if not mr then return end
 			local near = false
-			for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local rr = plr.Character:FindFirstChild("HumanoidRootPart"); if rr and (rr.Position - mr.Position).Magnitude <= 12 then near = true break end end end
-			if not near then local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local rr = m:FindFirstChild("HumanoidRootPart"); local hh = m:FindFirstChildOfClass("Humanoid"); if rr and hh and hh.Health > 0 and (rr.Position - mr.Position).Magnitude <= 12 then near = true break end end end end end
+			for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local rr = plr.Character:FindFirstChild("HumanoidRootPart"); if rr and (rr.Position - mr.Position).Magnitude <= 14 then near = true break end end end
+			if not near then local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local rr = m:FindFirstChild("HumanoidRootPart"); local hh = m:FindFirstChildOfClass("Humanoid"); if rr and hh and hh.Health > 0 and (rr.Position - mr.Position).Magnitude <= 14 then near = true break end end end end end
 			if not near then return end
-			lastSwing = tick(); finisher()   -- YOUR M1 landed on someone -> launcher (uptilt / down slam) right now
+			fireLauncher()   -- YOUR M1 is going out RIGHT NOW -> send the Up/Down variant with it (no delay)
 		end)
 	end
 	task.spawn(function() while true do if mode ~= "Off" then pcall(hookSelf) end task.wait(0.6) end end)
+	-- CLICK trigger too (fires even if the anim id is missing for a skin): your left-click IS the M1 - send the variant with it
+	UIS.InputBegan:Connect(function(input)
+		if mode == "Off" or UIS:GetFocusedTextBox() then return end
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+		local me = myModel(); local mr = me and me:FindFirstChild("HumanoidRootPart"); if not mr then return end
+		local near = false
+		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local rr = plr.Character:FindFirstChild("HumanoidRootPart"); if rr and (rr.Position - mr.Position).Magnitude <= 14 then near = true break end end end
+		if not near then local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local rr = m:FindFirstChild("HumanoidRootPart"); local hh = m:FindFirstChildOfClass("Humanoid"); if rr and hh and hh.Health > 0 and (rr.Position - mr.Position).Magnitude <= 14 then near = true break end end end end end
+		if near then task.delay(0.04, fireLauncher) end   -- a beat after the click so the M1 is in flight when the variant arrives
+	end)
 	M1ComboApi = { setMode = function(m) mode = m or "Off"; count = 0 end, setDelay = function() end }
 end
 
@@ -1836,24 +1870,19 @@ do
 	screen.Name = "VX_LockOn"; screen.ResetOnSpawn = false; screen.IgnoreGuiInset = true; screen.DisplayOrder = 9001
 	pcall(function() screen.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
 	if not screen.Parent then pcall(function() screen.Parent = LP:WaitForChild("PlayerGui") end) end
+	-- CLEAN lock-on icon: a smooth purple ring + soft outer glow + center dot (matches the Dream Hub theme;
+	-- replaces the old harsh red brackets)
 	local ret = Instance.new("Frame"); ret.BackgroundTransparency = 1; ret.AnchorPoint = Vector2.new(0.5, 0.5); ret.Visible = false; ret.Parent = screen
-	local brackets = {}
-	local function corner(ax, ay)
-		local h = Instance.new("Frame"); h.BorderSizePixel = 0; h.BackgroundColor3 = Color3.fromRGB(255, 46, 58); h.Parent = ret; brackets[#brackets + 1] = { f = h, ax = ax, ay = ay, dir = "h" }
-		local v = Instance.new("Frame"); v.BorderSizePixel = 0; v.BackgroundColor3 = Color3.fromRGB(255, 46, 58); v.Parent = ret; brackets[#brackets + 1] = { f = v, ax = ax, ay = ay, dir = "v" }
-	end
-	corner(0, 0); corner(1, 0); corner(0, 1); corner(1, 1)
-	local dot = Instance.new("Frame"); dot.Size = UDim2.fromOffset(4, 4); dot.AnchorPoint = Vector2.new(0.5, 0.5); dot.Position = UDim2.fromScale(0.5, 0.5); dot.BackgroundColor3 = Color3.fromRGB(255, 46, 58); dot.BorderSizePixel = 0; dot.Parent = ret
+	local ring = Instance.new("Frame"); ring.BackgroundTransparency = 1; ring.Size = UDim2.fromScale(1, 1); ring.Parent = ret
+	Instance.new("UICorner", ring).CornerRadius = UDim.new(1, 0)
+	local rs = Instance.new("UIStroke"); rs.Color = Color3.fromRGB(150, 95, 255); rs.Thickness = 2.4; rs.Transparency = 0.05; rs.Parent = ring
+	local glow = Instance.new("Frame"); glow.BackgroundTransparency = 1; glow.AnchorPoint = Vector2.new(0.5, 0.5); glow.Position = UDim2.fromScale(0.5, 0.5); glow.Size = UDim2.new(1, 8, 1, 8); glow.Parent = ret
+	Instance.new("UICorner", glow).CornerRadius = UDim.new(1, 0)
+	local gs = Instance.new("UIStroke"); gs.Color = Color3.fromRGB(150, 95, 255); gs.Thickness = 5; gs.Transparency = 0.82; gs.Parent = glow
+	local dot = Instance.new("Frame"); dot.Size = UDim2.fromOffset(5, 5); dot.AnchorPoint = Vector2.new(0.5, 0.5); dot.Position = UDim2.fromScale(0.5, 0.5); dot.BackgroundColor3 = Color3.fromRGB(255, 255, 255); dot.BorderSizePixel = 0; dot.Parent = ret
+	Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
 	local function layoutReticle(size)
 		ret.Size = UDim2.fromOffset(size, size)
-		local seg = math.max(6, size * 0.28); local th = 2
-		for _, b in ipairs(brackets) do
-			if b.dir == "h" then
-				b.f.Size = UDim2.fromOffset(seg, th); b.f.Position = UDim2.new(b.ax, b.ax == 0 and 0 or -seg, b.ay, b.ay == 0 and 0 or -th)
-			else
-				b.f.Size = UDim2.fromOffset(th, seg); b.f.Position = UDim2.new(b.ax, b.ax == 0 and 0 or -th, b.ay, b.ay == 0 and 0 or -seg)
-			end
-		end
 	end
 	local function acquire()
 		local hrp = myHRP(); local cam = workspace.CurrentCamera; if not (hrp and cam) then return nil end
@@ -2702,6 +2731,25 @@ do
 			if tick() - mahoCd > 5 then mahoCd = tick(); mahoEscape() end
 		end)
 	end)
+	-- CHANT path (most reliable): the Mahoraga summon makes the summoner SAY the ritual chant
+	-- ("With this treasure I summon..."). The moment ANY enemy chats it, safe TP - fires even if
+	-- the anim/model never streams in on your client.
+	local CHANT = "with this treasure"
+	local function chantHook(plr)
+		pcall(function() plr.Chatted:Connect(function(msg)
+			if mahoOn and tostring(msg):lower():find(CHANT, 1, true) and tick() - mahoCd > 5 then mahoCd = tick(); mahoEscape() end
+		end) end)
+	end
+	for _, p in ipairs(Players:GetPlayers()) do if p ~= LP then chantHook(p) end end
+	Players.PlayerAdded:Connect(function(p) if p ~= LP then chantHook(p) end end)
+	pcall(function()
+		game:GetService("TextChatService").MessageReceived:Connect(function(m)
+			if not (mahoOn and m and m.Text) then return end
+			local src = m.TextSource
+			if src and src.UserId == LP.UserId then return end   -- your OWN summon must not teleport you away
+			if m.Text:lower():find(CHANT, 1, true) and tick() - mahoCd > 5 then mahoCd = tick(); mahoEscape() end
+		end)
+	end)
 	-- anim path: catch the summon the instant an enemy plays it (earlier than the model streaming in)
 	local mahoHooked = setmetatable({}, { __mode = "k" })
 	local function hookMahoAnim(char)
@@ -2866,6 +2914,31 @@ do
 		end)
 	end
 	task.spawn(function() while true do if manualOn then pcall(hookSelfY) end task.wait(0.6) end end)
+	-- SECOND trigger (in case the anim never reaches your animator): YOU press 2 as Yuta -> the script
+	-- adds the second 2 = the 'use again' black flash. Shared debounce with the anim path.
+	local function charIsYuta()
+		local c = myModel(); if not c then return false end
+		local h = c:FindFirstChildOfClass("Humanoid")
+		local hay = string.lower((c.Name or "") .. " " .. (h and h.DisplayName or ""))
+		local mv = c:FindFirstChild("Moveset"); if mv then for _, m in ipairs(mv:GetChildren()) do hay = hay .. " " .. string.lower(m.Name) end end
+		return (hay:find("yuta", 1, true) or hay:find("resolute", 1, true) or hay:find("severing", 1, true) or hay:find("true love", 1, true)) ~= nil
+	end
+	local UISy = game:GetService("UserInputService")
+	UISy.InputBegan:Connect(function(input)
+		if not manualOn or UISy:GetFocusedTextBox() then return end
+		if input.KeyCode ~= Enum.KeyCode.Two then return end
+		local injK = _G.VX_INJ_KEYS
+		if injK and injK[Enum.KeyCode.Two] and tick() < injK[Enum.KeyCode.Two] then return end   -- our own re-press: don't loop
+		if not charIsYuta() then return end
+		if tick() - last < 1.4 then return end
+		last = tick()
+		task.delay(0.45, function()   -- your 2 fired the slash -> the script presses 2 AGAIN = the flash
+			_G.VX_INJECT_UNTIL = tick() + 0.5
+			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Two] = tick() + 0.5
+			pcall(function() VIMy:SendKeyEvent(true, Enum.KeyCode.Two, false, game); task.wait(0.06); VIMy:SendKeyEvent(false, Enum.KeyCode.Two, false, game) end)
+			if VX_NOTIFY then pcall(function() VX_NOTIFY("Yuta BF: second 2", nil) end) end
+		end)
+	end)
 	-- AUTO "Yuta Teleport Kill Black Flash": fully automatic - hunt the nearest LOW-HP enemy and finish them.
 	local function nearestLowEnemy(maxD)
 		local mh = getHRP(myModel()); if not mh then return nil end
@@ -3800,27 +3873,14 @@ do
 		local r = myR(); if r and ghostRoot then pcall(function() ghost:PivotTo(r.CFrame) end) end
 		pcall(function() workspace.CurrentCamera.CameraSubject = h or ghostRoot end)   -- your camera follows the ghost
 	end
-	local attackUntil = 0   -- while attacking from the ghost, the real body rides AT the ghost (unanchored) so the hit comes from where YOU are
-	-- GHOST CAN FIGHT: M1 / Q dash / 1-4 / R / G / F block while ghosting -> blink the real body to the ghost,
-	-- let the attack come out there, then re-freeze at the ghost's spot.
-	local ATTACK_KEYS = { [Enum.KeyCode.One]=1,[Enum.KeyCode.Two]=1,[Enum.KeyCode.Three]=1,[Enum.KeyCode.Four]=1,[Enum.KeyCode.R]=1,[Enum.KeyCode.G]=1,[Enum.KeyCode.F]=1,[Enum.KeyCode.Q]=1 }
-	UIS.InputBegan:Connect(function(input)
-		if not on or UIS:GetFocusedTextBox() then return end
-		local isAtk = input.UserInputType == Enum.UserInputType.MouseButton1 or (input.KeyCode and ATTACK_KEYS[input.KeyCode])
-		if not isAtk then return end
-		if ghostRoot then freezeCF = ghostRoot.CFrame end   -- the body now freezes WHERE THE GHOST IS (your attack fires from you)
-		attackUntil = tick() + 0.7                          -- unfrozen window so the move actually comes out
-	end)
 	RunService.RenderStepped:Connect(function(dt)
 		if not on then return end
 		local r = myR()
 		if r then
 			if not freezeCF then freezeCF = r.CFrame end   -- capture the freeze point ONCE
-			if tick() < attackUntil then
-				pcall(function() r.Anchored = false; r.CFrame = freezeCF; r.AssemblyLinearVelocity = Vector3.zero end)   -- attack window: body live at the ghost spot so hits register
-			else
-				pcall(function() r.Anchored = true; r.AssemblyLinearVelocity = Vector3.zero; r.AssemblyAngularVelocity = Vector3.zero; r.CFrame = freezeCF end)  -- HARD pin otherwise
-			end
+			-- ABSOLUTE pin: the real body NEVER moves while frozen - not for attacks, not for anything.
+			-- (Attacks you throw while ghosting fire from the frozen spot; the body stays exactly still.)
+			pcall(function() r.Anchored = true; r.AssemblyLinearVelocity = Vector3.zero; r.AssemblyAngularVelocity = Vector3.zero; r.CFrame = freezeCF end)
 		end
 		if not (ghost and ghost.Parent and ghostRoot) then makeGhost(); if not ghostRoot then return end end
 		local cam = workspace.CurrentCamera; if not cam then return end
@@ -8277,7 +8337,7 @@ do
     if TPApi and TPApi.spotNames then for _, n in ipairs(TPApi.spotNames()) do locSec:Button({ Name = n, Callback = function() if TPApi then TPApi.spot(n) end end }) end end
     local quickSec = tpSub:Section({ Name = "Quick", Side = 2 })
     quickSec:Dropdown({ Name = "TP Method", Items = { "Glide", "Instant" }, Default = "Glide", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
-    quickSec:Slider({ Name = "TP Speed", Min = 16, Max = 400, Default = 80, Decimals = 0, Callback = function(v) if TPApi then TPApi.setSpeed(v) end end })
+    quickSec:Slider({ Name = "TP Speed", Min = 16, Max = 400, Default = 130, Decimals = 0, Callback = function(v) if TPApi then TPApi.setSpeed(v) end end })
     quickSec:Button({ Name = "Print TP Remote", Callback = function()
         local RS = game:GetService("ReplicatedStorage"); local found = 0
         for _, d in ipairs(RS:GetDescendants()) do
@@ -8326,13 +8386,14 @@ do
     srvSec:Button({ Name = "Copy Discord", Callback = function() if setclipboard then pcall(function() setclipboard("https://discord.gg/fRcGd9bW") end) end if VX_NOTIFY then VX_NOTIFY("Discord copied", true) end end })
     srvSec:Button({ Name = "Force Reset", Callback = function() if ResetApi then ResetApi.reset() end end })
     srvSec:Toggle({ Name = "Instant Respawn", Callback = function(b) if InstaRespawnApi then InstaRespawnApi.set(b) end end })
+    srvSec:Toggle({ Name = "Disable Notifications", Callback = function(b) _G.VX_SILENT = b == true end })
     srvSec:Button({ Name = "Unlock Extra Emote Slot", Callback = function() if EmoteSlotApi then EmoteSlotApi.unlock() end end })
 
     -- ===================== SETTINGS (configs / theming / menu keybind) =====================
     Window:Category("Config")
     Library:CreateSettingsPage(Window)
 
-    VX_NOTIFY = function(t) pcall(function() Library:Notification(tostring(t), 4) end) end
+    VX_NOTIFY = function(t) if _G.VX_SILENT then return end pcall(function() Library:Notification(tostring(t), 4) end) end   -- 'Disable Notifications' silences EVERY popup through this one choke point
     if getgenv then getgenv().Library = Library end
     pcall(function() Library:Notification("Dream Hub " .. string.upper(VX_TIER) .. " loaded", 4) end)
     print("[Vaultix v" .. VX_VERSION .. " | samet UI] loaded (" .. VX_TIER .. ") - RightShift toggle")
