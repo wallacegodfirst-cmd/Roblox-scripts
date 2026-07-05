@@ -54,6 +54,7 @@ local CFG = {
 	SaveDino=false, SaveHP=30, NoSleep=true,
 	AutoFarmPlayer=false, FarmPlayerRange=120, AutoFarmFossil=false, FarmFossilRange=1000000,
 	ESPPlayers=false, ESPCorpses=false, FoodESP=false, FishESP=false, GemESP=false, ESPRange=900, ESPColor="Default",
+	AlertEnabled=false, AlertDino="", AlertRange=350,
 	FullBright=false, NightVision=false, NoDarkWater=true, InfLight=false, UnlockMouse=false,
 	SkinDino="", SkinName="", SkinWet=false, ProgSlot="",
 	Waypoints={}, TPName="", TPX=0, TPY=0, TPZ=0,
@@ -96,7 +97,7 @@ if not (tonumber(CFG.FarmReach) and CFG.FarmReach>=30 and CFG.FarmReach<=120) th
 for _,key in ipairs({
 	"Aimbot","SilentAim","LockOn","BoneProtect","TurnHack","Fly","SpeedHack","Noclip","InfJump",
 	"InfFood","InfWater","InfStam","InfOxygen","SaveDino","AutoFarmPlayer","AutoFarmFossil","AutoFarmGem","AutoPlayBot",
-	"ESPPlayers","ESPCorpses","FoodESP","FishESP","GemESP","FullBright","NightVision","NoDarkWater","WaterClear","NoClouds","AlwaysDamage","NoGrabLimit",
+	"ESPPlayers","ESPCorpses","FoodESP","FishESP","GemESP","AlertEnabled","FullBright","NightVision","NoDarkWater","WaterClear","NoClouds","AlwaysDamage","NoGrabLimit",
 	"Float","GodMode","InfLight","UnlockFOV","InfZoom","AntiDrown","WalkWater","AutoClean","AntiFracture","AntiBleed","AntiFall","Invis",
 	"AntiBreakHead","AntiBreakNeck","AntiBreakLeg","AntiBreakTail","AntiBreakTorso","NoSleep","AntiAFK","UnlockMouse","__SpyOn",
 	"AutoClick","AutoEatFood","DebugPanel","LogRemotes","BypassTP","SafeTP",
@@ -1319,9 +1320,10 @@ do local p=Pages["Movement"]
 	mkToggle(n,"Anti-Snapback Teleports","BypassTP",3)
 end
 do local p=Pages["Survival"]
-	local _,f=mkSec(p,"Water / Stamina",1)
-	mkToggle(f,"INF Water","InfWater",1)
-	mkToggle(f,"INF Stamina","InfStam",2)
+	local _,f=mkSec(p,"Food / Water / Stamina",1)
+	mkToggle(f,"INF Food","InfFood",1)
+	mkToggle(f,"INF Water","InfWater",2)
+	mkToggle(f,"INF Stamina","InfStam",3)
 	local _,pr=mkSec(p,"Protection",2)
 	mkToggle(pr,"Anti Drown","AntiDrown",1)
 	mkToggle(pr,"Walk on Water","WalkWater",2)
@@ -1455,6 +1457,10 @@ do local p=Pages["Visuals"]
 	mkToggle(l,"Water Transparency","WaterClear",4)
 	mkToggle(l,"No Clouds","NoClouds",5)
 	mkToggle(l,"INF Light (expand your light)","InfLight",6)
+	local _,al=mkSec(p,"Danger Alert (pick a dino - warns when it's near)",3)
+	mkToggle(al,"Enable Alert","AlertEnabled",1)
+	mkDropdown(al,"Alert Dino", function() return DINO_NAMES end, function() return CFG.AlertDino~="" and CFG.AlertDino or "(pick a dino)" end, function(opt) CFG.AlertDino=opt; saveCfg() end, 2)
+	mkSlider(al,"Alert Range","AlertRange",100,2000,3,50)
 end
 local skinDropdownRef, dinoLabel
 do local p=Pages["Skins"]
@@ -2399,6 +2405,52 @@ ESP.gui = C("ScreenGui",{Name="MoneyHubPE_ESP", ResetOnSpawn=false, IgnoreGuiIns
 safeParentGui(ESP.gui)
 ESP.folder = C("Folder",{Parent=ESP.gui, Name="ESP"})
 ESP.objs={}
+
+-- ═══ DANGER ALERT: pick a dino; flash a red hazard warning when that species is near ═══
+do
+	local A = {}
+	A.gui = C("ScreenGui",{Name="MoneyHubPE_Alert", ResetOnSpawn=false, IgnoreGuiInset=true, DisplayOrder=9999}); safeParentGui(A.gui)
+	A.frame = C("Frame",{Parent=A.gui, Size=UDim2.fromScale(1,1), BackgroundTransparency=1, Visible=false})
+	A.top    = C("Frame",{Parent=A.frame, Size=UDim2.new(1,0,0,12), BackgroundColor3=Color3.fromRGB(255,30,30), BorderSizePixel=0})
+	A.bottom = C("Frame",{Parent=A.frame, Size=UDim2.new(1,0,0,12), Position=UDim2.new(0,0,1,-12), BackgroundColor3=Color3.fromRGB(255,30,30), BorderSizePixel=0})
+	A.left   = C("Frame",{Parent=A.frame, Size=UDim2.new(0,12,1,0), BackgroundColor3=Color3.fromRGB(255,30,30), BorderSizePixel=0})
+	A.right  = C("Frame",{Parent=A.frame, Size=UDim2.new(0,12,1,0), Position=UDim2.new(1,-12,0,0), BackgroundColor3=Color3.fromRGB(255,30,30), BorderSizePixel=0})
+	A.banner = C("Frame",{Parent=A.frame, AnchorPoint=Vector2.new(0.5,0), Size=UDim2.fromOffset(460,56), Position=UDim2.new(0.5,0,0,26), BackgroundColor3=Color3.fromRGB(40,0,0), BorderSizePixel=0}); corner(A.banner,8); stroke(A.banner,Color3.fromRGB(255,40,40),2)
+	A.icon = C("TextLabel",{Parent=A.banner, Position=UDim2.fromOffset(16,0), Size=UDim2.fromOffset(42,56), BackgroundTransparency=1, Text="\u{26A0}", TextColor3=Color3.fromRGB(255,210,40), TextSize=32, Font=Enum.Font.GothamBold})
+	A.text = C("TextLabel",{Parent=A.banner, Position=UDim2.fromOffset(60,0), Size=UDim2.new(1,-72,1,0), BackgroundTransparency=1, Text="DINO NEAR - RUN!", TextColor3=Color3.fromRGB(255,90,90), TextSize=20, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Left})
+	task.spawn(function() local on=false while RUNNING do
+		local show,who,dd=false,nil,nil
+		if CFG.AlertEnabled and CFG.AlertDino~="" and alive() then
+			local me=hrp()
+			if me then
+				local want=tostring(CFG.AlertDino):lower()
+				local function scan(folder) if not folder then return end for _,m in ipairs(folder:GetChildren()) do
+					if not show and m:IsA("Model") and m~=getMyModel() then
+						local sp=detectDinoModel(m) or m:GetAttribute("Type") or m:GetAttribute("Character") or m.Name
+						if sp then local lsp=tostring(sp):lower()
+							if lsp==want or lsp:find(want,1,true) or want:find(lsp,1,true) then
+								local r=getHitbox(m) or rootOf(m)
+								if r then local d=dist(me.Position,r.Position); if d<=(tonumber(CFG.AlertRange) or 350) then show=true; who=tostring(sp); dd=math.floor(d) end end
+							end
+						end
+					end
+				end end
+				scan(WS:FindFirstChild("Characters"))
+				for _,nm in ipairs({"Sandbox","Dinos","Creatures","NPCs","Entities","Animals"}) do if not show then scan(WS:FindFirstChild(nm)) end end
+			end
+		end
+		if show then
+			if not on then on=true; pcall(function() A.frame.Visible=true end) end
+			pcall(function() A.text.Text=(who and who:upper() or "DINO").." NEAR ["..(dd or 0).."m] - RUN!" end)
+			local a=(math.sin(tick()*9)+1)/2
+			pcall(function() for _,e in ipairs({A.top,A.bottom,A.left,A.right}) do e.BackgroundTransparency=0.15+a*0.65 end end)
+			task.wait(0.05)
+		else
+			if on then on=false; pcall(function() A.frame.Visible=false end) end
+			task.wait(0.35)
+		end
+	end end)
+end
 -- DEBUG STAT PANEL (green/yellow) — shows the REAL CharacterState.Replica values live, so you can SEE whether
 -- a pin is actually changing the stat or only the HUD. Toggle in Info tab. Reuses ESP.gui (saves a ScreenGui).
 ESP.dbg = nil
@@ -2453,14 +2505,19 @@ task.spawn(function() while RUNNING do
 	else task.wait(0.3) end
 end end)
 local function readDinoInfo(model)
-	local species,growth,health,stam
+	local species,growth,health,stam,bleed,hpFrac
 	species = detectDinoModel(model)
 	for _,a in ipairs({"GrowthStage","Stage","Growth","Age","Maturity","LifeStage"}) do local v=model:GetAttribute(a); if v~=nil then growth=tostring(v); break end end
 	local mm=model:FindFirstChild("MeshModel"); if not growth and mm then local v=mm:GetAttribute("Stage"); if v then growth=tostring(v) end end
-	local h=model:FindFirstChildOfClass("Humanoid"); if h then health=("%d/%d"):format(math.floor(h.Health),math.floor(h.MaxHealth)) end
-	for _,a in ipairs({"Health","HP"}) do if health then break end local v=model:GetAttribute(a); if v then health=tostring(math.floor(tonumber(v) or 0)) end end
+	local h=model:FindFirstChildOfClass("Humanoid"); if h and h.MaxHealth>0 then health=("%d/%d"):format(math.floor(h.Health),math.floor(h.MaxHealth)); hpFrac=h.Health/h.MaxHealth end
+	if not health then local cur,mx
+		for _,a in ipairs({"Health","HP","Hitpoints","HitPoints"}) do local v=model:GetAttribute(a); if v then cur=tonumber(v); break end end
+		for _,a in ipairs({"MaxHealth","MaxHP"}) do local v=model:GetAttribute(a); if v then mx=tonumber(v); break end end
+		if cur then if mx and mx>0 then health=("%d/%d"):format(math.floor(cur),math.floor(mx)); hpFrac=cur/mx else health=tostring(math.floor(cur)) end end
+	end
 	for _,a in ipairs({"Stamina","Stam","Energy"}) do local v=model:GetAttribute(a); if v then stam=tostring(math.floor(tonumber(v) or 0)); break end end
-	return species,growth,health,stam
+	for _,a in ipairs({"Bleed","Bleeding","BleedDamage","Wound","Wounds","Bloodloss","Bleed_Damage"}) do local v=model:GetAttribute(a); if v then bleed=math.floor(tonumber(v) or 0); break end end
+	return species,growth,health,stam,bleed,hpFrac
 end
 -- ESP is throttled (1.6s) and HARD-CAPPED at 60 objects, and the whole rebuild is pcall-wrapped,
 -- so Fish ESP (which used to scan the entire workspace every 0.6s) can no longer lag you out or kill the menu.
@@ -2478,13 +2535,16 @@ task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
 					if body then
 						local d=dist(me.Position, body.Position)
 						if d<=CFG.ESPRange then
-							local sp,gr,hp,st = readDinoInfo(m)
+							local sp,gr,hp,st,bl = readDinoInfo(m)
 							local pl = Players:GetPlayerFromCharacter(m)
-							local nm = (pl and pl.Name) or sp or m.Name
-							local label = nm.."\n["..math.floor(d).."m]"
+							-- always show the DINO SPECIES; for a player-controlled dino show their name on top + species under
+							local label
+							if pl and sp then label = pl.Name.."\n"..sp else label = (pl and pl.Name) or sp or m.Name end
+							label = label.."\n["..math.floor(d).."m]"
 							if gr then label=label.."\nStage: "..gr end
 							if hp then label=label.."\nHP: "..hp end
 							if st then label=label.."\nStam: "..st end
+							if bl and bl>0 then label=label.."\nBleed: "..bl end
 							addESP(m, pl and Color3.fromRGB(90,170,255) or Color3.fromRGB(120,220,120), label); count+=1
 						end
 					end
