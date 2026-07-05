@@ -1937,28 +1937,60 @@ local function isRedMeshMeat(p)
 	end
 	return true
 end
+-- DOWNED-BODY DETECTOR (user's screenshot): a dino lying on the ground = a corpse to eat. We detect it by POSTURE +
+-- STATE, not name: a Model (not us, not a live player) whose main part is (a) tilted like a ragdoll — its UpVector
+-- points sideways/down instead of up — or (b) has a dead Humanoid, or (c) carries PE's corpse markers, or (d) is
+-- barely moving and lying flat. That's "a body like that in position/ragdoll".
+local function isDownedBody(m)
+	if not (m and m:IsA("Model")) or m==getMyModel() or Players:GetPlayerFromCharacter(m) then return false end
+	-- corpse markers or corpse name = definitely a body
+	local marked=false; pcall(function() marked=(m:GetAttribute("DinoType") or m:GetAttribute("HintType") or m:GetAttribute("CreatedAt"))~=nil end)
+	if marked or isMeatName(m.Name) then return true end
+	-- dead humanoid = a body
+	local h=m:FindFirstChildOfClass("Humanoid"); if h and h.Health<=0 then return true end
+	-- POSTURE: main part tilted like a ragdoll (UpVector.Y low = lying on its side/back) AND near-still
+	local part=rootOf(m); if not part then return false end
+	local ok=false
+	pcall(function()
+		local up=part.CFrame.UpVector
+		local flat = up.Y < 0.55                                  -- >~57° from upright = lying down / ragdolled
+		local v=part.AssemblyLinearVelocity; local slow=(v.Magnitude<6)
+		if flat and slow then ok=true end
+	end)
+	return ok
+end
 local function nearestMeat(range)
 	local me=hrp(); if not me then return nil end
 	local best,bpart,bd=nil,nil,range
+	local seen={}
+	local function consider(m, part)
+		if not (m and part and part:IsA("BasePart")) or seen[m] then return end
+		seen[m]=true
+		local dd=dist(me.Position,part.Position); if dd<bd then best,bpart,bd=m,part,dd end
+	end
+	-- 1) scan workspace.Characters + all corpse/sandbox folders FULLY (these hold downed dinos + corpses) — no cap here
+	for _,fn in ipairs({"Characters","Corpses","Corpse","DeadBodies","Sandbox","Dinos","Creatures","NPCs","Entities","Animals","Food"}) do
+		local f=WS:FindFirstChild(fn)
+		if f then for _,m in ipairs(f:GetChildren()) do
+			if m:IsA("Model") and isDownedBody(m) then consider(m, rootOf(m)) end
+		end end
+	end
+	-- 2) whole-map sweep for prompts / red-mesh meat / downed bodies (raised cap = "scan the entire map"; 20000 covers
+	--    big maps while still bounded so it can't freeze you).
 	local cnt=0
 	for _,d in ipairs(WS:GetDescendants()) do
-		cnt+=1; if cnt>4000 then break end
-		local m,part
+		cnt+=1; if cnt>20000 then break end
 		if d:IsA("ProximityPrompt") then
 			local at=((d.ActionText or "").." "..(d.Name or "")):lower()
 			if at:find("investigate") or at:find("eat") or at:find("consume") then
-				local p=d.Parent; part=(p and p:IsA("BasePart") and p) or (p and p:FindFirstChildWhichIsA("BasePart")); m=(p and p:IsA("Model")) and p or (part and part:FindFirstAncestorWhichIsA("Model")) or p
+				local p=d.Parent; local part=(p and p:IsA("BasePart") and p) or (p and p:FindFirstChildWhichIsA("BasePart")); local m=(p and p:IsA("Model")) and p or (part and part:FindFirstAncestorWhichIsA("Model")) or p
+				consider(m, part)
 			end
-		elseif d:IsA("Model") and d~=getMyModel() and not Players:GetPlayerFromCharacter(d) then
-			-- a corpse either NAME-matches meat OR carries PE's corpse markers (DinoType/HintType/CreatedAt)
-			local isCorpse=isMeatName(d.Name)
-			if not isCorpse then pcall(function() isCorpse=(d:GetAttribute("DinoType") or d:GetAttribute("HintType") or d:GetAttribute("CreatedAt"))~=nil end) end
-			if isCorpse then m=d; part=rootOf(d) end
 		elseif d:IsA("BasePart") and isRedMeshMeat(d) then
-			-- the RED MESHY chunk itself (screenshot look) — teleportable meat even with no prompt/name/marker
-			part=d; m=d:FindFirstAncestorWhichIsA("Model") or d
+			consider(d:FindFirstAncestorWhichIsA("Model") or d, d)
+		elseif d:IsA("Model") and isDownedBody(d) then
+			consider(d, rootOf(d))
 		end
-		if m and part and part:IsA("BasePart") then local dd=dist(me.Position,part.Position); if dd<bd then best,bpart,bd=m,part,dd end end
 	end
 	return best,bpart,bd
 end
@@ -2991,17 +3023,34 @@ local function readDinoInfo(model)
 		for _,a in ipairs({"MaxHealth","MaxHP"}) do local v=model:GetAttribute(a); if v then mx=tonumber(v); break end end
 		if cur then if mx and mx>0 then health=("%d/%d"):format(math.floor(cur),math.floor(mx)); hpFrac=cur/mx else health=tostring(math.floor(cur)) end end
 	end
-	for _,a in ipairs({"Stamina","Stam","Energy"}) do local v=model:GetAttribute(a); if v then stam=tostring(math.floor(tonumber(v) or 0)); break end end
-	for _,a in ipairs({"Bleed","Bleeding","BleedDamage","Wound","Wounds","Bloodloss","Bleed_Damage"}) do local v=model:GetAttribute(a); if v then bleed=math.floor(tonumber(v) or 0); break end end
-	-- FALLBACK ("i don't see their stam"): other dinos rarely carry attributes — their stats live as Number/IntValues
-	-- inside the model (or on the MeshModel). Scan a bounded slice of descendants for health/stam/bleed value objects.
+	-- STAMINA + BLEED — thorough hunt (user: "i don't see their stam"). Search by SUBSTRING across every attribute on
+	-- the model, its Humanoid, MeshModel, and any Stats/Data/Vitals child folder — PE often names it CurrentStamina /
+	-- StaminaValue etc., which fixed-name lookups missed.
+	local function scanAttrs(inst)
+		if not inst then return end
+		pcall(function()
+			for k,v in pairs(inst:GetAttributes()) do
+				if type(v)=="number" then
+					local n=tostring(k):lower()
+					if not stam and (n:find("stam",1,true) or n:find("energy",1,true) or n:find("endur",1,true) or n:find("vigor",1,true)) and not n:find("max",1,true) then stam=tostring(math.floor(v))
+					elseif not bleed and (n:find("bleed",1,true) or n:find("bloodloss",1,true) or n:find("hemorrh",1,true) or n:find("wound",1,true)) then bleed=math.floor(v) end
+				end
+			end
+		end)
+	end
+	scanAttrs(model); scanAttrs(model:FindFirstChildOfClass("Humanoid")); scanAttrs(model:FindFirstChild("MeshModel"))
+	for _,fn in ipairs({"Stats","Data","Vitals","Needs","State","Status"}) do scanAttrs(model:FindFirstChild(fn)) end
+	-- also the classic fixed names as a fast path
+	if not stam then for _,a in ipairs({"Stamina","Stam","Energy","Endurance","Vigor","CurrentStamina","StaminaValue"}) do local v=model:GetAttribute(a); if v then stam=tostring(math.floor(tonumber(v) or 0)); break end end end
+	if not bleed then for _,a in ipairs({"Bleed","Bleeding","BleedDamage","Wound","Wounds","Bloodloss","Bleed_Damage"}) do local v=model:GetAttribute(a); if v then bleed=math.floor(tonumber(v) or 0); break end end end
+	-- Number/Int value-object fallback (stats stored as Values inside the model / a Stats folder)
 	if (not stam) or (not hpFrac) or (not bleed) then
 		local scanned=0
 		for _,v in ipairs(model:GetDescendants()) do
-			scanned+=1; if scanned>400 then break end
+			scanned+=1; if scanned>1200 then break end
 			if v:IsA("NumberValue") or v:IsA("IntValue") then
 				local n=v.Name:lower()
-				if not stam and (n:find("stam",1,true) or n=="energy" or n:find("endur",1,true)) then stam=tostring(math.floor(tonumber(v.Value) or 0))
+				if not stam and (n:find("stam",1,true) or n=="energy" or n:find("endur",1,true) or n:find("vigor",1,true)) and not n:find("max",1,true) then stam=tostring(math.floor(tonumber(v.Value) or 0))
 				elseif not bleed and (n:find("bleed",1,true) or n:find("bloodloss",1,true) or n:find("wound",1,true)) then bleed=math.floor(tonumber(v.Value) or 0)
 				elseif not hpFrac and (n=="health" or n=="hp") then
 					local mx; local sib=v.Parent and (v.Parent:FindFirstChild("MaxHealth") or v.Parent:FindFirstChild("MaxHP"))
