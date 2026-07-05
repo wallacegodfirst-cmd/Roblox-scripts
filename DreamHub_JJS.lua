@@ -844,10 +844,11 @@ local function vxTeleportHard(dest, holdTime)
 		if hum then pcall(function() hum.PlatformStand = true end) end
 		local dt = 1/60
 		local startT = tick()
+		acPass(); acPass()  -- whitelist HARD before the first move (some anti-cheats only accept a move if a fresh Teleport call already landed)
 		while tick() - startT < 25 do   -- STEP toward the spot at a SPEED CAP (studs/sec), whitelisting each frame, so the anti-cheat never flags a too-fast move -> no set-back
 			if vxTeleGen ~= gen then return end
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
-			acPass()
+			acPass(); acPass()   -- fire the whitelist twice per step: one call can be dropped and the step gets reverted (= 'teleport doesn't work')
 			local to = dest - hrp.Position; local d = to.Magnitude
 			if d < 3 then break end
 			local step = math.max(VX_TP_SPEED, 12) * dt   -- studs THIS frame = speed * real frame time; stays under the per-tick distance limit -> no snap-back
@@ -860,7 +861,7 @@ local function vxTeleportHard(dest, holdTime)
 		while tick() - h0 < (holdTime or 3) do
 			if vxTeleGen ~= gen then return end
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
-			acPass()
+			acPass(); acPass()
 			local destCF = CFrame.new(dest) * rot
 			pcall(function() hrp.CFrame = destCF; hrp.AssemblyLinearVelocity = Vector3.zero end)
 			pcall(function() cc:PivotTo(destCF) end)
@@ -1241,6 +1242,10 @@ do
 	local LP = Players.LocalPlayer
 	local slots = { nil, nil, nil }
 	local SPOTS = {  -- user-saved coordinate spots (ordered so the dropdown keeps this order)
+		{ "Main Map", Vector3.new(-16.2, 24.4, 14.1) },
+		{ "Leaderboard (who's better)", Vector3.new(51.8, 23.6, -96.0) },
+		{ "Cute", Vector3.new(261.7, 61.8, 467.6) },
+		{ "Green screen", Vector3.new(292.8, 23.7, 169.2) },
 		{ "Mall", Vector3.new(76.4, -60.2, -262.6) },
 		{ "Train", Vector3.new(168.8, -9.7, 158.5) },
 		{ "Train spawner", Vector3.new(182.3, 0.1, 557.0) },
@@ -2531,12 +2536,14 @@ do
 	end
 
 	-- ---------- MAHORAGA SAFE TP ----------
-	-- When ANY enemy summons Mahoraga (the model appears, or they play the Mahoraga summon anim), bolt
-	-- straight UP out of harm's way. Mahoraga adapts to attacks + its wheel hits hard - getting airborne
-	-- and far is the safe play.
+	-- When ANY enemy summons Mahoraga (they play the summon anim rbxassetid://127843796051633, or the model
+	-- appears), teleport ME to a fixed SAFE spot far off the map, hold there while the summon danger passes,
+	-- then teleport ME back to the main map. Fixed coords the user gave.
 	local mahoOn, mahoCd = false, 0
-	local MAHO_ANIM = { ["127843796051633"] = true }  -- Mahoraga summon/cast id (from the domain-cast capture)
-	local function mahoNameHit(n) n = n:lower(); return n:find("mahoraga") or n:find("mahoro") or n:find("divine") and n:find("general") end
+	local MAHO_SAFE   = Vector3.new(-66.9, 50.8, 424.0)   -- safe spot to sit out the Mahoraga summon
+	local MAHO_RETURN = Vector3.new(-16.2, 24.4, 14.1)    -- main map spawn to return to when it's done
+	local MAHO_ANIM = { ["127843796051633"] = true }      -- Mahoraga summon/cast id
+	local function mahoNameHit(n) n = n:lower(); return n:find("mahoraga") or n:find("mahoro") or (n:find("divine") and n:find("general")) end
 	local function scanMahoraga()  -- a Mahoraga model present in the world near you
 		local hrp = myHRP(); if not hrp then return false end
 		local function chkList(parent)
@@ -2551,10 +2558,17 @@ do
 		end
 		return chkList(workspace) or chkList(workspace:FindFirstChild("Characters")) or chkList(workspace:FindFirstChild("Summons")) or chkList(workspace:FindFirstChild("Shadows"))
 	end
+	local mahoBusy = false
 	local function mahoEscape()
-		local hrp = myHRP(); if not hrp then return end
-		if VX_NOTIFY then VX_NOTIFY("Mahoraga - teleporting UP (safe)", false) end
-		vxTeleportHard(hrp.Position + Vector3.new(0, 260, 0), 3)   -- straight up + hold, out of Mahoraga's reach
+		if mahoBusy then return end
+		mahoBusy = true
+		if VX_NOTIFY then VX_NOTIFY("Mahoraga - safe teleport", false) end
+		vxTeleportHard(MAHO_SAFE + Vector3.new(0, 4, 0), 5)          -- go to the safe spot + stay pinned ~5s
+		task.delay(5.4, function()
+			vxTeleportHard(MAHO_RETURN + Vector3.new(0, 4, 0), 3)     -- summon done -> back to the main map
+			if VX_NOTIFY then VX_NOTIFY("Back to main map", true) end
+			task.delay(1.5, function() mahoBusy = false end)
+		end)
 	end
 	-- anim path: catch the summon the instant an enemy plays it (earlier than the model streaming in)
 	local mahoHooked = setmetatable({}, { __mode = "k" })
@@ -2598,37 +2612,37 @@ do
 	end)
 
 	-- ---------- AUTO KILL-EMOTE ----------
-	-- When a nearby enemy DIES, teleport onto their corpse and play your emote (taunt on the kill),
-	-- then end the emote after a couple seconds.
+	-- When a nearby enemy DIES, play your emote (taunt on the kill) via the EmoteService remote. No teleport
+	-- onto the body - it just fires the emote where you stand. Death is detected by watching each enemy's
+	-- health drop from >0 to <=0 (reliable for JJS enemies that ragdoll instead of firing Humanoid.Died).
 	local killEmoteOn, killEmoteSlot, keCd = false, 1, 0
-	local watched = setmetatable({}, { __mode = "k" })   -- humanoid -> Died connection (weak so GC'd)
-	local function doKillEmote(corpseHRP)
+	local hpSeen = setmetatable({}, { __mode = "k" })   -- humanoid -> last seen health
+	local function doKillEmote()
 		if tick() - keCd < 1.5 then return end
 		keCd = tick()
-		if corpseHRP then pcall(function() vxTeleportHard(corpseHRP.Position + Vector3.new(0, 3, 0), 1.5) end) end
-		task.delay(0.15, function()
-			local re = emoteRE("Emote"); if re then pcall(function() re:FireServer(killEmoteSlot) end) end
-		end)
+		local re = emoteRE("Emote"); if re then pcall(function() re:FireServer(killEmoteSlot) end) end   -- the emote remote you gave: EmoteService.RE.Emote:FireServer(slot)
 		task.delay(2.8, function()
 			local re2 = emoteRE("EmoteEnd"); if re2 then pcall(function() re2:FireServer() end) end
-		end)
-	end
-	local function watchEnemy(char)
-		if not char or char.Name == LP.Name or char == LP.Character then return end
-		local hum = char:FindFirstChildOfClass("Humanoid"); if not hum or watched[hum] then return end
-		watched[hum] = hum.Died:Connect(function()
-			if not killEmoteOn then return end
-			local mh = myHRP(); local r = char:FindFirstChild("HumanoidRootPart")
-			if mh and r and (r.Position - mh.Position).Magnitude <= 120 then doKillEmote(r) end   -- only taunt a kill that's near you (yours)
 		end)
 	end
 	task.spawn(function()
 		while true do
 			if killEmoteOn then
-				for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then watchEnemy(plr.Character) end end
-				local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do watchEnemy(m) end end
+				local mh = myHRP()
+				local function chk(char)
+					if not char or char.Name == LP.Name or char == LP.Character then return end
+					local hum = char:FindFirstChildOfClass("Humanoid"); local r = char:FindFirstChild("HumanoidRootPart")
+					if not hum or not r then return end
+					local prev = hpSeen[hum]
+					if prev ~= nil and prev > 0 and hum.Health <= 0 then   -- just died
+						if mh and (r.Position - mh.Position).Magnitude <= 130 then doKillEmote() end   -- only taunt a kill near you (yours)
+					end
+					hpSeen[hum] = hum.Health
+				end
+				for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP then chk(plr.Character) end end
+				local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do chk(m) end end
 			end
-			task.wait(0.6)
+			task.wait(0.25)
 		end
 	end)
 
@@ -2664,9 +2678,16 @@ do
 		local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m:IsA("Model") then chk(m) end end end
 		return best
 	end
+	local LOW_HP = 0.35   -- Yuta kill only fires when the target is LOW: at or below 35% health (the finisher)
+	local function isLow(tgt)
+		local h = tgt and tgt:FindFirstChildOfClass("Humanoid")
+		if not h or h.MaxHealth <= 0 then return false end
+		return (h.Health / h.MaxHealth) <= LOW_HP and h.Health > 0
+	end
 	local function flash(tgt)  -- fire the PROVEN teleport black-flash chain on the target (teleport behind -> flash)
 		if tick() - last < 0.9 then return end
 		if not (tgt and tgt.Parent) then return end
+		if not isLow(tgt) then return end   -- ONLY when they're low HP (kill/finisher), never on a full-HP enemy
 		last = tick()
 		if _G.VX_RUNCHAIN then pcall(function() _G.VX_RUNCHAIN(tgt) end) end
 	end
@@ -2682,10 +2703,22 @@ do
 		end)
 	end
 	task.spawn(function() while true do if manualOn then pcall(hookSelf) end task.wait(0.6) end end)
-	-- AUTO "Yuta Teleport Kill Black Flash": fully automatic - keep finding the nearest enemy and black-flash them.
+	-- AUTO "Yuta Teleport Kill Black Flash": fully automatic - hunt the nearest LOW-HP enemy and finish them.
+	local function nearestLowEnemy(maxD)
+		local mh = getHRP(myModel()); if not mh then return nil end
+		local best, bd = nil, maxD
+		local function chk(m)
+			if not m or m == myModel() or m.Name == LP.Name then return end
+			local r = getHRP(m); if not r or not isLow(m) then return end
+			local d = (r.Position - mh.Position).Magnitude; if d < bd then bd = d; best = m end
+		end
+		for _, pl in ipairs(Players:GetPlayers()) do if pl ~= LP then chk(pl.Character) end end
+		local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m:IsA("Model") then chk(m) end end end
+		return best
+	end
 	task.spawn(function()
 		while true do
-			if autoOn then local t = nearestEnemy(45); if t then flash(t) end task.wait(0.25) else task.wait(0.3) end
+			if autoOn then local t = nearestLowEnemy(45); if t then flash(t) end task.wait(0.25) else task.wait(0.3) end
 		end
 	end)
 	YutaBFApi = {
@@ -7826,13 +7859,16 @@ do
         pcall(function() mmGui.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
         if not mmGui.Parent then mmGui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui") end
         local btn = Instance.new("TextButton")
-        -- clean PURPLE pill, top-center. No image asset (it didn't render = the grey block you saw).
-        btn.Size = UDim2.fromOffset(72, 30); btn.Position = UDim2.new(0.5, -36, 0, 6); btn.AnchorPoint = Vector2.new(0, 0)
+        -- DREAM LOGO pill, top-center: purple->blue gradient wordmark. Pure-UI (no image asset = no grey block).
+        btn.Size = UDim2.fromOffset(96, 34); btn.Position = UDim2.new(0.5, -48, 0, 6); btn.AnchorPoint = Vector2.new(0, 0)
         btn.BackgroundColor3 = Color3.fromRGB(120, 80, 255); btn.Text = "Dream"; btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        btn.Font = Enum.Font.GothamBold; btn.TextSize = 13; btn.AutoButtonColor = true
+        btn.Font = Enum.Font.GothamBold; btn.TextSize = 15; btn.AutoButtonColor = true
         btn.Active = true; btn.ZIndex = 10; btn.Parent = mmGui
         Instance.new("UICorner", btn).CornerRadius = UDim.new(1, 0)
-        local us = Instance.new("UIStroke"); us.Color = Color3.fromRGB(255, 255, 255); us.Thickness = 1.2; us.Transparency = 0.5; us.Parent = btn
+        local grad = Instance.new("UIGradient")   -- the logo look: purple -> blue sweep
+        grad.Color = ColorSequence.new(Color3.fromRGB(150, 90, 255), Color3.fromRGB(70, 120, 255))
+        grad.Rotation = 25; grad.Parent = btn
+        local us = Instance.new("UIStroke"); us.Color = Color3.fromRGB(255, 255, 255); us.Thickness = 1.4; us.Transparency = 0.35; us.Parent = btn
         -- DRAG (custom - won't capture-freeze movement) + TAP toggles the menu only if you didn't drag
         do
             local dragging, moved, startPos, startMouse = false, false, nil, nil
