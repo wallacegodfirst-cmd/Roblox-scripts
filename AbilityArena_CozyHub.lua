@@ -411,31 +411,13 @@ end
 local function fireM1() end
 
 -- ── M1 PACKET SPY (debug) ──────────────────────────────────────
--- Logs every outgoing Jolt_Reliable payload so we can capture a REAL damaging
--- M1 (with a populated "Hits" list) and rebuild buildM1 to carry the target.
--- Installs the hook only when you enable the toggle (opt-in). Some anti-cheats
--- detect __namecall hooks - enable briefly, capture one hit, disable.
-local m1SpyInstalled = false
-local function installM1Spy()
-    if m1SpyInstalled then return true end
-    if typeof(hookmetamethod) ~= "function" or typeof(getnamecallmethod) ~= "function" then return false end
-    m1SpyInstalled = true
-    local old
-    old = hookmetamethod(game, "__namecall", function(self, ...)
-        if S.M1Spy and self == JoltReliable and getnamecallmethod() == "FireServer" then
-            local payload = (...)
-            local s
-            if typeof(payload) == "buffer" then pcall(function() s = buffer.tostring(payload) end)
-            elseif type(payload) == "string" then s = payload end
-            if s then
-                local b = {}; for i = 1, #s do b[i] = string.byte(s, i) end
-                print("[M1SPY] len="..#s.." | ascii: "..(s:gsub("[^%w%p ]", ".")).." | bytes: "..table.concat(b, ","))
-            end
-        end
-        return old(self, ...)
-    end)
-    return true
-end
+-- REMOVED: this used hookmetamethod(game,"__namecall",...). Ability Arena's anti-cheat has a
+-- "namecallInstance detector" that spots a hooked __namecall metamethod and 267-kicks you — and
+-- the old hook was NEVER uninstalled (toggling the feature off left the hook in place forever), so
+-- one use bricked every future session. It was only ever a debug capture tool, so we drop the hook
+-- entirely. If a raw remote logger is ever needed again, do it without touching the namecall
+-- metamethod (e.g. a per-remote OutgoingReplication signal), never a global __namecall hook.
+local function installM1Spy() return false end
 local function fireSkill(skill) fireRaw(buildSkillNew(skill)) end
 local function fireDash(direction)
     fireRaw(buildSkillNewDir("Dash", direction))
@@ -2350,16 +2332,12 @@ UtilityTab:CreateButton({Name="Dump Player Data (to console)", Callback=function
     Rayfield:Notify({Title="Dream Hub", Content="Dumped to console (open F9 / executor console).", Duration=5})
 end})
 
-UtilityTab:CreateToggle({Name="Spy M1 Packets  [debug, uses a hook]", CurrentValue=false, Flag="M1Spy", Callback=function(v)
-    S.M1Spy = v
-    if v then
-        if installM1Spy() then
-            Rayfield:Notify({Title="Dream Hub", Content="M1 Spy ON. Turn OFF Auto Farm/Auto M1, then LEFT-CLICK an enemy once. Copy the [M1SPY] line with 'UseM1'/'Hits' from console.", Duration=10})
-        else
-            S.M1Spy = false
-            Rayfield:Notify({Title="Dream Hub", Content="Your executor has no hookmetamethod - can't spy packets.", Duration=6})
-        end
-    end
+UtilityTab:CreateToggle({Name="Spy M1 Packets  [removed - anti-cheat safe]", CurrentValue=false, Flag="M1Spy", Callback=function(v)
+    -- Hard-disabled: the packet spy required a __namecall hook, which Ability Arena's anti-cheat
+    -- detects ("namecallInstance detector" -> 267 kick). The toggle is kept as a no-op so old saved
+    -- configs with M1Spy=true don't error; it never installs a hook now.
+    S.M1Spy = false
+    if v then Rayfield:Notify({Title="Dream Hub", Content="M1 Packet Spy is disabled — it used a namecall hook that got you kicked (Error 267). The hub no longer hooks anything.", Duration=8}) end
 end})
 
 UtilityTab:CreateSection("Admin")
