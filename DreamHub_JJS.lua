@@ -123,14 +123,21 @@ do
 	-- weak-keyed poller re-hooks after respawn / character swap. One clean listener path, no LP.Character-only guess.
 	local hookedAnims = setmetatable({}, { __mode = "k" })
 	local function hookBoth()
+		-- FOUND THE REAL BUG ("M1 Black Flash randomly never fires"): ipairs() STOPS at the first nil element.
+		-- The old code built `{ player.Character, resolvedModel }` — when player.Character is nil (which this file
+		-- repeatedly notes is COMMON in JJS: "LP.Character can lag/differ", "your live body lives under
+		-- workspace.Characters"), ipairs() saw a nil in slot 1 and NEVER EVEN LOOKED at slot 2 — silently skipping
+		-- the resolved model, the ONE that actually has your combat animations, every single poll where
+		-- LP.Character happened to be nil/stale. Build the list by explicit append so there's never a gap.
 		local chars = workspace:FindFirstChild("Characters")
-		local bodies = { player.Character, chars and chars:FindFirstChild(player.Name) or nil }
+		local bodies = {}
+		if player.Character then bodies[#bodies + 1] = player.Character end
+		local resolved = chars and chars:FindFirstChild(player.Name)
+		if resolved and resolved ~= player.Character then bodies[#bodies + 1] = resolved end
 		for _, char in ipairs(bodies) do
-			if char then
-				local hum = char:FindFirstChildOfClass("Humanoid")
-				local a = hum and hum:FindFirstChildOfClass("Animator")
-				if a and not hookedAnims[a] then hookedAnims[a] = a.AnimationPlayed:Connect(onAnim) end
-			end
+			local hum = char:FindFirstChildOfClass("Humanoid")
+			local a = hum and hum:FindFirstChildOfClass("Animator")
+			if a and not hookedAnims[a] then hookedAnims[a] = a.AnimationPlayed:Connect(onAnim) end
 		end
 	end
 	task.spawn(function() while RT.Running do pcall(hookBoth); task.wait(0.5) end end)
@@ -699,15 +706,25 @@ do
 			end)
 		end)
 	end
-	local function doEPress()   -- E = LOCK ONTO THE ENEMY'S BACK + FLASH, for EVERY mode (user's core request).
+	local function doEPress()   -- E = the enemy's back, for EVERY mode. Jump/Side Dash play their REAL movement
+		-- flourish first ("it doesn't even jump/side dash, it just teleports" — doApproach existed but was
+		-- orphaned; it's wired back in here), THEN doBackstab's snap+lock+flash guarantees you land on the back
+		-- precisely even if the flourish didn't line you up perfectly. Teleport/Back Dash are unchanged (instant).
 		if _G.VX_BF_DEBUG then print("[DreamHub BF] E press -> mode="..Settings.Mode) end
-		if Settings.Mode == "Back Dash" then handleBackDashE()                  -- Back Dash keeps its 2-stage watcher
-		elseif Settings.Mode == "Jump" then
-			-- "Jump doesn't jump, it teleports": Jump approach should visibly JUMP first, THEN snap behind — a real
-			-- Space press (legit engine jump input, not a velocity hack) fired right before the snap.
-			jumpNow()
-			task.spawn(function() doBackstab(true) end)
-		else task.spawn(function() doBackstab(true) end) end                    -- Teleport/Side Dash: snap behind, face back, lock, flash
+		if Settings.Mode == "Back Dash" then handleBackDashE()
+		elseif Settings.Mode == "Jump" or Settings.Mode == "Side Dash" then
+			task.spawn(function()
+				local tgt = getNearestEnemy(Settings.LockRange)
+				if tgt then
+					local tr = getHRP(tgt); local mh = getHRP(myCharResolved())
+					if tr and mh then
+						chainTarget = tgt; chainTargetT = tick()   -- doBackstab reuses this same target right after
+						doApproach(tr, mh)                          -- the visible sprint+jump / dash+curve
+					end
+				end
+				doBackstab(true)
+			end)
+		else task.spawn(function() doBackstab(true) end) end   -- Teleport: instant snap behind, face back, lock, flash
 	end
 	ContextActionService:BindActionAtPriority("VaultixBackstab", function(_, inputState)
 		if inputState == Enum.UserInputState.Begin then doEPress() end
@@ -1629,67 +1646,100 @@ do
 	--   UPPERCUT  = the 4th M1 thrown while HOLDING Space and MOVING UPWARD (jumping).
 	--   DOWNSLAM  = the 4th M1 thrown IN THE AIR while DESCENDING above the opponent.
 	-- So: count YOUR first 3 real M1 clicks; the script then throws the 4th M1 itself with the right physics.
-	local m1Count, m1LastT = 0, 0
+	-- ═══ TRIGGER (exact user spec) ═══
+	--   UPPERCUT  = the moment you click M1 (mode=Uppercut, enemy near), HOLD Space immediately (instant feel).
+	--               Keep holding through your combo; count CONFIRMED M1 swings via animation id (not raw clicks —
+	--               "use the animation ids to make it work", so a whiff/menu-click never advances the count).
+	--               On the 4th confirmed swing, release Space shortly after.
+	--   DOWN SLAM = count confirmed M1 swings (same animation-id detection); on the 3rd, the script jumps + M1s
+	--               for you (the airborne slam).
+	local m1AnimCount, m1LastAnim = 0, 0
+	local holding = false
+	local function releaseSpace()
+		if holding then holding = false; pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end
+	end
+	-- CLICK: starts the Uppercut hold immediately (this is "when it detects a click").
 	UIS.InputBegan:Connect(function(input, gpe)
 		if mode == "Off" then return end
-		-- NO gpe bail: JJS marks combat clicks gameProcessed — a gpe check here ate EVERY real M1.
 		if UIS:GetFocusedTextBox() then return end
 		if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-		if tick() < (_G.VX_INJECT_UNTIL or 0) then return end     -- ignore our OWN injected clicks
-		if busy then return end
+		if tick() < (_G.VX_INJECT_UNTIL or 0) then return end   -- ignore our OWN injected clicks
+		if busy or holding then return end
 		if not nearEnemy() then return end
-		if tick() - m1LastT > 1.6 then m1Count = 0 end            -- combo window reset (you stopped swinging)
-		m1LastT = tick(); m1Count = m1Count + 1
-		if m1Count < 3 then return end
-		m1Count = 0; busy = true
-		task.spawn(function()
-			-- CRASH-PROOF: an uncaught error anywhere below used to leave `busy=true` forever = "stops working
-			-- until I respawn". This pcall guarantees busy is ALWAYS released, error or not.
+		if mode == "Uppercut" then
+			m1AnimCount = 0; m1LastAnim = tick(); holding = true
+			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 3
+			pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)   -- HOLD starts on the very first click
+			if _G.VX_BF_DEBUG then print("[DreamHub M1Combo] Uppercut: click detected -> holding Space") end
+		end
+	end)
+	-- SAFETY: if you stop swinging mid-combo, don't leave Space stuck held forever.
+	task.spawn(function() while true do task.wait(0.2)
+		if holding and tick() - m1LastAnim > 1.6 then releaseSpace() end
+	end end)
+	-- ANIMATION-CONFIRMED M1 counter: hooks the RESOLVED model's animator (workspace.Characters[you] — the rig your
+	-- combat anims actually play on), re-hooked every 0.5s so it survives respawn/character swap.
+	local hookedCombo = setmetatable({}, { __mode = "k" })
+	task.spawn(function()
+		while true do
 			pcall(function()
-				_G.VX_LAUNCHING = tick()
-				_G.VX_INJECT_UNTIL = tick() + 1.4
-				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 1.4
-				task.wait(0.32)                                        -- let YOUR 3rd hit finish its swing
-				if _G.VX_CLAIMOWN then _G.VX_CLAIMOWN() end            -- network ownership: without it the velocity/state writes below are cosmetic and the server never sees you airborne
-				local c = myModel(); local h = c and c:FindFirstChildOfClass("Humanoid"); local hrp = c and c:FindFirstChild("HumanoidRootPart")
-				-- FACE the nearest enemy before the scripted M1 (screen-center click misses entirely if you're not
-				-- looking at them) — the "aim" the user asked for, applied to the one swing the SCRIPT throws.
-				local function faceEnemy()
-					pcall(function()
-						local mr = hrp; if not mr then return end
-						local best, bd
-						for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local rr = plr.Character:FindFirstChild("HumanoidRootPart"); if rr then local d = (rr.Position - mr.Position).Magnitude; if not bd or d < bd then best, bd = rr, d end end end end
-						local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local rr = m:FindFirstChild("HumanoidRootPart"); if rr then local d = (rr.Position - mr.Position).Magnitude; if not bd or d < bd then best, bd = rr, d end end end end end
-						if best then mr.CFrame = CFrame.lookAt(mr.Position, Vector3.new(best.Position.X, mr.Position.Y, best.Position.Z)) end
+				local m = myModel(); local h = m and m:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
+				if a and not hookedCombo[a] then
+					hookedCombo[a] = a.AnimationPlayed:Connect(function(track)
+						if mode == "Off" or busy then return end
+						local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+")
+						if not (id and COMBO_IDS[id]) then return end
+						if not nearEnemy() then return end
+						if tick() - m1LastAnim > 1.6 then m1AnimCount = 0 end   -- combo window reset
+						m1LastAnim = tick(); m1AnimCount = m1AnimCount + 1
+						if _G.VX_BF_DEBUG then print("[DreamHub M1Combo] confirmed M1 #"..m1AnimCount.." (mode="..mode..")") end
+						if mode == "Uppercut" then
+							if holding and m1AnimCount >= 4 then
+								m1AnimCount = 0
+								task.delay(0.15, releaseSpace)   -- let the 4th press-with-space-held land, then let go
+							end
+						elseif mode == "Down Slam" and m1AnimCount >= 3 and not busy then
+							m1AnimCount = 0; busy = true
+							task.spawn(function()
+								-- CRASH-PROOF: pcall guarantees `busy` is always released, error or not (was "stops
+								-- working until I respawn").
+								pcall(function()
+									_G.VX_LAUNCHING = tick()
+									_G.VX_INJECT_UNTIL = tick() + 1.4
+									_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 1.4
+									if _G.VX_CLAIMOWN then _G.VX_CLAIMOWN() end   -- without ownership the velocity write below is cosmetic
+									local c = myModel(); local hh = c and c:FindFirstChildOfClass("Humanoid"); local hrp = c and c:FindFirstChild("HumanoidRootPart")
+									local function faceEnemy()
+										pcall(function()
+											local mr = hrp; if not mr then return end
+											local best, bd
+											for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local rr = plr.Character:FindFirstChild("HumanoidRootPart"); if rr then local d = (rr.Position - mr.Position).Magnitude; if not bd or d < bd then best, bd = rr, d end end end end
+											local chs = workspace:FindFirstChild("Characters"); if chs then for _, mm in ipairs(chs:GetChildren()) do if mm.Name ~= LP.Name then local rr = mm:FindFirstChild("HumanoidRootPart"); if rr then local d = (rr.Position - mr.Position).Magnitude; if not bd or d < bd then best, bd = rr, d end end end end end
+											if best then mr.CFrame = CFrame.lookAt(mr.Position, Vector3.new(best.Position.X, mr.Position.Y, best.Position.Z)) end
+										end)
+									end
+									-- DOWNSLAM: jump HIGH (real Space press + a velocity nudge), wait until DESCENDING, then the M1 = slam.
+									pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.03); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
+									if hh then pcall(function() hh:ChangeState(Enum.HumanoidStateType.Jumping) end) end
+									if hrp then pcall(function() local v = hrp.AssemblyLinearVelocity; hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 42), v.Z) end) end
+									local t0 = tick()
+									repeat task.wait(0.03)
+									until (not hrp) or (hrp.AssemblyLinearVelocity.Y < -2) or tick() - t0 > 0.9   -- wait for the DESCENT
+									faceEnemy(); realM1()   -- airborne + falling = DOWNSLAM
+									act("Down")
+								end)
+								busy = false
+							end)
+						end
 					end)
 				end
-				if mode == "Uppercut" then
-					-- 4th M1 while HOLDING SPACE and MOVING UP: space DOWN -> real jump (up velocity) -> M1 mid-rise.
-					pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)
-					if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end
-					if hrp then pcall(function() local v = hrp.AssemblyLinearVelocity; hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 30), v.Z) end) end
-					task.wait(0.12)                                    -- now clearly moving upward
-					faceEnemy(); realM1()                              -- the 4th hit = UPPERCUT
-					act("Up")
-					task.wait(0.25)
-					pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
-				else
-					-- DOWNSLAM: jump HIGH, wait until you are DESCENDING (v.Y < 0), then the 4th M1 = slam.
-					pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.03); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
-					if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end
-					if hrp then pcall(function() local v = hrp.AssemblyLinearVelocity; hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 42), v.Z) end) end
-					local t0 = tick()
-					repeat task.wait(0.03)
-					until (not hrp) or (hrp.AssemblyLinearVelocity.Y < -2) or tick() - t0 > 0.9   -- wait for the DESCENT
-					faceEnemy(); realM1()                              -- airborne + falling = DOWNSLAM
-					act("Down")
-				end
 			end)
-			busy = false
-		end)
+			task.wait(0.5)
+		end
 	end)
+
 	M1ComboApi = {
-		setMode = function(m) mode = m or "Off"; count = 0; busy = false; m1Count = 0; pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end,
+		setMode = function(m) mode = m or "Off"; count = 0; busy = false; m1AnimCount = 0; releaseSpace() end,
 		setDelay = function() end,
 		setCount = function() end,
 	}
@@ -3651,8 +3701,10 @@ do
 		if tick() < (_G.VX_BUSY or 0) then return end              -- not during an Auto Air sequence
 		local mh = getHRP(myModel()); if not mh then return end
 		local tgt = nearestEnemy(18); local tr = tgt and getHRP(tgt)
+		if not tr then return end   -- no enemy nearby -> don't dash for nothing (was firing with no target = felt broken)
 		last = tick(); sdaInjecting = tick() + 0.3
 		_G.VX_INJECT_UNTIL = tick() + 0.3
+		if _G.VX_CLAIMOWN then pcall(_G.VX_CLAIMOWN) end   -- the velocity write below is cosmetic without network ownership
 		playAnim("rbxassetid://95295463826732"); playAnim("rbxassetid://75203303352791")   -- the two anim ids the user gave
 		fireKnit("MovementService", "Dash", "Left", true)   -- harmless if validation-only; the velocity below is the real mover
 		task.spawn(function()
@@ -8514,7 +8566,8 @@ do
     acSec:Toggle({ Name = "Auto Ult", Callback = function(b) if AutoUltApi then AutoUltApi.set(b) end end })
     acSec:Toggle({ Name = "Auto Air", Callback = function(b) if AutoAirApi_set then AutoAirApi_set(b) end end })
     acSec:Dropdown({ Name = "Auto Slam / Uppercut", Items = { "Off", "Down Slam", "Uppercut" }, Default = "Off", Callback = function(m) if M1ComboApi then M1ComboApi.setMode(m) end end })
-    acSec:Slider({ Name = "Launcher after N hits", Min = 2, Max = 5, Default = 3, Decimals = 1, Callback = function(v) if M1ComboApi and M1ComboApi.setCount then M1ComboApi.setCount(v) end end })   -- per-character chain length (some launch on the 3rd M1, some on the 4th)
+    -- (Removed the "Launcher after N hits" slider — the mechanic is now the FIXED real game rule per the wiki:
+    -- Uppercut = 4 M1s with Space held, Down Slam = 3 M1s then jump+M1. No slider needed or accurate anymore.)
     pcall(function() acSec:Label("Uppercut soon: Crow, Mangaka, Black Death, Disaster Plants") end)
     acSec:Toggle({ Name = "Auto Adapt", Callback = function(b) if AutoAdaptApi then AutoAdaptApi.set(b) end end })
     acSec:Toggle({ Name = "Auto Domain Adapt", Callback = function(b) if AutoDomainAdaptApi then AutoDomainAdaptApi.set(b) end end })
