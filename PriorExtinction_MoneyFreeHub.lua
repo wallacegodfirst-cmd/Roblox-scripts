@@ -1997,8 +1997,10 @@ end
 __gg.MH_nearestMeat = nearestMeat   -- expose so the Auto Play Bot (separate do-block) can reuse it without a 2nd top-level local
 local carnMeatCd=0
 task.spawn(function() while RUNNING do
-	if CFG.CarnMeatTP and CFG.InfFood and alive() then
-		-- only travel when actually hungry (don't yank you around at full bar)
+	-- CarnMeatTP now runs on its OWN (no longer requires INF Food to be on too — that dependency was why "tp to
+	-- corpse no work" when INF Food was off). It travels to the nearest corpse/downed body/meat and eats it.
+	if CFG.CarnMeatTP and alive() then
+		-- only travel when actually hungry (don't yank you around at full bar); if stats unreadable, assume hungry
 		local hungry=true; pcall(function() local s,m=csStats(); if s and m then local h=tonumber(s.Food or s.Hunger); local mh=tonumber(m.Food or m.Hunger or m.MaxFood); if h and mh then hungry = h < mh*0.9 end end end)
 		if hungry and tick()-carnMeatCd>3 then
 			local m,part=nearestMeat(4000)
