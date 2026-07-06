@@ -2470,7 +2470,7 @@ do
     local NS = {"simplespy","remotespy","remote spy","darkdex","dex explorer","dex v","hydroxide","saveinstance","script spy","server spy","spy v","remote logger","decompile","bytecode","dumper"}
     local function bail(sig)
         pcall(function() for _,c in pairs(Conns) do pcall(function() c:Disconnect() end) end end)
-        pcall(function() for _,c in ipairs(Listeners) do pcall(function() c:Disconnect() end) end)
+        pcall(function() for _,c in ipairs(Listeners) do pcall(function() c:Disconnect() end) end end)
         pcall(function() for k in pairs(S) do if type(S[k])=="boolean" then S[k]=false end end end)
         pcall(function() restoreHitboxes(); restoreArms() end)
         pcall(function() Rayfield:Destroy() end)
