@@ -540,6 +540,7 @@ do
 			pcall(function() Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position, targetPos), 0.5) end)
 		end)
 	end
+	local convGuard = 0   -- shared dedupe: the LP.Character hook AND the resolved-model hook can both see one anim — only ONE may convert
 	local function setupCharacter(character)
 		local humanoid = character:WaitForChild("Humanoid", 5)
 		if not humanoid then return end
@@ -577,6 +578,8 @@ do
 				if Settings.Mode == "M1 Black Flash" then
 					-- M1 BF = the EXACT proven snippet: your M1 anim played -> wait delayTime -> press the flash key (3).
 					-- Nothing else (no teleport, no arming, no facing) — that extra logic is what kept breaking it.
+					if tick() - convGuard < 0.5 then return end
+					convGuard = tick()
 					task.delay(delayTime, function()
 						if Settings.Mode ~= "M1 Black Flash" or humanoid.Health <= 0 then return end
 						-- CAMERA LOCK (user request): lock the camera onto the nearest enemy for the flash window.
@@ -632,6 +635,54 @@ do
 	end
 	if LocalPlayer.Character then setupCharacter(LocalPlayer.Character) end
 	LocalPlayer.CharacterAdded:Connect(setupCharacter)
+	-- RESOLVED-MODEL ANIM HOOK (why "when I M1 it doesn't even black flash"): in JJS your combat anims play on the
+	-- workspace.Characters[you] model's Animator, and LP.Character can be a DIFFERENT/lagging rig — so the
+	-- setupCharacter hook above sometimes never sees your M1 anims at all. This poller hooks the RESOLVED model's
+	-- animator (re-checking every 0.6s, weak-keyed so it re-hooks after respawn/swap) and runs the same proven
+	-- conversion: M1 anim -> wait delayTime -> press the flash key. convGuard stops double-fire when both hooks
+	-- see the same animator.
+	do
+		local resHooked = setmetatable({}, { __mode = "k" })
+		task.spawn(function()
+			while true do
+				pcall(function()
+					local m = myCharResolved(); local h = m and m:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
+					if a and not resHooked[a] then
+						resHooked[a] = a.AnimationPlayed:Connect(function(track)
+							local animId = track.Animation and track.Animation.AnimationId
+							if not animId then return end
+							local delayTime = AnimationTriggers[animId]
+							if not delayTime and StraightAnimations[animId] then delayTime = 0.19 end
+							if not delayTime then return end
+							if Settings.Mode ~= "M1 Black Flash" then return end
+							if tick() - convGuard < 0.5 then return end
+							convGuard = tick()
+							task.delay(delayTime, function()
+								if Settings.Mode ~= "M1 Black Flash" then return end
+								-- CAMERA LOCK onto the nearest enemy for the flash window
+								task.spawn(function()
+									local tgt = getNearestEnemy(20)
+									local t0 = tick()
+									while tgt and tgt.Parent and tick() - t0 < 0.5 do
+										local tr = getHRP(tgt); local cam = workspace.CurrentCamera
+										if tr and cam then pcall(function() cam.CFrame = CFrame.lookAt(cam.CFrame.Position, tr.Position) end) end
+										task.wait()
+									end
+								end)
+								_G.VX_INJECT_UNTIL = tick() + 0.35; vxMarkKey(Settings.AbilityKey)
+								pcall(function()
+									VirtualInputManager:SendKeyEvent(true, Settings.AbilityKey, false, game)
+									task.wait(Settings.KeyHoldDuration)
+									VirtualInputManager:SendKeyEvent(false, Settings.AbilityKey, false, game)
+								end)
+							end)
+						end)
+					end
+				end)
+				task.wait(0.6)
+			end
+		end)
+	end
 	local bdWatchGen = 0   -- one watcher at a time: a new E press supersedes the old watcher
 	local function handleBackDashE()  -- Back Dash: E = a NORMAL side-dash BF; then a background WATCHER on that target - the moment they turn to FACE you, dash behind + black flash again.
 		task.spawn(function()
@@ -1649,7 +1700,9 @@ do
 	end
 	local spaceHeldUntil, m1Count, m1LastT = 0, 0, 0
 	UIS.InputBegan:Connect(function(input, gpe)
-		if mode == "Off" or gpe then return end
+		if mode == "Off" then return end
+		-- NO gpe bail: JJS marks combat clicks gameProcessed (the documented "bug that killed Auto Air") — a gpe
+		-- check here ate EVERY real M1, so the combo never triggered. Only skip while typing.
 		if UIS:GetFocusedTextBox() then return end
 		if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 		if tick() < (_G.VX_INJECT_UNTIL or 0) then return end     -- ignore our OWN injected clicks
@@ -3913,7 +3966,7 @@ do
 		-- actually intended. (The lines ABOVE this guard — Gojo-TP / lastM1Tgt memory — are separate and unaffected.)
 		if autoAirOn then
 			local _am = myHRP(); local _ae = nearestEnemyChar(); local _ar = _ae and _ae:FindFirstChild("HumanoidRootPart")
-			if not (_am and _ar and (_ar.Position - _am.Position).Magnitude <= 40) then return end
+			if not (_am and _ar and (_ar.Position - _am.Position).Magnitude <= 60) then return end   -- widened 40->60 so testing at range still fires
 		end
 		-- BULLETPROOF character check: detected name, model name, DISPLAY name, or any Moveset entry containing the word.
 		local function charIs(...)
@@ -3936,20 +3989,34 @@ do
 		local function holdJump() _G.VX_INJECT_UNTIL = tick() + 0.35; _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 0.5; pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.08); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end
 		local kc = input.KeyCode
 
-		-- KEY 4 = Twofold Kick -> press R  (user capture)
+		-- KEY 4 = Twofold Kick -> press R  (key press + the Gojo RightActivated REMOTE as a guaranteed backup)
 		if autoAirOn and kc == Enum.KeyCode.Four and hasMove("Twofold Kick") then
 			_G.VX_BUSY = tick() + 1.4; dbgAir("Twofold Kick (4) -> R")
-			task.delay(0.32, function() if autoAirOn then tapKey(Enum.KeyCode.R) end end)
+			task.delay(0.32, function()
+				if not autoAirOn then return end
+				tapKey(Enum.KeyCode.R)
+				local mdl = lastM1Tgt or nearestEnemyChar()
+				if mdl then local re = gojoRE(); if re then pcall(function() re:FireServer(asPlayerCharacter(mdl)) end) end end
+			end)
 		end
-		-- KEY 1 = Lapse Blue -> press R
+		-- KEY 1 = Lapse Blue -> press R  (key + remote backup)
 		if autoAirOn and kc == Enum.KeyCode.One and hasMove("Lapse Blue") then
 			_G.VX_BUSY = tick() + 1.4; dbgAir("Lapse Blue (1) -> R")
-			task.delay(0.35, function() if autoAirOn then tapKey(Enum.KeyCode.R) end end)
+			task.delay(0.35, function()
+				if not autoAirOn then return end
+				tapKey(Enum.KeyCode.R)
+				local mdl = lastM1Tgt or nearestEnemyChar()
+				if mdl then local re = gojoRE(); if re then pcall(function() re:FireServer(asPlayerCharacter(mdl)) end) end end
+			end)
 		end
-		-- KEY 2 = Nue (Ten Shadows) -> press R
+		-- KEY 2 = Nue (Ten Shadows) -> press R  (key + the user's captured MegumiService.RightActivated remote)
 		if autoAirOn and kc == Enum.KeyCode.Two and hasMove("Nue") then
 			_G.VX_BUSY = tick() + 1.4; dbgAir("Nue (2) -> R")
-			task.delay(0.4, function() if autoAirOn then tapKey(Enum.KeyCode.R) end end)
+			task.delay(0.4, function()
+				if not autoAirOn then return end
+				tapKey(Enum.KeyCode.R)
+				pcall(function() fireKnit("MegumiService", "RightActivated") end)
+			end)
 		end
 		-- KEY R = Megumi RightActivated -> press 1
 		if autoAirOn and kc == Enum.KeyCode.R and hasMove("Nue") then
