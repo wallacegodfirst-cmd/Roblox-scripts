@@ -27,27 +27,38 @@ do
 		["rbxassetid://72475960800126"] = 0.20,
 		["rbxassetid://123171106092050"] = 0.19,
 	}
-	local CFG = { Enabled = false, Aim = false, DebugUnknownAnimations = false, TriggerKey = Enum.KeyCode.Three, Cooldown = 0.45, TimingOffset = 0, AnimatorWait = 8 }
+	local CFG = { Enabled = false, Aim = false, DebugUnknownAnimations = false, TriggerKey = Enum.KeyCode.Three, Cooldown = 0.3, TimingOffset = 0, AnimatorWait = 8 }
 	-- AIM (the user's explicit ask: "add the aim thing inside the BF"): when on, face the nearest enemy's back +
 	-- lock the camera onto them for a moment BEFORE pressing the flash key, same as the old lock-on-back system.
 	-- "Auto Single" = CFG.Aim off (the raw snippet, zero movement). "M1 Black Flash" = CFG.Aim on.
-	local function bfAim()
+	local function bfNearestEnemyHRP()
 		local LP = player
 		local chs = workspace:FindFirstChild("Characters")
 		local char = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
-		local hrp = char and char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
+		local hrp = char and char:FindFirstChild("HumanoidRootPart"); if not hrp then return nil, nil end
 		local best, bd
 		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local rr = plr.Character:FindFirstChild("HumanoidRootPart"); if rr then local d = (rr.Position - hrp.Position).Magnitude; if not bd or d < bd then best, bd = rr, d end end end end
 		if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local rr = m:FindFirstChild("HumanoidRootPart"); if rr then local d = (rr.Position - hrp.Position).Magnitude; if not bd or d < bd then best, bd = rr, d end end end end end
-		if not best then return end
-		pcall(function() hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(best.Position.X, hrp.Position.Y, best.Position.Z)) end)
+		return best, bd, hrp
+	end
+	local aimGen = 0
+	local function bfAim()
+		local best, _, hrp = bfNearestEnemyHRP()
+		if not (best and hrp) then return end
+		pcall(function() hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(best.Position.X, hrp.Position.Y, best.Position.Z)) end)   -- face them
+		aimGen = aimGen + 1; local gen = aimGen
 		task.spawn(function()
+			local cam = workspace.CurrentCamera; if not cam then return end
+			local savedFov = cam.FieldOfView
 			local t0 = tick()
-			while tick() - t0 < 0.4 and best and best.Parent do
-				local cam = workspace.CurrentCamera
-				if cam then pcall(function() cam.CFrame = CFrame.lookAt(cam.CFrame.Position, best.Position) end) end
+			while tick() - t0 < 0.45 and aimGen == gen and best and best.Parent do
+				pcall(function()
+					cam.CFrame = CFrame.lookAt(cam.CFrame.Position, best.Position)   -- point camera at them
+					cam.FieldOfView = 42                                            -- ZOOM IN (cinematic) for the flash
+				end)
 				task.wait()
 			end
+			if aimGen == gen then pcall(function() cam.FieldOfView = savedFov end) end   -- restore zoom (only if a newer aim didn't take over)
 		end)
 	end
 	local RT = { Running = true, Connection = nil, CharacterConnection = nil, DescendantConnection = nil, Pending = false, Firing = false, LastFireTime = 0, LastAnimationId = "--", LastMatched = false, LastSkipReason = "--", UnknownAnimations = {} }
@@ -67,57 +78,55 @@ do
 		if not ok then return "" end
 		return normalizeAnimationId(id)
 	end
-	local function canFire()
-		if not RT.Running then return false, "stopped" end
-		if not CFG.Enabled then return false, "disabled" end
-		if not VirtualInputManager then return false, "no VIM" end
-		if RT.Pending or RT.Firing then return false, "pending" end
-		if os.clock() - RT.LastFireTime < CFG.Cooldown then return false, "cooldown" end
-		return true, "ready"
-	end
-	local function pressKey(keyCode)
-		if not VirtualInputManager then RT.LastSkipReason = "no VIM"; return false end
-		pcall(function()
-			VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
-			task.wait(0.025)
-			VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
-		end)
-		return true
-	end
-	local function scheduleFire(delayTime, sourceId)
-		local ok, reason = canFire()
-		if not ok then RT.LastSkipReason = reason; return false end
-		RT.Pending = true
-		task.delay(math.max(0, delayTime + CFG.TimingOffset), function()
-			if not RT.Running then return end
-			RT.Pending = false
-			local ready, skipReason = canFire()
-			if not ready then RT.LastSkipReason = skipReason; return end
-			RT.Firing = true
-			RT.LastFireTime = os.clock()
-			RT.LastAnimationId = sourceId
-			if CFG.Aim then pcall(bfAim) end   -- M1 Black Flash mode: aim at their back before the press
-			if _G.VX_CLAIMOWN then pcall(_G.VX_CLAIMOWN) end
-			pressKey(CFG.TriggerKey)
-			RT.Firing = false
-		end)
-		return true
-	end
-	-- match an anim id -> delay: the 5 wind-up ids first, then the FULL per-character M1 database (_G.VX_M1_IDS,
-	-- assigned later in this file). This is why it now converts on EVERY character, not just the 5-id ones.
-	local function matchDelay(id)
-		local d = AnimationTriggers[id]
-		if not d then local num = tostring(id):match("%d+"); if num and _G.VX_M1_IDS and _G.VX_M1_IDS[num] then d = 0.19 end end
-		return d
-	end
-	local function onAnim(track)
-		if not CFG.Enabled then return end
-		local id = getAnimationId(track)
-		RT.LastAnimationId = id ~= "" and id or "--"
-		local delayTime = matchDelay(id)
-		RT.LastMatched = delayTime ~= nil
-		if delayTime then scheduleFire(delayTime, id) end
-	end
+		local function pressKey(keyCode)
+			if not VirtualInputManager then return false end
+			pcall(function()
+				VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
+				task.wait(0.025)
+				VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+			end)
+			return true
+		end
+		-- THE flash: aim (if on) then, after the wind-up delay, press the flash key. ONE simple debounce (lastFlash),
+		-- no Pending/Firing state that could get stuck = it fires on the FIRST try, every time.
+		local lastFlash = 0
+		local function doFlash(delayTime)
+			if not CFG.Enabled then return end
+			if os.clock() - lastFlash < CFG.Cooldown then return end
+			lastFlash = os.clock()
+			if CFG.Aim then pcall(bfAim) end   -- face their back + zoom the camera in, immediately
+			task.delay(math.max(0, (delayTime or 0.19) + CFG.TimingOffset), function()
+				if not CFG.Enabled then return end
+				if _G.VX_CLAIMOWN then pcall(_G.VX_CLAIMOWN) end
+				pressKey(CFG.TriggerKey)
+			end)
+		end
+		local function matchDelay(id)
+			local d = AnimationTriggers[id]
+			if not d then local num = tostring(id):match("%d+"); if num and _G.VX_M1_IDS and _G.VX_M1_IDS[num] then d = 0.19 end end
+			return d
+		end
+		-- ANIM trigger (for characters whose M1 ids ARE in the database)
+		local function onAnim(track)
+			if not CFG.Enabled then return end
+			local id = getAnimationId(track)
+			local delayTime = matchDelay(id)
+			if delayTime then doFlash(delayTime) end
+		end
+		-- CLICK trigger (THE fix for characters NOT in the id database, e.g. King of Curses/Sukuna): a left-click with
+		-- an enemy in melee range fires the flash. The anim-id path never matched for those characters = "M1 BF doesn't
+		-- work on mine"; the click path works on EVERY character.
+		do
+			local UISbf = game:GetService("UserInputService")
+			UISbf.InputBegan:Connect(function(input)
+				if not CFG.Enabled then return end
+				if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+				if UISbf:GetFocusedTextBox() then return end
+				if tick() < (_G.VX_INJECT_UNTIL or 0) then return end   -- ignore our OWN injected clicks
+				local best, bd = bfNearestEnemyHRP()
+				if best and bd and bd <= 16 then doFlash(0.19) end
+			end)
+		end
 	-- BULLETPROOF hook: connect to EVERY animator your body can have — LP.Character AND workspace.Characters[name]
 	-- (JJS can play combat anims on either rig; hooking only one is exactly why M1 BF "randomly" never fired). A
 	-- weak-keyed poller re-hooks after respawn / character swap. One clean listener path, no LP.Character-only guess.
@@ -144,7 +153,7 @@ do
 	local function reconnect() hookedAnims = setmetatable({}, { __mode = "k" }); pcall(hookBoth); return true end
 
 	BFApi = {
-		SetEnabled = function(v) CFG.Enabled = v == true; if not CFG.Enabled then RT.Pending = false; RT.Firing = false end end,
+		SetEnabled = function(v) CFG.Enabled = v == true end,
 		IsEnabled = function() return CFG.Enabled end,
 		SetAim = function(v) CFG.Aim = v == true end,   -- Auto Single = false (raw), M1 Black Flash = true (aim + camera lock)
 		SetCooldown = function(v) if type(v) == "number" then CFG.Cooldown = math.max(0, v) end end,
@@ -1646,100 +1655,71 @@ do
 	--   UPPERCUT  = the 4th M1 thrown while HOLDING Space and MOVING UPWARD (jumping).
 	--   DOWNSLAM  = the 4th M1 thrown IN THE AIR while DESCENDING above the opponent.
 	-- So: count YOUR first 3 real M1 clicks; the script then throws the 4th M1 itself with the right physics.
-	-- ═══ TRIGGER (exact user spec) ═══
-	--   UPPERCUT  = the moment you click M1 (mode=Uppercut, enemy near), HOLD Space immediately (instant feel).
-	--               Keep holding through your combo; count CONFIRMED M1 swings via animation id (not raw clicks —
-	--               "use the animation ids to make it work", so a whiff/menu-click never advances the count).
-	--               On the 4th confirmed swing, release Space shortly after.
-	--   DOWN SLAM = count confirmed M1 swings (same animation-id detection); on the 3rd, the script jumps + M1s
-	--               for you (the airborne slam).
-	local m1AnimCount, m1LastAnim = 0, 0
-	local holding = false
+	-- ═══ TRIGGER (CLICK-DRIVEN — works on EVERY character, incl. King of Curses/Sukuna whose M1 anim ids aren't
+	-- in the database, which is exactly why the anim-only version did nothing) ═══
+	--   UPPERCUT  = the instant you left-click (enemy near), HOLD Space. Keep holding as you click; on your 4th
+	--               click the game throws the 4th M1 with Space held + upward motion = uptilt, then Space releases.
+	--   DOWN SLAM = count your clicks; on the 3rd, the script jumps HIGH and M1s for you on the way down = slam.
+	local clickCount, lastClick, holding = 0, 0, false
 	local function releaseSpace()
 		if holding then holding = false; pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end
 	end
-	-- CLICK: starts the Uppercut hold immediately (this is "when it detects a click").
+	local function faceEnemy()
+		pcall(function()
+			local me = myModel(); local mr = me and me:FindFirstChild("HumanoidRootPart"); if not mr then return end
+			local best, bd
+			for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local rr = plr.Character:FindFirstChild("HumanoidRootPart"); if rr then local d = (rr.Position - mr.Position).Magnitude; if not bd or d < bd then best, bd = rr, d end end end end
+			local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local rr = m:FindFirstChild("HumanoidRootPart"); if rr then local d = (rr.Position - mr.Position).Magnitude; if not bd or d < bd then best, bd = rr, d end end end end end
+			if best then mr.CFrame = CFrame.lookAt(mr.Position, Vector3.new(best.Position.X, mr.Position.Y, best.Position.Z)) end
+		end)
+	end
 	UIS.InputBegan:Connect(function(input, gpe)
 		if mode == "Off" then return end
 		if UIS:GetFocusedTextBox() then return end
 		if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 		if tick() < (_G.VX_INJECT_UNTIL or 0) then return end   -- ignore our OWN injected clicks
-		if busy or holding then return end
+		if busy then return end
 		if not nearEnemy() then return end
+		if tick() - lastClick > 1.6 then clickCount = 0 end       -- combo window reset (you stopped swinging)
+		lastClick = tick(); clickCount = clickCount + 1
+		if _G.VX_BF_DEBUG then print("[DreamHub M1Combo] click #"..clickCount.." mode="..mode) end
 		if mode == "Uppercut" then
-			m1AnimCount = 0; m1LastAnim = tick(); holding = true
-			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 3
-			pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)   -- HOLD starts on the very first click
-			if _G.VX_BF_DEBUG then print("[DreamHub M1Combo] Uppercut: click detected -> holding Space") end
-		end
-	end)
-	-- SAFETY: if you stop swinging mid-combo, don't leave Space stuck held forever.
-	task.spawn(function() while true do task.wait(0.2)
-		if holding and tick() - m1LastAnim > 1.6 then releaseSpace() end
-	end end)
-	-- ANIMATION-CONFIRMED M1 counter: hooks the RESOLVED model's animator (workspace.Characters[you] — the rig your
-	-- combat anims actually play on), re-hooked every 0.5s so it survives respawn/character swap.
-	local hookedCombo = setmetatable({}, { __mode = "k" })
-	task.spawn(function()
-		while true do
-			pcall(function()
-				local m = myModel(); local h = m and m:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
-				if a and not hookedCombo[a] then
-					hookedCombo[a] = a.AnimationPlayed:Connect(function(track)
-						if mode == "Off" or busy then return end
-						local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+")
-						if not (id and COMBO_IDS[id]) then return end
-						if not nearEnemy() then return end
-						if tick() - m1LastAnim > 1.6 then m1AnimCount = 0 end   -- combo window reset
-						m1LastAnim = tick(); m1AnimCount = m1AnimCount + 1
-						if _G.VX_BF_DEBUG then print("[DreamHub M1Combo] confirmed M1 #"..m1AnimCount.." (mode="..mode..")") end
-						if mode == "Uppercut" then
-							if holding and m1AnimCount >= 4 then
-								m1AnimCount = 0
-								task.delay(0.15, releaseSpace)   -- let the 4th press-with-space-held land, then let go
-							end
-						elseif mode == "Down Slam" and m1AnimCount >= 3 and not busy then
-							m1AnimCount = 0; busy = true
-							task.spawn(function()
-								-- CRASH-PROOF: pcall guarantees `busy` is always released, error or not (was "stops
-								-- working until I respawn").
-								pcall(function()
-									_G.VX_LAUNCHING = tick()
-									_G.VX_INJECT_UNTIL = tick() + 1.4
-									_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 1.4
-									if _G.VX_CLAIMOWN then _G.VX_CLAIMOWN() end   -- without ownership the velocity write below is cosmetic
-									local c = myModel(); local hh = c and c:FindFirstChildOfClass("Humanoid"); local hrp = c and c:FindFirstChild("HumanoidRootPart")
-									local function faceEnemy()
-										pcall(function()
-											local mr = hrp; if not mr then return end
-											local best, bd
-											for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local rr = plr.Character:FindFirstChild("HumanoidRootPart"); if rr then local d = (rr.Position - mr.Position).Magnitude; if not bd or d < bd then best, bd = rr, d end end end end
-											local chs = workspace:FindFirstChild("Characters"); if chs then for _, mm in ipairs(chs:GetChildren()) do if mm.Name ~= LP.Name then local rr = mm:FindFirstChild("HumanoidRootPart"); if rr then local d = (rr.Position - mr.Position).Magnitude; if not bd or d < bd then best, bd = rr, d end end end end end
-											if best then mr.CFrame = CFrame.lookAt(mr.Position, Vector3.new(best.Position.X, mr.Position.Y, best.Position.Z)) end
-										end)
-									end
-									-- DOWNSLAM: jump HIGH (real Space press + a velocity nudge), wait until DESCENDING, then the M1 = slam.
-									pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.03); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
-									if hh then pcall(function() hh:ChangeState(Enum.HumanoidStateType.Jumping) end) end
-									if hrp then pcall(function() local v = hrp.AssemblyLinearVelocity; hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 42), v.Z) end) end
-									local t0 = tick()
-									repeat task.wait(0.03)
-									until (not hrp) or (hrp.AssemblyLinearVelocity.Y < -2) or tick() - t0 > 0.9   -- wait for the DESCENT
-									faceEnemy(); realM1()   -- airborne + falling = DOWNSLAM
-									act("Down")
-								end)
-								busy = false
-							end)
-						end
-					end)
-				end
+			if not holding then
+				holding = true
+				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 3
+				if _G.VX_CLAIMOWN then pcall(_G.VX_CLAIMOWN) end
+				pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)   -- HOLD starts on the 1st click
+			end
+			if clickCount >= 4 then
+				clickCount = 0
+				local h = myModel() and myModel():FindFirstChildOfClass("Humanoid")
+				if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end   -- ensure the 4th is thrown moving UP
+				task.delay(0.28, releaseSpace)
+			end
+		elseif mode == "Down Slam" and clickCount >= 3 and not busy then
+			clickCount = 0; busy = true
+			task.spawn(function()
+				pcall(function()   -- crash-proof: busy is ALWAYS released
+					_G.VX_LAUNCHING = tick(); _G.VX_INJECT_UNTIL = tick() + 1.4
+					_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 1.4
+					if _G.VX_CLAIMOWN then pcall(_G.VX_CLAIMOWN) end
+					local c = myModel(); local h = c and c:FindFirstChildOfClass("Humanoid"); local hrp = c and c:FindFirstChild("HumanoidRootPart")
+					pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.03); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
+					if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end
+					if hrp then pcall(function() local v = hrp.AssemblyLinearVelocity; hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 42), v.Z) end) end
+					local t0 = tick()
+					repeat task.wait(0.03) until (not hrp) or (hrp.AssemblyLinearVelocity.Y < -2) or tick() - t0 > 0.9   -- wait for the DESCENT
+					faceEnemy(); realM1(); act("Down")   -- airborne + falling = DOWNSLAM
+				end)
+				busy = false
 			end)
-			task.wait(0.5)
 		end
 	end)
+	-- SAFETY: if you stop clicking mid-uppercut, never leave Space stuck held.
+	task.spawn(function() while true do task.wait(0.2); if holding and tick() - lastClick > 1.6 then releaseSpace() end end end)
 
 	M1ComboApi = {
-		setMode = function(m) mode = m or "Off"; count = 0; busy = false; m1AnimCount = 0; releaseSpace() end,
+		setMode = function(m) mode = m or "Off"; count = 0; busy = false; clickCount = 0; releaseSpace() end,
 		setDelay = function() end,
 		setCount = function() end,
 	}
@@ -6242,6 +6222,14 @@ local Library do
                     BorderSizePixel = 0,
                     BackgroundColor3 = FromRGB(16, 18, 18)
                 })  Items["MainFrame"]:AddToTheme({BackgroundColor3 = "Background"})
+                -- HARD TOGGLE exposed for the Dream button: sets MainFrame.Visible directly, bypassing the fade
+                -- tween + Debounce (which could get stuck = "clicking Dream doesn't hide the GUI"). Instant, reliable.
+                _G.VX_HARDTOGGLE = function()
+                    local f = Items["MainFrame"].Instance
+                    local vis = not f.Visible
+                    f.Visible = vis
+                    Window.IsOpen = vis   -- keep RightShift's state in sync
+                end
 
                 Items["MainFrame"]:MakeDraggable()
                 Items["MainFrame"]:MakeResizeable(Vector2New(540, 400), Vector2New(9999, 9999))   -- min 540x400 so the corner grip can scale the menu DOWN as well as up
@@ -8470,11 +8458,20 @@ do
                     dragging = false   -- just end the drag; the toggle is handled by Activated below (one path = no double-toggle)
                 end
             end)
-            -- SINGLE toggle path (the old InputEnded toggle sometimes never fired = "clicking Dream did nothing").
-            -- Activated fires once per genuine click/tap; guarded by `moved` so a drag doesn't toggle.
-            btn.Activated:Connect(function()
-                if not moved then pcall(function() Window:SetOpen(not Window.IsOpen) end) end
-            end)
+            -- HARD toggle (fixes "clicking Dream doesn't hide the GUI"): use the direct MainFrame.Visible toggle
+            -- exposed by the window, which bypasses the fade tween + Debounce that could get stuck. Fires on both
+            -- Activated AND InputEnded (whichever the executor delivers), guarded by `moved` + a small debounce so
+            -- one tap = one toggle.
+            local lastToggle = 0
+            local function hardToggle()
+                if moved then return end
+                if tick() - lastToggle < 0.25 then return end
+                lastToggle = tick()
+                if _G.VX_HARDTOGGLE then pcall(_G.VX_HARDTOGGLE)
+                elseif Window then pcall(function() Window:SetOpen(not Window.IsOpen) end) end
+            end
+            btn.Activated:Connect(hardToggle)
+            btn.MouseButton1Click:Connect(hardToggle)
         end
     end)
 
