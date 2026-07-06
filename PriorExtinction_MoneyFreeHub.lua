@@ -1354,9 +1354,9 @@ do local p=Pages["Survival"]
 		mkToggle(f,"INF Food","InfFood",1)
 		mkLabel(f,"HERB ONLY: turn INF Food ON, then EAT ONE plant (walk up + press E). It captures that food id + scans the whole map and keeps replaying it to hold your bar. If you're a CARNIVORE, use Carnivore Meat TP below instead.")
 		mkSlider(f,"INF Food grow speed (bites/cycle)","FoodEatSpeed",1,10,3,1)
+		mkToggle(f,"Carnivore Meat TP (cycles corpses + asks Yes/No)","CarnMeatTP",4)
+		mkBtn(f,"Teleport Back (where you were)",function() if __gg.MH_corpseBack then __gg.MH_corpseBack() end end,4)
 	end
-	mkToggle(f,"Carnivore Meat TP (cycles corpses + asks Yes/No)","CarnMeatTP",4)
-	mkBtn(f,"Teleport Back (where you were)",function() if __gg.MH_corpseBack then __gg.MH_corpseBack() end end,4)
 	mkToggle(f,"INF Water","InfWater",5)
 	mkToggle(f,"INF Stamina","InfStam",6)
 	mkSlider(f,"INF Stam Run Speed (lower if it snaps you back)","RunSpeed",14,28,7,1)
