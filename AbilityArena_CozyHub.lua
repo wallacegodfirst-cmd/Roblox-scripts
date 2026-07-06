@@ -283,7 +283,7 @@ local S = {
     SaveHealth=false, SaveHealthPct=35, SaveHealthHeight=700,
     RemoveWaterBorder=false, AntiKillBricks=false,
     M1Hitbox=false, M1HitboxSize=50,
-    HitboxAbility=false, HitboxAbilitySize=40, HitboxAllParts=false,
+    HitboxAbility=false, HitboxAbilitySize=40, HitboxAllParts=false, HitboxVisible=true,
     AutoM1=false,
     AutoAbility=false, AutoAbilityRange=25,
     CastE=true, CastQ=false, CastR=false, CastT=false,
@@ -620,6 +620,13 @@ local function hitboxParts(char)
     end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if hrp and hrp:IsA("BasePart") then out[#out+1] = hrp end
+    -- These enemies are standard R6 rigs (Explorer: Head/Torso/Left Arm/Right Arm/Left Leg/Right Leg + Humanoid).
+    -- The Jolt M1 detector's spatial query can read the BODY parts too, not just the "Hitbox" container — so grow
+    -- them as well. Bigger body bounds = your M1 registers on enemies much farther away.
+    for _, nm in ipairs({ "Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg" }) do
+        local bp = char:FindFirstChild(nm)
+        if bp and bp:IsA("BasePart") then out[#out+1] = bp end
+    end
     if S.HitboxAllParts then
         for _,d in ipairs(char:GetDescendants()) do if d:IsA("BasePart") then out[#out+1] = d end end
     end
@@ -737,7 +744,16 @@ hook(RunService.Heartbeat, function()
                 -- Compare ALL 3 axes (was X-only): a part whose X already matched sz but was thin on Y/Z used to
                 -- stay flat = no real reach. THIS was the core "hitbox doesn't work" bug (same one PE fixed).
                 if part.Size ~= cube then part.Size = cube end
-                part.Transparency = 1   -- INVISIBLE (no red boxes on enemies) while still expanding the hit volume
+                -- VISIBLE again (user: "make it more visualize"): show ONE clean cyan box per enemy (the Hitbox/HRP);
+                -- the extra body parts still grow but stay invisible so you don't get 6 overlapping cubes per enemy.
+                local showThis = (S.HitboxVisible ~= false) and (part.Name=="Hitbox" or part.Name=="HitBox" or part.Name=="HumanoidRootPart")
+                if showThis then
+                    part.Transparency = 0.55
+                    part.Color        = Color3.fromRGB(0, 220, 255)
+                    part.Material     = Enum.Material.ForceField
+                else
+                    part.Transparency = 1
+                end
             end)
         end
     end
@@ -2182,6 +2198,7 @@ CombatTab:CreateToggle({Name="Ability Hitbox Expander (pulses bigger on E)", Cur
 end})
 CombatTab:CreateSlider({Name="Ability Hitbox Size", Range={1,300}, Increment=1, Suffix="studs", CurrentValue=40, Flag="HitboxAbilitySize", Callback=function(v) S.HitboxAbilitySize=v end})
 CombatTab:CreateToggle({Name="Expand Whole Body (max reach, looks huge)", CurrentValue=false, Flag="HitboxAllParts", Callback=function(v) S.HitboxAllParts=v; if not v then restoreHitboxes() end end})
+CombatTab:CreateToggle({Name="Show Hitbox (cyan box - off = invisible)", CurrentValue=true, Flag="HitboxVisible", Callback=function(v) S.HitboxVisible=v end})
 
 CombatTab:CreateSection("Auto")
 CombatTab:CreateToggle({Name="Auto M1 (click spam)", CurrentValue=false, Flag="AutoM1", Callback=function(v) S.AutoM1=v end})
