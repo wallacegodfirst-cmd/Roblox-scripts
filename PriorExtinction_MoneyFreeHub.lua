@@ -49,7 +49,7 @@ local CFG = {
 	BotFlee=true, BotFleeRange=240, BotRoam=true, BotRoamRadius=350, BotEatAt=80, BotDrinkAt=80, BotSleepHeal=true, BotSpeed=18, BotAnnounce=true,
 	BoneProtect=false, ProtectBone="All",
 	TurnHack=false, TurnSpeed=30,
-	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=30, Noclip=false, Invis=false,
+	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=20, Noclip=false, Invis=false,
 	InfJump=false, BypassTP=true,
 	InfFood=false, InfWater=false, InfStam=false, InfOxygen=false,
 	AntiDrown=true, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false,
@@ -83,6 +83,10 @@ local function loadCfg()
 	end)
 end
 loadCfg()
+-- MIGRATE + CLAMP the INF-Stam run speed on load: the old 30 default was above what the server tolerates = "it
+-- keeps sending me back". Any saved value ABOVE the safe band gets reset to 20 (the sweet spot: clearly faster
+-- than walking, low enough the server doesn't snap you); values you set inside 14-28 are kept as-is.
+do local rs = tonumber(CFG.RunSpeed) or 20; CFG.RunSpeed = (rs > 28 or rs < 14) and 20 or rs end
 CFG.Keybinds = CFG.Keybinds or {}
 CFG.Keybinds.UIKey = CFG.Keybinds.UIKey or CFG.UIKey
 CFG.Keybinds.AimKey = CFG.Keybinds.AimKey or CFG.AimKey
@@ -1353,7 +1357,7 @@ do local p=Pages["Survival"]
 	mkToggle(f,"Carnivore Meat TP (TP to nearest meat/corpse)","CarnMeatTP",4)
 	mkToggle(f,"INF Water","InfWater",5)
 	mkToggle(f,"INF Stamina","InfStam",6)
-	mkSlider(f,"INF Stam Run Speed (raise if it feels slow)","RunSpeed",16,60,7,2)
+	mkSlider(f,"INF Stam Run Speed (lower if it snaps you back)","RunSpeed",14,28,7,1)
 	local _,pr=mkSec(p,"Protection",2)
 	mkToggle(pr,"Anti Drown","AntiDrown",1)
 	mkToggle(pr,"Walk on Water","WalkWater",2)
@@ -1949,6 +1953,10 @@ do   -- SCOPED (Luau 200-local cap): meat helpers + the Carnivore Meat TP loop l
      -- persist in the main chunk. nearestMeat is exposed via __gg so the Auto Play Bot (its own do-block) can reuse it.
 local MEAT_KW = {"corpse","carcass","carrion","meat","chunk","rotten","flesh","remains","dead","fish","gar","sturgeon","bichir","coelacanth","mawsonia","sawfish","egg","grub","larva","insect","ant"}
 local function isMeatName(n) n=(n or ""):lower(); for _,k in ipairs(MEAT_KW) do if n:find(k,1,true) then return true end end return false end
+-- PLANT EXCLUDER (AI-analysis point the user sent): plants ALSO have eat/consume prompts, so the prompt fallback
+-- was teleporting carnivores to plants. Any model whose name matches these is NEVER meat-TP eligible.
+local PLANT_KW = {"plant","sapling","tree","fern","berry","berries","pine","needle","leaf","leaves","frond","conifer","cycad","mushroom","fungus","grass","moss","bush","shrub","flower","seed","cone","horsetail","redwood","ginkgo","gingko","sequoia","equisetum","woodwardia","blechnace","gleichenia","osmunda","zingiberopsis","dicksonia","williamsonia","weichselia","ptilophyllum","pachypteris","matonidium","cycadeoidea","elatides","dryophyllum","paleoaster","sabalite","marmarthia","coniopteris","wielandiella","hermanophyton"}
+local function isPlantName(n) n=(n or ""):lower(); for _,k in ipairs(PLANT_KW) do if n:find(k,1,true) then return true end end return false end
 -- RED MESHY MEAT DETECTOR (from the screenshot): PE meat chunks are small RED MeshParts/meshed Parts lying on the
 -- ground. Detect by COLOR (red clearly dominates green+blue), a mesh (MeshPart or SpecialMesh child), and a chunk-
 -- sized part (not a giant red rock / not a tiny particle). Name is NOT required — this is what catches the meat
@@ -2064,7 +2072,12 @@ local function nearestMeat(range)
 			local at=((d.ActionText or "").." "..(d.Name or "")):lower()
 			if at:find("investigate") or at:find("eat") or at:find("consume") then
 				local p=d.Parent; local part=(p and p:IsA("BasePart") and p) or (p and p:FindFirstChildWhichIsA("BasePart")); local m=(p and p:IsA("Model")) and p or (part and part:FindFirstAncestorWhichIsA("Model")) or p
-				consider(m, part)
+				-- CARNIVORE GATE: plants also carry eat prompts — only accept the prompt if the model is NOT
+				-- plant-named AND actually looks like a corpse (meat name / PE corpse markers / Investigate).
+				local nm=(m and m.Name) or ""
+				local corpseish = at:find("investigate") or isMeatName(nm)
+				if not corpseish then pcall(function() corpseish=(m and m.GetAttribute and (m:GetAttribute("DinoType") or m:GetAttribute("HintType") or m:GetAttribute("CreatedAt")))~=nil end) end
+				if corpseish and not isPlantName(nm) then consider(m, part) end
 			end
 		elseif d:IsA("BasePart") and isRedMeshMeat(d) then
 			consider(d:FindFirstAncestorWhichIsA("Model") or d, d)
