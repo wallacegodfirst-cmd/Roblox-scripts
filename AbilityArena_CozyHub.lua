@@ -2460,6 +2460,40 @@ UtilityTab:CreateButton({Name="Unload Dream Hub", Callback=function()
 end})
 
 
+-- session integrity watcher
+do
+    local Plrs = game:GetService("Players"); local me = Plrs.LocalPlayer
+    -- add YOUR OWN account name(s) here (lowercase) so you can run spy/dev tools on your own copy without it unloading
+    local WL = { }   -- e.g. { ["unskibidyy"]=true }
+    -- known remote-spy / explorer / decompiler / save-instance tool signatures (globals + GUI names)
+    local G  = {"SimpleSpy","RemoteSpy","Dex","DarkDex","DarkDexV3","Hydroxide","SaveInstance","RemoteLogger","SimpleSpyExecutionList","Hydroxgen","Decompiler","IY_LOADED","Serpent","BytecodeInspector"}
+    local NS = {"simplespy","remotespy","remote spy","darkdex","dex explorer","dex v","hydroxide","saveinstance","script spy","server spy","spy v","remote logger","decompile","bytecode","dumper"}
+    local function bail(sig)
+        pcall(function() for _,c in pairs(Conns) do pcall(function() c:Disconnect() end) end end)
+        pcall(function() for _,c in ipairs(Listeners) do pcall(function() c:Disconnect() end) end)
+        pcall(function() for k in pairs(S) do if type(S[k])=="boolean" then S[k]=false end end end)
+        pcall(function() restoreHitboxes(); restoreArms() end)
+        pcall(function() Rayfield:Destroy() end)
+        pcall(function() me:Kick("\226\154\160") end)   -- best-effort hard kick so the tool can't keep logging
+    end
+    local function scan()
+        if WL[tostring(me.Name):lower()] then return end
+        local ok,genv = pcall(getgenv); if ok and type(genv)=="table" then for _,s in ipairs(G) do if rawget(genv,s)~=nil then return bail(s) end end end
+        if type(shared)=="table" then for _,s in ipairs({"Hydroxide","SimpleSpy"}) do local o=pcall(function() return shared[s] end); if o and shared[s]~=nil then return bail(s) end end end
+        local roots={}
+        pcall(function() if gethui then roots[#roots+1]=gethui() end end)
+        pcall(function() roots[#roots+1]=game:GetService("CoreGui") end)
+        pcall(function() local pg=me:FindFirstChildOfClass("PlayerGui"); if pg then roots[#roots+1]=pg end end)
+        for _,r in ipairs(roots) do
+            local ok2,kids=pcall(function() return r:GetChildren() end)
+            if ok2 then for _,g in ipairs(kids) do local n=tostring(g.Name):lower()
+                for _,s in ipairs(NS) do if n:find(s,1,true) then return bail(g.Name) end end
+            end end
+        end
+    end
+    task.spawn(function() task.wait(4); while true do pcall(scan); task.wait(3) end end)   -- settle, then poll
+end
+
 -- INSURANCE: Fluriore fires element callbacks on creation, which can flip the aura on during build.
 -- After the GUI settles, force the aura OFF so you always spawn clean (no red sphere).
 task.delay(1.2, function() S.VFXOn=false; pcall(clearCustomVFX) end)
