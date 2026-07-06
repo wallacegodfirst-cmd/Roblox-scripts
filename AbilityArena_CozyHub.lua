@@ -590,7 +590,9 @@ end
 
 local function wantedHitboxSize()
     local sz = 0
-    if S.M1Hitbox or S.AutoFarm or S.AutoPlay then sz = math.max(sz, S.M1HitboxSize) end
+    -- M1 Expand Hitbox NO LONGER grows enemy hitboxes (that drew red boxes on everyone + is server-rejected). It now
+    -- only grows YOUR arms (below). Auto Farm/Play still point-blank the enemy so they keep their own reach here.
+    if S.AutoFarm or S.AutoPlay then sz = math.max(sz, S.M1HitboxSize) end
     if S.HitboxAbility then
         local a = S.HitboxAbilitySize
         if tick() < abilityBurstUntil then a = a * 1.5 end
@@ -2171,11 +2173,11 @@ CombatTab:CreateSlider({Name="Save Health: trigger at HP %", Range={5,90}, Incre
 CombatTab:CreateSlider({Name="Save Health: sky height", Range={100,2000}, Increment=50, Suffix="studs", CurrentValue=700, Flag="SaveHealthHeight", Callback=function(v) S.SaveHealthHeight=v end})
 
 CombatTab:CreateSection("Hitboxes")
-CombatTab:CreateToggle({Name="M1 Reach (grows YOUR arms + enemy hitbox)", CurrentValue=false, Flag="M1Hitbox", Callback=function(v)
+CombatTab:CreateToggle({Name="M1 Expand Hitbox (expands YOUR arms only)", CurrentValue=false, Flag="M1Hitbox", Callback=function(v)
     S.M1Hitbox=v
-    if not v then restoreHitboxes(); restoreArms() end
+    if not v then restoreArms() end
 end})
-CombatTab:CreateSlider({Name="M1 Reach Size", Range={1,300}, Increment=1, Suffix="studs", CurrentValue=50, Flag="M1HitboxSize", Callback=function(v) S.M1HitboxSize=v end})
+CombatTab:CreateSlider({Name="M1 Expand Size (arm reach)", Range={1,300}, Increment=1, Suffix="studs", CurrentValue=50, Flag="M1HitboxSize", Callback=function(v) S.M1HitboxSize=v end})
 CombatTab:CreateToggle({Name="Ability Hitbox Expander (pulses bigger on E)", CurrentValue=false, Flag="HitboxAbility", Callback=function(v)
     S.HitboxAbility=v
     if not v then destroyAbilityHb(); restoreHitboxes() end
