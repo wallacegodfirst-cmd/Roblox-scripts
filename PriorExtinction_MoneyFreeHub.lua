@@ -363,15 +363,13 @@ local function installHook()
 						if CFG.InfStam and action=="RegisterAttack" and typeof(a[3])=="string" and string.find(a[3],"Secondary",1,true) then
 							return
 						end
-						-- ═══ INF STAM — THE REAL FIX (user-captured remote) ═══ Sprinting fires
-						-- ReplicaSignal(id,"SetAction","Run",true) and the SERVER drains stamina the whole time it believes
-						-- Run is true. So we SWALLOW the Run=true report → the server never starts the drain → the bar never
-						-- drops. (Letting it pass instead just drained the bar = "inf stam not working".) Swallowing makes the
-						-- server think you're WALKING, so we drive your movement ourselves with a smooth BodyVelocity keeper
-						-- (see the InfStam Heartbeat) — a FORCE hold, not a raw velocity set, so it's fast WITHOUT the snap-back.
+						-- ═══ INF STAM — the user's CONFIRMED-WORKING approach (do NOT swallow Run) ═══ Run=true PASSES
+						-- THROUGH so you keep the game's real full sprint speed (swallowing it made you "very slow"). The
+						-- bar is held full instead by the HARD stamina PINS every frame (RenderStepped/Stepped/Heartbeat pin
+						-- the value back to max) + the velocity keeper — so the server's drain never shows on the bar.
 						if CFG.InfStam and action=="SetAction" and a[3]=="Run" and a[4]==true then
-							__gg.MH_wantRun = tick()   -- remember you're sprinting so the BodyVelocity keeper drives you
-							return                     -- SWALLOW: server never hears "Run=true" = never drains stamina
+							__gg.MH_wantRun = tick()   -- note we're sprinting (the keeper only tops you up if you're BELOW target)
+							-- (no swallow — Run replicates so you move at real sprint speed; the pins keep the bar full)
 						end
 						-- (stamina DRAIN report is blocked below so it never drops while you sprint.)
 						-- REWRITE stamina SetProperty to max so the server always sees a full bar.
@@ -1880,6 +1878,20 @@ conn(RunService.Heartbeat:Connect(function()
 	local target=math.clamp(tonumber(CFG.RunSpeed) or 20, 14, 40)
 	pcall(function() bv.Velocity=dir.Unit*target end)
 end))
+-- HARD STAMINA PIN (the reference's fix for NOT swallowing Run): slam the stamina value back to its REAL max in ALL
+-- THREE frame phases — RenderStepped (start), Stepped (after physics), Heartbeat (after replication). If the server
+-- replicates a drained value mid-frame, the Heartbeat write lands AFTER it, so our full value always wins = the bar
+-- never visibly drops even though Run replicates. Pins every known stamina key + clears exhaustion.
+do local STAM_PIN_KEYS = {"Stamina","Stam","Energy","Endurance","Vigor","Wellbeing"}
+	local function pinStamNow()
+		if not (CFG.InfStam and alive()) then return end
+		pcall(function() local s,m=csStats(); if s then for _,k in ipairs(STAM_PIN_KEYS) do if s[k]~=nil then s[k]=(m and m[k]) or math.max(tonumber(s[k]) or 0,100) end end
+			for _,k in ipairs({"Exhaustion","Fatigue","Tired","Exhausted"}) do if s[k]~=nil then if type(s[k])=="boolean" then s[k]=false else s[k]=0 end end end end end)
+		pcall(function() if CharacterState then for _,k in ipairs(STAM_PIN_KEYS) do local v=CharacterState[k]; if type(v)=="number" then CharacterState[k]=math.max(v,100) end end end end)
+	end
+	conn(RunService.Stepped:Connect(function() pinStamNow() end))
+	conn(RunService.Heartbeat:Connect(function() pinStamNow() end))
+end
 -- FLOAT: a Y-only BodyVelocity HOLDS you in the air — plain velocity writes don't hold a CFrame-driven PE dino
 -- (that's why Float "didn't work"). It only controls vertical, so you still walk normally. Space=rise, Ctrl=sink.
 -- No CFrame teleport = no 267. On enable it lifts you ~4 studs off the ground so you're floating, then hovers.
@@ -2364,7 +2376,7 @@ __gg.MH_corpseBack = function()   -- "Teleport Back" button -> return to where y
 end
 -- TRIGGER: turning Carnivore Meat TP ON starts the cycle (teleport to a corpse + ask). Turning it OFF hides the popup.
 task.spawn(function() local was=false while RUNNING do
-	if CFG.CarnMeatTP and alive() and tick()-carnSpawnT>5 then
+	if CFG.CarnMeatTP and alive() and tick()-carnSpawnT>5 and tick()>=(__gg.MH_spawnGrace or 0) then   -- also wait out the spawn grace so it can't TP you into the void on load
 		if not was then was=true; carnOrigin=nil; corpseList=collectCorpses(); corpseIdx=0; task.spawn(doNextCorpse) end
 	else if was then was=false; pcall(function() carnGui.Enabled=false end) end end
 	task.wait(0.3)
@@ -3590,7 +3602,23 @@ conn(UIS.InputBegan:Connect(function(input, gp)
 	end
 end))
 task.spawn(function() local last=false; while RUNNING do task.wait(0.1); if CFG.Fly~=last then last=CFG.Fly; if CFG.Fly then startFly() else stopFly() end end end end)
-conn(LP.CharacterAdded:Connect(function() task.wait(1); saving=false; SKN.saBack={}; pcall(function() CharacterState=CharacterState or (require(RS:WaitForChild("Common",5):WaitForChild("CharacterState",5))) end); if CFG.Fly then startFly() end pcall(function() local r=hrp(); if r then r.Anchored=false end end)
+conn(LP.CharacterAdded:Connect(function()
+	-- ═══ SPAWN SAFETY (fix "I keep dying when I spawn — fall damage / teleported outside the map") ═══ For 10s after
+	-- every spawn we HARD-force fall immunity every frame (the server keeps resetting it right at spawn = the death),
+	-- clear any fall status, and set a spawn-grace that BLOCKS every teleport feature (corpse TP / farm / save-sky)
+	-- so nothing can yeet you into the void the instant you load in.
+	__gg.MH_spawnGrace = tick() + 10
+	carnSpawnT = tick()
+	task.spawn(function()
+		local t0=tick()
+		while tick()-t0 < 10 and RUNNING do
+			if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
+			pcall(function() clearStatus({"fall","falldamage","falldmg"},{"Falling","FallDamage","FallDmg"}) end)
+			pcall(function() local r=hrp(); if r then local v=r.AssemblyLinearVelocity; if v.Y<-60 then r.AssemblyLinearVelocity=Vector3.new(v.X,-25,v.Z) end end end)  -- cap a killer fall
+			task.wait()
+		end
+	end)
+	task.wait(1); saving=false; SKN.saBack={}; pcall(function() CharacterState=CharacterState or (require(RS:WaitForChild("Common",5):WaitForChild("CharacterState",5))) end); if CFG.Fly then startFly() end pcall(function() local r=hrp(); if r then r.Anchored=false end end)
 	-- ON SPAWN: fill food + water right away (fire the real eat/Sip sequences in a burst so you spawn topped up).
 	task.spawn(function() task.wait(1.5); for _=1,10 do if not RUNNING then break end if CFG.InfFood and alive() then fakeEat() end if CFG.InfWater and alive() then fakeDrink() end task.wait(0.18) end end)
 end))
