@@ -2000,10 +2000,11 @@ task.spawn(function() while RUNNING do
 	-- CarnMeatTP now runs on its OWN (no longer requires INF Food to be on too — that dependency was why "tp to
 	-- corpse no work" when INF Food was off). It travels to the nearest corpse/downed body/meat and eats it.
 	if CFG.CarnMeatTP and alive() then
-		-- only travel when actually hungry (don't yank you around at full bar); if stats unreadable, assume hungry
-		local hungry=true; pcall(function() local s,m=csStats(); if s and m then local h=tonumber(s.Food or s.Hunger); local mh=tonumber(m.Food or m.Hunger or m.MaxFood); if h and mh then hungry = h < mh*0.9 end end end)
+		-- travel whenever you're not basically FULL (99%) — much more eager to hunt, so it actually moves you.
+		-- if stats can't be read, assume hungry so it still travels.
+		local hungry=true; pcall(function() local s,m=csStats(); if s and m then local h=tonumber(s.Food or s.Hunger); local mh=tonumber(m.Food or m.Hunger or m.MaxFood); if h and mh then hungry = h < mh*0.99 end end end)
 		if hungry and tick()-carnMeatCd>3 then
-			local m,part=nearestMeat(4000)
+			local m,part=nearestMeat(6000)   -- wider reach = "scan the whole map" for a corpse/downed body/meat
 			if part then
 				carnMeatCd=tick()
 				if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
