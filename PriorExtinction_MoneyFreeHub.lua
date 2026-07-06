@@ -2052,54 +2052,51 @@ end
 local function nearestMeat(range)
 	local me=hrp(); if not me then return nil end
 	local best,bpart,bd=nil,nil,range
-	local sbest,sbpart,sbd=nil,nil,range   -- SCENT corpses tracked separately so the red-highlighted corpse WINS
 	local seen={}
-	local function consider(m, part, isScent)
+	local function consider(m, part)
+		part = part or (m and (m:IsA("BasePart") and m or rootOf(m) or m:FindFirstChildWhichIsA("BasePart")))
 		if not (m and part and part:IsA("BasePart")) or seen[m] then return end
 		seen[m]=true
-		local dd=dist(me.Position,part.Position)
-		if dd<bd then best,bpart,bd=m,part,dd end
-		if isScent and dd<sbd then sbest,sbpart,sbd=m,part,dd end
+		local dd=dist(me.Position,part.Position); if dd<bd then best,bpart,bd=m,part,dd end
 	end
-	-- 1) scan workspace.Characters + all corpse/sandbox folders FULLY (these hold downed dinos + corpses) — no cap here.
-	-- ScentHighlight (the game's own "press F to sniff" corpse marker) is checked FIRST — it's authoritative, so a
-	-- model with it doesn't need to also pass the posture heuristic.
-	for _,fn in ipairs({"Characters","Corpses","Corpse","DeadBodies","Sandbox","Dinos","Creatures","NPCs","Entities","Animals","Food"}) do
+	-- ═══ AUTHORITATIVE FOLDER SCAN (from the user's Explorer screenshots) ═══
+	-- The REAL meat + corpses live in these exact folders — NOT scattered by heuristics. Targeting them directly
+	-- means the meat TP goes to actual food/corpses and can NEVER hit the anthill mound / footprints / plants
+	-- (none of which are in these folders). Each folder child is a meat chunk / ragdoll corpse.
+	--   workspace.Food.Meat / workspace.Food.CollectedMeat   = meat chunks (carnivore food)
+	--   workspace.DinosaurRagdolls                           = dead dino corpses
+	--   workspace.CorpseSpawns / *Corpse* folders            = corpse spawns
+	local function scanChildren(f)
+		if not f then return end
+		for _,m in ipairs(f:GetChildren()) do consider(m) end
+	end
+	local food = WS:FindFirstChild("Food")
+	if food then scanChildren(food:FindFirstChild("Meat")); scanChildren(food:FindFirstChild("CollectedMeat")) end
+	scanChildren(WS:FindFirstChild("DinosaurRagdolls"))
+	-- any folder whose name contains "corpse" (CorpseSpawns / FishCorpseSpawns / Corpses …)
+	for _,f in ipairs(WS:GetChildren()) do
+		if f:IsA("Folder") and f.Name:lower():find("corpse",1,true) then scanChildren(f) end
+	end
+	if best then return best,bpart,bd end   -- found real meat/corpse in the folders = go there, done. No heuristics.
+	-- ═══ FALLBACK (only when the folders held nothing): the game's own RED scent corpse, then a marked/named corpse
+	-- under Characters. Deliberately NO loose posture / red-mesh / prompt sweep here — that's what grabbed the mound.
+	local sbest,sbpart,sbd=nil,nil,range
+	local function considerScent(m)
+		local part=scentPart(m); if not (part and part:IsA("BasePart")) then return end
+		local dd=dist(me.Position,part.Position); if dd<sbd then sbest,sbpart,sbd=m,part,dd end
+	end
+	for _,fn in ipairs({"Characters","Corpses","DeadBodies","Sandbox","Dinos","Creatures","Animals"}) do
 		local f=WS:FindFirstChild(fn)
 		if f then for _,m in ipairs(f:GetChildren()) do
-			if m:IsA("Model") then
-				if isScentCorpse(m) then consider(m, scentPart(m), true)  -- teleport to the EXACT part inside the red highlight
-				elseif isDownedBody(m) then consider(m, rootOf(m)) end
-			end
+			if m:IsA("Model") and isScentCorpse(m) then considerScent(m) end
 		end end
 	end
-	-- 2) whole-map sweep for prompts / red-mesh meat / downed bodies (raised cap = "scan the entire map"; 20000 covers
-	--    big maps while still bounded so it can't freeze you).
-	local cnt=0
-	for _,d in ipairs(WS:GetDescendants()) do
-		cnt+=1; if cnt>20000 then break end
-		if d:IsA("ProximityPrompt") then
-			local at=((d.ActionText or "").." "..(d.Name or "")):lower()
-			if at:find("investigate") or at:find("eat") or at:find("consume") then
-				local p=d.Parent; local part=(p and p:IsA("BasePart") and p) or (p and p:FindFirstChildWhichIsA("BasePart")); local m=(p and p:IsA("Model")) and p or (part and part:FindFirstAncestorWhichIsA("Model")) or p
-				-- CARNIVORE GATE: plants also carry eat prompts — only accept the prompt if the model is NOT
-				-- plant-named AND actually looks like a corpse (meat name / PE corpse markers / Investigate).
-				local nm=(m and m.Name) or ""
-				local corpseish = at:find("investigate") or isMeatName(nm)
-				if not corpseish then pcall(function() corpseish=(m and m.GetAttribute and (m:GetAttribute("DinoType") or m:GetAttribute("HintType") or m:GetAttribute("CreatedAt")))~=nil end) end
-				if corpseish and not isPlantName(nm) then consider(m, part) end
-			end
-		elseif d:IsA("BasePart") and isRedMeshMeat(d) then
-			consider(d:FindFirstAncestorWhichIsA("Model") or d, d)
-		elseif d:IsA("Highlight") and d.Name=="ScentHighlight" then
-			local m=d:FindFirstAncestorWhichIsA("Model"); if m and isScentCorpse(m) then consider(m, scentPart(m), true) end
-		elseif d:IsA("Model") and isDownedBody(d) then
-			consider(d, rootOf(d))
-		end
-	end
-	-- PREFER the red scent corpse ("teleport to the thing inside red"): if any scent corpse was found, return the
-	-- nearest one; only fall back to other meat/downed bodies when there is NO scent corpse anywhere.
 	if sbest then return sbest,sbpart,sbd end
+	-- last resort: a genuinely marked/named corpse under Characters (dead dino left in place)
+	local chars=WS:FindFirstChild("Characters")
+	if chars then for _,m in ipairs(chars:GetChildren()) do
+		if m:IsA("Model") and isDownedBody(m) then consider(m, rootOf(m)) end
+	end end
 	return best,bpart,bd
 end
 __gg.MH_nearestMeat = nearestMeat   -- expose so the Auto Play Bot (separate do-block) can reuse it without a 2nd top-level local
