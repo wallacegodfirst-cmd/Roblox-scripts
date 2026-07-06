@@ -1854,7 +1854,7 @@ while RUNNING do
 					-- the real water, so Anti-Drown + Walk-on-Water now work on EVERY river/pond regardless of part name.
 					local waterFolder=WS:FindFirstChild("Water")
 					if waterFolder then for _,d in ipairs(waterFolder:GetDescendants()) do
-						if d:IsA("BasePart") and (d.Size.X*d.Size.Z)>60 then wParts[#wParts+1]=d end
+						if d:IsA("BasePart") and (d.Size.X*d.Size.Z)>15 then wParts[#wParts+1]=d end   -- lower threshold: river segments are thin
 					end end
 					-- fallback: name-matched big water parts anywhere else on the map
 					for _,d in ipairs(WS:GetDescendants()) do c+=1; if c>9000 then break end
@@ -1863,12 +1863,15 @@ while RUNNING do
 						end
 					end
 				end
-				local band = CFG.WalkWater and 4 or 1   -- wider detect band while standing ON the water (no bobbing)
+				local band = CFG.WalkWater and 6 or 2   -- wider detect band while standing ON the water (no bobbing)
 				for _,p in ipairs(wParts) do if p.Parent then
 					local rel=p.CFrame:PointToObjectSpace(r.Position)
-					if math.abs(rel.X)<=p.Size.X/2 and math.abs(rel.Z)<=p.Size.Z/2 then
+					-- MARGIN (+6 studs) on the horizontal box so thin river segments / part edges still count as "on the
+					-- water" — the strict edge-only check was why Walk-on-Water missed rivers. Also allow standing up to
+					-- the part's half-height + band above its top.
+					if math.abs(rel.X)<=p.Size.X/2+6 and math.abs(rel.Z)<=p.Size.Z/2+6 then
 						local top=p.Position.Y+p.Size.Y/2
-						if r.Position.Y < top+band and (not surf or top>surf) then surf=top end
+						if r.Position.Y < top+band+p.Size.Y and (not surf or top>surf) then surf=top end
 					end
 				end end
 			end
@@ -2150,10 +2153,22 @@ local function collectCorpses()
 	-- 2) players who died / left (LeftCharacters) + ragdoll corpses + bones + meat = actual eatable bodies
 	if ci then local lc=ci:FindFirstChild("LeftCharacters"); if lc then for _,m in ipairs(lc:GetChildren()) do addM(m) end end end
 	for _,fn in ipairs({"DinosaurRagdolls","Bonepiles","Corpses","DeadBodies"}) do local f=WS:FindFirstChild(fn); if f then for _,m in ipairs(f:GetChildren()) do addM(m) end end end
-	local food=WS:FindFirstChild("Food"); if food then for _,sub in ipairs(food:GetChildren()) do local n=sub.Name:lower()
-		if n:find("meat",1,true) or n:find("bone",1,true) or n:find("carcass",1,true) or n:find("collect",1,true) or n:find("corpse",1,true) then
-			if #sub:GetChildren()>0 then for _,m in ipairs(sub:GetChildren()) do addM(m) end else addM(sub) end
-		end end end
+	-- Food: DEEP scan (Food.Meat / Food.CollectedMeat may hold grouped models, not flat parts). Every meat/bone MODEL
+	-- or top-level meat part counts as one corpse so the "1/2" number reflects what's really eatable on the map.
+	local food=WS:FindFirstChild("Food"); if food then for _,sub in ipairs(food:GetChildren()) do
+		local kids=sub:GetChildren()
+		if #kids>0 then for _,m in ipairs(kids) do addM(m) end else addM(sub) end
+	end end
+	-- 2b) WHOLE-MAP sweep for anything the game itself marked as a smellable RED corpse (a ScentHighlight), no matter
+	--     which folder it sits in — this catches the corpse you SAW that wasn't in Characters/Food (the "1/2" miss).
+	pcall(function() for _,h in ipairs(WS:GetDescendants()) do
+		if h:IsA("Highlight") and h.Enabled then
+			local c=h.FillColor
+			if c.R>0.55 and c.G<0.35 and c.B<0.35 then
+				local a=h.Adornee or h.Parent; if a then addM(a) end
+			end
+		end
+	end end)
 	-- 3) CorpseSpawns markers LAST — ONLY the ones that currently have a real corpse spawned on them (a Model/MeshPart
 	--    child). A bare invisible red spawn dot is skipped, so you never teleport up/far to an empty marker.
 	if ci then local cs=ci:FindFirstChild("CorpseSpawns"); if cs then for _,d in ipairs(cs:GetChildren()) do
@@ -2178,14 +2193,21 @@ local function tpToCorpse(part)
 	carnBusy=true
 	if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
 	local np=part.Position
-	-- LAND ON REAL GROUND (fix "it teleports me up and far / floating"): the spawn markers sit at odd heights, and
-	-- the old cap left you hovering at the marker's Y. Raycast from well ABOVE the target straight DOWN to the true
-	-- ground and stand +3 on it. If nothing is below (rare), fall back to the part's own Y.
+	-- LAND ON REAL GROUND (fix "it teleports me up and far / floating"): the old ray hit the CORPSE MESH itself
+	-- (it wasn't excluded) so you landed ON TOP of the body = "up". Exclude every corpse/meat/spawn folder AND the
+	-- target part so the ray only hits real terrain, then stand +3 on it. If nothing is below, use the corpse's own Y.
+	local ci=WS:FindFirstChild("CharacterIgnore")
 	local landY=np.Y+3
 	pcall(function()
 		local rp=RaycastParams.new(); rp.FilterType=Enum.RaycastFilterType.Exclude
-		rp.FilterDescendantsInstances={getMyModel(), WS:FindFirstChild("Characters")}; rp.RespectCanCollide=true
-		local res=WS:Raycast(np+Vector3.new(0,25,0), Vector3.new(0,-4000,0), rp)
+		rp.FilterDescendantsInstances={
+			getMyModel(), part, part.Parent,
+			WS:FindFirstChild("Characters"), WS:FindFirstChild("DinosaurRagdolls"),
+			WS:FindFirstChild("Bonepiles"), WS:FindFirstChild("Food"),
+			ci and ci:FindFirstChild("CorpseSpawns"), ci and ci:FindFirstChild("LeftCharacters"),
+		}
+		rp.RespectCanCollide=true
+		local res=WS:Raycast(np+Vector3.new(0,60,0), Vector3.new(0,-6000,0), rp)
 		if res then landY=res.Position.Y+3 end
 	end)
 	local cc=getMyModel(); local goal=CFrame.new(np.X, landY, np.Z)
@@ -2193,10 +2215,20 @@ local function tpToCorpse(part)
 	pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end end)
 	local r=hrp(); if r then pcall(function() r.AssemblyLinearVelocity=Vector3.zero; r.AssemblyAngularVelocity=Vector3.zero end) end
 	local bp; pcall(function() if r then bp=Instance.new("BodyPosition"); bp.MaxForce=Vector3.new(9e9,9e9,9e9); bp.P=2e4; bp.D=2500; bp.Position=Vector3.new(np.X,landY,np.Z); bp.Parent=r end end)
+	-- BYPASS-TELEPORT anti-snapback (the user's "bypass telport" fix for going up/away): the server rubber-bands you
+	-- back for ~1s after a hard set. Re-assert the goal CFrame + kill velocity every frame for 1s so the snap loses.
+	task.spawn(function()
+		local t0=tick()
+		while tick()-t0<1.0 and carnBusy do
+			local rr=hrp()
+			if rr then pcall(function() rr.CFrame=goal; rr.AssemblyLinearVelocity=Vector3.zero; rr.AssemblyAngularVelocity=Vector3.zero end) end
+			RunService.Heartbeat:Wait()
+		end
+	end)
 	pcall(function() local m=part:FindFirstAncestorWhichIsA("Model"); local prompt=(m and m:FindFirstChildWhichIsA("ProximityPrompt",true)) or part:FindFirstChildWhichIsA("ProximityPrompt")
 		if prompt then local oh=prompt.HoldDuration; prompt.RequiresLineOfSight=false; prompt.HoldDuration=0; if fireprox then fireprox(prompt) end; prompt.HoldDuration=oh end end)
 	holdKey(Enum.KeyCode.E, 0.5)
-	task.delay(0.8, function() for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end; pcall(function() if bp then bp:Destroy() end end); carnBusy=false end)
+	task.delay(1.2, function() for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end; pcall(function() if bp then bp:Destroy() end end); carnBusy=false end)
 end
 -- go to the NEXT corpse in the list, wrapping, skipping any that despawned; then ask YES/NO.
 local function doNextCorpse()
