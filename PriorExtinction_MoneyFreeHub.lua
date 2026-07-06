@@ -1350,9 +1350,11 @@ do local p=Pages["Movement"]
 end
 do local p=Pages["Survival"]
 	local _,f=mkSec(p,"Food / Water / Stamina",1)
-	mkToggle(f,"INF Food","InfFood",1)
-	mkLabel(f,"HERB ONLY: turn INF Food ON, then EAT ONE plant (walk up + press E). It captures that food id + scans the whole map and keeps replaying it to hold your bar. If you're a CARNIVORE, use Carnivore Meat TP below instead.")
-	mkSlider(f,"INF Food grow speed (bites/cycle)","FoodEatSpeed",1,10,3,1)
+	if not _G.PE_HIDE_LITE then   -- INF Food lives in the separate Lite hub; the wrapper hides it here
+		mkToggle(f,"INF Food","InfFood",1)
+		mkLabel(f,"HERB ONLY: turn INF Food ON, then EAT ONE plant (walk up + press E). It captures that food id + scans the whole map and keeps replaying it to hold your bar. If you're a CARNIVORE, use Carnivore Meat TP below instead.")
+		mkSlider(f,"INF Food grow speed (bites/cycle)","FoodEatSpeed",1,10,3,1)
+	end
 	mkToggle(f,"Carnivore Meat TP (cycles corpses + asks Yes/No)","CarnMeatTP",4)
 	mkBtn(f,"Teleport Back (where you were)",function() if __gg.MH_corpseBack then __gg.MH_corpseBack() end end,4)
 	mkToggle(f,"INF Water","InfWater",5)
@@ -1436,18 +1438,20 @@ do local p=Pages["Auto Farm"]
 			notify("Teleport","At the nearest gemstone ("..math.floor(bd).."m away).")
 		else notify("Teleport","No gemstone found nearby.") end
 	end, 4)
-	local _,b=mkSec(p,"Auto Play Bot (full survival AI)",2)
-	mkToggle(b,"Auto Play Bot — plays the game for you","AutoPlayBot",1)
-	mkLabel(b,"The bot SURVIVES on its own: eats (diet-aware), drinks, flees predators, sleeps to heal, roams around its home spot, un-sticks itself, and keeps growing. Turn it on and walk away.")
-	mkToggle(b,"Flee from predators","BotFlee",2)
-	mkSlider(b,"Flee detect range","BotFleeRange",80,600,3,20)
-	mkToggle(b,"Roam / wander (looks human)","BotRoam",4)
-	mkSlider(b,"Roam radius (from home)","BotRoamRadius",50,1200,5,50)
-	mkSlider(b,"Eat when food below %","BotEatAt",30,95,6,5)
-	mkSlider(b,"Drink when water below %","BotDrinkAt",30,95,7,5)
-	mkToggle(b,"Sleep to heal when hurt + safe","BotSleepHeal",8)
-	mkSlider(b,"Bot walk speed","BotSpeed",14,24,9,1)
-	mkToggle(b,"Announce what the bot is doing","BotAnnounce",10)
+	if not _G.PE_HIDE_LITE then   -- Auto Play Bot lives in the separate Lite hub; the wrapper hides it here
+		local _,b=mkSec(p,"Auto Play Bot (full survival AI)",2)
+		mkToggle(b,"Auto Play Bot — plays the game for you","AutoPlayBot",1)
+		mkLabel(b,"The bot SURVIVES on its own: eats (diet-aware), drinks, flees predators, sleeps to heal, roams around its home spot, un-sticks itself, and keeps growing. Turn it on and walk away.")
+		mkToggle(b,"Flee from predators","BotFlee",2)
+		mkSlider(b,"Flee detect range","BotFleeRange",80,600,3,20)
+		mkToggle(b,"Roam / wander (looks human)","BotRoam",4)
+		mkSlider(b,"Roam radius (from home)","BotRoamRadius",50,1200,5,50)
+		mkSlider(b,"Eat when food below %","BotEatAt",30,95,6,5)
+		mkSlider(b,"Drink when water below %","BotDrinkAt",30,95,7,5)
+		mkToggle(b,"Sleep to heal when hurt + safe","BotSleepHeal",8)
+		mkSlider(b,"Bot walk speed","BotSpeed",14,24,9,1)
+		mkToggle(b,"Announce what the bot is doing","BotAnnounce",10)
+	end
 end
 do local p=Pages["Teleport"]
 	-- Scans Workspace.Biomes (the ecosystems loaded around you) and lets you teleport to any one. Auto-detects the
@@ -1503,10 +1507,12 @@ do local p=Pages["Visuals"]
 	mkToggle(l,"Water Transparency","WaterClear",4)
 	mkToggle(l,"No Clouds","NoClouds",5)
 	mkToggle(l,"INF Light (expand your light)","InfLight",6)
-	local _,al=mkSec(p,"Danger Alert (pick a dino - warns when it's near)",3)
-	mkToggle(al,"Enable Alert","AlertEnabled",1)
-	mkDropdown(al,"Alert Dino", function() return DINO_NAMES end, function() return CFG.AlertDino~="" and CFG.AlertDino or "(pick a dino)" end, function(opt) CFG.AlertDino=opt; saveCfg() end, 2)
-	mkSlider(al,"Alert Range","AlertRange",100,2000,3,50)
+	if not _G.PE_HIDE_LITE then   -- Danger Alert lives in the separate Lite hub; the wrapper hides it here
+		local _,al=mkSec(p,"Danger Alert (pick a dino - warns when it's near)",3)
+		mkToggle(al,"Enable Alert","AlertEnabled",1)
+		mkDropdown(al,"Alert Dino", function() return DINO_NAMES end, function() return CFG.AlertDino~="" and CFG.AlertDino or "(pick a dino)" end, function(opt) CFG.AlertDino=opt; saveCfg() end, 2)
+		mkSlider(al,"Alert Range","AlertRange",100,2000,3,50)
+	end
 end
 local skinDropdownRef, dinoLabel
 do local p=Pages["Skins"]
