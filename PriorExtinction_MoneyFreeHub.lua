@@ -2134,25 +2134,31 @@ local function modelDead(m)
 	for _,a in ipairs({"Health","HP","Hitpoints","HitPoints"}) do local v=m:GetAttribute(a); if tonumber(v)~=nil then return tonumber(v)<=0 end end
 	return false
 end
--- Build the list of EVERY corpse/meat/bone/spawn on the map (not nearest — all of them, to cycle through).
+-- Build the list of every ACTUAL corpse/meat on the map (not nearest — all of them, to cycle 25 -> 26 -> 27…).
+-- REAL bodies come FIRST (dead players, ragdolls, meat, bones) so the cycle starts on things you can actually eat;
+-- empty CorpseSpawns spawn-dots are added LAST and only when a corpse mesh is actually sitting on them (an empty
+-- red marker at a far/high position was the "it teleports me up and far to nothing").
 local function collectCorpses()
 	local out,seen={},{}
 	local function add(p) if p and p:IsA("BasePart") and not seen[p] then seen[p]=true; out[#out+1]=p end end
 	local function addM(m) if m then add((m:IsA("BasePart") and m) or rootOf(m) or m:FindFirstChildWhichIsA("BasePart")) end end
 	local ci=WS:FindFirstChild("CharacterIgnore")
-	if ci then
-		local cs=ci:FindFirstChild("CorpseSpawns"); if cs then for _,d in ipairs(cs:GetChildren()) do addM(d) end end          -- corpse spawn markers
-		local lc=ci:FindFirstChild("LeftCharacters"); if lc then for _,m in ipairs(lc:GetChildren()) do addM(m) end end        -- players who died/left = corpses
-	end
-	for _,fn in ipairs({"Bonepiles","DinosaurRagdolls","Corpses","DeadBodies"}) do local f=WS:FindFirstChild(fn); if f then for _,m in ipairs(f:GetChildren()) do addM(m) end end end
+	-- 1) DEAD players/dinos across the WHOLE map (the health trick) — these are the real "dead body users".
+	local chars=WS:FindFirstChild("Characters"); if chars then for _,m in ipairs(chars:GetChildren()) do
+		if m:IsA("Model") and (modelDead(m) or isScentCorpse(m)) then addM(m) end
+	end end
+	-- 2) players who died / left (LeftCharacters) + ragdoll corpses + bones + meat = actual eatable bodies
+	if ci then local lc=ci:FindFirstChild("LeftCharacters"); if lc then for _,m in ipairs(lc:GetChildren()) do addM(m) end end end
+	for _,fn in ipairs({"DinosaurRagdolls","Bonepiles","Corpses","DeadBodies"}) do local f=WS:FindFirstChild(fn); if f then for _,m in ipairs(f:GetChildren()) do addM(m) end end end
 	local food=WS:FindFirstChild("Food"); if food then for _,sub in ipairs(food:GetChildren()) do local n=sub.Name:lower()
 		if n:find("meat",1,true) or n:find("bone",1,true) or n:find("carcass",1,true) or n:find("collect",1,true) or n:find("corpse",1,true) then
 			if #sub:GetChildren()>0 then for _,m in ipairs(sub:GetChildren()) do addM(m) end else addM(sub) end
 		end end end
-	-- DEAD players/dinos ANYWHERE under workspace.Characters (health-based, whole map — not nearest)
-	local chars=WS:FindFirstChild("Characters"); if chars then for _,m in ipairs(chars:GetChildren()) do
-		if m:IsA("Model") and (modelDead(m) or isScentCorpse(m)) then addM(m) end
-	end end
+	-- 3) CorpseSpawns markers LAST — ONLY the ones that currently have a real corpse spawned on them (a Model/MeshPart
+	--    child). A bare invisible red spawn dot is skipped, so you never teleport up/far to an empty marker.
+	if ci then local cs=ci:FindFirstChild("CorpseSpawns"); if cs then for _,d in ipairs(cs:GetChildren()) do
+		if d:FindFirstChildOfClass("Model") or d:FindFirstChildOfClass("MeshPart") then addM(d) end
+	end end end
 	return out
 end
 -- YES/NO confirmation popup
@@ -2171,7 +2177,17 @@ local function tpToCorpse(part)
 	if not (part and part.Parent) or carnBusy then return end
 	carnBusy=true
 	if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
-	local np=part.Position; local landY=np.Y+3; pcall(function() if __gg.MH_landY then landY=__gg.MH_landY(np, part:FindFirstAncestorWhichIsA("Model")) end end)
+	local np=part.Position
+	-- LAND ON REAL GROUND (fix "it teleports me up and far / floating"): the spawn markers sit at odd heights, and
+	-- the old cap left you hovering at the marker's Y. Raycast from well ABOVE the target straight DOWN to the true
+	-- ground and stand +3 on it. If nothing is below (rare), fall back to the part's own Y.
+	local landY=np.Y+3
+	pcall(function()
+		local rp=RaycastParams.new(); rp.FilterType=Enum.RaycastFilterType.Exclude
+		rp.FilterDescendantsInstances={getMyModel(), WS:FindFirstChild("Characters")}; rp.RespectCanCollide=true
+		local res=WS:Raycast(np+Vector3.new(0,25,0), Vector3.new(0,-4000,0), rp)
+		if res then landY=res.Position.Y+3 end
+	end)
 	local cc=getMyModel(); local goal=CFrame.new(np.X, landY, np.Z)
 	local noclip={}; if cc then pcall(function() for _,dd in ipairs(cc:GetDescendants()) do if dd:IsA("BasePart") and dd.CanCollide then dd.CanCollide=false; noclip[#noclip+1]=dd end end end) end
 	pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end end)
