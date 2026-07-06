@@ -86,7 +86,7 @@ loadCfg()
 -- MIGRATE + CLAMP the INF-Stam run speed on load: the old 30 default was above what the server tolerates = "it
 -- keeps sending me back". Any saved value ABOVE the safe band gets reset to 20 (the sweet spot: clearly faster
 -- than walking, low enough the server doesn't snap you); values you set inside 14-28 are kept as-is.
-do local rs = tonumber(CFG.RunSpeed) or 16; CFG.RunSpeed = (rs > 26 or rs < 12) and 16 or rs end   -- lower default = less snapback
+do local rs = tonumber(CFG.RunSpeed) or 19; CFG.RunSpeed = (rs > 26 or rs < 12) and 19 or rs end   -- ~normal sprint speed
 CFG.Keybinds = CFG.Keybinds or {}
 CFG.Keybinds.UIKey = CFG.Keybinds.UIKey or CFG.UIKey
 CFG.Keybinds.AimKey = CFG.Keybinds.AimKey or CFG.AimKey
@@ -1402,7 +1402,7 @@ do local p=Pages["Survival"]
 	mkToggle(pr,"Anti Bleed","AntiBleed",5)
 	mkToggle(pr,"Anti Fall","AntiFall",6)
 	mkToggle(pr,"No Sleep Screen","NoSleep",7)
-	mkToggle(pr,"Bone Protection (anti break)","BoneProtect",8)
+	mkToggle(pr,"Bone Protection (shrinks that bone's hitbox so it can't be hit)","BoneProtect",8)
 	mkDropdown(pr,"Protect Bone", function() return {"All","Head","Neck","Arm","Leg","Body"} end, function() return CFG.ProtectBone~="" and CFG.ProtectBone or "All" end, function(opt) CFG.ProtectBone=opt; saveCfg() end, 9)
 	local _,sv=mkSec(p,"Auto Heal",4)
 	mkToggle(sv,"Save Dino","SaveDino",1)
@@ -1588,7 +1588,7 @@ do local p=Pages["Settings"]
 	mkBtn(t,"Cycle Accent Color",function() CFG.AccentIndex=(CFG.AccentIndex % #ACCENTS)+1; T.Accent=ACCENTS[CFG.AccentIndex]; T.On=T.Accent; if accentBar then accentBar.BackgroundColor3=T.Accent end for key,ref in pairs(toggleRefs) do if CFG[key] and ref[1] then ref[1].BackgroundColor3=T.On end end showPage(currentPage); saveCfg() end,1)
 	mkSlider(t,"UI Scale (bigger = crisp on 4K)","UIScale",1,3,2,0.1)
 	local _,k=mkSec(p,"Keybinds (click then press a key)",2)
-	local binds = { {"Open/Close UI","UIKey"},{"Aim Lock","AimKey"},{"Aimbot","Aimbot"},{"Silent Aim","SilentAim"},{"Lock On","LockOn"},{"Turn Hack","TurnHack"},{"Hitbox","HitboxExpand"},{"Auto Click","AutoClick"},{"Float","Float"},{"Fly","Fly"},{"Speed Hack","SpeedHack"},{"Noclip","Noclip"},{"Inf Jump","InfJump"},{"INF Food","InfFood"},{"INF Water","InfWater"},{"INF Stam","InfStam"},{"Anti Drown","AntiDrown"},{"Walk on Water","WalkWater"},{"Anti Fall","AntiFall"},{"Save Dino","SaveDino"},{"Auto Farm Player","AutoFarmPlayer"},{"Auto Farm Fossil","AutoFarmFossil"},{"Auto Farm Gem","AutoFarmGem"},{"ESP","ESPPlayers"},{"Plant ESP","FoodESP"},{"Fish ESP","FishESP"},{"Full Bright","FullBright"},{"No Night","NightVision"},{"INF Light","InfLight"},{"INF Zoom","InfZoom"} }
+	local binds = { {"Open/Close UI","UIKey"},{"Aim Lock","AimKey"},{"Aimbot","Aimbot"},{"Silent Aim","SilentAim"},{"Lock On","LockOn"},{"Turn Hack","TurnHack"},{"Hitbox","HitboxExpand"},{"Float","Float"},{"Fly","Fly"},{"Speed Hack","SpeedHack"},{"Noclip","Noclip"},{"Inf Jump","InfJump"},{"INF Food","InfFood"},{"INF Water","InfWater"},{"INF Stam","InfStam"},{"Anti Drown","AntiDrown"},{"Walk on Water","WalkWater"},{"Anti Fall","AntiFall"},{"Save Dino","SaveDino"},{"Auto Farm Player","AutoFarmPlayer"},{"Auto Farm Fossil","AutoFarmFossil"},{"Auto Farm Gem","AutoFarmGem"},{"ESP","ESPPlayers"},{"Plant ESP","FoodESP"},{"Fish ESP","FishESP"},{"Full Bright","FullBright"},{"No Night","NightVision"},{"INF Light","InfLight"},{"INF Zoom","InfZoom"} }
 	if _G.PE_HIDE_LITE then local kept={} for _,kb in ipairs(binds) do if kb[2]~="InfFood" then kept[#kept+1]=kb end end binds=kept end   -- hide the INF Food keybind row in the no-lite build
 	for i,kb in ipairs(binds) do mkKeybind(k, kb[1], kb[2], i) end
 end
@@ -1887,6 +1887,41 @@ task.spawn(function() while RUNNING do
 		task.wait(0.08)
 	else task.wait(0.3) end
 end end)
+-- ═══ BONE PROTECTION — SHRINK THE PROTECTED BONE'S HITBOX (your idea) ═══ PE resolves a bite by querying which of
+-- YOUR Hitbox parts the attacker overlapped. So for the bone you pick (Protect Bone), we shrink YOUR OWN Hitbox.<bone>
+-- part to near-zero + CanQuery/CanTouch = false → the attacker's hit-check finds NOTHING there → the hit resolves off
+-- that bone (or misses) = no head/leg crit. Massless=true so shrinking it NEVER changes your body mass = you still MOVE
+-- normally. Only touches the defensive Hitbox container parts, NEVER your steer body / RootPart, so your M1 is fine.
+-- Everything is restored the instant Bone Protection is turned off.
+do local bpSaved={}
+	local function protMatch(nm)
+		local sel=CFG.ProtectBone or "All"; local n=tostring(nm):lower()
+		if sel=="All" then return true end
+		if sel=="Head" then return n:find("head",1,true) or n:find("jaw",1,true) or n:find("skull",1,true) or n:find("neck",1,true) end
+		if sel=="Neck" then return n:find("neck",1,true) end
+		if sel=="Arm"  then return n:find("arm",1,true) or n:find("hand",1,true) or n:find("claw",1,true) or n:find("humerus",1,true) end
+		if sel=="Leg"  then return n:find("leg",1,true) or n:find("foot",1,true) or n:find("femur",1,true) or n:find("tibia",1,true) or n:find("thigh",1,true) end
+		if sel=="Body" then return n:find("spine",1,true) or n:find("body",1,true) or n:find("hip",1,true) or n:find("torso",1,true) or n:find("tail",1,true) end
+		return false
+	end
+	task.spawn(function() while RUNNING do task.wait(0.15)
+		local m=getMyModel()
+		if CFG.BoneProtect and alive() and m then
+			for _,cn in ipairs({"Hitbox","HitBox","HitboxPart","Hit"}) do local hb=m:FindFirstChild(cn)
+				if hb then local parts = hb:IsA("BasePart") and {hb} or hb:GetDescendants()
+					for _,d in ipairs(parts) do if d:IsA("BasePart") and protMatch(d.Name) then
+						if bpSaved[d]==nil then bpSaved[d]={d.Size,d.CanQuery,d.CanTouch,d.Massless} end
+						pcall(function() d.Massless=true; if d.Size.X>0.06 then d.Size=Vector3.new(0.05,0.05,0.05) end; d.CanQuery=false; d.CanTouch=false end)
+					elseif d:IsA("BasePart") and bpSaved[d] and not protMatch(d.Name) then   -- bone switched away → restore
+						local v=bpSaved[d]; pcall(function() if d.Parent then d.Size=v[1]; d.CanQuery=v[2]; d.CanTouch=v[3]; d.Massless=v[4] end end); bpSaved[d]=nil
+					end end
+				end
+			end
+		elseif next(bpSaved) then
+			for d,v in pairs(bpSaved) do pcall(function() if d and d.Parent then d.Size=v[1]; d.CanQuery=v[2]; d.CanTouch=v[3]; d.Massless=v[4] end end); bpSaved[d]=nil end
+		end
+	end end)
+end
 local FLY={}  -- bv/bg/conn (one table instead of 3 locals — Luau 200-local-cap mgmt)
 local function stopFly() if FLY.conn then FLY.conn:Disconnect(); FLY.conn=nil end if FLY.bv then FLY.bv:Destroy(); FLY.bv=nil end if FLY.bg then FLY.bg:Destroy(); FLY.bg=nil end local h=hum(); if h then pcall(function() h.PlatformStand=false end) end end
 local function startFly()
@@ -1939,7 +1974,7 @@ conn(RunService.Heartbeat:Connect(function()
 	-- ONLY NUDGE UP when you're slower than target (never OVERRIDE your natural sprint) — forcing a fixed velocity
 	-- every frame is what fought the server = the "keeps sending me back" snapback. Now Run passes through (real
 	-- sprint speed) and this only fills in when you're below target, then RELEASES so nothing fights the server.
-	local target=math.clamp(tonumber(CFG.RunSpeed) or 16, 12, 26)
+	local target=math.clamp(tonumber(CFG.RunSpeed) or 19, 12, 26)
 	local v=r.AssemblyLinearVelocity; local curH=math.sqrt(v.X*v.X+v.Z*v.Z)
 	if curH < target-1 then pcall(function() bv.Velocity=dir.Unit*target end)
 	else pcall(function() bv.Velocity=Vector3.zero end) end
