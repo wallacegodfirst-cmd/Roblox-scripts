@@ -2991,41 +2991,43 @@ end
 -- MOVEMENT DRIVE — HOLD W/A/S/D (the fix): writing AssemblyLinearVelocity got overridden by PE's server-authoritative
 -- movement controller, so the dino just stood still ("hold stop"). Now the bot drives the game's OWN movement by
 -- HOLDING the real WASD keys toward the goal (camera-relative, same as a human), so the game moves the dino normally.
-local BOT_KC = {W=Enum.KeyCode.W, A=Enum.KeyCode.A, S=Enum.KeyCode.S, D=Enum.KeyCode.D}
+-- NOTE: these hang off the BOT table (fields, NOT new locals) so they don't add to this do-block's Luau 200-local
+-- register cap — adding them as locals overflowed the cap and made the whole script fail to loadstring.
+BOT.kc = {W=Enum.KeyCode.W, A=Enum.KeyCode.A, S=Enum.KeyCode.S, D=Enum.KeyCode.D}
 BOT.held = BOT.held or {}
-local function botSetKey(name, down)
-	if BOT.held[name]==down then return end            -- only fire on a state CHANGE (not every frame)
+function BOT.setKey(name, down)
+	if BOT.held[name]==down then return end             -- only fire on a state CHANGE (not every frame)
 	BOT.held[name]=down
-	pcall(function() VIM:SendKeyEvent(down, BOT_KC[name], false, game) end)
+	pcall(function() VIM:SendKeyEvent(down, BOT.kc[name], false, game) end)
 end
-local function botReleaseKeys() for n in pairs(BOT_KC) do botSetKey(n,false) end end
-__gg.MH_botReleaseKeys = botReleaseKeys                 -- so the on/off + death paths can stop the walk
+function BOT.releaseKeys() for n in pairs(BOT.kc) do BOT.setKey(n,false) end end
+__gg.MH_botReleaseKeys = BOT.releaseKeys                 -- so the on/off + death paths can stop the walk
 -- press the WASD combo that moves toward desFlat given the current camera facing (release all if no direction)
-local function botDriveToward(desFlat)
-	if not desFlat or desFlat.Magnitude<0.05 then botReleaseKeys(); return end
-	local des=Vector3.new(desFlat.X,0,desFlat.Z); if des.Magnitude<0.05 then botReleaseKeys(); return end; des=des.Unit
+function BOT.driveToward(desFlat)
+	if not desFlat or desFlat.Magnitude<0.05 then BOT.releaseKeys(); return end
+	local des=Vector3.new(desFlat.X,0,desFlat.Z); if des.Magnitude<0.05 then BOT.releaseKeys(); return end; des=des.Unit
 	local cf=Cam.CFrame
-	local look=Vector3.new(cf.LookVector.X,0,cf.LookVector.Z); if look.Magnitude<0.05 then botReleaseKeys(); return end; look=look.Unit
+	local look=Vector3.new(cf.LookVector.X,0,cf.LookVector.Z); if look.Magnitude<0.05 then BOT.releaseKeys(); return end; look=look.Unit
 	local right=Vector3.new(cf.RightVector.X,0,cf.RightVector.Z).Unit
 	local fwd=des:Dot(look); local rgt=des:Dot(right)
-	botSetKey("W", fwd> 0.35); botSetKey("S", fwd< -0.35)
-	botSetKey("D", rgt> 0.35); botSetKey("A", rgt< -0.35)
+	BOT.setKey("W", fwd> 0.35); BOT.setKey("S", fwd< -0.35)
+	BOT.setKey("D", rgt> 0.35); BOT.setKey("A", rgt< -0.35)
 end
 conn(RunService.Heartbeat:Connect(function()
-	if not (CFG.AutoPlayBot and alive()) then if next(BOT.held) then botReleaseKeys() end return end
-	if CFG.Fly or CFG.SpeedHack then botReleaseKeys(); return end   -- user-controlled movement wins
-	local r=hrp(); if not r then botReleaseKeys(); return end
+	if not (CFG.AutoPlayBot and alive()) then if next(BOT.held) then BOT.releaseKeys() end return end
+	if CFG.Fly or CFG.SpeedHack then BOT.releaseKeys(); return end   -- user-controlled movement wins
+	local r=hrp(); if not r then BOT.releaseKeys(); return end
 	local goal=BOT.goal
-	if BOT.sleeping or not goal then botReleaseKeys(); return end   -- resting / no destination = stand still
+	if BOT.sleeping or not goal then BOT.releaseKeys(); return end   -- resting / no destination = stand still
 	local to=goal-r.Position; local flat=Vector3.new(to.X,0,to.Z)
-	if flat.Magnitude<4 then botReleaseKeys(); return end           -- arrived (state loop decides what's next)
+	if flat.Magnitude<4 then BOT.releaseKeys(); return end           -- arrived (state loop decides what's next)
 	if tick()<BOT.unstuckUntil then
 		-- UNSTICK: strafe at an angle + hop (Space) to clear the rock/tree we're wedged on
 		local side=flat.Unit:Cross(Vector3.yAxis)
-		botDriveToward((flat.Unit*0.5+side*0.85))
+		BOT.driveToward((flat.Unit*0.5+side*0.85))
 		pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
 	else
-		botDriveToward(flat)
+		BOT.driveToward(flat)
 	end
 end))
 -- STUCK WATCCHDOG: if the bot has a goal but has barely moved for ~3s, trigger the unstick hop + re-path.
