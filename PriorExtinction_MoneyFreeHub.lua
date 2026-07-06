@@ -2557,26 +2557,31 @@ task.spawn(function() while RUNNING do
 	if CFG.AlwaysDamage and alive() then
 		local me=hrp()
 		if me then
-			-- ONE real swing per cycle (mouse click + SoundRemote) so the bite ANIMATION/STATE is active when the
-			-- server gets our Attack reports. Wait ONE frame after the swing so the server opens the attack window
-			-- BEFORE the hit reports land (matches the real sequence: swing → window opens → hit), then fire Attacks.
-			pcall(clickMouse)
-			local sr=getSoundRemote(); if sr then pcall(function() sr:FireServer("PVP","Attacks/Primary",false,nil,1) end) end
-			RunService.Heartbeat:Wait()
-			local mine=getMyModel(); local n=0; local seen={}
-			local function hit(m)
-				if n>=8 or not (m and m:IsA("Model") and m~=mine) or seen[m] then return end
-				local hb=getHitbox(m); if hb and dist(me.Position,hb.Position)<=CFG.DamageRange then seen[m]=true; fireAttack(m, true); n+=1 end
+			-- FIND TARGETS FIRST — collect every enemy inside DamageRange. If there's NOBODY in range we do NOTHING
+			-- (no click, no SoundRemote, no attack) so it never "auto-attacks nothing". Only when a target exists do we
+			-- swing once (click + SoundRemote), wait a frame for the server's attack window, then fire the hit reports.
+			local mine=getMyModel(); local targs={}; local seen={}
+			local function consider(m)
+				if #targs>=8 or not (m and m:IsA("Model") and m~=mine) or seen[m] then return end
+				seen[m]=true
+				local h=m:FindFirstChildOfClass("Humanoid"); if h and h.Health<=0 then return end
+				local hb=getHitbox(m); if hb and dist(me.Position,hb.Position)<=CFG.DamageRange then targs[#targs+1]=m end
 			end
-			local chars=WS:FindFirstChild("Characters"); if chars then for _,m in ipairs(chars:GetChildren()) do hit(m) end end
-			-- Sandbox: other containers + nil-parented models
+			local chars=WS:FindFirstChild("Characters"); if chars then for _,m in ipairs(chars:GetChildren()) do consider(m) end end
 			for _,nm in ipairs({"Sandbox","Dinos","Creatures","NPCs","Entities","Mobs","Animals","DynamicCharacters"}) do
-				if n>=8 then break end local f=WS:FindFirstChild(nm); if f then for _,m in ipairs(f:GetChildren()) do hit(m) end end
+				if #targs>=8 then break end local f=WS:FindFirstChild(nm); if f then for _,m in ipairs(f:GetChildren()) do consider(m) end end
 			end
-			if n==0 and typeof(getnilinstances)=="function" then
-				pcall(function() local c=0; for _,v in next, getnilinstances() do c+=1; if c>4000 or n>=8 then break end
-					if typeof(v)=="Instance" and v:IsA("Model") and (v:FindFirstChild("Hitbox") or v:FindFirstChild("HitBox")) then hit(v) end
+			if #targs==0 and typeof(getnilinstances)=="function" then
+				pcall(function() local c=0; for _,v in next, getnilinstances() do c+=1; if c>4000 or #targs>=8 then break end
+					if typeof(v)=="Instance" and v:IsA("Model") and (v:FindFirstChild("Hitbox") or v:FindFirstChild("HitBox")) then consider(v) end
 				end end)
+			end
+			-- ONLY swing + fire when there's actually something in range (this is the "stop attacking nothing" fix)
+			if #targs>0 then
+				pcall(clickMouse)
+				local sr=getSoundRemote(); if sr then pcall(function() sr:FireServer("PVP","Attacks/Primary",false,nil,1) end) end
+				RunService.Heartbeat:Wait()
+				for _,m in ipairs(targs) do fireAttack(m, true) end
 			end
 		end
 		task.wait(1/math.max(1,CFG.DamageRate))
