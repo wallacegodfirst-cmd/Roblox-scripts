@@ -192,7 +192,7 @@ do
 	local Settings = {
 		BackDistance    = 1.5,    -- dead-center on the back
 		LockRange       = 34,
-		LockDuration    = 0.22,   -- SHORT: just long enough for the flash to land. (0.6s of pinning behind a knocked-back body = the fling window)
+		LockDuration    = 0.32,   -- firmer back-lock (was 0.22 = 'loses lock halfway'). getBehind smoothing + collision-off make a longer hold safe now.
 		PreAttackDelay  = 0.05,   -- settle a beat after the snap so the flash KEY actually registers (0.018 = sometimes eaten -> no flash)
 		KeyHoldDuration = 0.09,
 		PosLead         = 0.14,   -- lead a MOVING target harder so a runner/dasher's back stays under you
@@ -557,88 +557,88 @@ do
 					task.delay(0.08, function() pressR(); task.wait(0.06); pressMove(feintMove) end)   -- feint, then the move
 				end
 			end
-			local delayTime = AnimationTriggers[animId]
-			if not delayTime and StraightAnimations[animId] then delayTime = 0.19 end
-			if delayTime then
-				-- AUTO FEINT Mode A ("Feint Black Flash"): count black flashes; after feintBFStop, press R (feint) then STOP the chain until your next E.
-				if feintMode == "BF" and feintBFStop > 0 then
-					if tick() - lastBF > 1.5 then bfCount = 0 end   -- reset the count if you stopped flashing
-					lastBF = tick(); bfCount = bfCount + 1
-					if bfCount >= feintBFStop then
-						bfCount = 0
-						bfSuppressUntil = tick() + 1.2                                 -- STOP: no more conversions after the feint (you asked it to stop at N - it stops)
-						burstUntil = 0
-						task.delay(delayTime + 0.05, pressR)
-					end
-				end
-				-- the wind-up re-press = the BLACK FLASH conversion.
-				if Settings.Mode == "M1 Black Flash" then
-					-- M1 BF = the EXACT proven snippet: your M1 anim played -> wait delayTime -> press the flash key (3).
-					-- Nothing else (no teleport, no arming, no facing) — that extra logic is what kept breaking it.
-					if tick() - convGuard < 0.5 then return end
-					convGuard = tick()
-					task.delay(delayTime, function()
-						if Settings.Mode ~= "M1 Black Flash" or humanoid.Health <= 0 then return end
-						-- CAMERA LOCK (user request): lock the camera onto the nearest enemy for the flash window.
-						task.spawn(function()
-							local tgt = getNearestEnemy(20)
-							local t0 = tick()
-							while tgt and tgt.Parent and tick() - t0 < 0.5 do
-								local tr = getHRP(tgt); local cam = workspace.CurrentCamera
-								if tr and cam then pcall(function() cam.CFrame = CFrame.lookAt(cam.CFrame.Position, tr.Position) end) end
-								task.wait()
-							end
-						end)
-						_G.VX_INJECT_UNTIL = tick() + 0.35; vxMarkKey(Settings.AbilityKey)
-						pcall(function()
-							VirtualInputManager:SendKeyEvent(true, Settings.AbilityKey, false, game)
-							task.wait(Settings.KeyHoldDuration)
-							VirtualInputManager:SendKeyEvent(false, Settings.AbilityKey, false, game)
-						end)
-					end)
-				elseif Settings.Mode == "Side Dash" and (ScriptEnabled or tick() < burstUntil) and tick() >= bfSuppressUntil then
-					-- SIDE DASH BF (user's proven pattern): your M1 anim fired -> dash LEFT now -> press the flash key
-					-- (3) at the exact wind-up frame (delayTime). No teleport/orbit — just left dash + the black flash.
-					task.spawn(function()
-						local t0 = tick()
-						while tick() - t0 < 0.1 do
-							local r = getHRP(myCharResolved()); if not r then break end
-							local v = -r.CFrame.RightVector * 80   -- PURE LEFT
-							pcall(function() r.AssemblyLinearVelocity = Vector3.new(v.X, math.min(r.AssemblyLinearVelocity.Y, 0), v.Z) end)
-							task.wait()
-						end
-						local rS = getHRP(myCharResolved()); if rS then pcall(function() local vv = rS.AssemblyLinearVelocity; rS.AssemblyLinearVelocity = Vector3.new(0, vv.Y, 0) end) end
-					end)
-					task.delay(delayTime, function()
-						if Settings.Mode ~= "Side Dash" or humanoid.Health <= 0 then return end
-						if not (ScriptEnabled or tick() < burstUntil) or tick() < bfSuppressUntil then return end
-						-- aim at the nearest enemy's back before the flash
-						pcall(function()
-							local mh = getHRP(myCharResolved()); local tgt = getNearestEnemy(16); local tr = tgt and getHRP(tgt)
-							if mh and tr then mh.CFrame = CFrame.lookAt(mh.Position, Vector3.new(tr.Position.X, mh.Position.Y, tr.Position.Z)) end
-						end)
-						_G.VX_INJECT_UNTIL = tick() + 0.4; vxMarkKey(Settings.AbilityKey)
-						pcall(function()
-							VirtualInputManager:SendKeyEvent(true, Settings.AbilityKey, false, game)
-							task.wait(Settings.KeyHoldDuration)
-							VirtualInputManager:SendKeyEvent(false, Settings.AbilityKey, false, game)
-						end)
-					end)
-				elseif (ScriptEnabled or tick() < burstUntil) and tick() >= bfSuppressUntil then
-					task.delay(delayTime, function() if humanoid.Health > 0 and Settings.Mode ~= "M1 Black Flash" and Settings.Mode ~= "Side Dash" and (ScriptEnabled or tick() < burstUntil) and tick() >= bfSuppressUntil then doBackstab() end end)
-				end
-			end
+			-- (BF conversion moved OUT of this LP.Character listener — see the SINGLE resolved-model conversion
+			--  authority below. This listener now only does Feint-M1 counting above.)
 		end)
 	end
 	if LocalPlayer.Character then setupCharacter(LocalPlayer.Character) end
 	LocalPlayer.CharacterAdded:Connect(setupCharacter)
-	-- RESOLVED-MODEL ANIM HOOK (why "when I M1 it doesn't even black flash"): in JJS your combat anims play on the
-	-- workspace.Characters[you] model's Animator, and LP.Character can be a DIFFERENT/lagging rig — so the
-	-- setupCharacter hook above sometimes never sees your M1 anims at all. This poller hooks the RESOLVED model's
-	-- animator (re-checking every 0.6s, weak-keyed so it re-hooks after respawn/swap) and runs the same proven
-	-- conversion: M1 anim -> wait delayTime -> press the flash key. convGuard stops double-fire when both hooks
-	-- see the same animator.
+	-- ═══════════════ SINGLE M1 → BLACK FLASH CONVERSION AUTHORITY ═══════════════
+	-- ONE listener, on the RESOLVED model's animator (workspace.Characters[you] — the rig your combat anims
+	-- actually play on; LP.Character lags), re-hooked every 0.5s (weak-keyed) so it survives respawn/char-swap.
+	-- Handles EVERY approach mode with the FULL per-character M1 database. All the old competing paths (the
+	-- LP.Character conversion, fireFlashInPlace, tryM1Flash) are gone — this is the only thing that converts.
 	do
+		-- shared one-shot flash press (aim camera at nearest, press the ability key = 3)
+		local function pressFlash()
+			_G.VX_INJECT_UNTIL = tick() + 0.35; vxMarkKey(Settings.AbilityKey)
+			pcall(function()
+				VirtualInputManager:SendKeyEvent(true, Settings.AbilityKey, false, game)
+				task.wait(Settings.KeyHoldDuration)
+				VirtualInputManager:SendKeyEvent(false, Settings.AbilityKey, false, game)
+			end)
+		end
+		local function lockCam(dur)   -- lock the camera onto the nearest enemy for the flash window
+			task.spawn(function()
+				local tgt = getNearestEnemy(24); local t0 = tick()
+				while tgt and tgt.Parent and tick() - t0 < (dur or 0.5) do
+					local tr = getHRP(tgt); local cam = workspace.CurrentCamera
+					if tr and cam then pcall(function() cam.CFrame = CFrame.lookAt(cam.CFrame.Position, tr.Position) end) end
+					task.wait()
+				end
+			end)
+		end
+		local function faceBack()   -- turn to face the nearest enemy (rotation only)
+			pcall(function()
+				local mh = getHRP(myCharResolved()); local tgt = getNearestEnemy(18); local tr = tgt and getHRP(tgt)
+				if mh and tr then mh.CFrame = CFrame.lookAt(mh.Position, Vector3.new(tr.Position.X, mh.Position.Y, tr.Position.Z)) end
+			end)
+		end
+		local function dashLeft()   -- short fast pure-LEFT client dash (0.1s), then stop dead
+			task.spawn(function()
+				local t0 = tick()
+				while tick() - t0 < 0.1 do
+					local r = getHRP(myCharResolved()); if not r then break end
+					local v = -r.CFrame.RightVector * 80
+					pcall(function() r.AssemblyLinearVelocity = Vector3.new(v.X, math.min(r.AssemblyLinearVelocity.Y, 0), v.Z) end)
+					task.wait()
+				end
+				local rS = getHRP(myCharResolved()); if rS then pcall(function() local vv = rS.AssemblyLinearVelocity; rS.AssemblyLinearVelocity = Vector3.new(0, vv.Y, 0) end) end
+			end)
+		end
+		-- THE conversion: called once per detected M1 swing. Dispatches by mode.
+		local function convert(delayTime)
+			-- one conversion per swing (an anim can fire its track twice)
+			if tick() - convGuard < 0.45 then return end
+			convGuard = tick()
+			-- FEINT (Mode A "Feint Black Flash"): count flashes, stop after N with an R feint
+			if feintMode == "BF" and feintBFStop > 0 then
+				if tick() - lastBF > 1.5 then bfCount = 0 end
+				lastBF = tick(); bfCount = bfCount + 1
+				if bfCount >= feintBFStop then bfCount = 0; bfSuppressUntil = tick() + 1.2; burstUntil = 0; task.delay(delayTime + 0.05, pressR); return end
+			end
+			-- GATE: the chain must actually be enabled (Auto Chain) or in a self-driving burst, and not feint-suppressed.
+			-- This is what stops the conflict with Auto Single (which sets ScriptEnabled=false).
+			if not (ScriptEnabled or tick() < burstUntil) or tick() < bfSuppressUntil then return end
+			local mode = Settings.Mode
+			if mode == "M1 Black Flash" then
+				task.delay(delayTime, function() if Settings.Mode == "M1 Black Flash" then lockCam(0.5); pressFlash() end end)
+			elseif mode == "Side Dash" then
+				dashLeft()
+				task.delay(delayTime, function() if Settings.Mode == "Side Dash" then faceBack(); pressFlash() end end)
+			else   -- Teleport / Jump / Back Dash = snap behind + flash + lock (the "lock on to the back" system)
+				task.delay(delayTime, function()
+					local mm = Settings.Mode
+					if mm ~= "M1 Black Flash" and mm ~= "Side Dash" then doBackstab(false) end
+				end)
+			end
+		end
+		local function matchDelay(animId)
+			local d = AnimationTriggers[animId]
+			if not d and StraightAnimations[animId] then d = 0.19 end
+			if not d then local num = tostring(animId):match("%d+"); if num and _G.VX_M1_IDS and _G.VX_M1_IDS[num] then d = 0.19 end end
+			return d
+		end
 		local resHooked = setmetatable({}, { __mode = "k" })
 		task.spawn(function()
 			while true do
@@ -648,42 +648,12 @@ do
 						resHooked[a] = a.AnimationPlayed:Connect(function(track)
 							local animId = track.Animation and track.Animation.AnimationId
 							if not animId then return end
-							local delayTime = AnimationTriggers[animId]
-							if not delayTime and StraightAnimations[animId] then delayTime = 0.19 end
-							-- FULL M1 DATABASE fallback: the 5 wind-up ids only exist for SOME characters -- on everyone
-							-- else the anim never matched, so M1 BF never fired. Any id in the master per-character M1
-							-- set converts with the standard 0.19s delay.
-							if not delayTime then
-								local num = tostring(animId):match("%d+")
-								if num and _G.VX_M1_IDS and _G.VX_M1_IDS[num] then delayTime = 0.19 end
-							end
-							if not delayTime then return end
-							if Settings.Mode ~= "M1 Black Flash" then return end
-							if tick() - convGuard < 0.5 then return end
-							convGuard = tick()
-							task.delay(delayTime, function()
-								if Settings.Mode ~= "M1 Black Flash" then return end
-								-- CAMERA LOCK onto the nearest enemy for the flash window
-								task.spawn(function()
-									local tgt = getNearestEnemy(20)
-									local t0 = tick()
-									while tgt and tgt.Parent and tick() - t0 < 0.5 do
-										local tr = getHRP(tgt); local cam = workspace.CurrentCamera
-										if tr and cam then pcall(function() cam.CFrame = CFrame.lookAt(cam.CFrame.Position, tr.Position) end) end
-										task.wait()
-									end
-								end)
-								_G.VX_INJECT_UNTIL = tick() + 0.35; vxMarkKey(Settings.AbilityKey)
-								pcall(function()
-									VirtualInputManager:SendKeyEvent(true, Settings.AbilityKey, false, game)
-									task.wait(Settings.KeyHoldDuration)
-									VirtualInputManager:SendKeyEvent(false, Settings.AbilityKey, false, game)
-								end)
-							end)
+							local d = matchDelay(animId)
+							if d then convert(d) end
 						end)
 					end
 				end)
-				task.wait(0.6)
+				task.wait(0.5)
 			end
 		end)
 	end
@@ -726,11 +696,10 @@ do
 			end)
 		end)
 	end
-	local function doEPress()   -- exactly what pressing E does for the current approach (also fired by the mobile tap button)
-			if _G.VX_BF_DEBUG then print("[DreamHub BF] E press -> mode="..Settings.Mode) end
-		if Settings.Mode == "Back Dash" then handleBackDashE()                  -- already spawned
-		elseif Settings.Mode == "M1 Black Flash" then if runChain then runChain() end  -- E = the same teleport black flash
-		else task.spawn(function() doBackstab(true) end) end                   -- Teleport/Jump/Side Dash - spawn so the orbit doesn't stall the input handler
+	local function doEPress()   -- E = LOCK ONTO THE ENEMY'S BACK + FLASH, for EVERY mode (user's core request).
+		if _G.VX_BF_DEBUG then print("[DreamHub BF] E press -> mode="..Settings.Mode) end
+		if Settings.Mode == "Back Dash" then handleBackDashE()                  -- Back Dash keeps its 2-stage watcher
+		else task.spawn(function() doBackstab(true) end) end                    -- Teleport/Jump/Side Dash/M1 BF: snap behind, face back, lock, flash
 	end
 	ContextActionService:BindActionAtPriority("VaultixBackstab", function(_, inputState)
 		if inputState == Enum.UserInputState.Begin then doEPress() end
@@ -765,55 +734,7 @@ do
 			end
 		end)
 	end
-		-- M1 BLACK FLASH (IN PLACE - no teleport): in "M1 Black Flash" mode, your M1 lands FIRST (deals damage),
-		-- THEN the black flash fires WHERE YOU STAND. It does NOT snap/teleport behind the enemy - it just faces
-		-- them and presses the flash key, so the M1 hit registers, then the flash converts. (User: M1 first, deal
-		-- damage, then black flash, NOT teleport.)
-		do
-			local UIS_M1 = game:GetService("UserInputService")
-			local m1bfGen = 0   -- generation counter: ONE facing-hold + ONE anti-fling capper alive at a time.
-			                    -- (The click press AND the wind-up conversion both call fireFlashInPlace on the same
-			                    -- swing — two competing velocity/CFrame writers on one body was itself a fling source.)
-			fireFlashInPlace = function(tgt, isConversion)   -- (forward-declared) face the target IN PLACE, press the flash key, damp the shove
-				local myChar = myCharResolved()
-				local myHRP = getHRP(myChar)
-				local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
-				local tHRP = tgt and getHRP(tgt)
-				if not (myHRP and hum and tHRP) or hum.Health <= 0 then return end
-				if _G.VX_BF_DEBUG then print("[DreamHub BF] fireFlashInPlace on "..tostring(tgt and tgt.Name).." conv="..tostring(isConversion).." key="..tostring(Settings.AbilityKey)) end
-				m1bfGen = m1bfGen + 1; local gen = m1bfGen
-				-- FACE THEM ONCE (rotation only) then PRESS THE FLASH KEY. This is the exact minimal path that WORKED —
-				-- nothing between the face and the press, no AutoRotate change, no re-face loop (both of those broke it).
-				pcall(function()
-					local flat = Vector3.new(tHRP.Position.X, myHRP.Position.Y, tHRP.Position.Z)
-					myHRP.CFrame = CFrame.lookAt(myHRP.Position, flat)
-				end)
-				pcall(function() Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, tHRP.Position) end)  -- aim camera at them
-				_G.VX_INJECT_UNTIL = tick() + 0.4
-				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Settings.AbilityKey] = tick() + 0.5   -- our flash key press must not chain other features
-				pcall(function()
-					VirtualInputManager:SendKeyEvent(true, Settings.AbilityKey, false, game)
-					task.wait(Settings.KeyHoldDuration)
-					VirtualInputManager:SendKeyEvent(false, Settings.AbilityKey, false, game)
-				end)
-				task.spawn(function()   -- ANTI-FLING: cap only a RUNAWAY launch; Y untouched (clamping Y = the stutter/fling)
-					local t0 = tick()
-					while tick() - t0 < 0.7 do
-						if m1bfGen ~= gen then return end
-						local c = myCharResolved(); local r = c and getHRP(c)
-						if r then pcall(function()
-							local v = r.AssemblyLinearVelocity; local flat = Vector3.new(v.X, 0, v.Z)
-							if flat.Magnitude > 50 then local u = flat.Unit * 50; r.AssemblyLinearVelocity = Vector3.new(u.X, v.Y, u.Z) end
-						end) end
-						task.wait()
-					end
-				end)
-			end
-			local flashSuppress = 0  -- after ONE flash, ignore every M1/anim for a full second so 1 M1 = exactly 1 flash (not 4)
-			-- (M1 Black Flash is now handled ENTIRELY by the setupCharacter AnimationPlayed path — the proven snippet:
-			-- M1 anim -> wait delayTime -> press 3. The old click/backup path also pressed 3, which double-fired and
-			-- kept breaking it, so it's removed. fireFlashInPlace stays defined above in case another feature calls it.)
-		end
+		-- (Dead M1-in-place fireFlashInPlace block removed — the single conversion authority above handles M1 BF.)
 
 	-- MOBILE SUPPORT: a floating tap button so phone players (no keyboard E) can fire the chosen chain approach. Toggled via ChainApi.setMobile. M1 Black Flash needs no button (M1 auto-fires) but the button still works.
 	local mobileGui, mobileBtn
