@@ -331,6 +331,19 @@ do
 			if a then local anim = Instance.new("Animation"); anim.AnimationId = id; local t = a:LoadAnimation(anim); t.Priority = prio or Enum.AnimationPriority.Action2; t:Play(0.05); task.delay(0.6, function() pcall(function() t:Stop() end) end) end
 		end)
 	end
+	-- ═══ USER-CAPTURED combo animation sequences (SimpleSpy movement recordings) ═══ Each mode now plays the REAL
+	-- anims from the recordings the user sent: Side Dash BF, Jump BF, and the base M1→Black-Flash. These are the exact
+	-- ids that fire in-game (M1=95295463826732, BLACK FLASH windup=100962226150441, stance=120133391090244, etc.).
+	local COMBO_ANIMS = {
+		["Side Dash"]      = { "rbxassetid://95295463826732", "rbxassetid://96489184596023", "rbxassetid://100962226150441", "rbxassetid://120133391090244" },
+		["Jump"]           = { "rbxassetid://126572575938378", "rbxassetid://97446412066176", "rbxassetid://100962226150441", "rbxassetid://120133391090244" },
+		["M1 Black Flash"] = { "rbxassetid://100962226150441", "rbxassetid://138196552148011", "rbxassetid://120133391090244" },
+		["default"]        = { "rbxassetid://100962226150441", "rbxassetid://120133391090244" },
+	}
+	local function playCombo(mode)
+		local seq = COMBO_ANIMS[mode] or COMBO_ANIMS.default
+		for _, id in ipairs(seq) do playAnim(id) end
+	end
 	-- CINEMATIC ORBIT: curve smoothly AROUND the target (no teleport / no snap), easing accel + decel,
 	-- always facing them, radius + angle interpolated, re-reading the target's LIVE position each frame so
 	-- the arc wraps around them if they move. opts: duration, endRadius, endBehind, extraSweep(rad),
@@ -411,11 +424,12 @@ do
 	local function doApproach(targetHRP, myHRP)  -- PRE-flash movement per mode; the flash + back-lock happens right after (in doBackstab)
 		local m = Settings.Mode
 		if m == "Side Dash" then                                                                   -- CURVE around them to their back (anime run-around), then flash
-			playAnim("rbxassetid://75203303352791"); playAnim("rbxassetid://96489184596023")      -- flourish anims (pcall'd — a character without them just skips the visual)
+			playCombo("Side Dash")   -- user-captured Side Dash BF anim sequence (M1 + walk + black-flash windup + stance)
 			fireDash("Right")
 			task.wait(0.1)   -- let the REAL dash impulse actually move you before the orbit takes over — the orbit's first frame zeroes velocity, which was instantly cancelling the dash (= "side dash does nothing")
 			orbitAround(targetHRP, { duration = 0.24, endRadius = math.max(Settings.BackDistance, 3), extraSweep = math.pi * 0.4, endBehind = true })   -- wider, weightier wrap = reads like a real player circling them
 		elseif m == "Jump" then                                                                    -- SPRINT to them (real movement, NO teleport) -> JUMP over -> flash lands on the back
+			playCombo("Jump")   -- user-captured Jump BF anim sequence (fall + land + black-flash windup + stance)
 			local t0 = tick()
 			while tick() - t0 < 1.4 do                                                             -- run-up: drive toward them at sprint speed, facing them
 				local h = getHRP(myCharResolved()); if not (h and targetHRP.Parent) then break end
@@ -645,8 +659,9 @@ do
 			-- removes the duplicate. This chain path only does Side Dash + the teleport-behind approaches.
 			if mode == "Side Dash" then
 				dashLeft()
-				task.delay(delayTime, function() if Settings.Mode == "Side Dash" then faceBack(); pressFlash() end end)
+				task.delay(delayTime, function() if Settings.Mode == "Side Dash" then faceBack(); playCombo("Side Dash"); pressFlash() end end)
 			else   -- Teleport / Jump / Back Dash = snap behind + flash + lock (the "lock on to the back" system)
+				if mode == "Jump" then playCombo("Jump") end   -- user-captured Jump BF anim sequence
 				task.delay(delayTime, function()
 					if Settings.Mode ~= "Side Dash" then doBackstab(false) end
 				end)
@@ -684,7 +699,7 @@ do
 			chainTarget = tgt; chainTargetT = tick()
 			local tr = getHRP(tgt)
 			if tr and tr.Parent then                                            -- 1) normal side-dash black flash
-				playAnim("rbxassetid://75203303352791"); playAnim("rbxassetid://96489184596023")
+				playCombo("Side Dash")   -- user-captured Side Dash BF anim sequence
 				fireDash("Right")
 				local mh0 = getHRP(myCharResolved()); if mh0 then pcall(function() mh0.AssemblyLinearVelocity = Vector3.zero end) end   -- kill the dash-remote velocity BEFORE the orbit (that burst was the back-dash fling)
 				orbitAround(tr, { duration = 0.16, endRadius = math.max(Settings.BackDistance, 3), extraSweep = math.pi * 0.25, endBehind = true })
