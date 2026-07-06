@@ -53,7 +53,7 @@ local CFG = {
 	InfJump=false, BypassTP=true,
 	InfFood=false, InfWater=false, InfStam=false, InfOxygen=false,
 	AntiDrown=true, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false,
-	SaveDino=false, SaveHP=30, NoSleep=true,
+	SaveDino=false, SaveHP=30, NoSleep=true, AutoHealBlood=false,
 	AutoFarmPlayer=false, FarmPlayerRange=120, AutoFarmFossil=false, FarmFossilRange=1000000,
 	ESPPlayers=false, ESPCorpses=false, FoodESP=false, FishESP=false, GemESP=false, ESPRange=900, ESPColor="Default",
 	AlertEnabled=false, AlertDino="", AlertRange=350, CarnMeatTP=false,
@@ -1372,6 +1372,8 @@ do local p=Pages["Survival"]
 	local _,sv=mkSec(p,"Auto Heal",4)
 	mkToggle(sv,"Save Dino","SaveDino",1)
 	mkSlider(sv,"Save at HP %","SaveHP",5,90,2,5)
+	mkToggle(sv,"Auto Heal Blood (no sleep needed)","AutoHealBlood",3)
+	mkLabel(sv,"Blood damage normally only heals by sleeping/waiting. This keeps your blood + health topped and clears bleed/wounds so you never have to sleep it off. (Stamina = use INF Stamina; water refills it.)")
 	local _,pg=mkSec(p,"Progress",5)
 	mkBtn(pg,"Progress Restore",function() progressRestore() end,1)
 	-- SAVED SLOTS — auto-named dropdown ("<n>: Species - Stage"). Save banks your CURRENT dino into the next free slot
@@ -1707,6 +1709,36 @@ task.spawn(function() while RUNNING do
 		end
 		task.wait(0.35)
 	else task.wait(0.4) end
+end end)
+
+-- ═══ AUTO HEAL BLOOD (no sleep needed) — in PE "blood damage" only recovers by sleeping/waiting. This keeps the
+-- blood + health pool topped and clears the bleed/wound accumulators (the things that force the sleep), through the
+-- SAME replica-stats path GodMode/INF-Food already use, plus the Humanoid + model attributes as a fallback.
+task.spawn(function() while RUNNING do
+	if CFG.AutoHealBlood and alive() then
+		pcall(function()
+			local stats, maxs = csStats()
+			if stats then
+				-- clear the bleed / wound / blood-loss accumulators that gate recovery
+				for _,k in ipairs({"Bleed","Bleeding","BleedDamage","Bloodloss","BloodLoss","Wound","Wounds","Hemorrhage","Injury"}) do
+					if stats[k]~=nil then if type(stats[k])=="boolean" then stats[k]=false else stats[k]=0 end end
+				end
+				-- refill the blood / health pool (what sleeping slowly restores) to its real max
+				for _,k in ipairs({"Blood","BloodLevel","BloodVolume","Health","HP","Vitality"}) do
+					if stats[k]~=nil and maxs and maxs[k] then stats[k]=maxs[k] end
+				end
+				-- clear tiredness so the game doesn't insist you sleep
+				for _,k in ipairs({"Tiredness","Tired","Sleep","Sleepiness","Rest","Exhaustion","Fatigue"}) do
+					if stats[k]~=nil then if type(stats[k])=="boolean" then stats[k]=false else stats[k]=0 end end
+				end
+			end
+		end)
+		pcall(function() local h=hum(); if h and h.MaxHealth>0 and h.Health<h.MaxHealth then h.Health=h.MaxHealth end end)
+		pcall(function() local m=getMyModel(); if m then for _,a in ipairs({"Bleed","Bleeding","BleedDamage","Bloodloss","Wound","Wounds","Blood"}) do
+			local v=m:GetAttribute(a); if type(v)=="number" then m:SetAttribute(a, (a=="Blood") and math.max(v,100) or 0) elseif type(v)=="boolean" then m:SetAttribute(a,false) end
+		end end end)
+		task.wait(0.5)
+	else task.wait(0.5) end
 end end)
 
 -- ═══ ANTI-INJURY (path-aware): we don't know the exact bleed/break field names, so walk the WHOLE replica tree
