@@ -646,9 +646,21 @@ end
 -- The captured Attack call uses vector.create(...) = Luau's NATIVE vector type (typeof=="vector"), NOT Vector3.
 -- If the server type-checks the Position, a Vector3 is silently rejected. Send the native vector to match exactly.
 local function vec(p) if typeof(vector)=="table" and typeof(vector.create)=="function" then return vector.create(p.X, p.Y, p.Z) end return p end
+-- Classify a clicked bone part's NAME into the server's damage group (so clicking a Head/Neck/Leg bone registers as
+-- that group). Used for "aim the bone you click" — the Hitbox-container parts are named Head / Neck.001 / Spine /
+-- LegIK.L / Tail.002 / Hand.R etc.
+local function boneGroupFor(name)
+	local n=tostring(name):lower()
+	if n:find("head",1,true) or n:find("jaw",1,true) or n:find("skull",1,true) then return "Head" end
+	if n:find("neck",1,true) then return "Neck" end
+	if n:find("tail",1,true) then return "Tail" end
+	if n:find("leg",1,true) or n:find("femur",1,true) or n:find("tibia",1,true) or n:find("foot",1,true) or n:find("toe",1,true) then return "Leg" end
+	if n:find("arm",1,true) or n:find("hand",1,true) or n:find("humerus",1,true) or n:find("claw",1,true) or n:find("finger",1,true) then return "Arm" end
+	return "Body"   -- spine/hip/pelvis/chest/torso and anything unrecognized all report as Body
+end
 local getMyModel  -- FORWARD-DECLARED: fireAttack (below) calls it, but the definition is further down. Without this
                   -- forward decl it bound to a nil global and fireAttack THREW before sending the Attack remote.
-local function fireAttack(targetModel, skipSound)
+local function fireAttack(targetModel, skipSound, clickedPart)
 	if not targetModel then return false end
 	-- Degrade gracefully like replicaFire does: if the hook didn't capture our id, use any seen id (no-hook executors).
 	local myId = myReplicaId or seenIds[1]
@@ -656,12 +668,20 @@ local function fireAttack(targetModel, skipSound)
 	local rs=getReplicaSignal(); if not rs then return false end
 	-- pick a TARGET bone. If you picked a specific "Expand Bone" (Hitbox), AIM THAT SAME BONE; else use Always-hit part.
 	local group, boneName, targetPos
+	-- ═══ AIM THE BONE YOU CLICKED ═══ If a specific bone part was clicked (mouse target) and it belongs to this
+	-- target, register the hit on THAT exact bone — its real name + position + mapped group. This is what makes
+	-- "click a bone to hit it" work: click the head → Head hit, click a leg → Leg hit, etc.
+	local clickedAim=false
+	if clickedPart and clickedPart:IsA("BasePart") and clickedPart:IsDescendantOf(targetModel) then
+		local p=clickedPart.Position
+		if p then group, boneName, targetPos = boneGroupFor(clickedPart.Name), clickedPart.Name, p; clickedAim=true end
+	end
 	local want = (CFG.HitboxBone and CFG.HitboxBone~="All" and CFG.HitboxBone~="") and CFG.HitboxBone or CFG.DamagePart
 	local list = (want and want~="" and want~="Auto" and ATK_GROUPS[want]) or ATK_GROUPS.Auto
-	for _,b in ipairs(list) do
+	if not targetPos then for _,b in ipairs(list) do
 		local bn=_findIn(targetModel, b.n); local p=_bonePos(bn)
 		if p then group, boneName, targetPos = b.g, b.n, p; break end
-	end
+	end end
 	if not targetPos and list~=ATK_GROUPS.Auto then
 		for _,b in ipairs(ATK_GROUPS.Auto) do local bn=_findIn(targetModel,b.n); local p=_bonePos(bn); if p then group,boneName,targetPos=b.g,b.n,p; break end end
 	end
@@ -672,7 +692,8 @@ local function fireAttack(targetModel, skipSound)
 	if not targetPos then return false end
 	-- ALWAYS HIT the chosen part: even if we resolved the position from another bone (fallback), REPORT the hit as the
 	-- selected group/name. So "Always Damage = Neck" registers as a Neck hit no matter which bone we found.
-	if want and want~="" and want~="Auto" then
+	-- (SKIP this when you clicked a specific bone — the click wins so you can target any bone by clicking it.)
+	if not clickedAim and want and want~="" and want~="Auto" then
 		group = want
 		boneName = (ATK_GROUPS[want] and ATK_GROUPS[want][1] and ATK_GROUPS[want][1].n) or want
 	end
@@ -1782,6 +1803,12 @@ local function antiInjurySweep(tb, path, depth)
 				end
 			end
 			if CFG.BoneProtect and (kp:find("fractur",1,true) or kp:find("concuss",1,true)) then clear=true end  -- anti-fractured-head etc.
+			-- IMPROVED PROTECTION: when ANY protection anti is on, also wipe the disable states that bypass it — stun,
+			-- daze, stagger, downed, ragdoll, knockout, grabbed/pinned — so you can't be locked/killed through it.
+			if not clear then
+				local anyProt = CFG.AntiBleed or CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso
+				if anyProt and (kp:find("stun",1,true) or kp:find("daze",1,true) or kp:find("stagger",1,true) or kp:find("downed",1,true) or kp:find("ragdoll",1,true) or kp:find("knockout",1,true) or kp:find("grabbed",1,true) or kp:find("pinned",1,true) or kp:find("frozen",1,true)) then clear=true end
+			end
 			if clear then
 				if tv=="boolean" then if v then pcall(function() tb[k]=false end) end
 				else if v~=0 then pcall(function() tb[k]=0 end) end end
@@ -1795,6 +1822,9 @@ task.spawn(function() while RUNNING do
 	if (CFG.AntiBleed or CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso) and alive() then
 		pcall(function() local r=csReplica(); if r and r.Data then antiInjurySweep(r.Data, "", 0) end end)
 		pcall(function() if CharacterState then for _,s in ipairs({"Stats","State","Data","Wounds","Bones","BodyParts","Status"}) do local t=CharacterState[s]; if type(t)=="table" then antiInjurySweep(t, s:lower()..".", 0) end end end end)
+		-- un-ragdoll: a knockdown must never stick while protection is on (dinos that DO have a Humanoid)
+		pcall(function() local h=hum(); if h then if h.PlatformStand then h.PlatformStand=false end
+			local st=h:GetState(); if st==Enum.HumanoidStateType.Ragdoll or st==Enum.HumanoidStateType.FallingDown then pcall(function() h:ChangeState(Enum.HumanoidStateType.GettingUp) end) end end end)
 		task.wait(0.08)
 	else task.wait(0.3) end
 end end)
@@ -2447,7 +2477,7 @@ end end)
 -- SoundRemote, which were ONLY wired to the Always-Damage auto-loop. So a plain click never fired them = no damage.
 -- Now, while HITBOX is on, a real M1 click (not on the menu) fires the SAME proven swing→window→hit sequence at every
 -- enemy inside the expanded reach, so clicking actually deals damage. Debounced so a click can't spam-report.
-do local lastClickDmg=0
+do local lastClickDmg=0; local mouse=LP:GetMouse()
 conn(UIS.InputBegan:Connect(function(input, gp)
 	if gp then return end                                            -- click landed on the GUI = ignore (don't attack)
 	if input.UserInputType~=Enum.UserInputType.MouseButton1 then return end
@@ -2455,10 +2485,18 @@ conn(UIS.InputBegan:Connect(function(input, gp)
 	if tick()-lastClickDmg < 0.12 then return end; lastClickDmg=tick()
 	local me=hrp(); if not me then return end
 	local rng=math.max(tonumber(CFG.DamageRange) or 120, tonumber(CFG.HitboxSize) or 50)
+	-- THE BONE YOU CLICKED: mouse.Target is the CanQuery Hitbox bone part under the cursor (the expander sets those
+	-- CanQuery=true). We hit that enemy on that exact bone first, then AoE the rest at their auto bone.
+	local clicked=mouse.Target
+	local clickedModel=clicked and clicked:FindFirstAncestorWhichIsA("Model")
 	task.spawn(function()
 		local sr=getSoundRemote(); if sr then pcall(function() sr:FireServer("PVP","Attacks/Primary",false,nil,1) end) end
 		RunService.Heartbeat:Wait()                                  -- let the attack window open before the hit reports
 		local mine=getMyModel(); local n=0; local seen={}
+		-- clicked enemy FIRST, aiming the exact bone you clicked
+		if clickedModel and clickedModel:IsA("Model") and clickedModel~=mine and getHitbox(clickedModel) then
+			seen[clickedModel]=true; fireAttack(clickedModel, true, clicked); n+=1
+		end
 		local function hit(m)
 			if n>=8 or not (m and m:IsA("Model") and m~=mine) or seen[m] then return end
 			local hb=getHitbox(m); if hb and dist(me.Position,hb.Position)<=rng then seen[m]=true; fireAttack(m, true); n+=1 end
