@@ -640,7 +640,66 @@ local function hitboxTargets()
     return out
 end
 
+-- ============================================================
+-- ARM EXPANDER (Ability Arena's real fix). This game validates M1s server-side and the UseM1A packet carries
+-- encoded per-hit data (target id + hit position) we can't forge — BUT the game builds that packet itself from
+-- its own client-side detection off YOUR ARMS. So instead of (only) growing the enemy hitbox, we grow YOUR
+-- Left/Right Arm parts: the native detector then reaches far enemies and fires the correct UseM1A for us.
+-- We also clear YOUR HitLog (workspace.<You>.HitLog) so repeated swings keep landing on the same target.
+-- ============================================================
+local armOriginal = {}
+local function restoreArms()
+    for part, orig in pairs(armOriginal) do
+        if part and part.Parent then pcall(function()
+            part.Size = orig.size; part.Transparency = orig.transp
+            part.Massless = orig.massless; part.CanCollide = orig.collide
+            part.CanTouch = orig.touch; part.CanQuery = orig.query
+        end) end
+    end
+    armOriginal = {}
+end
+local function myArmParts()
+    local out = {}
+    local char = LP.Character
+    if not char then return out end
+    -- every arm/hand naming variant (R6 "Left Arm", R15 "LeftUpperArm"/"LeftHand", plus a custom "Handle")
+    for _, nm in ipairs({ "Left Arm","Right Arm","LeftArm","RightArm","LeftHand","RightHand",
+                          "LeftLowerArm","RightLowerArm","LeftUpperArm","RightUpperArm" }) do
+        local a = char:FindFirstChild(nm)
+        if a and a:IsA("BasePart") then out[#out+1] = a end
+    end
+    return out
+end
+-- clear your own HitLog so the same enemy can be hit again on the next swing (the log is the "already hit" guard)
+local function clearMyHitLog()
+    pcall(function()
+        local mine = Workspace:FindFirstChild(LP.Name)
+        local log = mine and mine:FindFirstChild("HitLog")
+        if log then for _,c in ipairs(log:GetChildren()) do c:Destroy() end end
+    end)
+end
+
 hook(RunService.Heartbeat, function()
+    -- grow YOUR arms whenever M1 reach is wanted (this is the primary Ability-Arena mechanism now)
+    local armSz = 0
+    if S.M1Hitbox or S.AutoFarm or S.AutoPlay then armSz = math.max(armSz, S.M1HitboxSize) end
+    if armSz > 0 then
+        for part in pairs(armOriginal) do if not part or not part.Parent then armOriginal[part] = nil end end
+        local acube = Vector3.new(armSz, armSz, armSz)
+        for _,part in ipairs(myArmParts()) do
+            if not armOriginal[part] then
+                armOriginal[part] = { size=part.Size, transp=part.Transparency,
+                    massless=part.Massless, collide=part.CanCollide, touch=part.CanTouch, query=part.CanQuery }
+            end
+            pcall(function()
+                part.Massless = true; part.CanCollide = false; part.CanTouch = true; part.CanQuery = true
+                if part.Size ~= acube then part.Size = acube end
+                part.Transparency = 0.7
+            end)
+        end
+        clearMyHitLog()
+    elseif next(armOriginal) then restoreArms() end
+
     local sz = wantedHitboxSize()
     if sz <= 0 then
         if next(hbOriginal) then restoreHitboxes() end
@@ -2109,11 +2168,11 @@ CombatTab:CreateSlider({Name="Save Health: trigger at HP %", Range={5,90}, Incre
 CombatTab:CreateSlider({Name="Save Health: sky height", Range={100,2000}, Increment=50, Suffix="studs", CurrentValue=700, Flag="SaveHealthHeight", Callback=function(v) S.SaveHealthHeight=v end})
 
 CombatTab:CreateSection("Hitboxes")
-CombatTab:CreateToggle({Name="M1 Hitbox Expander (your M1 reaches farther)", CurrentValue=false, Flag="M1Hitbox", Callback=function(v)
+CombatTab:CreateToggle({Name="M1 Reach (grows YOUR arms + enemy hitbox)", CurrentValue=false, Flag="M1Hitbox", Callback=function(v)
     S.M1Hitbox=v
-    if not v then restoreHitboxes() end
+    if not v then restoreHitboxes(); restoreArms() end
 end})
-CombatTab:CreateSlider({Name="M1 Hitbox Size", Range={1,300}, Increment=1, Suffix="studs", CurrentValue=50, Flag="M1HitboxSize", Callback=function(v) S.M1HitboxSize=v end})
+CombatTab:CreateSlider({Name="M1 Reach Size", Range={1,300}, Increment=1, Suffix="studs", CurrentValue=50, Flag="M1HitboxSize", Callback=function(v) S.M1HitboxSize=v end})
 CombatTab:CreateToggle({Name="Ability Hitbox Expander (pulses bigger on E)", CurrentValue=false, Flag="HitboxAbility", Callback=function(v)
     S.HitboxAbility=v
     if not v then destroyAbilityHb(); restoreHitboxes() end
