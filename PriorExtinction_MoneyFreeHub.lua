@@ -2360,20 +2360,10 @@ local function collectCorpses()
 	--    should read "1/24", not "1/2"). For each marker we PREFER the real body spawned inside it (a Humanoid, a child
 	--    Model, or a VISIBLE MeshPart — the marker itself is an invisible Transparency-1 dot); if nothing has spawned
 	--    there yet we still target the marker's own position so you can cycle to it and camp the spot.
-	-- ground validity: a marker parked in the VOID (no terrain/map under it) is "outside the map" — raycast down and
-	-- only keep it if it actually sits over real ground, so we never teleport you outside.
-	local function overGround(part)
-		if not (part and part:IsA("BasePart")) then return false end
-		local ok=false
-		pcall(function()
-			local rp=RaycastParams.new(); rp.FilterType=Enum.RaycastFilterType.Exclude
-			rp.FilterDescendantsInstances={getMyModel(), ci and ci:FindFirstChild("CorpseSpawns")}
-			rp.RespectCanCollide=true; rp.IgnoreWater=false
-			local res=WS:Raycast(part.Position+Vector3.new(0,10,0), Vector3.new(0,-2000,0), rp)
-			ok = res~=nil
-		end)
-		return ok
-	end
+	-- Count EVERY DinosaurSpawn in the folder (live) — same idea as the gem/fossil node scan: one entry per marker, so
+	-- the "X / N" number matches what's actually in CorpseSpawns. We PREFER the real body spawned inside a marker; if
+	-- none yet, we still add the marker itself so it's counted + cyclable. (Void/off-map markers can't hurt: the
+	-- teleport's own ground guard refuses them and auto-skips to the next, so the count is honest and the TP is safe.)
 	if ci then local cs=ci:FindFirstChild("CorpseSpawns"); if cs then for _,d in ipairs(cs:GetChildren()) do
 		local corpsePart
 		for _,x in ipairs(d:GetDescendants()) do
@@ -2381,9 +2371,8 @@ local function collectCorpses()
 			elseif x:IsA("MeshPart") and x.Transparency<0.95 then corpsePart=x; break
 			elseif x:IsA("Model") and x~=d then corpsePart=rootOf(x) or x:FindFirstChildWhichIsA("BasePart"); if corpsePart then break end end
 		end
-		-- corpse inside a marker = always keep. Bare marker = keep ONLY if it's over real ground (in the map, not void).
 		local markerPart=(d:IsA("BasePart") and d) or rootOf(d) or d:FindFirstChildWhichIsA("BasePart",true)
-		if corpsePart then add(corpsePart) elseif markerPart and overGround(markerPart) then add(markerPart) end
+		add(corpsePart or markerPart)
 	end end end
 	return out
 end
@@ -2450,7 +2439,7 @@ end
 -- go to the NEXT corpse in the list, wrapping, SKIPPING void/out-of-map spots (tpToCorpse returns false for those)
 -- until one actually lands you in the map; then ask YES/NO.
 local function doNextCorpse()
-	if #corpseList==0 then corpseList=collectCorpses(); corpseIdx=0 end
+	corpseList=collectCorpses()   -- LIVE: re-scan the folder every press so the count is always current
 	if #corpseList==0 then pcall(function() carnGui.Enabled=false end); notify("Corpse TP","No corpse / meat / bone found on the map right now."); return end
 	if not carnOrigin then local r=hrp(); if r then carnOrigin=r.Position end end   -- remember where you were (for Teleport Back)
 	local tries=0; local ok=false
@@ -2481,6 +2470,13 @@ task.spawn(function() local was=false while RUNNING do
 		if not was then was=true; carnOrigin=nil; corpseList=collectCorpses(); corpseIdx=0; task.spawn(doNextCorpse) end
 	else if was then was=false; pcall(function() carnGui.Enabled=false end) end end
 	task.wait(0.3)
+end end)
+-- LIVE COUNT: while the popup is showing, keep the "/ N" total fresh (same live-scan idea as gem/fossil), so as
+-- corpses spawn/despawn the number tracks the folder instead of freezing at whatever it was when you toggled on.
+task.spawn(function() while RUNNING do task.wait(1.5)
+	if carnGui.Enabled and CFG.CarnMeatTP and alive() then
+		pcall(function() local n=#collectCorpses(); if n>0 then carnLabel.Text="Teleported to corpse "..math.min(corpseIdx,n).." / "..n.." - did it work?" end end)
+	end
 end end)
 end   -- end of the scoped meat-helpers + Carnivore Meat TP block
 task.spawn(function() while RUNNING do
