@@ -1950,7 +1950,13 @@ local function isScentCorpse(m)
 	local sh = m:FindFirstChild("ScentHighlight")
 	if not (sh and sh:IsA("Highlight")) then return false end
 	if sh.Enabled==false then return false end
-	return true   -- an ENABLED ScentHighlight IS the game's corpse marker (what lights up red when you sniff) — trust it. (Red-color filtering removed: it rejected corpses whose fill wasn't perfectly red = "it doesn't tp".)
+	-- RED ONLY = corpse/meat (carnivore food). When you sniff, PLANTS get a GREEN ScentHighlight and corpses get a
+	-- RED one — matching any color teleported you to plants. Require a clearly RED fill (high red, low green+blue),
+	-- checking BOTH FillColor and OutlineColor (the red outline in the screenshot may live on either).
+	local function isRed(c) return c and c.R>0.55 and c.G<0.4 and c.B<0.4 end
+	local ok=false
+	pcall(function() if isRed(sh.FillColor) or isRed(sh.OutlineColor) then ok=true end end)
+	return ok
 end
 -- THE EXACT PART INSIDE THE RED (user: "teleport to the thing that is inside red"): a Highlight draws its outline
 -- on its .Adornee. So the "thing inside red" is ScentHighlight.Adornee — teleport to THAT, not the model's generic
@@ -2044,10 +2050,13 @@ local function nearestMeat(range)
 end
 __gg.MH_nearestMeat = nearestMeat   -- expose so the Auto Play Bot (separate do-block) can reuse it without a 2nd top-level local
 local carnMeatCd=0
+local carnSpawnT=tick()   -- SPAWN GRACE: never teleport in the first seconds after load/respawn (teleporting mid
+                          -- spawn-in = the "I spawn and die" you kept hitting). Reset on every CharacterAdded below.
+pcall(function() LP.CharacterAdded:Connect(function() carnSpawnT=tick() end) end)
 task.spawn(function() while RUNNING do
 	-- CarnMeatTP now runs on its OWN (no longer requires INF Food to be on too — that dependency was why "tp to
 	-- corpse no work" when INF Food was off). It travels to the nearest corpse/downed body/meat and eats it.
-	if CFG.CarnMeatTP and alive() then
+	if CFG.CarnMeatTP and alive() and tick()-carnSpawnT>5 then
 		-- travel whenever you're not basically FULL (99%) — much more eager to hunt, so it actually moves you.
 		-- if stats can't be read, assume hungry so it still travels.
 		local hungry=true; pcall(function() local s,m=csStats(); if s and m then local h=tonumber(s.Food or s.Hunger); local mh=tonumber(m.Food or m.Hunger or m.MaxFood); if h and mh then hungry = h < mh*0.99 end end end)
