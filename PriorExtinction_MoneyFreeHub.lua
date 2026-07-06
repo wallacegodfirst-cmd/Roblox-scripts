@@ -52,7 +52,7 @@ local CFG = {
 	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=17, Noclip=false, Invis=false,
 	InfJump=false, BypassTP=true,
 	InfFood=false, InfWater=false, InfStam=false, InfOxygen=false,
-	AntiDrown=true, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false,
+	AntiDrown=true, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false, HeadDmgReduce=90,
 	SaveDino=false, SaveHP=30, NoSleep=true, AutoHealBlood=false,
 	AutoFarmPlayer=false, FarmPlayerRange=120, AutoFarmFossil=false, FarmFossilRange=1000000,
 	ESPPlayers=false, ESPCorpses=false, FoodESP=false, FishESP=false, GemESP=false, ESPRange=900, ESPColor="Default",
@@ -86,7 +86,7 @@ loadCfg()
 -- MIGRATE + CLAMP the INF-Stam run speed on load: the old 30 default was above what the server tolerates = "it
 -- keeps sending me back". Any saved value ABOVE the safe band gets reset to 20 (the sweet spot: clearly faster
 -- than walking, low enough the server doesn't snap you); values you set inside 14-28 are kept as-is.
-do local rs = tonumber(CFG.RunSpeed) or 17; CFG.RunSpeed = (rs > 26 or rs < 14) and 17 or rs end
+do local rs = tonumber(CFG.RunSpeed) or 16; CFG.RunSpeed = (rs > 26 or rs < 12) and 16 or rs end   -- lower default = less snapback
 CFG.Keybinds = CFG.Keybinds or {}
 CFG.Keybinds.UIKey = CFG.Keybinds.UIKey or CFG.UIKey
 CFG.Keybinds.AimKey = CFG.Keybinds.AimKey or CFG.AimKey
@@ -680,6 +680,20 @@ local function fireAttack(targetModel, skipSound, clickedPart)
 		local bn=_findIn(targetModel, b.n); local p=_bonePos(bn)
 		if p then group, boneName, targetPos = b.g, b.n, p; break end
 	end end
+	-- KEYWORD FALLBACK — makes "Always hit part = Leg/Head/…" work on EVERY dino: if the exact bone names above didn't
+	-- resolve on THIS dino's rig, search its parts/bones for ANY name in the selected region, reporting that real name
+	-- so the server accepts it (bone naming varies per dino — this is why "aim a body part" missed on some of them).
+	if not targetPos and want and want~="" and want~="Auto" then
+		local KW=({Head={"head","skull","jaw","crani","maxill","mandib","frontal"},Neck={"neck"},Spine={"spine","body","torso","chest"},Body={"spine","body","torso","chest","hip","ilium"},Leg={"leg","femur","tibia","thigh","foot","shin","toe"},Tail={"tail"},Hip={"hip","ilium","pelvis"},Arm={"arm","hand","claw","humer","wing","finger"}})[want]
+		if KW then local scanned=0
+			for _,d in ipairs(targetModel:GetDescendants()) do scanned+=1; if scanned>600 then break end
+				if d:IsA("BasePart") or d:IsA("Bone") then local dn=d.Name:lower()
+					for _,kw in ipairs(KW) do if dn:find(kw,1,true) then local p=_bonePos(d); if p then group=(ATK_GROUPS[want] and ATK_GROUPS[want][1] and ATK_GROUPS[want][1].g) or "Body"; boneName=d.Name; targetPos=p; break end end end
+				end
+				if targetPos then break end
+			end
+		end
+	end
 	if not targetPos and list~=ATK_GROUPS.Auto then
 		for _,b in ipairs(ATK_GROUPS.Auto) do local bn=_findIn(targetModel,b.n); local p=_bonePos(bn); if p then group,boneName,targetPos=b.g,b.n,p; break end end
 	end
@@ -688,12 +702,12 @@ local function fireAttack(targetModel, skipSound, clickedPart)
 		if hb and hb:IsA("BasePart") then group, boneName, targetPos = "Body","Hitbox",hb.Position end
 	end
 	if not targetPos then return false end
-	-- ALWAYS HIT the chosen part: even if we resolved the position from another bone (fallback), REPORT the hit as the
-	-- selected group/name. So "Always Damage = Neck" registers as a Neck hit no matter which bone we found.
-	-- (SKIP this when you clicked a specific bone — the click wins so you can target any bone by clicking it.)
+	-- ALWAYS HIT the chosen part: report the GROUP as the selected region so "Always Damage = Neck" registers as a Neck
+	-- hit — but KEEP the REAL bone name we resolved above (forcing a canonical name like "Skull" on a dino whose bone is
+	-- "Head" made the server REJECT the hit = no damage). Skip when you clicked a specific bone (the click wins).
 	if not clickedAim and want and want~="" and want~="Auto" then
 		group = want
-		boneName = (ATK_GROUPS[want] and ATK_GROUPS[want][1] and ATK_GROUPS[want][1].n) or want
+		if not boneName or boneName=="" then boneName = (ATK_GROUPS[want] and ATK_GROUPS[want][1] and ATK_GROUPS[want][1].n) or want end
 	end
 	-- attacker's Jaw position (our own MeshModel bone) — server expects this in arg[5]
 	-- arg[5] = OUR biting bone. The capture used Name="Head" — use our own Head hit-part (from our Hitbox container).
@@ -1378,12 +1392,13 @@ do local p=Pages["Survival"]
 	end
 	mkToggle(f,"INF Water","InfWater",5)
 	mkToggle(f,"INF Stamina","InfStam",6)
-	mkSlider(f,"INF Stam Run Speed (lower if it snaps you back)","RunSpeed",14,28,7,1)
+	mkSlider(f,"INF Stam Run Speed (lower if it snaps you back)","RunSpeed",12,26,7,1)
 	local _,pr=mkSec(p,"Protection",2)
 	mkToggle(pr,"Anti Drown","AntiDrown",1)
 	mkToggle(pr,"Walk on Water","WalkWater",2)
 	mkToggle(pr,"Auto Clean","AutoClean",3)
-	mkToggle(pr,"Anti Fractured Head","AntiFracture",4)
+	mkToggle(pr,"Anti Head (clears break + HEALS BACK the damage)","AntiFracture",4)
+	mkSlider(pr,"Damage Reduce % (90 = heal back 90% of every hit)","HeadDmgReduce",0,95,4,5)
 	mkToggle(pr,"Anti Bleed","AntiBleed",5)
 	mkToggle(pr,"Anti Fall","AntiFall",6)
 	mkToggle(pr,"No Sleep Screen","NoSleep",7)
@@ -1816,6 +1831,30 @@ local function antiInjurySweep(tb, path, depth)
 		end
 	end
 end
+-- ═══ ANTI HEAD / BONE PROTECTION — DAMAGE HEAL-BACK (the real "I still get damage" fix) ═══ PE damage is server-
+-- side and report-based, so we can't change the hit number — but we can HEAL BACK part of every hit the instant it
+-- lands. Each Heartbeat we read your HP; if it dropped, we restore HeadDmgReduce% of that drop (default 90%), so a
+-- 1k head hit nets ~100. This is what actually stops you dying to head hits / bleed / breaks (not just the blur).
+-- Tied to Anti Head (AntiFracture) OR Bone Protection so either toggle gives real damage reduction.
+conn(RunService.Heartbeat:Connect(function()
+	if not ((CFG.AntiFracture or CFG.BoneProtect) and alive()) then __gg.MH_lastHP=nil; return end
+	pcall(function()
+		local h=hum(); local stats,maxs=csStats()
+		local hp = (stats and tonumber(stats.Health or stats.HP)) or (h and h.Health)
+		local mx = (maxs and tonumber(maxs.Health or maxs.HP)) or (h and h.MaxHealth)
+		if not hp or not mx or mx<=0 or mx>=1e7 then return end
+		local last = __gg.MH_lastHP or hp
+		if hp < last-0.05 then   -- ANY drop (incl. small bleed DoT ticks)
+			local frac = math.clamp((tonumber(CFG.HeadDmgReduce) or 90)/100, 0, 0.95)
+			local newHP = math.min(mx, hp + (last-hp)*frac)   -- heal back `frac` of the damage = take only (1-frac)
+			if stats then for _,k in ipairs({"Health","HP","Hp","health","hp"}) do if stats[k]~=nil then stats[k]=newHP end end end
+			if h then pcall(function() h.Health=newHP; h:SetStateEnabled(Enum.HumanoidStateType.Dead,false) end) end
+			if CharacterState then for _,k in ipairs({"Health","HP"}) do if type(CharacterState[k])=="number" then CharacterState[k]=newHP end end end
+			pcall(function() setReplicaProp("Health", newHP) end)
+			__gg.MH_lastHP = newHP
+		else __gg.MH_lastHP = math.min(hp, mx) end
+	end)
+end))
 task.spawn(function() while RUNNING do
 	if (CFG.AntiBleed or CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso) and alive() then
 		pcall(function() local r=csReplica(); if r and r.Data then antiInjurySweep(r.Data, "", 0) end end)
@@ -1875,8 +1914,13 @@ conn(RunService.Heartbeat:Connect(function()
 	local bv=__gg.MH_stamBV
 	if not (bv and bv.Parent==r) then pcall(function() if bv then bv:Destroy() end end); bv=Instance.new("BodyVelocity"); bv.Name="MH_Stam"; bv.MaxForce=Vector3.new(9e9,0,9e9); bv.P=5000; bv.Velocity=Vector3.zero; bv.Parent=r; __gg.MH_stamBV=bv end
 	if dir.Magnitude<=0 then pcall(function() bv.Velocity=Vector3.zero end); return end   -- no input = don't push
-	local target=math.clamp(tonumber(CFG.RunSpeed) or 20, 14, 40)
-	pcall(function() bv.Velocity=dir.Unit*target end)
+	-- ONLY NUDGE UP when you're slower than target (never OVERRIDE your natural sprint) — forcing a fixed velocity
+	-- every frame is what fought the server = the "keeps sending me back" snapback. Now Run passes through (real
+	-- sprint speed) and this only fills in when you're below target, then RELEASES so nothing fights the server.
+	local target=math.clamp(tonumber(CFG.RunSpeed) or 16, 12, 26)
+	local v=r.AssemblyLinearVelocity; local curH=math.sqrt(v.X*v.X+v.Z*v.Z)
+	if curH < target-1 then pcall(function() bv.Velocity=dir.Unit*target end)
+	else pcall(function() bv.Velocity=Vector3.zero end) end
 end))
 -- HARD STAMINA PIN (the reference's fix for NOT swallowing Run): slam the stamina value back to its REAL max in ALL
 -- THREE frame phases — RenderStepped (start), Stepped (after physics), Heartbeat (after replication). If the server
@@ -2588,20 +2632,33 @@ local function restorePart(p) local o=hbTouched[p]; if o and p and p.Parent then
 -- filtered by the selected bone. ENEMIES ONLY (never our own model — that would block our own clicks/movement).
 local function expandModel(m)
 	if not m then return end
+	local grewAny=false
 	for _,n in ipairs({"Hitbox","HitBox","HitboxPart","Hit"}) do
 		local inst=m:FindFirstChild(n)
 		if inst then
 			if inst:IsA("BasePart") then
-				if boneMatch(inst.Name) or CFG.HitboxBone=="All" or CFG.HitboxBone=="Body" then expandPart(inst)
+				if boneMatch(inst.Name) or CFG.HitboxBone=="All" or CFG.HitboxBone=="Body" then expandPart(inst); grewAny=true
 				elseif hbTouched[inst] then restorePart(inst) end  -- bone switched away → restore it (no double boxes)
 			else
 				for _,d in ipairs(inst:GetDescendants()) do
 					if d:IsA("BasePart") then
-						if boneMatch(d.Name) then expandPart(d)
+						if boneMatch(d.Name) then expandPart(d); grewAny=true
 						elseif hbTouched[d] then restorePart(d) end  -- restore parts that no longer match the selected bone
 					end
 				end
 			end
+		end
+	end
+	-- FALLBACK — WORKS ON EVERY DINO: some dinos have no "Hitbox" container (or an oddly-named one), so nothing grew
+	-- above. Grow the model's OWN parts too — the MeshModel bones' render parts, the HumanoidRootPart, and any direct
+	-- BasePart — filtered by the selected bone. This is why "hitbox didn't work on some dinos": they had no Hitbox box.
+	if not grewAny then
+		local hrp2=m:FindFirstChild("HumanoidRootPart"); if hrp2 and hrp2:IsA("BasePart") and (CFG.HitboxBone=="All" or CFG.HitboxBone=="Body") then expandPart(hrp2) end
+		local cnt=0
+		for _,d in ipairs(m:GetDescendants()) do
+			cnt+=1; if cnt>400 then break end
+			if d:IsA("BasePart") and d~=hrp2 and boneMatch(d.Name) then expandPart(d)
+			elseif d:IsA("BasePart") and hbTouched[d] and not boneMatch(d.Name) then restorePart(d) end
 		end
 	end
 end
