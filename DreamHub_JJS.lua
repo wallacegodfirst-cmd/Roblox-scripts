@@ -3615,54 +3615,47 @@ do
 		end)
 	end
 	local sdaInjecting = 0
-	-- SIDE DASH ASSIST (user spec): the instant a REAL M1 anim plays, CURVE LEFT AROUND the enemy — fast — then
-	-- face them so you can immediately M1 again. Just the two anim ids + a fast leftward curve dash. No orbit math,
-	-- no long steer loop (that was the "shit/fucked" version).
+	-- SIDE DASH ASSIST (user spec v2): fires ONLY when YOU press Q — never off an M1 anim (that dashed you when you
+	-- never clicked). Q -> short FAST LEFT dash (the game's Dash remote is validation-only per the user's own test,
+	-- so we drive a client velocity LEFT) -> face the enemy -> throw one M1. Left = -RightVector. Short = no over-glide.
 	local function trigger()
 		if not on then return end
-		if tick() - last < 0.5 then return end                     -- one dash per swing
+		if tick() - last < 0.4 then return end                     -- one dash per press
 		if tick() < sdaInjecting then return end                   -- never chain off our own injected inputs
 		if tick() - (_G.VX_LAUNCHING or 0) < 0.3 then return end   -- not during an uppercut launch
 		if tick() < (_G.VX_BUSY or 0) then return end              -- not during an Auto Air sequence
-		if _G.VX_M1BF_ON then return end                           -- M1 Black Flash owns landed M1s
-		if tick() < (_G.VX_SDA_HOLD or 0) then return end
 		local mh = getHRP(myModel()); if not mh then return end
-		local tgt = nearestEnemy(16); local tr = tgt and getHRP(tgt)
-		if not tr then return end
-		last = tick(); sdaInjecting = tick() + 0.35
-		_G.VX_INJECT_UNTIL = tick() + 0.35
-		-- the two anim ids the user gave (curve-around flourish)
-		playAnim("rbxassetid://95295463826732"); playAnim("rbxassetid://75203303352791")
-		-- FAST left curve: fire the game's own Left dash AND drive a leftward-and-slightly-forward velocity so it
-		-- visibly whips you around the enemy's left side. Short + fast (0.16s), re-reading facing each frame so
-		-- "left" stays left as you turn. Then snap to face them = instant follow-up M1.
-		fireKnit("MovementService", "Dash", "Left", true)
+		local tgt = nearestEnemy(18); local tr = tgt and getHRP(tgt)
+		last = tick(); sdaInjecting = tick() + 0.3
+		_G.VX_INJECT_UNTIL = tick() + 0.3
+		playAnim("rbxassetid://95295463826732"); playAnim("rbxassetid://75203303352791")   -- the two anim ids the user gave
+		fireKnit("MovementService", "Dash", "Left", true)   -- harmless if validation-only; the velocity below is the real mover
 		task.spawn(function()
+			-- SHORT pure-LEFT push (0.1s @ 80 ≈ 8 studs) — enough to whip left, short enough it can't "glide too far"
 			local t0 = tick()
-			while tick() - t0 < 0.16 do
+			while tick() - t0 < 0.10 do
 				local mh2 = getHRP(myModel()); if not mh2 then break end
-				local cf = mh2.CFrame
-				local v = (-cf.RightVector * 1.0 + cf.LookVector * 0.35).Unit * 105   -- left + a touch forward = curve, FAST
+				local v = -mh2.CFrame.RightVector * 80   -- PURE LEFT (no forward/right component)
 				pcall(function() mh2.AssemblyLinearVelocity = Vector3.new(v.X, math.min(mh2.AssemblyLinearVelocity.Y, 0), v.Z) end)
 				task.wait()
 			end
+			local mhS = getHRP(myModel()); if mhS then pcall(function() local vv = mhS.AssemblyLinearVelocity; mhS.AssemblyLinearVelocity = Vector3.new(0, vv.Y, 0) end) end   -- stop dead, no residual slide
 			local mh3 = getHRP(myModel()); local tr3 = tgt and tgt.Parent and getHRP(tgt)
-			if mh3 and tr3 then pcall(function() mh3.CFrame = CFrame.lookAt(mh3.Position, Vector3.new(tr3.Position.X, mh3.Position.Y, tr3.Position.Z)) end) end   -- face them = your next M1 lands
+			if mh3 and tr3 then pcall(function() mh3.CFrame = CFrame.lookAt(mh3.Position, Vector3.new(tr3.Position.X, mh3.Position.Y, tr3.Position.Z)) end) end   -- face them
+			local VIM = game:GetService("VirtualInputManager")
+			local cam = workspace.CurrentCamera; local vp = (cam and cam.ViewportSize) or Vector2.new(800, 600)
+			pcall(function() VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, true, game, 0); task.wait(0.04); VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, false, game, 0) end)   -- M1 for you
 		end)
-		if _G.VX_BF_DEBUG then print("[DreamHub SideDash] M1 detected -> fast Left curve around "..(tgt and tgt.Name or "?")) end
+		if _G.VX_BF_DEBUG then print("[DreamHub SideDash] Q -> Left dash + M1 at "..(tgt and tgt.Name or "no target")) end
 	end
-	-- TRIGGER: your own M1 ANIMATION (every character's ids are in _G.VX_M1_IDS now)
-	local hooked = setmetatable({}, { __mode = "k" })
-	local function hookSelf()
-		local m = myModel(); local h = m and m:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
-		if not a or hooked[a] then return end
-		hooked[a] = a.AnimationPlayed:Connect(function(track)
-			if not on then return end
-			local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+")
-			if id and _G.VX_M1_IDS and _G.VX_M1_IDS[id] then trigger() end
-		end)
-	end
-	task.spawn(function() while true do if on then pcall(hookSelf) end task.wait(0.6) end end)
+	-- TRIGGER: the Q key ONLY (real presses; injected Q is ignored). No animation trigger.
+	UIS.InputBegan:Connect(function(input, gpe)
+		if not on or gpe then return end
+		if UIS:GetFocusedTextBox() then return end
+		if input.KeyCode ~= Enum.KeyCode.Q then return end
+		do local injK = _G.VX_INJ_KEYS; if injK and injK[Enum.KeyCode.Q] and tick() < injK[Enum.KeyCode.Q] then return end end
+		trigger()
+	end)
 	-- BLOCK PUNISH (part of Side Dash Assist): the enemy you're hitting raises BLOCK -> instantly get BEHIND
 	-- them and M1 (their block faces the wrong way = free hit). This is the 'escape their block and hit them'.
 	local lastPunish = 0
@@ -4186,8 +4179,11 @@ do
 				local t = treesRoot()
 				if t then
 					for _, p in ipairs(t:GetDescendants()) do
-						if p:IsA("BasePart") and hidden[p] == nil then hidden[p] = p.Transparency; pcall(function() p.Transparency = 1 end) end
-						if p:IsA("Decal") or p:IsA("Texture") then pcall(function() p.Transparency = 1 end) end
+						-- SAVE everything we hide (parts AND decals/textures). Decals were hidden WITHOUT being saved,
+						-- so turning trees back on restored trunks but left leaves/bark invisible = "trees don't come back".
+						if (p:IsA("BasePart") or p:IsA("Decal") or p:IsA("Texture")) and hidden[p] == nil then
+							hidden[p] = p.Transparency; pcall(function() p.Transparency = 1 end)
+						end
 					end
 				end
 			end
@@ -6430,6 +6426,13 @@ local Library do
                 Window.IsOpen = Bool
 
                 Debounce = true
+                -- GUARANTEED RELEASE (root cause of the stuck Dream button): Debounce was only cleared inside the
+                -- tween's Completed callback. If the tween errored or never fired, Debounce stayed true forever and
+                -- NOTHING could toggle the menu again. This always releases it and enforces final visibility.
+                task.delay((Library.FadeSpeed or 0.2) + 0.3, function()
+                    Debounce = false
+                    pcall(function() Items["MainFrame"].Instance.Visible = Window.IsOpen end)
+                end)
 
                 if Window.IsOpen then
                     Items["MainFrame"].Instance.Visible = true
@@ -6456,10 +6459,12 @@ local Library do
                     end
                 end
 
-                NewTween.Tween.Completed:Connect(function()
-                    Debounce = false
-                    Items["MainFrame"].Instance.Visible = Window.IsOpen
-                end)
+                if NewTween and NewTween.Tween then   -- may be nil if nothing was tweenable — the task.delay above releases Debounce regardless
+                    NewTween.Tween.Completed:Connect(function()
+                        Debounce = false
+                        Items["MainFrame"].Instance.Visible = Window.IsOpen
+                    end)
+                end
             end
 
             Library:Connect(UserInputService.InputBegan, function(Input)
@@ -8533,9 +8538,7 @@ do
     local coreSec = mvSub:Section({ Name = "Core", Side = 1 })
     coreSec:Toggle({ Name = "Remove Trees", Callback = function(b) if RemoveTreesApi then RemoveTreesApi.set(b) end end })
     coreSec:Toggle({ Name = "Infinite Jump", Callback = function(b) if InfJumpApi then InfJumpApi.set(b) end end })
-    coreSec:Button({ Name = "Dash Forward", Callback = function() if DashApi then DashApi.forward() end end })
-    coreSec:Toggle({ Name = "Invisible", Callback = function(b) if InvisApi then InvisApi.set(b) end end })   -- always visible now
-    coreSec:Toggle({ Name = "Desync Freeze", Callback = function(b) if DesyncFreezeApi then DesyncFreezeApi.set(b) end end })
+    -- (Dash Forward / Invisible / Desync Freeze removed per request — modules stay in code, no UI)
     if tier("plus") then
         coreSec:Toggle({ Name = "No Dash CD", Callback = function(b) if DashApi then DashApi.setNoCd(b) end end })
     end
