@@ -1354,7 +1354,8 @@ do local p=Pages["Survival"]
 	mkToggle(f,"INF Food","InfFood",1)
 	mkLabel(f,"HERB ONLY: turn INF Food ON, then EAT ONE plant (walk up + press E). It captures that food id + scans the whole map and keeps replaying it to hold your bar. If you're a CARNIVORE, use Carnivore Meat TP below instead.")
 	mkSlider(f,"INF Food grow speed (bites/cycle)","FoodEatSpeed",1,10,3,1)
-	mkToggle(f,"Carnivore Meat TP (TP to nearest meat/corpse)","CarnMeatTP",4)
+	mkToggle(f,"Carnivore Meat TP (cycles corpses + asks Yes/No)","CarnMeatTP",4)
+	mkBtn(f,"Teleport Back (where you were)",function() if __gg.MH_corpseBack then __gg.MH_corpseBack() end end,4)
 	mkToggle(f,"INF Water","InfWater",5)
 	mkToggle(f,"INF Stamina","InfStam",6)
 	mkSlider(f,"INF Stam Run Speed (lower if it snaps you back)","RunSpeed",14,28,7,1)
@@ -2121,50 +2122,96 @@ local function nearestMeat(range)
 	return best,bpart,bd
 end
 __gg.MH_nearestMeat = nearestMeat   -- expose so the Auto Play Bot (separate do-block) can reuse it without a 2nd top-level local
-local carnMeatCd=0
-local carnSpawnT=tick()   -- SPAWN GRACE: never teleport in the first seconds after load/respawn (teleporting mid
-                          -- spawn-in = the "I spawn and die" you kept hitting). Reset on every CharacterAdded below.
+local carnSpawnT=tick()   -- SPAWN GRACE: never teleport in the first seconds after load/respawn.
 pcall(function() LP.CharacterAdded:Connect(function() carnSpawnT=tick() end) end)
-task.spawn(function() while RUNNING do
-	-- CarnMeatTP now runs on its OWN (no longer requires INF Food to be on too — that dependency was why "tp to
-	-- corpse no work" when INF Food was off). It travels to the nearest corpse/downed body/meat and eats it.
+-- ═══ CORPSE TELEPORT — cycle EVERY corpse across the WHOLE map + YES/NO confirm + teleport back ═══
+local corpseList, corpseIdx, carnOrigin, carnBusy = {}, 0, nil, false
+-- DEAD detector (the Save-Dino health trick, applied to OTHER dinos/players): a dead Humanoid, or a health
+-- attribute at 0. Dead player = a corpse you can eat.
+local function modelDead(m)
+	if not (m and m:IsA("Model")) or m==getMyModel() then return false end
+	local h=m:FindFirstChildOfClass("Humanoid"); if h and h.MaxHealth>0 then return h.Health<=0 end
+	for _,a in ipairs({"Health","HP","Hitpoints","HitPoints"}) do local v=m:GetAttribute(a); if tonumber(v)~=nil then return tonumber(v)<=0 end end
+	return false
+end
+-- Build the list of EVERY corpse/meat/bone/spawn on the map (not nearest — all of them, to cycle through).
+local function collectCorpses()
+	local out,seen={},{}
+	local function add(p) if p and p:IsA("BasePart") and not seen[p] then seen[p]=true; out[#out+1]=p end end
+	local function addM(m) if m then add((m:IsA("BasePart") and m) or rootOf(m) or m:FindFirstChildWhichIsA("BasePart")) end end
+	local ci=WS:FindFirstChild("CharacterIgnore")
+	if ci then
+		local cs=ci:FindFirstChild("CorpseSpawns"); if cs then for _,d in ipairs(cs:GetChildren()) do addM(d) end end          -- corpse spawn markers
+		local lc=ci:FindFirstChild("LeftCharacters"); if lc then for _,m in ipairs(lc:GetChildren()) do addM(m) end end        -- players who died/left = corpses
+	end
+	for _,fn in ipairs({"Bonepiles","DinosaurRagdolls","Corpses","DeadBodies"}) do local f=WS:FindFirstChild(fn); if f then for _,m in ipairs(f:GetChildren()) do addM(m) end end end
+	local food=WS:FindFirstChild("Food"); if food then for _,sub in ipairs(food:GetChildren()) do local n=sub.Name:lower()
+		if n:find("meat",1,true) or n:find("bone",1,true) or n:find("carcass",1,true) or n:find("collect",1,true) or n:find("corpse",1,true) then
+			if #sub:GetChildren()>0 then for _,m in ipairs(sub:GetChildren()) do addM(m) end else addM(sub) end
+		end end end
+	-- DEAD players/dinos ANYWHERE under workspace.Characters (health-based, whole map — not nearest)
+	local chars=WS:FindFirstChild("Characters"); if chars then for _,m in ipairs(chars:GetChildren()) do
+		if m:IsA("Model") and (modelDead(m) or isScentCorpse(m)) then addM(m) end
+	end end
+	return out
+end
+-- YES/NO confirmation popup
+local carnGui=Instance.new("ScreenGui"); carnGui.Name="MH_CorpseTP"; carnGui.ResetOnSpawn=false; carnGui.Enabled=false; carnGui.IgnoreGuiInset=true; carnGui.DisplayOrder=9998
+safeParentGui(carnGui)
+local carnFrame=Instance.new("Frame"); carnFrame.Size=UDim2.fromOffset(330,100); carnFrame.Position=UDim2.new(0.5,-165,0,80); carnFrame.BackgroundColor3=Color3.fromRGB(22,24,28); carnFrame.BorderSizePixel=0; carnFrame.Parent=carnGui
+Instance.new("UICorner",carnFrame).CornerRadius=UDim.new(0,8)
+local carnStroke=Instance.new("UIStroke"); carnStroke.Color=Color3.fromRGB(235,90,90); carnStroke.Thickness=1.5; carnStroke.Parent=carnFrame
+local carnLabel=Instance.new("TextLabel"); carnLabel.Size=UDim2.new(1,-16,0,46); carnLabel.Position=UDim2.fromOffset(8,6); carnLabel.BackgroundTransparency=1; carnLabel.Text="Did it teleport you to a corpse?"; carnLabel.TextColor3=Color3.new(1,1,1); carnLabel.TextSize=14; carnLabel.Font=Enum.Font.GothamMedium; carnLabel.TextWrapped=true; carnLabel.Parent=carnFrame
+local yesBtn=Instance.new("TextButton"); yesBtn.Size=UDim2.new(0.5,-12,0,34); yesBtn.Position=UDim2.fromOffset(8,58); yesBtn.BackgroundColor3=Color3.fromRGB(46,165,92); yesBtn.Text="YES - stay"; yesBtn.TextColor3=Color3.new(1,1,1); yesBtn.TextSize=13; yesBtn.Font=Enum.Font.GothamBold; yesBtn.BorderSizePixel=0; yesBtn.AutoButtonColor=true; yesBtn.Parent=carnFrame
+Instance.new("UICorner",yesBtn).CornerRadius=UDim.new(0,6)
+local noBtn=Instance.new("TextButton"); noBtn.Size=UDim2.new(0.5,-12,0,34); noBtn.Position=UDim2.new(0.5,4,0,58); noBtn.BackgroundColor3=Color3.fromRGB(205,72,72); noBtn.Text="NO - next corpse"; noBtn.TextColor3=Color3.new(1,1,1); noBtn.TextSize=13; noBtn.Font=Enum.Font.GothamBold; noBtn.BorderSizePixel=0; noBtn.AutoButtonColor=true; noBtn.Parent=carnFrame
+Instance.new("UICorner",noBtn).CornerRadius=UDim.new(0,6)
+-- teleport onto a corpse part (noclip + hold so it can't rubber-band; eat prompt fired)
+local function tpToCorpse(part)
+	if not (part and part.Parent) or carnBusy then return end
+	carnBusy=true
+	if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
+	local np=part.Position; local landY=np.Y+3; pcall(function() if __gg.MH_landY then landY=__gg.MH_landY(np, part:FindFirstAncestorWhichIsA("Model")) end end)
+	local cc=getMyModel(); local goal=CFrame.new(np.X, landY, np.Z)
+	local noclip={}; if cc then pcall(function() for _,dd in ipairs(cc:GetDescendants()) do if dd:IsA("BasePart") and dd.CanCollide then dd.CanCollide=false; noclip[#noclip+1]=dd end end end) end
+	pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end end)
+	local r=hrp(); if r then pcall(function() r.AssemblyLinearVelocity=Vector3.zero; r.AssemblyAngularVelocity=Vector3.zero end) end
+	local bp; pcall(function() if r then bp=Instance.new("BodyPosition"); bp.MaxForce=Vector3.new(9e9,9e9,9e9); bp.P=2e4; bp.D=2500; bp.Position=Vector3.new(np.X,landY,np.Z); bp.Parent=r end end)
+	pcall(function() local m=part:FindFirstAncestorWhichIsA("Model"); local prompt=(m and m:FindFirstChildWhichIsA("ProximityPrompt",true)) or part:FindFirstChildWhichIsA("ProximityPrompt")
+		if prompt then local oh=prompt.HoldDuration; prompt.RequiresLineOfSight=false; prompt.HoldDuration=0; if fireprox then fireprox(prompt) end; prompt.HoldDuration=oh end end)
+	holdKey(Enum.KeyCode.E, 0.5)
+	task.delay(0.8, function() for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end; pcall(function() if bp then bp:Destroy() end end); carnBusy=false end)
+end
+-- go to the NEXT corpse in the list, wrapping, skipping any that despawned; then ask YES/NO.
+local function doNextCorpse()
+	if #corpseList==0 then corpseList=collectCorpses(); corpseIdx=0 end
+	if #corpseList==0 then pcall(function() carnGui.Enabled=false end); notify("Corpse TP","No corpse / meat / bone found on the map right now."); return end
+	local tries=0; local part
+	repeat corpseIdx = corpseIdx % #corpseList + 1; tries=tries+1; part=corpseList[corpseIdx] until (part and part.Parent) or tries>#corpseList
+	if not (part and part.Parent) then corpseList={}; pcall(function() carnGui.Enabled=false end); notify("Corpse TP","Those corpses despawned — will rescan."); return end
+	if not carnOrigin then local r=hrp(); if r then carnOrigin=r.Position end end   -- remember where you were (for Teleport Back)
+	tpToCorpse(part)
+	pcall(function() carnLabel.Text="Teleported to corpse "..corpseIdx.." / "..#corpseList.." - did it work?"; carnGui.Enabled=true end)
+end
+yesBtn.MouseButton1Click:Connect(function() pcall(function() carnGui.Enabled=false end) end)   -- keep you here
+noBtn.MouseButton1Click:Connect(function() task.spawn(doNextCorpse) end)                        -- try a different one
+__gg.MH_corpseBack = function()   -- "Teleport Back" button -> return to where you were
+	local o=carnOrigin; if not o then notify("Corpse TP","No saved spot yet - use Carnivore Meat TP first."); return end
+	local cc=getMyModel(); local r=hrp()
+	if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
+	local noclip={}; if cc then pcall(function() for _,dd in ipairs(cc:GetDescendants()) do if dd:IsA("BasePart") and dd.CanCollide then dd.CanCollide=false; noclip[#noclip+1]=dd end end end) end
+	pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(CFrame.new(o)) elseif r then r.CFrame=CFrame.new(o) end end)
+	if r then pcall(function() r.AssemblyLinearVelocity=Vector3.zero end) end
+	task.delay(0.5, function() for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end end)
+	pcall(function() carnGui.Enabled=false end)
+	notify("Corpse TP","Teleported back to where you were.")
+end
+-- TRIGGER: turning Carnivore Meat TP ON starts the cycle (teleport to a corpse + ask). Turning it OFF hides the popup.
+task.spawn(function() local was=false while RUNNING do
 	if CFG.CarnMeatTP and alive() and tick()-carnSpawnT>5 then
-		-- travel whenever you're not basically FULL (99%) — much more eager to hunt, so it actually moves you.
-		-- if stats can't be read, assume hungry so it still travels.
-		local hungry=true; pcall(function() local s,m=csStats(); if s and m then local h=tonumber(s.Food or s.Hunger); local mh=tonumber(m.Food or m.Hunger or m.MaxFood); if h and mh then hungry = h < mh*0.99 end end end)
-		if hungry and tick()-carnMeatCd>3 then
-			local m,part=nearestMeat(6000)   -- wider reach = "scan the whole map" for a corpse/downed body/meat
-			if part then
-				carnMeatCd=tick()
-				if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
-				local np=part.Position; local landY=np.Y+2; pcall(function() if __gg.MH_landY then landY=__gg.MH_landY(np, m) end end)
-				local cc=getMyModel(); local goal=CFrame.new(np.X, landY, np.Z)
-				-- stepped/whitelisted-style move: noclip through, snap, then hold with a BodyPosition so it can't rubber-band
-				local noclip={}; if cc then pcall(function() for _,dd in ipairs(cc:GetDescendants()) do if dd:IsA("BasePart") and dd.CanCollide then dd.CanCollide=false; noclip[#noclip+1]=dd end end end) end
-				pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end end)
-				local r=hrp(); if r then pcall(function() r.AssemblyLinearVelocity=Vector3.zero; r.AssemblyAngularVelocity=Vector3.zero end) end
-				local bp; pcall(function() if r then bp=Instance.new("BodyPosition"); bp.MaxForce=Vector3.new(9e9,9e9,9e9); bp.P=2e4; bp.D=2500; bp.Position=Vector3.new(np.X,landY,np.Z); bp.Parent=r end end)
-				-- EAT IT NOW: fire the corpse's own Eat/Investigate prompt directly (instant hold) + a real E hold as
-				-- backup, so the meat is consumed on THIS visit instead of waiting for the food loop's next pass.
-				pcall(function()
-					local prompt
-					if m and m.FindFirstChildWhichIsA then prompt=m:FindFirstChildWhichIsA("ProximityPrompt", true) end
-					if not prompt and part then prompt=part:FindFirstChildWhichIsA("ProximityPrompt") end
-					if prompt then
-						local oh=prompt.HoldDuration
-						prompt.RequiresLineOfSight=false; prompt.HoldDuration=0
-						if fireprox then fireprox(prompt) end
-						prompt.HoldDuration=oh
-					end
-				end)
-				holdKey(Enum.KeyCode.E, 0.6)
-				task.wait(0.7)   -- sit on the meat so INF Food's eat consumes it
-				for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end
-				pcall(function() if bp then bp:Destroy() end end)
-			end
-		end
-		task.wait(0.4)
-	else task.wait(0.5) end
+		if not was then was=true; carnOrigin=nil; corpseList=collectCorpses(); corpseIdx=0; task.spawn(doNextCorpse) end
+	else if was then was=false; pcall(function() carnGui.Enabled=false end) end end
+	task.wait(0.3)
 end end)
 end   -- end of the scoped meat-helpers + Carnivore Meat TP block
 task.spawn(function() while RUNNING do
