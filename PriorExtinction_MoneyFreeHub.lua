@@ -49,7 +49,7 @@ local CFG = {
 	BotFlee=true, BotFleeRange=240, BotRoam=true, BotRoamRadius=350, BotEatAt=80, BotDrinkAt=80, BotSleepHeal=true, BotSpeed=18, BotAnnounce=true,
 	BoneProtect=false, ProtectBone="All",
 	TurnHack=false, TurnSpeed=30,
-	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=20, Noclip=false, Invis=false,
+	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=17, Noclip=false, Invis=false,
 	InfJump=false, BypassTP=true,
 	InfFood=false, InfWater=false, InfStam=false, InfOxygen=false,
 	AntiDrown=true, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false,
@@ -86,7 +86,7 @@ loadCfg()
 -- MIGRATE + CLAMP the INF-Stam run speed on load: the old 30 default was above what the server tolerates = "it
 -- keeps sending me back". Any saved value ABOVE the safe band gets reset to 20 (the sweet spot: clearly faster
 -- than walking, low enough the server doesn't snap you); values you set inside 14-28 are kept as-is.
-do local rs = tonumber(CFG.RunSpeed) or 20; CFG.RunSpeed = (rs > 28 or rs < 14) and 20 or rs end
+do local rs = tonumber(CFG.RunSpeed) or 17; CFG.RunSpeed = (rs > 26 or rs < 14) and 17 or rs end
 CFG.Keybinds = CFG.Keybinds or {}
 CFG.Keybinds.UIKey = CFG.Keybinds.UIKey or CFG.UIKey
 CFG.Keybinds.AimKey = CFG.Keybinds.AimKey or CFG.AimKey
@@ -1992,7 +1992,9 @@ local function isScentCorpse(m)
 	-- RED ONLY = corpse/meat (carnivore food). When you sniff, PLANTS get a GREEN ScentHighlight and corpses get a
 	-- RED one — matching any color teleported you to plants. Require a clearly RED fill (high red, low green+blue),
 	-- checking BOTH FillColor and OutlineColor (the red outline in the screenshot may live on either).
-	local function isRed(c) return c and c.R>0.55 and c.G<0.4 and c.B<0.4 end
+	-- RED, and explicitly NOT yellow: your footprint/scent trail highlights YELLOW (high red AND high green), and
+	-- yellow would sneak past a naive "red is high" test. Require green LOW so yellow is rejected.
+	local function isRed(c) return c and c.R>0.55 and c.G<0.35 and c.B<0.35 end
 	local ok=false
 	pcall(function() if isRed(sh.FillColor) or isRed(sh.OutlineColor) then ok=true end end)
 	return ok
@@ -2023,12 +2025,20 @@ end end)
 -- barely moving and lying flat. That's "a body like that in position/ragdoll".
 local function isDownedBody(m)
 	if not (m and m:IsA("Model")) or m==getMyModel() or Players:GetPlayerFromCharacter(m) then return false end
+	local nm=(m.Name or ""):lower()
+	-- EXCLUDE your footprint / scent trail (the YELLOW thing) + other flat map decor. These are flat + still, so the
+	-- pure-posture check below caught them as "a body" and teleported you onto your own tracks. Never eligible.
+	if nm:find("footprint",1,true) or nm:find("print",1,true) or nm:find("track",1,true) or nm:find("trail",1,true)
+		or nm:find("scent",1,true) or nm:find("mark",1,true) or nm:find("step",1,true) or isPlantName(nm) then return false end
 	-- corpse markers or corpse name = definitely a body
 	local marked=false; pcall(function() marked=(m:GetAttribute("DinoType") or m:GetAttribute("HintType") or m:GetAttribute("CreatedAt"))~=nil end)
 	if marked or isMeatName(m.Name) then return true end
 	-- dead humanoid = a body
 	local h=m:FindFirstChildOfClass("Humanoid"); if h and h.Health<=0 then return true end
-	-- POSTURE: main part tilted like a ragdoll (UpVector.Y low = lying on its side/back) AND near-still
+	-- POSTURE PATH now ONLY applies to a real CREATURE model (has a rig) — a footprint/decal isn't a creature, so it
+	-- can no longer qualify just by lying flat. This is the fix for "it teleports to the yellow footprint".
+	local isCreature = m:FindFirstChild("MeshModel") or m:FindFirstChild("TurningAnimation") or m:FindFirstChildOfClass("Humanoid")
+	if not isCreature then return false end
 	local part=rootOf(m); if not part then return false end
 	local ok=false
 	pcall(function()
