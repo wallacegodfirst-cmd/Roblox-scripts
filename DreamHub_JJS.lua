@@ -434,13 +434,10 @@ do
 		chainTarget = targetChar; chainTargetT = tick()   -- lock it (fresh stamp) for the follow-up hits
 		local targetHRP = getHRP(targetChar)
 		if not targetHRP then return end
-		-- The approach flourish runs ONLY on a real E press. The chain's internal anim-triggered re-presses NEVER approach
-		-- (Back Dash's 0.4s walk+dash prelude was hijacking the conversion press = the flash window got missed = no black flash).
-		if fromE and tick() - lastApproach > 0.4 then
-			lastApproach = tick()
-			doApproach(targetHRP, myHRP)
-			lastApproach = tick()  -- restart the window AFTER the prelude so the chain's conversion presses stay clean
-		end
+		-- APPROACH PRELUDES REMOVED (user: "when I press E it should lock onto the enemy's back like it used to").
+		-- The sprint/orbit/jump preludes ran BEFORE the snap and made Jump/Side Dash E-presses feel broken — E now
+		-- IMMEDIATELY snap-locks behind the target + aims the camera + presses the flash, for EVERY mode. The mode
+		-- only changes the M1-anim behavior (Side Dash left-dash / M1 BF), not the E behavior.
 		if not lockActive then
 			lockActive = true
 			savedWS = hum.WalkSpeed
@@ -653,6 +650,13 @@ do
 							if not animId then return end
 							local delayTime = AnimationTriggers[animId]
 							if not delayTime and StraightAnimations[animId] then delayTime = 0.19 end
+							-- FULL M1 DATABASE fallback: the 5 wind-up ids only exist for SOME characters -- on everyone
+							-- else the anim never matched, so M1 BF never fired. Any id in the master per-character M1
+							-- set converts with the standard 0.19s delay.
+							if not delayTime then
+								local num = tostring(animId):match("%d+")
+								if num and _G.VX_M1_IDS and _G.VX_M1_IDS[num] then delayTime = 0.19 end
+							end
 							if not delayTime then return end
 							if Settings.Mode ~= "M1 Black Flash" then return end
 							if tick() - convGuard < 0.5 then return end
@@ -1698,48 +1702,56 @@ do
 		local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local rr = m:FindFirstChild("HumanoidRootPart"); local hh = m:FindFirstChildOfClass("Humanoid"); if rr and hh and hh.Health > 0 and (rr.Position - mr.Position).Magnitude <= 16 then return true end end end end
 		return false
 	end
-	local spaceHeldUntil, m1Count, m1LastT = 0, 0, 0
+	-- GAME MECHANICS (per the JJS wiki, user-confirmed):
+	--   UPPERCUT  = the 4th M1 thrown while HOLDING Space and MOVING UPWARD (jumping).
+	--   DOWNSLAM  = the 4th M1 thrown IN THE AIR while DESCENDING above the opponent.
+	-- So: count YOUR first 3 real M1 clicks; the script then throws the 4th M1 itself with the right physics.
+	local m1Count, m1LastT = 0, 0
 	UIS.InputBegan:Connect(function(input, gpe)
 		if mode == "Off" then return end
-		-- NO gpe bail: JJS marks combat clicks gameProcessed (the documented "bug that killed Auto Air") — a gpe
-		-- check here ate EVERY real M1, so the combo never triggered. Only skip while typing.
+		-- NO gpe bail: JJS marks combat clicks gameProcessed — a gpe check here ate EVERY real M1.
 		if UIS:GetFocusedTextBox() then return end
 		if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 		if tick() < (_G.VX_INJECT_UNTIL or 0) then return end     -- ignore our OWN injected clicks
+		if busy then return end
 		if not nearEnemy() then return end
-		if mode == "Uppercut" then
-			-- HOLD space across your M1 string (renewed each M1); it releases shortly after you stop = uptilt.
-			if tick() >= spaceHeldUntil then pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end) end
-			spaceHeldUntil = tick() + 1.0
-			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 1.2
+		if tick() - m1LastT > 1.6 then m1Count = 0 end            -- combo window reset (you stopped swinging)
+		m1LastT = tick(); m1Count = m1Count + 1
+		if m1Count < 3 then return end
+		m1Count = 0; busy = true
+		task.spawn(function()
 			_G.VX_LAUNCHING = tick()
-			act("Up")
-		else   -- Down Slam
-			if tick() - m1LastT > 1.5 then m1Count = 0 end   -- combo window reset
-			m1LastT = tick(); m1Count = m1Count + 1
-			if m1Count >= 3 and not busy then
-				m1Count = 0; busy = true
-				task.spawn(function()
-					_G.VX_LAUNCHING = tick()
-					_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 1
-					jump(); task.wait(0.22); realM1(); act("Down")
-					task.wait(0.4); busy = false
-				end)
-			end
-		end
-	end)
-	-- release the held space ~1s after your last M1 (uppercut)
-	task.spawn(function()
-		while true do
-			if spaceHeldUntil > 0 and tick() >= spaceHeldUntil then
-				spaceHeldUntil = 0
+			_G.VX_INJECT_UNTIL = tick() + 1.4
+			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 1.4
+			task.wait(0.32)                                        -- let YOUR 3rd hit finish its swing
+			local c = myModel(); local h = c and c:FindFirstChildOfClass("Humanoid"); local hrp = c and c:FindFirstChild("HumanoidRootPart")
+			if mode == "Uppercut" then
+				-- 4th M1 while HOLDING SPACE and MOVING UP: space DOWN -> real jump (up velocity) -> M1 mid-rise.
+				pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)
+				if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end
+				if hrp then pcall(function() local v = hrp.AssemblyLinearVelocity; hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 30), v.Z) end) end
+				task.wait(0.12)                                    -- now clearly moving upward
+				realM1()                                           -- the 4th hit = UPPERCUT
+				act("Up")
+				task.wait(0.25)
 				pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
+			else
+				-- DOWNSLAM: jump HIGH, wait until you are DESCENDING (v.Y < 0), then the 4th M1 = slam.
+				pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.03); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
+				if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end
+				if hrp then pcall(function() local v = hrp.AssemblyLinearVelocity; hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 42), v.Z) end) end
+				local t0 = tick()
+				repeat task.wait(0.03)
+					local vv = hrp and hrp.AssemblyLinearVelocity
+				until (not hrp) or (hrp.AssemblyLinearVelocity.Y < -2) or tick() - t0 > 0.9   -- wait for the DESCENT
+				realM1()                                           -- airborne + falling = DOWNSLAM
+				act("Down")
 			end
-			task.wait(0.1)
-		end
+			task.wait(0.4); busy = false
+		end)
 	end)
 	M1ComboApi = {
-		setMode = function(m) mode = m or "Off"; count = 0; busy = false; m1Count = 0; if spaceHeldUntil > 0 then spaceHeldUntil = 0; pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end end,
+		setMode = function(m) mode = m or "Off"; count = 0; busy = false; m1Count = 0; pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end,
 		setDelay = function() end,
 		setCount = function() end,
 	}
