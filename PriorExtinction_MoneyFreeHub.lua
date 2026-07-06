@@ -2436,6 +2436,32 @@ task.spawn(function() while RUNNING do
 		task.wait(1/math.max(1,CFG.DamageRate))
 	else task.wait(0.15) end
 end end)
+-- CLICK TO DAMAGE (fix: "can't click/damage" with Hitbox on) — PE damage fires through the captured Attack remote +
+-- SoundRemote, which were ONLY wired to the Always-Damage auto-loop. So a plain click never fired them = no damage.
+-- Now, while HITBOX is on, a real M1 click (not on the menu) fires the SAME proven swing→window→hit sequence at every
+-- enemy inside the expanded reach, so clicking actually deals damage. Debounced so a click can't spam-report.
+do local lastClickDmg=0
+conn(UIS.InputBegan:Connect(function(input, gp)
+	if gp then return end                                            -- click landed on the GUI = ignore (don't attack)
+	if input.UserInputType~=Enum.UserInputType.MouseButton1 then return end
+	if not (CFG.HitboxExpand and alive()) then return end            -- only when Hitbox is on
+	if tick()-lastClickDmg < 0.12 then return end; lastClickDmg=tick()
+	local me=hrp(); if not me then return end
+	local rng=math.max(tonumber(CFG.DamageRange) or 120, tonumber(CFG.HitboxSize) or 50)
+	task.spawn(function()
+		local sr=getSoundRemote(); if sr then pcall(function() sr:FireServer("PVP","Attacks/Primary",false,nil,1) end) end
+		RunService.Heartbeat:Wait()                                  -- let the attack window open before the hit reports
+		local mine=getMyModel(); local n=0; local seen={}
+		local function hit(m)
+			if n>=8 or not (m and m:IsA("Model") and m~=mine) or seen[m] then return end
+			local hb=getHitbox(m); if hb and dist(me.Position,hb.Position)<=rng then seen[m]=true; fireAttack(m, true); n+=1 end
+		end
+		local chars=WS:FindFirstChild("Characters"); if chars then for _,m in ipairs(chars:GetChildren()) do hit(m) end end
+		for _,nm in ipairs({"Sandbox","Dinos","Creatures","NPCs","Entities","Mobs","Animals","DynamicCharacters"}) do
+			if n>=8 then break end local f=WS:FindFirstChild(nm); if f then for _,m in ipairs(f:GetChildren()) do hit(m) end end
+		end
+	end)
+end)) end
 task.spawn(function() while RUNNING do task.wait(0.5); local terrain=WS:FindFirstChildOfClass("Terrain"); if CFG.WaterClear and terrain then if not SAVED.water then SAVED.water={terrain.WaterTransparency,terrain.WaterReflectance,terrain.WaterWaveSize} end pcall(function() terrain.WaterTransparency=0.92; terrain.WaterReflectance=0; terrain.WaterWaveSize=0 end) elseif SAVED.water and terrain then pcall(function() terrain.WaterTransparency=SAVED.water[1]; terrain.WaterReflectance=SAVED.water[2]; terrain.WaterWaveSize=SAVED.water[3] end); SAVED.water=nil end end end)
 task.spawn(function() while RUNNING do task.wait(1) if CFG.NoClouds then pcall(function() local t=WS:FindFirstChildOfClass("Terrain"); local cl=t and t:FindFirstChildOfClass("Clouds"); if cl then cl.Cover=0; cl.Density=0; cl.Enabled=false end end) for _,e in ipairs(Lighting:GetDescendants()) do if e.ClassName=="Clouds" then pcall(function() e.Enabled=false end) end end end end end)
 local saving=false
