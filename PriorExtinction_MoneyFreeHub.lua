@@ -2740,10 +2740,20 @@ task.spawn(function() local cleared=true while RUNNING do
 			if myR and myR:IsDescendantOf(m) then return true end
 			return false
 		end
-		local function doFolder(folder) if folder then for _,m in ipairs(folder:GetChildren()) do if m:IsA("Model") and not isMine(m) then expandModel(m) end end end end
+		-- CAP + NEARBY-ONLY (crash fix for weaker executors like Wave): expanding EVERY model incl the whole SpawnedAI
+		-- fish/AI folder into big visible ForceField boxes every tick overloaded the renderer = crash. Now: at most 24
+		-- NEARBY enemies, and the giant AI folder is skipped.
+		local me=hrp(); local ecount=0; local MAXM=24
+		local reach=math.max(tonumber(CFG.DamageRange) or 120, tonumber(CFG.HitboxSize) or 50, 140)
+		local function doFolder(folder) if folder and me then for _,m in ipairs(folder:GetChildren()) do
+			if ecount>=MAXM then break end
+			if m:IsA("Model") and not isMine(m) then
+				local r=getHitbox(m) or rootOf(m)
+				if r and dist(me.Position, r.Position)<=reach then expandModel(m); ecount+=1 end
+			end
+		end end end
 		doFolder(WS:FindFirstChild("Characters"))
-		local ci=WS:FindFirstChild("CharacterIgnore"); if ci then doFolder(ci:FindFirstChild("SpawnedAI")) end
-		for _,nm in ipairs({"Sandbox","Dinos","Creatures","NPCs","Entities","Mobs","Animals","DynamicCharacters"}) do doFolder(WS:FindFirstChild(nm)) end
+		for _,nm in ipairs({"Sandbox","Dinos","Creatures","NPCs"}) do if ecount<MAXM then doFolder(WS:FindFirstChild(nm)) end end
 		-- NEVER your own hitbox: if any of OUR parts ever made it into the touched table, restore them right now.
 		for p in pairs(hbTouched) do
 			if p and p.Parent and ((mine and p:IsDescendantOf(mine)) or (LP.Character and p:IsDescendantOf(LP.Character)) or p:FindFirstAncestor(LP.Name)) then restorePart(p) end
