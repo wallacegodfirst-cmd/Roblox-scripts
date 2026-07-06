@@ -1374,7 +1374,7 @@ do local p=Pages["PvP"]
 end
 do local p=Pages["Movement"]
 	local _,m=mkSec(p,"Float & Speed",1)
-	mkToggle(m,"Float (hover up — Space/Ctrl to rise/lower)","Float",1)
+	mkToggle(m,"Float","Float",1)
 	mkToggle(m,"Speed Hack","SpeedHack",4)
 	mkSlider(m,"Speed","SpeedVal",20,250,5,5)
 	local _,n=mkSec(p,"Clip & Jump",2)
@@ -1385,30 +1385,30 @@ do local p=Pages["Survival"]
 	local _,f=mkSec(p,"Food / Water / Stamina",1)
 	if not _G.PE_HIDE_LITE then   -- INF Food lives in the separate Lite hub; the wrapper hides it here
 		mkToggle(f,"INF Food","InfFood",1)
-		mkLabel(f,"HERB ONLY: turn INF Food ON, then EAT ONE plant (walk up + press E). It captures that food id + scans the whole map and keeps replaying it to hold your bar. If you're a CARNIVORE, use Carnivore Meat TP below instead.")
-		mkSlider(f,"INF Food grow speed (bites/cycle)","FoodEatSpeed",1,10,3,1)
-		mkToggle(f,"Carnivore Meat TP (cycles corpses + asks Yes/No)","CarnMeatTP",4)
-		mkBtn(f,"Teleport Back (where you were)",function() if __gg.MH_corpseBack then __gg.MH_corpseBack() end end,4)
+		mkLabel(f,"Herbivore: turn on, then eat one plant once.")
+		mkSlider(f,"INF Food grow speed","FoodEatSpeed",1,10,3,1)
+		mkToggle(f,"Carnivore Meat TP","CarnMeatTP",4)
+		mkBtn(f,"Teleport Back",function() if __gg.MH_corpseBack then __gg.MH_corpseBack() end end,4)
 	end
 	mkToggle(f,"INF Water","InfWater",5)
 	mkToggle(f,"INF Stamina","InfStam",6)
-	mkSlider(f,"INF Stam Run Speed (lower if it snaps you back)","RunSpeed",12,26,7,1)
+	mkSlider(f,"INF Stam Run Speed","RunSpeed",12,26,7,1)
 	local _,pr=mkSec(p,"Protection",2)
 	mkToggle(pr,"Anti Drown","AntiDrown",1)
 	mkToggle(pr,"Walk on Water","WalkWater",2)
 	mkToggle(pr,"Auto Clean","AutoClean",3)
-	mkToggle(pr,"Anti Head (clears break + HEALS BACK the damage)","AntiFracture",4)
-	mkSlider(pr,"Damage Reduce % (90 = heal back 90% of every hit)","HeadDmgReduce",0,95,4,5)
+	mkToggle(pr,"Anti Head","AntiFracture",4)
+	mkSlider(pr,"Damage Reduce %","HeadDmgReduce",0,95,4,5)
 	mkToggle(pr,"Anti Bleed","AntiBleed",5)
 	mkToggle(pr,"Anti Fall","AntiFall",6)
 	mkToggle(pr,"No Sleep Screen","NoSleep",7)
-	mkToggle(pr,"Bone Protection (shrinks that bone's hitbox so it can't be hit)","BoneProtect",8)
+	mkToggle(pr,"Bone Protection","BoneProtect",8)
 	mkDropdown(pr,"Protect Bone", function() return {"All","Head","Neck","Arm","Leg","Body"} end, function() return CFG.ProtectBone~="" and CFG.ProtectBone or "All" end, function(opt) CFG.ProtectBone=opt; saveCfg() end, 9)
 	local _,sv=mkSec(p,"Auto Heal",4)
 	mkToggle(sv,"Save Dino","SaveDino",1)
 	mkSlider(sv,"Save at HP %","SaveHP",5,90,2,5)
-	mkToggle(sv,"Auto Heal Blood (no sleep needed)","AutoHealBlood",3)
-	mkLabel(sv,"Blood damage normally only heals by sleeping/waiting. This keeps your blood + health topped and clears bleed/wounds so you never have to sleep it off. (Stamina = use INF Stamina; water refills it.)")
+	mkToggle(sv,"Auto Heal Blood","AutoHealBlood",3)
+	mkLabel(sv,"Keeps your blood + health topped up.")
 	local _,pg=mkSec(p,"Progress",5)
 	mkBtn(pg,"Progress Restore",function() progressRestore() end,1)
 	-- SAVED SLOTS — auto-named dropdown ("<n>: Species - Stage"). Save banks your CURRENT dino into the next free slot
@@ -1450,7 +1450,7 @@ do local p=Pages["Auto Farm"]
 	local _,f=mkSec(p,"Fossils & Gems",1)
 	mkToggle(f,"Auto Farm Fossil","AutoFarmFossil",1)
 	mkToggle(f,"Auto Farm Gemstone","AutoFarmGem",2)
-	mkToggle(f,"Teleport Farm (TP to each node, TP back when off)","FarmTeleport",3)
+	mkToggle(f,"Teleport Farm","FarmTeleport",3)
 	mkBtn(f,"Teleport to Nearest Gemstone", function()
 		local me=hrp(); if not me then return end
 		local best,bd
@@ -1473,13 +1473,13 @@ do local p=Pages["Auto Farm"]
 		else notify("Teleport","No gemstone found nearby.") end
 	end, 4)
 	if not _G.PE_HIDE_LITE then   -- Auto Play Bot lives in the separate Lite hub; the wrapper hides it here
-		local _,b=mkSec(p,"Auto Play Bot (full survival AI)",2)
+		local _,b=mkSec(p,"Auto Play Bot",2)
 		mkToggle(b,"Auto Play Bot — plays the game for you","AutoPlayBot",1)
-		mkLabel(b,"The bot SURVIVES on its own: eats (diet-aware), drinks, flees predators, sleeps to heal, roams around its home spot, un-sticks itself, and keeps growing. Turn it on and walk away.")
+		mkLabel(b,"Turn it on and walk away.")
 		mkToggle(b,"Flee from predators","BotFlee",2)
 		mkSlider(b,"Flee detect range","BotFleeRange",80,600,3,20)
-		mkToggle(b,"Roam / wander (looks human)","BotRoam",4)
-		mkSlider(b,"Roam radius (from home)","BotRoamRadius",50,1200,5,50)
+		mkToggle(b,"Roam / wander","BotRoam",4)
+		mkSlider(b,"Roam radius","BotRoamRadius",50,1200,5,50)
 		mkSlider(b,"Eat when food below %","BotEatAt",30,95,6,5)
 		mkSlider(b,"Drink when water below %","BotDrinkAt",30,95,7,5)
 		mkToggle(b,"Sleep to heal when hurt + safe","BotSleepHeal",8)
@@ -1526,23 +1526,23 @@ do local p=Pages["Teleport"]
 	mkBtn(d,"Teleport to My Spawn / Origin", function() local r=hrp(); if r then tpTo(r.Position) end end, 3)
 end
 do local p=Pages["Visuals"]
-	local _,e=mkSec(p,"ESP (name / dist / dino / stage / HP)",1)
+	local _,e=mkSec(p,"ESP",1)
 	mkToggle(e,"ESP Creatures + Players","ESPPlayers",1)
 	mkToggle(e,"ESP Corpses","ESPCorpses",2)
-	mkToggle(e,"Plant ESP (herbivore plants, GREEN)","FoodESP",3)
+	mkToggle(e,"Plant ESP","FoodESP",3)
 	mkToggle(e,"Fish ESP","FishESP",4)
 	mkToggle(e,"Gem + Fossil ESP","GemESP",5)
 	mkSlider(e,"ESP Range","ESPRange",100,3000,6,50)
 	mkDropdown(e,"ESP Color", function() return {"Default","Rainbow","Red","Green","Blue","Yellow","Purple","Cyan","Orange","Pink","White"} end, function() return CFG.ESPColor~="" and CFG.ESPColor or "Default" end, function(opt) CFG.ESPColor=opt; saveCfg() end, 6)
 	local _,l=mkSec(p,"World",2)
 	mkToggle(l,"Full Bright","FullBright",1)
-	mkToggle(l,"No Night (force daytime)","NightVision",2)
+	mkToggle(l,"No Night","NightVision",2)
 	mkToggle(l,"No Darkness Underwater","NoDarkWater",3)
 	mkToggle(l,"Water Transparency","WaterClear",4)
 	mkToggle(l,"No Clouds","NoClouds",5)
-	mkToggle(l,"INF Light (expand your light)","InfLight",6)
+	mkToggle(l,"INF Light","InfLight",6)
 	if not _G.PE_HIDE_LITE then   -- Danger Alert lives in the separate Lite hub; the wrapper hides it here
-		local _,al=mkSec(p,"Danger Alert (pick a dino - warns when it's near)",3)
+		local _,al=mkSec(p,"Danger Alert",3)
 		mkToggle(al,"Enable Alert","AlertEnabled",1)
 		mkDropdown(al,"Alert Dino", function() return DINO_NAMES end, function() return CFG.AlertDino~="" and CFG.AlertDino or "(pick a dino)" end, function(opt) CFG.AlertDino=opt; saveCfg() end, 2)
 		mkSlider(al,"Alert Range","AlertRange",100,2000,3,50)
@@ -1550,7 +1550,7 @@ do local p=Pages["Visuals"]
 end
 local skinDropdownRef, dinoLabel
 do local p=Pages["Skins"]
-	local _,s=mkSec(p,"Skin Changer (auto-detects your dino)",1)
+	local _,s=mkSec(p,"Skin Changer",1)
 	if not USE_FLUENT then dinoLabel = C("TextLabel",{Parent=s, Size=UDim2.new(1,0,0,20), BackgroundTransparency=1, Text="Detecting your dino...", TextColor3=T.Accent, TextSize=12, Font=UIFONT, TextXAlignment=Enum.TextXAlignment.Left, LayoutOrder=1}) end
 	skinDropdownRef = mkDropdown(s,"Skin",
 		function() local dt=skGetCharInfo(); if dt then local l=skGetGameList(dt); if #l>0 then return l end end return {"Default"} end,
@@ -1576,9 +1576,9 @@ do local p=Pages["Misc"]
 	mkToggle(a,"Anti-AFK","AntiAFK",1)
 	mkToggle(a,"Unlock FOV","UnlockFOV",2)
 	mkSlider(a,"Field of View","FOV",40,120,3,1)
-	mkToggle(a,"INF Zoom (bypasses reset)","InfZoom",4)
+	mkToggle(a,"INF Zoom","InfZoom",4)
 	mkToggle(a,"Unlock Mouse + Camera","UnlockMouse",5)
-	mkToggle(a,"Safe Teleport (anti-267)","SafeTP",7)
+	mkToggle(a,"Safe Teleport","SafeTP",7)
 	local _,s=mkSec(p,"Server",2)
 	mkBtn(s,"Rejoin Server",function() pcall(function() TeleportSvc:Teleport(game.PlaceId,LP) end) end,1)
 	mkBtn(s,"Server Hop",function() pcall(function() TeleportSvc:Teleport(game.PlaceId,LP) end) end,2)
@@ -1586,8 +1586,8 @@ end
 do local p=Pages["Settings"]
 	local _,t=mkSec(p,"Theme & Quality",1)
 	mkBtn(t,"Cycle Accent Color",function() CFG.AccentIndex=(CFG.AccentIndex % #ACCENTS)+1; T.Accent=ACCENTS[CFG.AccentIndex]; T.On=T.Accent; if accentBar then accentBar.BackgroundColor3=T.Accent end for key,ref in pairs(toggleRefs) do if CFG[key] and ref[1] then ref[1].BackgroundColor3=T.On end end showPage(currentPage); saveCfg() end,1)
-	mkSlider(t,"UI Scale (bigger = crisp on 4K)","UIScale",1,3,2,0.1)
-	local _,k=mkSec(p,"Keybinds (click then press a key)",2)
+	mkSlider(t,"UI Scale","UIScale",1,3,2,0.1)
+	local _,k=mkSec(p,"Keybinds",2)
 	local binds = { {"Open/Close UI","UIKey"},{"Aim Lock","AimKey"},{"Aimbot","Aimbot"},{"Silent Aim","SilentAim"},{"Lock On","LockOn"},{"Turn Hack","TurnHack"},{"Hitbox","HitboxExpand"},{"Float","Float"},{"Fly","Fly"},{"Speed Hack","SpeedHack"},{"Noclip","Noclip"},{"Inf Jump","InfJump"},{"INF Food","InfFood"},{"INF Water","InfWater"},{"INF Stam","InfStam"},{"Anti Drown","AntiDrown"},{"Walk on Water","WalkWater"},{"Anti Fall","AntiFall"},{"Save Dino","SaveDino"},{"Auto Farm Player","AutoFarmPlayer"},{"Auto Farm Fossil","AutoFarmFossil"},{"Auto Farm Gem","AutoFarmGem"},{"ESP","ESPPlayers"},{"Plant ESP","FoodESP"},{"Fish ESP","FishESP"},{"Full Bright","FullBright"},{"No Night","NightVision"},{"INF Light","InfLight"},{"INF Zoom","InfZoom"} }
 	if _G.PE_HIDE_LITE then local kept={} for _,kb in ipairs(binds) do if kb[2]~="InfFood" then kept[#kept+1]=kb end end binds=kept end   -- hide the INF Food keybind row in the no-lite build
 	for i,kb in ipairs(binds) do mkKeybind(k, kb[1], kb[2], i) end

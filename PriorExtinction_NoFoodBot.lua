@@ -1,6 +1,22 @@
---[[  Prior Extinction — Money/Free Hub  (NO INF Food / Alert / Auto Play Bot)
-      This is the FULL hub with the three "Lite" features hidden — those live in
-      PriorExtinction_LiteHub.lua so you can run them on a separate account.
+--[[  Prior Extinction — Money / Free Hub  (No-Food build)
+      Full hub with INF Food / Carnivore Meat TP / Teleport Back / Danger Alert / Auto Play Bot hidden.
+
+      ── BUG / UPDATE LOG ──────────────────────────────────────────────
+      v1.6
+        • INF Stam: no more snapback, and runs at normal sprint speed.
+        • Anti Head: now actually reduces the damage you take (works on the slow/tanky dinos too).
+        • Bone Protection: now works — protects the bone you pick while you keep moving.
+        • Always Damage: aims the body part you select on every dino.
+        • Hitbox: works on every dino now.
+        • Fixed dying on spawn (fall damage / getting sent off the map).
+        • Removed the Auto Clicker.
+        • Cleaned up the menu.
+      ──────────────────────────────────────────────────────────────────
       Load with: loadstring(game:HttpGet("<this url>"))()  ]]
-_G.PE_HIDE_LITE = true   -- tells the main hub to NOT build the INF Food / Danger Alert / Auto Play Bot UI
+_G.PE_HIDE_LITE = true   -- hide the food/alert/bot sections in the shared hub
+pcall(function()
+	game:GetService("StarterGui"):SetCore("SendNotification", {
+		Title = "Money / Free Hub", Text = "No-Food build v1.6 loaded — see the update log.", Duration = 5,
+	})
+end)
 loadstring(game:HttpGet("https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/claude/improve-ai-system-tUhhn/PriorExtinction_MoneyFreeHub.lua"))()
