@@ -395,14 +395,14 @@ local function installHook()
 							local blockInj=false
 							if (CFG.AntiFracture or CFG.BoneProtect) and (lp:find("fractur",1,true) or lp:find("concuss",1,true)) then blockInj=true end
 							if CFG.AntiBleed and (lp:find("bleed",1,true) or lp:find("hemorrhage",1,true) or lp:find("wound",1,true)) then blockInj=true end
-							if (CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso)
-							and (lp:find("brok",1,true) or lp:find("break",1,true) or lp:find("sever",1,true) or lp:find("dislocat",1,true)) then blockInj=true end
+							if (CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso)
+							and (lp:find("brok",1,true) or lp:find("break",1,true) or lp:find("sever",1,true) or lp:find("dislocat",1,true) or lp:find("limp",1,true)) then blockInj=true end
 							if blockInj then local v=a[4]; if v==true or (typeof(v)=="number" and v~=0) or typeof(v)=="table" then return end end
 						end
 						if action=="SetAction" and typeof(a[3])=="string" and a[4]==true then local lp=a[3]:lower()
 							if (CFG.AntiBleed and lp:find("bleed",1,true))
 							or ((CFG.AntiFracture or CFG.BoneProtect) and (lp:find("fractur",1,true) or lp:find("concuss",1,true)))
-							or ((CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso) and (lp:find("brok",1,true) or lp:find("limp",1,true))) then return end
+							or ((CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso) and (lp:find("brok",1,true) or lp:find("limp",1,true) or lp:find("sever",1,true))) then return end
 						end
 						do local la=action:lower()
 							if (CFG.AntiFracture or CFG.AntiBleed or CFG.BoneProtect) and (la:find("fractur",1,true) or la:find("bleed",1,true) or la:find("injur",1,true)) then return end
@@ -1794,14 +1794,17 @@ local function antiInjurySweep(tb, path, depth)
 			local clear=false
 			if CFG.AntiBleed and (kp:find("bleed",1,true) or kp:find("hemorrhage",1,true) or kp:find("bloodloss",1,true)) then clear=true end
 			if CFG.AntiFracture and (kp:find("fractur",1,true) or kp:find("concuss",1,true)) then clear=true end
+			-- ANTI HEAD now clears EVERY break (incl. the LEG break that slows Trike/Anky/Deino — the "Broke Leg" you
+			-- saw) so slow/tanky dinos stay un-slowed, not just un-head-fractured.
 			if (kp:find("brok",1,true) or kp:find("break",1,true) or kp:find("sever",1,true) or kp:find("dislocat",1,true) or kp:find("snap",1,true) or kp:find("crippl",1,true)) then
-				local anyBreak = CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso
+				local anyBreak = CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso
+				-- Anti Head (AntiFracture) clears the break on ANY part; the specific AntiBreak* toggles still work too.
 				local part
-				if kp:find("head",1,true) or kp:find("jaw",1,true) or kp:find("skull",1,true) then part=CFG.AntiBreakHead
-				elseif kp:find("neck",1,true) then part=CFG.AntiBreakNeck
-				elseif kp:find("leg",1,true) or kp:find("foot",1,true) or kp:find("limb",1,true) or kp:find("femur",1,true) or kp:find("tibia",1,true) or kp:find("thigh",1,true) or kp:find("pubis",1,true) then part=CFG.AntiBreakLeg
-				elseif kp:find("tail",1,true) then part=CFG.AntiBreakTail
-				elseif kp:find("torso",1,true) or kp:find("spine",1,true) or kp:find("rib",1,true) or kp:find("body",1,true) then part=CFG.AntiBreakTorso
+				if kp:find("head",1,true) or kp:find("jaw",1,true) or kp:find("skull",1,true) then part=CFG.AntiFracture or CFG.AntiBreakHead
+				elseif kp:find("neck",1,true) then part=CFG.AntiFracture or CFG.AntiBreakNeck
+				elseif kp:find("leg",1,true) or kp:find("foot",1,true) or kp:find("limb",1,true) or kp:find("femur",1,true) or kp:find("tibia",1,true) or kp:find("thigh",1,true) or kp:find("pubis",1,true) then part=CFG.AntiFracture or CFG.AntiBreakLeg
+				elseif kp:find("tail",1,true) then part=CFG.AntiFracture or CFG.AntiBreakTail
+				elseif kp:find("torso",1,true) or kp:find("spine",1,true) or kp:find("rib",1,true) or kp:find("body",1,true) then part=CFG.AntiFracture or CFG.AntiBreakTorso
 				else part=anyBreak end
 				if part then clear=true end
 				-- BONE PROTECTION: clear the break/fracture for the chosen bone (status-based, NOT hitbox-shrink).
@@ -1840,16 +1843,28 @@ conn(RunService.Heartbeat:Connect(function()
 	if not ((CFG.AntiFracture or CFG.BoneProtect) and alive()) then __gg.MH_lastHP=nil; return end
 	pcall(function()
 		local h=hum(); local stats,maxs=csStats()
-		local hp = (stats and tonumber(stats.Health or stats.HP)) or (h and h.Health)
-		local mx = (maxs and tonumber(maxs.Health or maxs.HP)) or (h and h.MaxHealth)
+		-- READ HP FROM EVERY SOURCE (so it works on EVERY dino — the tanky/slow ones like Trike/Anky/Deino store HP
+		-- differently, so a single-source read silently did nothing = "anti head doesn't work on slower dinos").
+		local hp, mx
+		if stats then for _,k in ipairs({"Health","HP","Hp","health","hp","Hitpoints","HitPoints"}) do if tonumber(stats[k]) then hp=tonumber(stats[k]); break end end end
+		if maxs then for _,k in ipairs({"Health","HP","MaxHealth","Hp","Hitpoints"}) do if tonumber(maxs[k]) then mx=tonumber(maxs[k]); break end end end
+		if not hp and h then hp=h.Health end
+		if not mx and h then mx=h.MaxHealth end
+		if not hp and CharacterState then pcall(function() hp=tonumber(CharacterState.Health) end) end
+		if not mx and CharacterState then pcall(function() mx=tonumber(CharacterState.MaxHealth) end) end
+		if (not hp or not mx) then local m=getMyModel(); if m then
+			if not hp then local v=m:GetAttribute("Health") or m:GetAttribute("HP"); if tonumber(v) then hp=tonumber(v) end end
+			if not mx then local v=m:GetAttribute("MaxHealth") or m:GetAttribute("MaxHP"); if tonumber(v) then mx=tonumber(v) end end
+		end end
 		if not hp or not mx or mx<=0 or mx>=1e7 then return end
 		local last = __gg.MH_lastHP or hp
 		if hp < last-0.05 then   -- ANY drop (incl. small bleed DoT ticks)
 			local frac = math.clamp((tonumber(CFG.HeadDmgReduce) or 90)/100, 0, 0.95)
 			local newHP = math.min(mx, hp + (last-hp)*frac)   -- heal back `frac` of the damage = take only (1-frac)
-			if stats then for _,k in ipairs({"Health","HP","Hp","health","hp"}) do if stats[k]~=nil then stats[k]=newHP end end end
+			if stats then for _,k in ipairs({"Health","HP","Hp","health","hp","Hitpoints","HitPoints"}) do if stats[k]~=nil then stats[k]=newHP end end end
 			if h then pcall(function() h.Health=newHP; h:SetStateEnabled(Enum.HumanoidStateType.Dead,false) end) end
 			if CharacterState then for _,k in ipairs({"Health","HP"}) do if type(CharacterState[k])=="number" then CharacterState[k]=newHP end end end
+			pcall(function() local m=getMyModel(); if m then for _,k in ipairs({"Health","HP"}) do if m:GetAttribute(k)~=nil then m:SetAttribute(k,newHP) end end end end)
 			pcall(function() setReplicaProp("Health", newHP) end)
 			__gg.MH_lastHP = newHP
 		else __gg.MH_lastHP = math.min(hp, mx) end
@@ -1859,6 +1874,13 @@ task.spawn(function() while RUNNING do
 	if (CFG.AntiBleed or CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso) and alive() then
 		pcall(function() local r=csReplica(); if r and r.Data then antiInjurySweep(r.Data, "", 0) end end)
 		pcall(function() if CharacterState then for _,s in ipairs({"Stats","State","Data","Wounds","Bones","BodyParts","Status"}) do local t=CharacterState[s]; if type(t)=="table" then antiInjurySweep(t, s:lower()..".", 0) end end end end)
+		-- CharacterState.Fractures — the decompiled game gates running on `Run and not Fractures.Leg`, so a broken leg =
+		-- no run = the SLOW on Trike/Anky/Deino. Clear the whole table (+ the known head/leg keys) so Anti Head keeps
+		-- slow dinos un-slowed. Tied to Anti Head / Bone Protection.
+		if CFG.AntiFracture or CFG.BoneProtect then pcall(function() if CharacterState and type(CharacterState.Fractures)=="table" then
+			for k in pairs(CharacterState.Fractures) do CharacterState.Fractures[k]=false end
+			for _,fk in ipairs({"Head","Skull","Neck","Leg","Foot","Limb","Tail","Torso","Spine","Body"}) do CharacterState.Fractures[fk]=false end
+		end end) end
 		-- un-ragdoll: a knockdown must never stick while protection is on (dinos that DO have a Humanoid)
 		pcall(function() local h=hum(); if h then if h.PlatformStand then h.PlatformStand=false end
 			local st=h:GetState(); if st==Enum.HumanoidStateType.Ragdoll or st==Enum.HumanoidStateType.FallingDown then pcall(function() h:ChangeState(Enum.HumanoidStateType.GettingUp) end) end end end)
