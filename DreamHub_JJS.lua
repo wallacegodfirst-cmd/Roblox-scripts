@@ -575,16 +575,27 @@ do
 				end
 				-- the wind-up re-press = the BLACK FLASH conversion.
 				if Settings.Mode == "M1 Black Flash" then
-					-- M1 BF: the conversion happens IN PLACE (no teleport) and ONLY once per armed click.
-					-- delayTime comes from the per-anim timing table = pressed at the exact flash frame.
-					if tick() < m1bfArmed then
-						m1bfArmed = 0   -- disarm: exactly ONE conversion per M1 (kills the 4x chain for good)
-						task.delay(delayTime, function()
-							if Settings.Mode ~= "M1 Black Flash" or humanoid.Health <= 0 then return end
-							local tgt = (chainTarget and chainTarget.Parent) and chainTarget or getNearestEnemy(12)
-							if tgt and fireFlashInPlace then fireFlashInPlace(tgt, true) end   -- conversion re-press: key only, no second facing-hold/capper (one writer per swing)
+					-- M1 BF = the EXACT proven snippet: your M1 anim played -> wait delayTime -> press the flash key (3).
+					-- Nothing else (no teleport, no arming, no facing) — that extra logic is what kept breaking it.
+					task.delay(delayTime, function()
+						if Settings.Mode ~= "M1 Black Flash" or humanoid.Health <= 0 then return end
+						-- CAMERA LOCK (user request): lock the camera onto the nearest enemy for the flash window.
+						task.spawn(function()
+							local tgt = getNearestEnemy(20)
+							local t0 = tick()
+							while tgt and tgt.Parent and tick() - t0 < 0.5 do
+								local tr = getHRP(tgt); local cam = workspace.CurrentCamera
+								if tr and cam then pcall(function() cam.CFrame = CFrame.lookAt(cam.CFrame.Position, tr.Position) end) end
+								task.wait()
+							end
 						end)
-					end
+						_G.VX_INJECT_UNTIL = tick() + 0.35; vxMarkKey(Settings.AbilityKey)
+						pcall(function()
+							VirtualInputManager:SendKeyEvent(true, Settings.AbilityKey, false, game)
+							task.wait(Settings.KeyHoldDuration)
+							VirtualInputManager:SendKeyEvent(false, Settings.AbilityKey, false, game)
+						end)
+					end)
 				elseif Settings.Mode == "Side Dash" and (ScriptEnabled or tick() < burstUntil) and tick() >= bfSuppressUntil then
 					-- SIDE DASH BF (user's proven pattern): your M1 anim fired -> dash LEFT now -> press the flash key
 					-- (3) at the exact wind-up frame (delayTime). No teleport/orbit — just left dash + the black flash.
@@ -744,48 +755,9 @@ do
 				end)
 			end
 			local flashSuppress = 0  -- after ONE flash, ignore every M1/anim for a full second so 1 M1 = exactly 1 flash (not 4)
-			local function tryM1Flash()  -- shared by BOTH triggers (click + your M1 anim): flash if the M1 actually lands
-				if Settings.Mode ~= "M1 Black Flash" then return end
-				if tick() < flashSuppress then return end                 -- HARD gate: one flash per swing, no re-fire from the flash's own anim
-				if tick() - lastM1 < 1.0 then return end                  -- 1s debounce = 1 M1 -> 1 black flash chain
-				if tick() < (_G.VX_INJECT_UNTIL or 0) then return end     -- never fire off our own injected inputs
-				local mh = getHRP(myCharResolved())
-				local tgt = getNearestEnemy(14)
-				local tr = tgt and getHRP(tgt)
-				if not (mh and tr) then if _G.VX_BF_DEBUG then print("[DreamHub BF] tryM1Flash: no target in 14 studs") end return end
-				local to = tr.Position - mh.Position
-				-- LOOSENED gate: range 14 + a WIDE cone (dot > -0.25 ≈ 105°). The old 9-stud / dot>0.35 required you to
-				-- ALREADY be facing them — circular, since fireFlashInPlace is what turns you. Now proximity is enough;
-				-- fireFlashInPlace faces them. (M1 range in JJS is generous, so 14 covers a landed swing.)
-				if to.Magnitude <= 14 and mh.CFrame.LookVector:Dot(to.Unit) > -0.25 then
-					lastM1 = tick()
-					flashSuppress = tick() + 1.0   -- lock out further click-triggers for 1s
-					_G.VX_SDA_HOLD = tick() + 0.9  -- tell Side Dash Assist to SKIP this swing
-					chainTarget = tgt; chainTargetT = tick()
-					if _G.VX_BF_DEBUG then print("[DreamHub BF] M1 LANDED on "..tgt.Name.." -> press + armed conversion") end
-					m1bfArmed = tick() + 1.5       -- ARM the wind-up conversion: the anim's timing table fires the flash at the exact frame
-					task.delay(0.08, function() if Settings.Mode == "M1 Black Flash" then fireFlashInPlace(tgt) end end)  -- start the move right after the swing registers
-				end
-			end
-			UIS_M1.InputBegan:Connect(function(input)   -- no gpe bail: the game marks combat clicks processed (same bug that killed Auto Air)
-				if UIS_M1:GetFocusedTextBox() then return end
-				if input.UserInputType == Enum.UserInputType.MouseButton1 then tryM1Flash() end
-			end)
-			-- BACKUP TRIGGER: your own M1 ANIMATION (per-character database) - fires even if the click never reaches us
-			local bfHooked = setmetatable({}, { __mode = "k" })
-			task.spawn(function()
-				while true do
-					if Settings.Mode == "M1 Black Flash" then pcall(function()
-						local m = myCharResolved(); local h = m and m:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
-						if a and not bfHooked[a] then bfHooked[a] = a.AnimationPlayed:Connect(function(track)
-							if Settings.Mode ~= "M1 Black Flash" then return end
-							local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+")
-							if id and _G.VX_M1_IDS and _G.VX_M1_IDS[id] then tryM1Flash() end
-						end) end
-					end) end
-					task.wait(0.6)
-				end
-			end)
+			-- (M1 Black Flash is now handled ENTIRELY by the setupCharacter AnimationPlayed path — the proven snippet:
+			-- M1 anim -> wait delayTime -> press 3. The old click/backup path also pressed 3, which double-fired and
+			-- kept breaking it, so it's removed. fireFlashInPlace stays defined above in case another feature calls it.)
 		end
 
 	-- MOBILE SUPPORT: a floating tap button so phone players (no keyboard E) can fire the chosen chain approach. Toggled via ChainApi.setMobile. M1 Black Flash needs no button (M1 auto-fires) but the button still works.
@@ -1665,24 +1637,58 @@ do
 	for _, id in ipairs(UPPERCUT_M1) do COMBO_IDS[id] = true end
 	if _G.VX_M1_IDS then for id in pairs(_G.VX_M1_IDS) do COMBO_IDS[id] = true end end   -- merge with the master DB (never clobber)
 	for id in pairs(COMBO_IDS) do if _G.VX_M1_IDS then _G.VX_M1_IDS[id] = true end end   -- and feed the new ids BACK so every module sees them
-	-- TRIGGER: fully automatic. When the toggle is on, an enemy is within melee range, and we're not already mid-
-	-- combo, run the whole uppercut/downslam sequence. (No anim counting — the user wants it done FOR them.)
+	-- TRIGGER: WHEN YOU M1 (the user wants it to work off their own M1s, not run on a loop).
+	--   UPPERCUT  = while you're M1ing, HOLD the space bar (your M1s become the uptilt). Space is pressed on your
+	--               first M1 and released ~1s after your last one, so the whole 4-hit string is done with space held.
+	--   DOWN SLAM = count your M1s; on the 3rd, the script does jump + M1 (the airborne slam).
 	local function nearEnemy()
 		local me = myModel(); local mr = me and me:FindFirstChild("HumanoidRootPart"); if not mr then return false end
-		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local rr = plr.Character:FindFirstChild("HumanoidRootPart"); if rr and (rr.Position - mr.Position).Magnitude <= 14 then return true end end end
-		local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local rr = m:FindFirstChild("HumanoidRootPart"); local hh = m:FindFirstChildOfClass("Humanoid"); if rr and hh and hh.Health > 0 and (rr.Position - mr.Position).Magnitude <= 14 then return true end end end end
+		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local rr = plr.Character:FindFirstChild("HumanoidRootPart"); if rr and (rr.Position - mr.Position).Magnitude <= 16 then return true end end end
+		local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local rr = m:FindFirstChild("HumanoidRootPart"); local hh = m:FindFirstChildOfClass("Humanoid"); if rr and hh and hh.Health > 0 and (rr.Position - mr.Position).Magnitude <= 16 then return true end end end end
 		return false
 	end
+	local spaceHeldUntil, m1Count, m1LastT = 0, 0, 0
+	UIS.InputBegan:Connect(function(input, gpe)
+		if mode == "Off" or gpe then return end
+		if UIS:GetFocusedTextBox() then return end
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+		if tick() < (_G.VX_INJECT_UNTIL or 0) then return end     -- ignore our OWN injected clicks
+		if not nearEnemy() then return end
+		if mode == "Uppercut" then
+			-- HOLD space across your M1 string (renewed each M1); it releases shortly after you stop = uptilt.
+			if tick() >= spaceHeldUntil then pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end) end
+			spaceHeldUntil = tick() + 1.0
+			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 1.2
+			_G.VX_LAUNCHING = tick()
+			act("Up")
+		else   -- Down Slam
+			if tick() - m1LastT > 1.5 then m1Count = 0 end   -- combo window reset
+			m1LastT = tick(); m1Count = m1Count + 1
+			if m1Count >= 3 and not busy then
+				m1Count = 0; busy = true
+				task.spawn(function()
+					_G.VX_LAUNCHING = tick()
+					_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 1
+					jump(); task.wait(0.22); realM1(); act("Down")
+					task.wait(0.4); busy = false
+				end)
+			end
+		end
+	end)
+	-- release the held space ~1s after your last M1 (uppercut)
 	task.spawn(function()
 		while true do
-			if mode ~= "Off" and not busy and nearEnemy() then finisher() end
-			task.wait(0.4)
+			if spaceHeldUntil > 0 and tick() >= spaceHeldUntil then
+				spaceHeldUntil = 0
+				pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
+			end
+			task.wait(0.1)
 		end
 	end)
 	M1ComboApi = {
-		setMode = function(m) mode = m or "Off"; count = 0; busy = false end,
+		setMode = function(m) mode = m or "Off"; count = 0; busy = false; m1Count = 0; if spaceHeldUntil > 0 then spaceHeldUntil = 0; pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end end,
 		setDelay = function() end,
-		setCount = function() end,   -- (chain-length slider no longer used; the combo is fully auto now)
+		setCount = function() end,
 	}
 end
 
@@ -8346,7 +8352,7 @@ do
         end
     end
 
-    local Window = Library:Window({ Name = "Dream Hub", SubTitle = "JJS  -  " .. tierNice, ExpiresIn = "lifetime" })
+    local Window = Library:Window({ Name = "Dream Hub", SubTitle = "JJS " .. tierNice, ExpiresIn = "lifetime" })
 
     -- MINIMIZE button (PC + mobile): a small floating, draggable tap button that hides/shows the whole menu.
     pcall(function()
