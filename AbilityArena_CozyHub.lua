@@ -590,9 +590,9 @@ end
 
 local function wantedHitboxSize()
     local sz = 0
-    -- M1 Expand Hitbox NO LONGER grows enemy hitboxes (that drew red boxes on everyone + is server-rejected). It now
-    -- only grows YOUR arms (below). Auto Farm/Play still point-blank the enemy so they keep their own reach here.
-    if S.AutoFarm or S.AutoPlay then sz = math.max(sz, S.M1HitboxSize) end
+    -- M1 Expand Hitbox grows the ENEMY hitbox (this is what actually lands the M1 — the game reads the overlap
+    -- client-side) AND your arms. The enemy grow is now INVISIBLE (no red boxes on everyone — the old complaint).
+    if S.M1Hitbox or S.AutoFarm or S.AutoPlay then sz = math.max(sz, S.M1HitboxSize) end
     if S.HitboxAbility then
         local a = S.HitboxAbilitySize
         if tick() < abilityBurstUntil then a = a * 1.5 end
@@ -737,9 +737,7 @@ hook(RunService.Heartbeat, function()
                 -- Compare ALL 3 axes (was X-only): a part whose X already matched sz but was thin on Y/Z used to
                 -- stay flat = no real reach. THIS was the core "hitbox doesn't work" bug (same one PE fixed).
                 if part.Size ~= cube then part.Size = cube end
-                part.Transparency = 0.55
-                part.Color        = Color3.fromRGB(255, 60, 60)
-                part.Material     = Enum.Material.ForceField
+                part.Transparency = 1   -- INVISIBLE (no red boxes on enemies) while still expanding the hit volume
             end)
         end
     end
@@ -2173,9 +2171,9 @@ CombatTab:CreateSlider({Name="Save Health: trigger at HP %", Range={5,90}, Incre
 CombatTab:CreateSlider({Name="Save Health: sky height", Range={100,2000}, Increment=50, Suffix="studs", CurrentValue=700, Flag="SaveHealthHeight", Callback=function(v) S.SaveHealthHeight=v end})
 
 CombatTab:CreateSection("Hitboxes")
-CombatTab:CreateToggle({Name="M1 Expand Hitbox (expands YOUR arms only)", CurrentValue=false, Flag="M1Hitbox", Callback=function(v)
+CombatTab:CreateToggle({Name="M1 Expand Hitbox (invisible reach - lands M1)", CurrentValue=false, Flag="M1Hitbox", Callback=function(v)
     S.M1Hitbox=v
-    if not v then restoreArms() end
+    if not v then restoreHitboxes(); restoreArms() end
 end})
 CombatTab:CreateSlider({Name="M1 Expand Size (arm reach)", Range={1,300}, Increment=1, Suffix="studs", CurrentValue=50, Flag="M1HitboxSize", Callback=function(v) S.M1HitboxSize=v end})
 CombatTab:CreateToggle({Name="Ability Hitbox Expander (pulses bigger on E)", CurrentValue=false, Flag="HitboxAbility", Callback=function(v)
