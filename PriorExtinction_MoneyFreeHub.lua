@@ -57,6 +57,7 @@ local CFG = {
 	AutoFarmPlayer=false, FarmPlayerRange=120, AutoFarmFossil=false, FarmFossilRange=1000000,
 	ESPPlayers=false, ESPCorpses=false, FoodESP=false, FishESP=false, GemESP=false, ESPRange=900, ESPColor="Default",
 	AlertEnabled=false, AlertDino="", AlertRange=350, CarnMeatTP=false,
+	ProFood=false, ProFoodStopAge="Off", CarnYesHold=false,
 	FullBright=false, NightVision=false, NoDarkWater=true, InfLight=false, UnlockMouse=false,
 	SkinDino="", SkinName="", SkinWet=false, ProgSlot="",
 	Waypoints={}, TPName="", TPX=0, TPY=0, TPZ=0,
@@ -103,7 +104,7 @@ if not (tonumber(CFG.FarmReach) and CFG.FarmReach>=30 and CFG.FarmReach<=120) th
 for _,key in ipairs({
 	"Aimbot","SilentAim","LockOn","BoneProtect","TurnHack","Fly","SpeedHack","Noclip","InfJump",
 	"InfFood","InfWater","InfStam","InfOxygen","SaveDino","AutoFarmPlayer","AutoFarmFossil","AutoFarmGem","AutoPlayBot",
-	"ESPPlayers","ESPCorpses","FoodESP","FishESP","GemESP","AlertEnabled","CarnMeatTP","FullBright","NightVision","NoDarkWater","WaterClear","NoClouds","AlwaysDamage","NoGrabLimit",
+	"ESPPlayers","ESPCorpses","FoodESP","FishESP","GemESP","AlertEnabled","CarnMeatTP","ProFood","FullBright","NightVision","NoDarkWater","WaterClear","NoClouds","AlwaysDamage","NoGrabLimit",
 	"Float","GodMode","InfLight","UnlockFOV","InfZoom","AntiDrown","WalkWater","AutoClean","AntiFracture","AntiBleed","Invis",
 	"AntiBreakHead","AntiBreakNeck","AntiBreakLeg","AntiBreakTail","AntiBreakTorso","NoSleep","AntiAFK","UnlockMouse","__SpyOn",
 	"AutoClick","AutoEatFood","DebugPanel","LogRemotes","BypassTP","SafeTP",
@@ -1323,7 +1324,7 @@ if FWindow then
 	-- farm-player guards read — true = Fluent menu open (pause aim so you can click tabs). Toggled with RightShift.
 	pcall(function() SG.Enabled=true; MF.Visible=false; Shd.Visible=false end)
 	for k in pairs(Pages) do Pages[k]=nil end
-	local ICONS = {Combat="swords", PvP="target", Movement="footprints", Survival="heart-pulse", ["Auto Farm"]="pickaxe", Teleport="map-pin", Visuals="eye", Skins="palette", Misc="wrench", Settings="settings", Info="info"}
+	local ICONS = {Combat="swords", PvP="target", Movement="footprints", Survival="heart-pulse", Growth="sprout", ["Auto Farm"]="pickaxe", Teleport="map-pin", Visuals="eye", Skins="palette", Misc="wrench", Settings="settings", Info="info"}
 	mkTab = function(name) local tb=FWindow:AddTab({Title=name, Icon=ICONS[name] or ""}); Pages[name]=tb; return tb end
 	mkSec = function(par, title) pcall(function() par:AddParagraph({Title=title, Content=""}) end); return par, par end
 	mkToggle = function(par, txt, key) pcall(function() local t=par:AddToggle(key,{Title=txt, Default=CFG[key] and true or false}); t:OnChanged(function() CFG[key]=Options[key].Value; saveCfg() end) end) end
@@ -1343,8 +1344,8 @@ else
 end
 
 -- ═══ TABS / PAGES ═══
-mkTab("Combat",1); mkTab("PvP",2); mkTab("Movement",3); mkTab("Survival",4); mkTab("Auto Farm",5); mkTab("Teleport",6)
-mkTab("Visuals",7); mkTab("Skins",8); mkTab("Misc",9); mkTab("Settings",10); mkTab("Info",11)
+mkTab("Combat",1); mkTab("PvP",2); mkTab("Movement",3); mkTab("Survival",4); mkTab("Growth",5); mkTab("Auto Farm",6); mkTab("Teleport",7)
+mkTab("Visuals",8); mkTab("Skins",9); mkTab("Misc",10); mkTab("Settings",11); mkTab("Info",12)
 
 do local p=Pages["Combat"]
 	local _,a=mkSec(p,"Aim",1)
@@ -1445,6 +1446,21 @@ do local p=Pages["Survival"]
 		if slotsDD and slotsDD.refresh then slotsDD.refresh() end
 		notify("Progress","Deleted slot "..n..".")
 	end,5)
+end
+do local p=Pages["Growth"]
+	if not _G.PE_HIDE_LITE then
+		local _,g=mkSec(p,"Pro Food",1)
+		mkToggle(g,"Pro Food","ProFood",1)
+		mkLabel(g,"One button: teleports to a corpse with no dinos around, eats until full, then circles to grow, moves to the next corpse when done, and stops at the age you pick.")
+		mkDropdown(g,"Stop at age", function() return {"Off","Juvenile","Teen","Adolescent","Sub Adult","Adult","Elder"} end, function() return CFG.ProFoodStopAge~="" and CFG.ProFoodStopAge or "Off" end, function(opt) CFG.ProFoodStopAge=opt; saveCfg() end, 2)
+		local _,fw=mkSec(p,"Food & Water",2)
+		mkToggle(fw,"INF Food","InfFood",1)
+		mkToggle(fw,"INF Water","InfWater",2)
+		mkToggle(fw,"TP Food","CarnMeatTP",3)
+		mkBtn(fw,"Teleport Back",function() if __gg.MH_corpseBack then __gg.MH_corpseBack() end end,4)
+	end
+	local _,pg=mkSec(p,"Progress",3)
+	mkBtn(pg,"Progress Restore",function() progressRestore() end,1)
 end
 do local p=Pages["Auto Farm"]
 	local _,f=mkSec(p,"Fossils & Gems",1)
@@ -2433,7 +2449,9 @@ local function tpToCorpse(part)
 		end
 	end)
 	pcall(function() local m=part:FindFirstAncestorWhichIsA("Model"); local prompt=(m and m:FindFirstChildWhichIsA("ProximityPrompt",true)) or part:FindFirstChildWhichIsA("ProximityPrompt")
-		if prompt then local oh=prompt.HoldDuration; prompt.RequiresLineOfSight=false; prompt.HoldDuration=0; if fireprox then fireprox(prompt) end; prompt.HoldDuration=oh end end)
+		if prompt then prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(prompt.MaxActivationDistance or 8, 30); prompt.Enabled=true
+			if fireprox then local oh=prompt.HoldDuration; prompt.HoldDuration=0; fireprox(prompt); prompt.HoldDuration=oh end
+		end end)
 	-- (removed the holdKey(E) — pressing/holding E every teleport is what "kept clicking" and locked your controls)
 	task.delay(0.5, function() for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end; pcall(function() if bp then bp:Destroy() end end); carnBusy=false end)
 	return true
@@ -2453,7 +2471,15 @@ local function doNextCorpse()
 	if not ok then corpseList={}; pcall(function() carnGui.Enabled=false end); notify("Corpse TP","No in-map corpse found right now — will rescan next time."); return end
 	pcall(function() carnLabel.Text="Teleported to corpse "..corpseIdx.." / "..#corpseList.." - did it work?"; carnGui.Enabled=true end)
 end
-yesBtn.MouseButton1Click:Connect(function() pcall(function() carnGui.Enabled=false end) end)   -- keep you here
+yesBtn.MouseButton1Click:Connect(function()   -- YES = stay + STAND STILL on the corpse (hold you in place ~1.5s so you don't drift off it)
+	pcall(function() carnGui.Enabled=false end)
+	local r=hrp(); if r then local pos=r.Position
+		task.spawn(function() local bp=Instance.new("BodyPosition"); bp.MaxForce=Vector3.new(9e9,9e9,9e9); bp.P=2e4; bp.D=2500; bp.Position=pos; pcall(function() bp.Parent=r end)
+			local t0=tick(); while tick()-t0<1.5 do local rr=hrp(); if rr then pcall(function() rr.AssemblyLinearVelocity=Vector3.zero end) end; task.wait(0.1) end
+			pcall(function() bp:Destroy() end)
+		end)
+	end
+end)
 noBtn.MouseButton1Click:Connect(function() task.spawn(doNextCorpse) end)                        -- try a different one
 __gg.MH_corpseBack = function()   -- "Teleport Back" button -> return to where you were
 	local o=carnOrigin; if not o then notify("Corpse TP","No saved spot yet - use Carnivore Meat TP first."); return end
@@ -2480,7 +2506,96 @@ task.spawn(function() while RUNNING do task.wait(1.5)
 		pcall(function() local n=#collectCorpses(); if n>0 then carnLabel.Text="Teleported to corpse "..math.min(corpseIdx,n).." / "..n.." - did it work?" end end)
 	end
 end end)
+__gg.MH_collectCorpses = collectCorpses   -- expose for the Pro Food system (separate do-block)
+__gg.MH_tpToCorpse = tpToCorpse
 end   -- end of the scoped meat-helpers + Carnivore Meat TP block
+-- ═══ PRO FOOD — one-button growth farmer ═══ TP to a corpse with no dinos around → eat until full → when full,
+-- kill trot/speed and walk in CIRCLES (grows faster) → when the corpse is gone / food drops, move to the next
+-- corpse → stop when you reach the age you picked. Reuses the corpse-TP + food-eat systems (exposed via __gg).
+do
+	local PRO = { ang=0, lastTP=0, target=nil, lastEat=0 }
+	local STAGES = {"hatchling","juvenile","teen","adolescent","subadult","adult","elder","monster"}
+	local function stageIdx(name)
+		local n=tostring(name):lower():gsub("[^%w]","")
+		for i,s in ipairs(STAGES) do if n==s or (n~="" and n:find(s,1,true)) then return i end end
+		return nil
+	end
+	local function curStage()
+		local ci
+		local ok,_,st = pcall(skGetCharInfo)   -- returns (dt, st, gd)
+		if ok and st then ci=stageIdx(st) end
+		if not ci then pcall(function() local rr=csReplica(); if rr and rr.Data then ci=stageIdx(rr.Data.GrowthStage or rr.Data.Stage or (rr.Data.Growth and rr.Data.Growth.Stage)) end end) end
+		return ci
+	end
+	local function reachedAge()
+		local t=CFG.ProFoodStopAge; if not t or t=="" or t=="Off" then return false end
+		local ti=stageIdx(t); local ci=curStage()
+		return (ti and ci and ci>=ti) or false
+	end
+	local function foodFrac()
+		local s,m=csStats()
+		if s and m then for _,k in ipairs({"Food","Hunger","Nutrition","Fullness"}) do local cv=tonumber(s[k]); local mv=tonumber(m[k]); if cv and mv and mv>0 then return cv/mv end end end
+		return nil
+	end
+	-- a corpse/food with NO other dino within 30 studs of it (so you don't get attacked while eating)
+	local function pickSafeFood()
+		local me=hrp(); if not me then return nil end
+		local mine=getMyModel(); local chars=WS:FindFirstChild("Characters")
+		local function dinoNear(pos) if not chars then return false end
+			for _,cm in ipairs(chars:GetChildren()) do if cm:IsA("Model") and cm~=mine then
+				local h=cm:FindFirstChildOfClass("Humanoid"); if (not h) or h.Health>0 then local r=getHitbox(cm) or rootOf(cm); if r and (r.Position-pos).Magnitude<30 then return true end end
+			end end
+			return false
+		end
+		-- nearby food first (already on/near a corpse)
+		local list=nearbyFood(80)
+		for _,fd in ipairs(list) do local part=fd[2]; if part and part.Parent and not dinoNear(part.Position) then return fd, false end end
+		-- else pick a corpse to TP to (skip ones with dinos around)
+		local corpses = __gg.MH_collectCorpses and __gg.MH_collectCorpses() or {}
+		local best,bd
+		for _,part in ipairs(corpses) do if part and part.Parent and not dinoNear(part.Position) then local d=(part.Position-me.Position).Magnitude; if not bd or d<bd then best=part; bd=d end end end
+		if best then return {nil,best,bd}, true end
+		return nil
+	end
+	local function eat(fd)
+		local m,part,prompt = fd[1],fd[2],fd.prompt
+		if not prompt and m then prompt=m:FindFirstChildWhichIsA("ProximityPrompt",true) end
+		if not prompt and part then local mm=part:FindFirstAncestorWhichIsA("Model"); prompt=mm and mm:FindFirstChildWhichIsA("ProximityPrompt",true) end
+		if prompt then pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(prompt.MaxActivationDistance or 8,30); prompt.HoldDuration=0; if fireprox then fireprox(prompt) end end) end
+		holdKey(Enum.KeyCode.E, 0.35); task.wait(0.1); holdKey(Enum.KeyCode.E, 0.35)   -- E, then E again (as requested)
+		pcall(fakeEat)
+	end
+	-- FULL → circle to grow: no trot/sprint, slow steady circle
+	local function circle()
+		local r=hrp(); if not r then return end
+		pcall(function() replicaAction("SetAction","Run",false) end); pcall(function() replicaAction("SetAction","Trot",false) end)
+		PRO.ang = PRO.ang + 0.22
+		local dir=Vector3.new(math.cos(PRO.ang),0,math.sin(PRO.ang))
+		pcall(function() r.AssemblyLinearVelocity=Vector3.new(dir.X*7, r.AssemblyLinearVelocity.Y, dir.Z*7) end)   -- gentle circle
+	end
+	task.spawn(function() while RUNNING do
+		if CFG.ProFood and alive() and tick()>=(__gg.MH_spawnGrace or 0) then
+			if reachedAge() then CFG.ProFood=false; pcall(function() notify("Pro Food","Reached "..tostring(CFG.ProFoodStopAge).." — growth stopped.") end)
+			else
+				local ff = foodFrac()
+				if ff and ff>=0.96 then
+					circle()                    -- full → circle to grow faster
+					task.wait(0.15)
+				else
+					local fd, needTP = pickSafeFood()
+					if fd then
+						if needTP and tick()-PRO.lastTP>1.5 and __gg.MH_tpToCorpse then PRO.lastTP=tick(); pcall(function() __gg.MH_tpToCorpse(fd[2]) end); task.wait(0.6) end
+						if tick()-PRO.lastEat>0.5 then PRO.lastEat=tick(); eat(fd) end
+						task.wait(0.4)
+					else
+						pcall(fakeEat)          -- nothing safe nearby → still replay captured bites while we wait
+						task.wait(0.6)
+					end
+				end
+			end
+		else task.wait(0.4) end
+	end end)
+end
 task.spawn(function() while RUNNING do
 	if CFG.InfFood and alive() then
 		fakeEat()
