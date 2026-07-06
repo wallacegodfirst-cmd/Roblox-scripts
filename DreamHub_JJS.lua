@@ -79,59 +79,38 @@ do
 		end)
 		return true
 	end
-	local function bindAnimator(animator)
-		disconnect("Connection")
-		if not animator then RT.LastSkipReason = "no animator"; return false end
-		RT.Connection = animator.AnimationPlayed:Connect(function(track)
-			if not CFG.Enabled then return end
-			local id = getAnimationId(track)
-			RT.LastAnimationId = id ~= "" and id or "--"
-			local delayTime = AnimationTriggers[id]
-			RT.LastMatched = delayTime ~= nil
-			if delayTime then
-				scheduleFire(delayTime, id)
-			elseif CFG.DebugUnknownAnimations and id ~= "" and not RT.UnknownAnimations[id] then
-				RT.UnknownAnimations[id] = true
-				warn("[AutoBlackFlash] Unknown animation id:", id)
+	-- match an anim id -> delay: the 5 wind-up ids first, then the FULL per-character M1 database (_G.VX_M1_IDS,
+	-- assigned later in this file). This is why it now converts on EVERY character, not just the 5-id ones.
+	local function matchDelay(id)
+		local d = AnimationTriggers[id]
+		if not d then local num = tostring(id):match("%d+"); if num and _G.VX_M1_IDS and _G.VX_M1_IDS[num] then d = 0.19 end end
+		return d
+	end
+	local function onAnim(track)
+		if not CFG.Enabled then return end
+		local id = getAnimationId(track)
+		RT.LastAnimationId = id ~= "" and id or "--"
+		local delayTime = matchDelay(id)
+		RT.LastMatched = delayTime ~= nil
+		if delayTime then scheduleFire(delayTime, id) end
+	end
+	-- BULLETPROOF hook: connect to EVERY animator your body can have — LP.Character AND workspace.Characters[name]
+	-- (JJS can play combat anims on either rig; hooking only one is exactly why M1 BF "randomly" never fired). A
+	-- weak-keyed poller re-hooks after respawn / character swap. One clean listener path, no LP.Character-only guess.
+	local hookedAnims = setmetatable({}, { __mode = "k" })
+	local function hookBoth()
+		local chars = workspace:FindFirstChild("Characters")
+		local bodies = { player.Character, chars and chars:FindFirstChild(player.Name) or nil }
+		for _, char in ipairs(bodies) do
+			if char then
+				local hum = char:FindFirstChildOfClass("Humanoid")
+				local a = hum and hum:FindFirstChildOfClass("Animator")
+				if a and not hookedAnims[a] then hookedAnims[a] = a.AnimationPlayed:Connect(onAnim) end
 			end
-		end)
-		RT.LastSkipReason = "listener ready"
-		return true
-	end
-	local function getAnimator(character)
-		if not character then return nil end
-		local humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid", CFG.AnimatorWait)
-		if not humanoid then return nil end
-		local animator = humanoid:FindFirstChildOfClass("Animator")
-		if animator then return animator end
-		local started = os.clock()
-		while RT.Running and character.Parent and os.clock() - started < CFG.AnimatorWait do
-			animator = humanoid:FindFirstChildOfClass("Animator")
-			if animator then return animator end
-			task.wait(0.1)
 		end
-		return humanoid:FindFirstChildOfClass("Animator")
 	end
-	local function setup(character)
-		disconnect("DescendantConnection")
-		disconnect("Connection")
-		if not character then RT.LastSkipReason = "no character"; return false end
-		RT.Pending = false
-		RT.Firing = false
-		local animator = getAnimator(character)
-		if animator then bindAnimator(animator) else RT.LastSkipReason = "waiting for animator" end
-		RT.DescendantConnection = character.DescendantAdded:Connect(function(d)
-			if d:IsA("Animator") then bindAnimator(d) end
-		end)
-		return animator ~= nil
-	end
-	local function reconnect() return setup(player.Character) end
-
-	if player.Character then task.defer(setup, player.Character) end
-	RT.CharacterConnection = player.CharacterAdded:Connect(function(character)
-		task.wait(0.25)
-		setup(character)
-	end)
+	task.spawn(function() while RT.Running do pcall(hookBoth); task.wait(0.5) end end)
+	local function reconnect() hookedAnims = setmetatable({}, { __mode = "k" }); pcall(hookBoth); return true end
 
 	BFApi = {
 		SetEnabled = function(v) CFG.Enabled = v == true; if not CFG.Enabled then RT.Pending = false; RT.Firing = false end end,
@@ -621,15 +600,14 @@ do
 			-- This is what stops the conflict with Auto Single (which sets ScriptEnabled=false).
 			if not (ScriptEnabled or tick() < burstUntil) or tick() < bfSuppressUntil then return end
 			local mode = Settings.Mode
-			if mode == "M1 Black Flash" then
-				task.delay(delayTime, function() if Settings.Mode == "M1 Black Flash" then lockCam(0.5); pressFlash() end end)
-			elseif mode == "Side Dash" then
+			-- M1 Black Flash is handled by the standalone Mode="M1 Black Flash" system (BFApi) now, NOT here — that
+			-- removes the duplicate. This chain path only does Side Dash + the teleport-behind approaches.
+			if mode == "Side Dash" then
 				dashLeft()
 				task.delay(delayTime, function() if Settings.Mode == "Side Dash" then faceBack(); pressFlash() end end)
 			else   -- Teleport / Jump / Back Dash = snap behind + flash + lock (the "lock on to the back" system)
 				task.delay(delayTime, function()
-					local mm = Settings.Mode
-					if mm ~= "M1 Black Flash" and mm ~= "Side Dash" then doBackstab(false) end
+					if Settings.Mode ~= "Side Dash" then doBackstab(false) end
 				end)
 			end
 		end
@@ -8416,13 +8394,15 @@ do
 
     local bfSub = CombatPage:SubPage({ Name = "Black Flash", Columns = 2 })
     local bfSec = bfSub:Section({ Name = "Black Flash", Side = 1 })
-    bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "Auto Single", "Auto Chain" } or { "Off", "Auto Single" }), Default = "Off", Callback = function(m)
+    -- Mode: "M1 Black Flash" = the standalone snippet (M1 -> press 3, full DB, both rigs) = BFApi. "Auto Chain" =
+    -- the teleport-behind chain + E lock-on-back. E always locks behind regardless (it self-bursts).
+    bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 Black Flash", "Auto Chain" } or { "Off", "M1 Black Flash" }), Default = "Off", Callback = function(m)
         if not BFApi or not ChainApi then return end
-        if m == "Auto Single" then BFApi.SetEnabled(true); ChainApi.setEnabled(false)
+        if m == "M1 Black Flash" then BFApi.SetEnabled(true); ChainApi.setEnabled(false)
         elseif m == "Auto Chain" then BFApi.SetEnabled(false); ChainApi.setEnabled(true)
         else BFApi.SetEnabled(false); ChainApi.setEnabled(false) end
     end })
-    bfSec:Dropdown({ Name = "Approach", Items = { "Teleport", "Jump", "Side Dash", "Back Dash", "M1 Black Flash" }, Default = "Teleport", Callback = function(m) if ChainApi then ChainApi.setMode(m) end end })
+    bfSec:Dropdown({ Name = "Approach (Auto Chain)", Items = { "Teleport", "Jump", "Side Dash", "Back Dash" }, Default = "Teleport", Callback = function(m) if ChainApi then ChainApi.setMode(m) end end })
     bfSec:Dropdown({ Name = "Auto Feint", Items = { "Off", "Feint Black Flash", "Feint M1", "Feint Moves" }, Default = "Off", Callback = function(v)
         if ChainApi then ChainApi.setFeintMode(v == "Feint Black Flash" and "BF" or (v == "Feint M1" and "M1" or (v == "Feint Moves" and "Moves" or "Off"))) end
     end })
