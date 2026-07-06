@@ -2174,6 +2174,20 @@ local function collectCorpses()
 	--    should read "1/24", not "1/2"). For each marker we PREFER the real body spawned inside it (a Humanoid, a child
 	--    Model, or a VISIBLE MeshPart — the marker itself is an invisible Transparency-1 dot); if nothing has spawned
 	--    there yet we still target the marker's own position so you can cycle to it and camp the spot.
+	-- ground validity: a marker parked in the VOID (no terrain/map under it) is "outside the map" — raycast down and
+	-- only keep it if it actually sits over real ground, so we never teleport you outside.
+	local function overGround(part)
+		if not (part and part:IsA("BasePart")) then return false end
+		local ok=false
+		pcall(function()
+			local rp=RaycastParams.new(); rp.FilterType=Enum.RaycastFilterType.Exclude
+			rp.FilterDescendantsInstances={getMyModel(), ci and ci:FindFirstChild("CorpseSpawns")}
+			rp.RespectCanCollide=true; rp.IgnoreWater=false
+			local res=WS:Raycast(part.Position+Vector3.new(0,10,0), Vector3.new(0,-2000,0), rp)
+			ok = res~=nil
+		end)
+		return ok
+	end
 	if ci then local cs=ci:FindFirstChild("CorpseSpawns"); if cs then for _,d in ipairs(cs:GetChildren()) do
 		local corpsePart
 		for _,x in ipairs(d:GetDescendants()) do
@@ -2181,8 +2195,9 @@ local function collectCorpses()
 			elseif x:IsA("MeshPart") and x.Transparency<0.95 then corpsePart=x; break
 			elseif x:IsA("Model") and x~=d then corpsePart=rootOf(x) or x:FindFirstChildWhichIsA("BasePart"); if corpsePart then break end end
 		end
-		-- target the corpse inside if present, else the marker itself (BasePart, or its first part / a descendant part)
-		add(corpsePart or (d:IsA("BasePart") and d) or rootOf(d) or d:FindFirstChildWhichIsA("BasePart",true))
+		-- corpse inside a marker = always keep. Bare marker = keep ONLY if it's over real ground (in the map, not void).
+		local markerPart=(d:IsA("BasePart") and d) or rootOf(d) or d:FindFirstChildWhichIsA("BasePart",true)
+		if corpsePart then add(corpsePart) elseif markerPart and overGround(markerPart) then add(markerPart) end
 	end end end
 	return out
 end
