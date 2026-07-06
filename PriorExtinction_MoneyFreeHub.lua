@@ -364,14 +364,14 @@ local function installHook()
 							return
 						end
 						-- ═══ INF STAM — THE REAL FIX (user-captured remote) ═══ Sprinting fires
-						-- ReplicaSignal(id,"SetAction","Run",true). We used to SWALLOW that, but swallowing it makes the
-						-- server treat you as WALKING = the "very slow" bug (the speed-keeper could only shove you back to
-						-- ~RunSpeed). So now we LET Run=true PASS (you keep the game's real full sprint speed) and instead
-						-- keep the STAMINA itself pinned to max — the SetProperty rewrite just below + the refill loop report
-						-- a full bar the same way the game does, so the server never enforces exhaustion. Full speed + full bar.
+						-- ReplicaSignal(id,"SetAction","Run",true) and the SERVER drains stamina the whole time it believes
+						-- Run is true. So we SWALLOW the Run=true report → the server never starts the drain → the bar never
+						-- drops. (Letting it pass instead just drained the bar = "inf stam not working".) Swallowing makes the
+						-- server think you're WALKING, so we drive your movement ourselves with a smooth BodyVelocity keeper
+						-- (see the InfStam Heartbeat) — a FORCE hold, not a raw velocity set, so it's fast WITHOUT the snap-back.
 						if CFG.InfStam and action=="SetAction" and a[3]=="Run" and a[4]==true then
-							__gg.MH_wantRun = tick()   -- note we're sprinting (speed-keeper only tops up if you're BELOW target)
-							-- (no swallow — fall through so Run replicates and you move at real sprint speed)
+							__gg.MH_wantRun = tick()   -- remember you're sprinting so the BodyVelocity keeper drives you
+							return                     -- SWALLOW: server never hears "Run=true" = never drains stamina
 						end
 						-- (stamina DRAIN report is blocked below so it never drops while you sprint.)
 						-- REWRITE stamina SetProperty to max so the server always sees a full bar.
@@ -1822,21 +1822,26 @@ conn(RunService.Heartbeat:Connect(function() if CFG.SpeedHack and alive() and no
 -- also stops sprinting you = it would rubber-band you to walk speed ("slow"). This re-asserts your sprint speed
 -- every frame AFTER replication, so the server can't drag you down. It ONLY pushes you UP to the sprint target and
 -- NEVER caps a naturally-faster dino, and only while you're actually moving — so it never fights normal walking.
+-- SMOOTH BodyVelocity keeper (the snap fix): swallowing Run makes the server think you walk, so a RAW velocity SET
+-- fought the server = the snap-back at higher speeds. A BodyVelocity is a FORCE the PE dino accepts (same as Float/
+-- Water), so it holds your sprint speed smoothly with NO snap. X/Z only (Y untouched = gravity/jump still normal);
+-- velocity zeroes the instant you release the keys so you stop naturally.
 conn(RunService.Heartbeat:Connect(function()
-	if not (CFG.InfStam and alive()) or CFG.SpeedHack or CFG.Fly then return end
-	local r=hrp(); if not r then return end
+	local keep = CFG.InfStam and alive() and not CFG.SpeedHack and not CFG.Fly
+	local r = keep and hrp() or nil
+	if not r then if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end return end
 	local dir=Vector3.zero; local cf=Cam.CFrame
 	if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end
 	if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end
 	if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end
 	if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end
-	if dir.Magnitude<=0 then return end                          -- not moving = leave you alone
-	local target=tonumber(CFG.RunSpeed) or 30                    -- sprint studs/sec (Movement > Run Speed slider)
-	local v=r.AssemblyLinearVelocity; local cur=Vector3.new(v.X,0,v.Z).Magnitude
-	if cur < target then                                         -- only push UP to sprint speed, never slow a fast dino
-		dir=Vector3.new(dir.X,0,dir.Z).Unit*target
-		pcall(function() r.AssemblyLinearVelocity=Vector3.new(dir.X, v.Y, dir.Z) end)
-	end
+	dir=Vector3.new(dir.X,0,dir.Z)
+	-- ensure the BodyVelocity exists (X/Z force only, Y=0 so it never lifts/pins you vertically)
+	local bv=__gg.MH_stamBV
+	if not (bv and bv.Parent==r) then pcall(function() if bv then bv:Destroy() end end); bv=Instance.new("BodyVelocity"); bv.Name="MH_Stam"; bv.MaxForce=Vector3.new(9e9,0,9e9); bv.P=5000; bv.Velocity=Vector3.zero; bv.Parent=r; __gg.MH_stamBV=bv end
+	if dir.Magnitude<=0 then pcall(function() bv.Velocity=Vector3.zero end); return end   -- no input = don't push
+	local target=math.clamp(tonumber(CFG.RunSpeed) or 20, 14, 40)
+	pcall(function() bv.Velocity=dir.Unit*target end)
 end))
 -- FLOAT: a Y-only BodyVelocity HOLDS you in the air — plain velocity writes don't hold a CFrame-driven PE dino
 -- (that's why Float "didn't work"). It only controls vertical, so you still walk normally. Space=rise, Ctrl=sink.
@@ -2254,6 +2259,7 @@ local function tpToCorpse(part)
 	-- target part so the ray only hits real terrain, then stand +3 on it. If nothing is below, use the corpse's own Y.
 	local ci=WS:FindFirstChild("CharacterIgnore")
 	local landY=np.Y+3
+	local foundGround=false
 	pcall(function()
 		local rp=RaycastParams.new(); rp.FilterType=Enum.RaycastFilterType.Exclude
 		rp.FilterDescendantsInstances={
@@ -2262,10 +2268,14 @@ local function tpToCorpse(part)
 			WS:FindFirstChild("Bonepiles"), WS:FindFirstChild("Food"),
 			ci and ci:FindFirstChild("CorpseSpawns"), ci and ci:FindFirstChild("LeftCharacters"),
 		}
-		rp.RespectCanCollide=true
+		rp.RespectCanCollide=true; rp.IgnoreWater=false
 		local res=WS:Raycast(np+Vector3.new(0,60,0), Vector3.new(0,-6000,0), rp)
-		if res then landY=res.Position.Y+3 end
+		if res then landY=res.Position.Y+3; foundGround=true end
 	end)
+	-- OUT-OF-MAP GUARD (user: "sometimes it teleports like out the map"): if there's NO ground/water under the target
+	-- within 6000 studs, it's a void-parked marker = outside the map. Don't teleport — report false so the cycle skips
+	-- to the next corpse instead of throwing you into the void.
+	if not foundGround then carnBusy=false; return false end
 	local cc=getMyModel(); local goal=CFrame.new(np.X, landY, np.Z)
 	local noclip={}; if cc then pcall(function() for _,dd in ipairs(cc:GetDescendants()) do if dd:IsA("BasePart") and dd.CanCollide then dd.CanCollide=false; noclip[#noclip+1]=dd end end end) end
 	pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end end)
@@ -2285,16 +2295,21 @@ local function tpToCorpse(part)
 		if prompt then local oh=prompt.HoldDuration; prompt.RequiresLineOfSight=false; prompt.HoldDuration=0; if fireprox then fireprox(prompt) end; prompt.HoldDuration=oh end end)
 	holdKey(Enum.KeyCode.E, 0.5)
 	task.delay(1.2, function() for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end; pcall(function() if bp then bp:Destroy() end end); carnBusy=false end)
+	return true
 end
--- go to the NEXT corpse in the list, wrapping, skipping any that despawned; then ask YES/NO.
+-- go to the NEXT corpse in the list, wrapping, SKIPPING void/out-of-map spots (tpToCorpse returns false for those)
+-- until one actually lands you in the map; then ask YES/NO.
 local function doNextCorpse()
 	if #corpseList==0 then corpseList=collectCorpses(); corpseIdx=0 end
 	if #corpseList==0 then pcall(function() carnGui.Enabled=false end); notify("Corpse TP","No corpse / meat / bone found on the map right now."); return end
-	local tries=0; local part
-	repeat corpseIdx = corpseIdx % #corpseList + 1; tries=tries+1; part=corpseList[corpseIdx] until (part and part.Parent) or tries>#corpseList
-	if not (part and part.Parent) then corpseList={}; pcall(function() carnGui.Enabled=false end); notify("Corpse TP","Those corpses despawned — will rescan."); return end
 	if not carnOrigin then local r=hrp(); if r then carnOrigin=r.Position end end   -- remember where you were (for Teleport Back)
-	tpToCorpse(part)
+	local tries=0; local ok=false
+	repeat
+		corpseIdx = corpseIdx % #corpseList + 1; tries=tries+1
+		local part=corpseList[corpseIdx]
+		if part and part.Parent then ok = (tpToCorpse(part)==true) end   -- false = void/out-of-map → try the next one
+	until ok or tries>#corpseList
+	if not ok then corpseList={}; pcall(function() carnGui.Enabled=false end); notify("Corpse TP","No in-map corpse found right now — will rescan next time."); return end
 	pcall(function() carnLabel.Text="Teleported to corpse "..corpseIdx.." / "..#corpseList.." - did it work?"; carnGui.Enabled=true end)
 end
 yesBtn.MouseButton1Click:Connect(function() pcall(function() carnGui.Enabled=false end) end)   -- keep you here
@@ -3280,14 +3295,14 @@ local function espColor(def)
 	if c and M[c] then return M[c] end
 	return def
 end
-local function addESP(model, color, label, hpFrac)
+local function addESP(model, color, label, hpFrac, stamFrac)
 	if ESP.objs[model] then return end
 	local r=getHitbox(model) or rootOf(model); if not r then return end
 	color = espColor(color)
 	-- Highlight MUST be parented into the workspace/model to render — inside a ScreenGui it shows NOTHING (that was the bug).
 	local h = Instance.new("Highlight"); h.FillColor=color; h.OutlineColor=Color3.new(1,1,1); h.FillTransparency=0.6; h.OutlineTransparency=0; h.DepthMode=Enum.HighlightDepthMode.AlwaysOnTop; h.Adornee=model; h.Parent=model
 	local lines=1; for _ in label:gmatch("\n") do lines=lines+1 end
-	local barH = hpFrac and 7 or 0   -- room for the HEALTH BAR under the text
+	local barH = (hpFrac and 7 or 0) + (stamFrac and 6 or 0)   -- room for HEALTH bar (+ STAMINA bar if we have it)
 	local bb = Instance.new("BillboardGui"); bb.Adornee=r; bb.Size=UDim2.fromOffset(180, 13*lines+6+barH); bb.AlwaysOnTop=true; bb.StudsOffset=Vector3.new(0,3,0); bb.Parent=ESP.folder
 	local tl = Instance.new("TextLabel"); tl.BackgroundTransparency=1; tl.Size=UDim2.new(1,0,1,-barH); tl.Text=label; tl.TextColor3=color; tl.TextStrokeTransparency=0.3; tl.TextSize=12; tl.Font=UIFONT; tl.TextYAlignment=Enum.TextYAlignment.Top; tl.Parent=bb
 	local fill
@@ -3297,6 +3312,13 @@ local function addESP(model, color, label, hpFrac)
 		local uc=Instance.new("UICorner"); uc.CornerRadius=UDim.new(0,2); uc.Parent=bg
 		fill=Instance.new("Frame"); fill.Size=UDim2.new(f,0,1,0); fill.BorderSizePixel=0; fill.BackgroundColor3=Color3.fromRGB(math.floor(220*(1-f))+40, math.floor(200*f)+40, 55); fill.Parent=bg
 		local uc2=Instance.new("UICorner"); uc2.CornerRadius=UDim.new(0,2); uc2.Parent=fill
+	end
+	if stamFrac then   -- STAMINA BAR: YELLOW, sits just ABOVE the health bar
+		local sf=math.clamp(stamFrac,0,1)
+		local sbg=Instance.new("Frame"); sbg.AnchorPoint=Vector2.new(0.5,1); sbg.Position=UDim2.new(0.5,0,1,-(hpFrac and 7 or 0)-1); sbg.Size=UDim2.new(1,-20,0,4); sbg.BackgroundColor3=Color3.fromRGB(20,20,20); sbg.BackgroundTransparency=0.2; sbg.BorderSizePixel=0; sbg.Parent=bb
+		local uc3=Instance.new("UICorner"); uc3.CornerRadius=UDim.new(0,2); uc3.Parent=sbg
+		local sfill=Instance.new("Frame"); sfill.Size=UDim2.new(sf,0,1,0); sfill.BorderSizePixel=0; sfill.BackgroundColor3=Color3.fromRGB(245,215,60); sfill.Parent=sbg
+		local uc4=Instance.new("UICorner"); uc4.CornerRadius=UDim.new(0,2); uc4.Parent=sfill
 	end
 	ESP.objs[model]={h,bb,tl,fill}
 end
@@ -3357,7 +3379,17 @@ local function readDinoInfo(model)
 	end
 	-- last resort for the BAR: no readable HP anywhere → show a FULL bar (so every dino still gets a visible bar)
 	if not hpFrac then hpFrac=1 end
-	return species,growth,health,stam,bleed,hpFrac
+	-- STAMINA BAR fraction (user: "add their stamina bar to their ESP"): find a MAX stamina alongside the value so we
+	-- can draw a yellow stamina bar. Only shows for dinos that actually expose stamina to the client (many enemies
+	-- keep it server-side / in their own HUD only, so it won't always appear — that's a game limit, not a bug).
+	local stamFrac
+	if stam then
+		local sv=tonumber(stam); local smx
+		for _,a in ipairs({"MaxStamina","MaxStam","MaxEnergy","MaxEndurance","StaminaMax"}) do local v=model:GetAttribute(a); if v then smx=tonumber(v); break end end
+		if not smx then for _,fn in ipairs({"Stats","Data","Vitals","Needs"}) do local f=model:FindFirstChild(fn); if f then for _,a in ipairs({"MaxStamina","MaxStam","MaxEnergy"}) do local v=f:GetAttribute(a); if v then smx=tonumber(v); break end end end if smx then break end end end
+		if sv and smx and smx>0 then stamFrac=math.clamp(sv/smx,0,1) end
+	end
+	return species,growth,health,stam,bleed,hpFrac,stamFrac
 end
 -- ESP is throttled (1.6s) and HARD-CAPPED at 60 objects, and the whole rebuild is pcall-wrapped,
 -- so Fish ESP (which used to scan the entire workspace every 0.6s) can no longer lag you out or kill the menu.
@@ -3375,7 +3407,7 @@ task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
 					if body then
 						local d=dist(me.Position, body.Position)
 						if d<=CFG.ESPRange then
-							local sp,gr,hp,st,bl,hpf = readDinoInfo(m)
+							local sp,gr,hp,st,bl,hpf,stf = readDinoInfo(m)
 							local pl = Players:GetPlayerFromCharacter(m)
 							-- always show the DINO SPECIES; for a player-controlled dino show their name on top + species under
 							local label
@@ -3385,7 +3417,7 @@ task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
 							if hp then label=label.."\nHP: "..hp end
 							if st then label=label.."\nStam: "..st end
 							if bl and bl>0 then label=label.."\nBlood: "..bl end
-							addESP(m, pl and Color3.fromRGB(90,170,255) or Color3.fromRGB(120,220,120), label, hpf); count+=1
+							addESP(m, pl and Color3.fromRGB(90,170,255) or Color3.fromRGB(120,220,120), label, hpf, stf); count+=1
 						end
 					end
 				end
