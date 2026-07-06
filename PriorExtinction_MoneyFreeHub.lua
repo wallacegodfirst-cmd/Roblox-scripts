@@ -2420,11 +2420,13 @@ local function tpToCorpse(part)
 	pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end end)
 	local r=hrp(); if r then pcall(function() r.AssemblyLinearVelocity=Vector3.zero; r.AssemblyAngularVelocity=Vector3.zero end) end
 	local bp; pcall(function() if r then bp=Instance.new("BodyPosition"); bp.MaxForce=Vector3.new(9e9,9e9,9e9); bp.P=2e4; bp.D=2500; bp.Position=Vector3.new(np.X,landY,np.Z); bp.Parent=r end end)
-	-- BYPASS-TELEPORT anti-snapback (the user's "bypass telport" fix for going up/away): the server rubber-bands you
-	-- back for ~1s after a hard set. Re-assert the goal CFrame + kill velocity every frame for 1s so the snap loses.
+	-- SHORT anti-snapback (fix "it keeps clicking / I can't do anything"): only re-assert the CFrame for ~0.4s so you
+	-- land where the corpse is, then you get FULL control right back. No key presses at all — the teleport just moves
+	-- you next to the corpse; you eat it yourself (or let INF Food do it). We fire the eat prompt ONCE (a remote fire,
+	-- not a held key) so it doesn't hijack your keyboard.
 	task.spawn(function()
 		local t0=tick()
-		while tick()-t0<1.0 and carnBusy do
+		while tick()-t0<0.4 and carnBusy do
 			local rr=hrp()
 			if rr then pcall(function() rr.CFrame=goal; rr.AssemblyLinearVelocity=Vector3.zero; rr.AssemblyAngularVelocity=Vector3.zero end) end
 			RunService.Heartbeat:Wait()
@@ -2432,8 +2434,8 @@ local function tpToCorpse(part)
 	end)
 	pcall(function() local m=part:FindFirstAncestorWhichIsA("Model"); local prompt=(m and m:FindFirstChildWhichIsA("ProximityPrompt",true)) or part:FindFirstChildWhichIsA("ProximityPrompt")
 		if prompt then local oh=prompt.HoldDuration; prompt.RequiresLineOfSight=false; prompt.HoldDuration=0; if fireprox then fireprox(prompt) end; prompt.HoldDuration=oh end end)
-	holdKey(Enum.KeyCode.E, 0.5)
-	task.delay(1.2, function() for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end; pcall(function() if bp then bp:Destroy() end end); carnBusy=false end)
+	-- (removed the holdKey(E) — pressing/holding E every teleport is what "kept clicking" and locked your controls)
+	task.delay(0.5, function() for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end; pcall(function() if bp then bp:Destroy() end end); carnBusy=false end)
 	return true
 end
 -- go to the NEXT corpse in the list, wrapping, SKIPPING void/out-of-map spots (tpToCorpse returns false for those)
