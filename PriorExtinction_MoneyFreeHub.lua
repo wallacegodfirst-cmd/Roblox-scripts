@@ -2169,10 +2169,11 @@ local function collectCorpses()
 			end
 		end
 	end end)
-	-- 3) CorpseSpawns.DinosaurSpawn markers — the corpse spawns INSIDE each marker (user's Explorer: CorpseSpawns holds
-	--    a big list of DinosaurSpawn, and the body sits inside one). The marker itself is an INVISIBLE red dot
-	--    (Transparency 1), so we DEEP-scan each DinosaurSpawn for the real spawned body — a Humanoid, a child Model, or
-	--    a VISIBLE MeshPart — and target THAT corpse (not the invisible marker, which is why it went "up/far to nothing").
+	-- 3) CorpseSpawns.DinosaurSpawn markers — the user's path: workspace.CharacterIgnore.CorpseSpawns:GetChildren()[N].
+	--    Corpses spawn AT these points and there are MANY of them, so we cycle EVERY DinosaurSpawn (that's why the count
+	--    should read "1/24", not "1/2"). For each marker we PREFER the real body spawned inside it (a Humanoid, a child
+	--    Model, or a VISIBLE MeshPart — the marker itself is an invisible Transparency-1 dot); if nothing has spawned
+	--    there yet we still target the marker's own position so you can cycle to it and camp the spot.
 	if ci then local cs=ci:FindFirstChild("CorpseSpawns"); if cs then for _,d in ipairs(cs:GetChildren()) do
 		local corpsePart
 		for _,x in ipairs(d:GetDescendants()) do
@@ -2180,7 +2181,8 @@ local function collectCorpses()
 			elseif x:IsA("MeshPart") and x.Transparency<0.95 then corpsePart=x; break
 			elseif x:IsA("Model") and x~=d then corpsePart=rootOf(x) or x:FindFirstChildWhichIsA("BasePart"); if corpsePart then break end end
 		end
-		if corpsePart then add(corpsePart) end
+		-- target the corpse inside if present, else the marker itself (BasePart, or its first part / a descendant part)
+		add(corpsePart or (d:IsA("BasePart") and d) or rootOf(d) or d:FindFirstChildWhichIsA("BasePart",true))
 	end end end
 	return out
 end
