@@ -359,8 +359,18 @@ local function installHook()
 						if CFG.InfStam and action=="RegisterAttack" and typeof(a[3])=="string" and string.find(a[3],"Secondary",1,true) then
 							return
 						end
-						-- INF Stam: DO NOT swallow the Sprint action (that STOPPED you sprinting = the "slow" bug). Let sprint
-						-- run normally; we just block the stamina DRAIN report below so it never drops while you sprint.
+						-- ═══ INF STAM — THE REAL FIX (user-captured remote) ═══ Sprinting fires
+						-- ReplicaSignal(id,"SetAction","Run",true) and the SERVER drains stamina the ENTIRE time it
+						-- believes Run is true. So we SWALLOW the Run=true report → the server never starts the drain →
+						-- the bar never drops. (Run=false passes through so the state can always clear.) Swallowing Run
+						-- alone made you "slow" before, because the server then rubber-bands you to walk speed — so the
+						-- velocity drive further down (see the InfStam Heartbeat) re-asserts your sprint speed every frame
+						-- AFTER replication, which the server can't override. No-drain + speed drive = fast + full bar.
+						if CFG.InfStam and action=="SetAction" and a[3]=="Run" and a[4]==true then
+							__gg.MH_wantRun = tick()   -- remember you're trying to sprint so the drive knows to push speed
+							return                     -- SWALLOW: the server never hears "Run=true" = never drains
+						end
+						-- (stamina DRAIN report is blocked below so it never drops while you sprint.)
 						-- REWRITE stamina SetProperty to max so the server always sees a full bar.
 						-- Previously this swallowed the call entirely, which also blocked our own
 						-- refill fires at line ~1615 → server never got told stam was full = no drain fix.
@@ -1343,6 +1353,7 @@ do local p=Pages["Survival"]
 	mkToggle(f,"Carnivore Meat TP (TP to nearest meat/corpse)","CarnMeatTP",4)
 	mkToggle(f,"INF Water","InfWater",5)
 	mkToggle(f,"INF Stamina","InfStam",6)
+	mkSlider(f,"INF Stam Run Speed (raise if it feels slow)","RunSpeed",16,60,7,2)
 	local _,pr=mkSec(p,"Protection",2)
 	mkToggle(pr,"Anti Drown","AntiDrown",1)
 	mkToggle(pr,"Walk on Water","WalkWater",2)
@@ -1771,6 +1782,26 @@ end
 -- made the server snap you back AND counted as sprinting (which drained stamina, then exhausted = slow when you
 -- toggled off). INF Stam now just suppresses the drain (hook + stat pin), so you move at NORMAL speed, stam full.
 conn(RunService.Heartbeat:Connect(function() if CFG.SpeedHack and alive() and not CFG.Fly then local r=hrp(); if r then local spd=CFG.SpeedVal; local dir=Vector3.zero; local cf=Cam.CFrame if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end if dir.Magnitude>0 then dir=Vector3.new(dir.X,0,dir.Z).Unit*spd; r.AssemblyLinearVelocity=Vector3.new(dir.X,r.AssemblyLinearVelocity.Y,dir.Z) end end end end))
+-- INF STAM SPEED KEEPER: since we SWALLOW the "Run=true" report (so the server never drains stamina), the server
+-- also stops sprinting you = it would rubber-band you to walk speed ("slow"). This re-asserts your sprint speed
+-- every frame AFTER replication, so the server can't drag you down. It ONLY pushes you UP to the sprint target and
+-- NEVER caps a naturally-faster dino, and only while you're actually moving — so it never fights normal walking.
+conn(RunService.Heartbeat:Connect(function()
+	if not (CFG.InfStam and alive()) or CFG.SpeedHack or CFG.Fly then return end
+	local r=hrp(); if not r then return end
+	local dir=Vector3.zero; local cf=Cam.CFrame
+	if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end
+	if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end
+	if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end
+	if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end
+	if dir.Magnitude<=0 then return end                          -- not moving = leave you alone
+	local target=tonumber(CFG.RunSpeed) or 30                    -- sprint studs/sec (Movement > Run Speed slider)
+	local v=r.AssemblyLinearVelocity; local cur=Vector3.new(v.X,0,v.Z).Magnitude
+	if cur < target then                                         -- only push UP to sprint speed, never slow a fast dino
+		dir=Vector3.new(dir.X,0,dir.Z).Unit*target
+		pcall(function() r.AssemblyLinearVelocity=Vector3.new(dir.X, v.Y, dir.Z) end)
+	end
+end))
 -- FLOAT: a Y-only BodyVelocity HOLDS you in the air — plain velocity writes don't hold a CFrame-driven PE dino
 -- (that's why Float "didn't work"). It only controls vertical, so you still walk normally. Space=rise, Ctrl=sink.
 -- No CFrame teleport = no 267. On enable it lifts you ~4 studs off the ground so you're floating, then hovers.
