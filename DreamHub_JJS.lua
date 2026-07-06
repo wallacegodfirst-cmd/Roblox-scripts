@@ -585,8 +585,36 @@ do
 							if tgt and fireFlashInPlace then fireFlashInPlace(tgt, true) end   -- conversion re-press: key only, no second facing-hold/capper (one writer per swing)
 						end)
 					end
+				elseif Settings.Mode == "Side Dash" and (ScriptEnabled or tick() < burstUntil) and tick() >= bfSuppressUntil then
+					-- SIDE DASH BF (user's proven pattern): your M1 anim fired -> dash LEFT now -> press the flash key
+					-- (3) at the exact wind-up frame (delayTime). No teleport/orbit — just left dash + the black flash.
+					task.spawn(function()
+						local t0 = tick()
+						while tick() - t0 < 0.1 do
+							local r = getHRP(myCharResolved()); if not r then break end
+							local v = -r.CFrame.RightVector * 80   -- PURE LEFT
+							pcall(function() r.AssemblyLinearVelocity = Vector3.new(v.X, math.min(r.AssemblyLinearVelocity.Y, 0), v.Z) end)
+							task.wait()
+						end
+						local rS = getHRP(myCharResolved()); if rS then pcall(function() local vv = rS.AssemblyLinearVelocity; rS.AssemblyLinearVelocity = Vector3.new(0, vv.Y, 0) end) end
+					end)
+					task.delay(delayTime, function()
+						if Settings.Mode ~= "Side Dash" or humanoid.Health <= 0 then return end
+						if not (ScriptEnabled or tick() < burstUntil) or tick() < bfSuppressUntil then return end
+						-- aim at the nearest enemy's back before the flash
+						pcall(function()
+							local mh = getHRP(myCharResolved()); local tgt = getNearestEnemy(16); local tr = tgt and getHRP(tgt)
+							if mh and tr then mh.CFrame = CFrame.lookAt(mh.Position, Vector3.new(tr.Position.X, mh.Position.Y, tr.Position.Z)) end
+						end)
+						_G.VX_INJECT_UNTIL = tick() + 0.4; vxMarkKey(Settings.AbilityKey)
+						pcall(function()
+							VirtualInputManager:SendKeyEvent(true, Settings.AbilityKey, false, game)
+							task.wait(Settings.KeyHoldDuration)
+							VirtualInputManager:SendKeyEvent(false, Settings.AbilityKey, false, game)
+						end)
+					end)
 				elseif (ScriptEnabled or tick() < burstUntil) and tick() >= bfSuppressUntil then
-					task.delay(delayTime, function() if humanoid.Health > 0 and Settings.Mode ~= "M1 Black Flash" and (ScriptEnabled or tick() < burstUntil) and tick() >= bfSuppressUntil then doBackstab() end end)
+					task.delay(delayTime, function() if humanoid.Health > 0 and Settings.Mode ~= "M1 Black Flash" and Settings.Mode ~= "Side Dash" and (ScriptEnabled or tick() < burstUntil) and tick() >= bfSuppressUntil then doBackstab() end end)
 				end
 			end
 		end)
