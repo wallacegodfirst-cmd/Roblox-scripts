@@ -100,9 +100,13 @@ for _,key in ipairs({
 	"Aimbot","SilentAim","LockOn","BoneProtect","TurnHack","Fly","SpeedHack","Noclip","InfJump",
 	"InfFood","InfWater","InfStam","InfOxygen","SaveDino","AutoFarmPlayer","AutoFarmFossil","AutoFarmGem","AutoPlayBot",
 	"ESPPlayers","ESPCorpses","FoodESP","FishESP","GemESP","AlertEnabled","CarnMeatTP","FullBright","NightVision","NoDarkWater","WaterClear","NoClouds","AlwaysDamage","NoGrabLimit",
-	"Float","GodMode","InfLight","UnlockFOV","InfZoom","AntiDrown","WalkWater","AutoClean","AntiFracture","AntiBleed","AntiFall","Invis",
+	"Float","GodMode","InfLight","UnlockFOV","InfZoom","AntiDrown","WalkWater","AutoClean","AntiFracture","AntiBleed","Invis",
 	"AntiBreakHead","AntiBreakNeck","AntiBreakLeg","AntiBreakTail","AntiBreakTorso","NoSleep","AntiAFK","UnlockMouse","__SpyOn",
 	"AutoClick","AutoEatFood","DebugPanel","LogRemotes","BypassTP","SafeTP",
+	-- AntiFall REMOVED from this reset list ("when I spawn in, I die"): forcing it off on every execution meant a
+	-- fresh load / respawn had ZERO fall protection during the game's own spawn-in drop, killing you before you
+	-- could ever toggle it back on. It's a pure safety net with no lag/side-effect cost, so it now stays at its
+	-- CFG default (true) across loads/respawns instead of being wiped.
 }) do CFG[key]=false end
 
 -- ═══ CORE HELPERS ═══
@@ -1937,6 +1941,27 @@ local function isRedMeshMeat(p)
 	end
 	return true
 end
+-- SCENT HIGHLIGHT DETECTOR (user's idea, from their Explorer screenshot): the game itself tags smellable corpses
+-- with a child named "ScentHighlight" (a Highlight instance) under workspace.Characters[name] — the same thing
+-- that lights up red when you press F to sniff. This is the GAME'S OWN authoritative corpse marker, so it's
+-- checked FIRST (before any name/posture guess) and is far more reliable than any heuristic.
+local function isScentCorpse(m)
+	if not (m and m:IsA("Model")) then return false end
+	local sh = m:FindFirstChild("ScentHighlight")
+	if not (sh and sh:IsA("Highlight")) then return false end
+	if sh.Enabled==false then return false end
+	local c = sh.FillColor
+	if not c then return true end   -- present + enabled, no readable color -> trust the game's own marker
+	return c.R>0.4 and c.R>c.G*1.2 and c.R>c.B*1.2   -- red-dominant = "red = corpse" per the user
+end
+-- keep the scent system ACTIVE: press F (the game's own sniff key) periodically so ScentHighlight objects exist
+-- and stay current. Only while Carnivore Meat TP is on, and never while you're typing.
+task.spawn(function() while RUNNING do
+	if CFG.CarnMeatTP and alive() and not UIS:GetFocusedTextBox() then
+		pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.F, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.F, false, game) end)
+		task.wait(2)
+	else task.wait(1) end
+end end)
 -- DOWNED-BODY DETECTOR (user's screenshot): a dino lying on the ground = a corpse to eat. We detect it by POSTURE +
 -- STATE, not name: a Model (not us, not a live player) whose main part is (a) tilted like a ragdoll — its UpVector
 -- points sideways/down instead of up — or (b) has a dead Humanoid, or (c) carries PE's corpse markers, or (d) is
@@ -1968,11 +1993,13 @@ local function nearestMeat(range)
 		seen[m]=true
 		local dd=dist(me.Position,part.Position); if dd<bd then best,bpart,bd=m,part,dd end
 	end
-	-- 1) scan workspace.Characters + all corpse/sandbox folders FULLY (these hold downed dinos + corpses) — no cap here
+	-- 1) scan workspace.Characters + all corpse/sandbox folders FULLY (these hold downed dinos + corpses) — no cap here.
+	-- ScentHighlight (the game's own "press F to sniff" corpse marker) is checked FIRST — it's authoritative, so a
+	-- model with it doesn't need to also pass the posture heuristic.
 	for _,fn in ipairs({"Characters","Corpses","Corpse","DeadBodies","Sandbox","Dinos","Creatures","NPCs","Entities","Animals","Food"}) do
 		local f=WS:FindFirstChild(fn)
 		if f then for _,m in ipairs(f:GetChildren()) do
-			if m:IsA("Model") and isDownedBody(m) then consider(m, rootOf(m)) end
+			if m:IsA("Model") and (isScentCorpse(m) or isDownedBody(m)) then consider(m, rootOf(m)) end
 		end end
 	end
 	-- 2) whole-map sweep for prompts / red-mesh meat / downed bodies (raised cap = "scan the entire map"; 20000 covers
@@ -1988,6 +2015,8 @@ local function nearestMeat(range)
 			end
 		elseif d:IsA("BasePart") and isRedMeshMeat(d) then
 			consider(d:FindFirstAncestorWhichIsA("Model") or d, d)
+		elseif d:IsA("Highlight") and d.Name=="ScentHighlight" then
+			local m=d:FindFirstAncestorWhichIsA("Model"); if m and isScentCorpse(m) then consider(m, rootOf(m)) end
 		elseif d:IsA("Model") and isDownedBody(d) then
 			consider(d, rootOf(d))
 		end
