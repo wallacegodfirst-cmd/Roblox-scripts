@@ -1946,13 +1946,23 @@ end
 -- that lights up red when you press F to sniff. This is the GAME'S OWN authoritative corpse marker, so it's
 -- checked FIRST (before any name/posture guess) and is far more reliable than any heuristic.
 local function isScentCorpse(m)
-	if not (m and m:IsA("Model")) then return false end
+	if not (m and m:IsA("Model")) or m==getMyModel() then return false end
 	local sh = m:FindFirstChild("ScentHighlight")
 	if not (sh and sh:IsA("Highlight")) then return false end
 	if sh.Enabled==false then return false end
-	local c = sh.FillColor
-	if not c then return true end   -- present + enabled, no readable color -> trust the game's own marker
-	return c.R>0.4 and c.R>c.G*1.2 and c.R>c.B*1.2   -- red-dominant = "red = corpse" per the user
+	return true   -- an ENABLED ScentHighlight IS the game's corpse marker (what lights up red when you sniff) — trust it. (Red-color filtering removed: it rejected corpses whose fill wasn't perfectly red = "it doesn't tp".)
+end
+-- THE EXACT PART INSIDE THE RED (user: "teleport to the thing that is inside red"): a Highlight draws its outline
+-- on its .Adornee. So the "thing inside red" is ScentHighlight.Adornee — teleport to THAT, not the model's generic
+-- root. Falls back to the highlight's parent model root if the Adornee isn't a readable part.
+local function scentPart(m)
+	local sh = m and m:FindFirstChild("ScentHighlight")
+	local ad = sh and sh.Adornee
+	if ad then
+		if ad:IsA("BasePart") then return ad end
+		if ad:IsA("Model") then local r=rootOf(ad); if r then return r end end
+	end
+	return rootOf(m)
 end
 -- keep the scent system ACTIVE: press F (the game's own sniff key) periodically so ScentHighlight objects exist
 -- and stay current. Only while Carnivore Meat TP is on, and never while you're typing.
@@ -1987,11 +1997,14 @@ end
 local function nearestMeat(range)
 	local me=hrp(); if not me then return nil end
 	local best,bpart,bd=nil,nil,range
+	local sbest,sbpart,sbd=nil,nil,range   -- SCENT corpses tracked separately so the red-highlighted corpse WINS
 	local seen={}
-	local function consider(m, part)
+	local function consider(m, part, isScent)
 		if not (m and part and part:IsA("BasePart")) or seen[m] then return end
 		seen[m]=true
-		local dd=dist(me.Position,part.Position); if dd<bd then best,bpart,bd=m,part,dd end
+		local dd=dist(me.Position,part.Position)
+		if dd<bd then best,bpart,bd=m,part,dd end
+		if isScent and dd<sbd then sbest,sbpart,sbd=m,part,dd end
 	end
 	-- 1) scan workspace.Characters + all corpse/sandbox folders FULLY (these hold downed dinos + corpses) — no cap here.
 	-- ScentHighlight (the game's own "press F to sniff" corpse marker) is checked FIRST — it's authoritative, so a
@@ -1999,7 +2012,10 @@ local function nearestMeat(range)
 	for _,fn in ipairs({"Characters","Corpses","Corpse","DeadBodies","Sandbox","Dinos","Creatures","NPCs","Entities","Animals","Food"}) do
 		local f=WS:FindFirstChild(fn)
 		if f then for _,m in ipairs(f:GetChildren()) do
-			if m:IsA("Model") and (isScentCorpse(m) or isDownedBody(m)) then consider(m, rootOf(m)) end
+			if m:IsA("Model") then
+				if isScentCorpse(m) then consider(m, scentPart(m), true)  -- teleport to the EXACT part inside the red highlight
+				elseif isDownedBody(m) then consider(m, rootOf(m)) end
+			end
 		end end
 	end
 	-- 2) whole-map sweep for prompts / red-mesh meat / downed bodies (raised cap = "scan the entire map"; 20000 covers
@@ -2016,11 +2032,14 @@ local function nearestMeat(range)
 		elseif d:IsA("BasePart") and isRedMeshMeat(d) then
 			consider(d:FindFirstAncestorWhichIsA("Model") or d, d)
 		elseif d:IsA("Highlight") and d.Name=="ScentHighlight" then
-			local m=d:FindFirstAncestorWhichIsA("Model"); if m and isScentCorpse(m) then consider(m, rootOf(m)) end
+			local m=d:FindFirstAncestorWhichIsA("Model"); if m and isScentCorpse(m) then consider(m, scentPart(m), true) end
 		elseif d:IsA("Model") and isDownedBody(d) then
 			consider(d, rootOf(d))
 		end
 	end
+	-- PREFER the red scent corpse ("teleport to the thing inside red"): if any scent corpse was found, return the
+	-- nearest one; only fall back to other meat/downed bodies when there is NO scent corpse anywhere.
+	if sbest then return sbest,sbpart,sbd end
 	return best,bpart,bd
 end
 __gg.MH_nearestMeat = nearestMeat   -- expose so the Auto Play Bot (separate do-block) can reuse it without a 2nd top-level local
