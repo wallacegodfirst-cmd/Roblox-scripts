@@ -1002,11 +1002,12 @@ end
 -- HARDENED teleport for FAR spots that a one-frame snap gets set back on: glide there in whitelisted STEPS
 -- (each step is small enough to stay under the anti-cheat's per-tick distance limit) then HOLD + re-whitelist.
 local function vxTeleportHard(dest, holdTime)
-	if VX_TP_METHOD == "Instant" then   -- proven path: instant whitelisted snap + long hold (what the black flash does)
-		if typeof(dest) == "CFrame" then dest = dest.Position end
-		vxGlide(dest, nil, math.max(holdTime or 3, 2))
-		return
-	end
+	-- ALWAYS INSTANT now (user: "i just want to tp, not glide" — use the early teleport). The stepped Glide path is
+	-- gone; every teleport is one whitelisted snap + a short hold so the anti-cheat can't drag you back. A stale
+	-- saved "Glide" config can no longer bring the gliding back.
+	if typeof(dest) == "CFrame" then dest = dest.Position end
+	vxGlide(dest, nil, math.max(holdTime or 3, 2))
+	if true then return end
 	local LP = game:GetService("Players").LocalPlayer
 	if typeof(dest) == "CFrame" then dest = dest.Position end
 	task.spawn(function()
@@ -1605,32 +1606,32 @@ do
 	-- So: count YOUR chain (M1 anims, per-character database). After hit #3, the SCRIPT throws hit #4
 	-- itself with the right modifier - held space (uptilt) or after a hop (slam) - plus the Activated
 	-- remote at the exact same moment. Every character, same chain rule.
+	-- EXACT user spec:
+	--   UPPERCUT  = HOLD the space bar while you do 4 M1s.
+	--   DOWN SLAM = do 3 M1s, THEN jump + M1.
+	-- Fully automatic: when the toggle is on and an enemy is in melee range, the script performs the whole thing.
 	local function finisher()
-		busy = true
-		count = 0
+		busy = true; count = 0
 		task.spawn(function()
-			_G.VX_INJECT_UNTIL = tick() + 1.2
+			_G.VX_INJECT_UNTIL = tick() + 2.5
 			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}
-			_G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 1.2
+			_G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 2.5
 			_G.VX_LAUNCHING = tick()
 			if mode == "Uppercut" then
-				note("Uppercut: 3 hits in -> space + 4th hit")
-				pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)   -- HOLD space: mid-combo this can't jump you
-				task.wait(0.22)                                                                  -- the game must SEE space held before the hit
-				realM1()                                                                        -- the 4th hit, thrown BY the script, space held = UPTILT
-				act("Up")                                                                       -- the variant remote with the in-flight hit
-				task.wait(0.06); realM1()                                                       -- safety tap if the first was a frame early
-				task.wait(0.2)
+				if _G.VX_BF_DEBUG then print("[DreamHub M1Combo] Uppercut: hold Space + 4 M1s") end
+				pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)   -- HOLD space the WHOLE combo
+				for _ = 1, 4 do realM1(); task.wait(0.33) end                                   -- 4 M1s with space held = uptilt on the last
+				act("Up")
 				pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
 			else
-				note("Down Slam: 3 hits in -> hop + air hit")
-				jump()                                                                          -- small real hop = airborne
-				task.wait(0.28)                                                                 -- rising above them
-				realM1()                                                                        -- airborne hit = DOWN SLAM
+				if _G.VX_BF_DEBUG then print("[DreamHub M1Combo] Down Slam: 3 M1s -> jump + M1") end
+				for _ = 1, 3 do realM1(); task.wait(0.33) end                                   -- 3 M1s
+				jump()                                                                          -- then jump (airborne)
+				task.wait(0.22)
+				realM1()                                                                        -- + M1 in the air = down slam
 				act("Down")
-				task.wait(0.07); realM1()
 			end
-			task.wait(0.6)
+			task.wait(0.5)
 			busy = false
 		end)
 	end
@@ -1664,37 +1665,24 @@ do
 	for _, id in ipairs(UPPERCUT_M1) do COMBO_IDS[id] = true end
 	if _G.VX_M1_IDS then for id in pairs(_G.VX_M1_IDS) do COMBO_IDS[id] = true end end   -- merge with the master DB (never clobber)
 	for id in pairs(COMBO_IDS) do if _G.VX_M1_IDS then _G.VX_M1_IDS[id] = true end end   -- and feed the new ids BACK so every module sees them
-	-- TRIGGER: your own M1 ANIMATION (every character - the merged full database)
-	local hooked = setmetatable({}, { __mode = "k" })
-	local function hookSelf()
-		local m = myModel(); local h = m and m:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
-		if not a or hooked[a] then return end
-		hooked[a] = a.AnimationPlayed:Connect(function(track)
-			if mode == "Off" or busy then return end
-			if tick() < (_G.VX_INJECT_UNTIL or 0) then return end   -- the finisher's OWN 4th hit must not count as a chain hit
-			local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+")
-			if not (id and COMBO_IDS[id]) then return end
-			-- only count hits with an enemy actually in melee range (whiffs into air don't build a chain)
-			local me = myModel(); local mr = me and me:FindFirstChild("HumanoidRootPart"); if not mr then return end
-			local near = false
-			for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local rr = plr.Character:FindFirstChild("HumanoidRootPart"); if rr and (rr.Position - mr.Position).Magnitude <= 14 then near = true break end end end
-			if not near then local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local rr = m:FindFirstChild("HumanoidRootPart"); local hh = m:FindFirstChildOfClass("Humanoid"); if rr and hh and hh.Health > 0 and (rr.Position - mr.Position).Magnitude <= 14 then near = true break end end end end end
-			if not near then return end
-			local now = tick()
-			if now - lastSwing > 1.7 then count = 0 end   -- you stopped swinging -> the chain broke -> restart the count
-			if now - lastSwing < 0.18 then return end     -- one anim event per swing (some rigs fire the track twice)
-			lastSwing = now; count = count + 1
-			print("[DreamHub M1Combo] chain hit " .. count .. "/" .. needHits)
-			if count >= needHits then finisher() end      -- N hits in = the launcher window -> the SCRIPT throws the next hit with the modifier
-		end)
+	-- TRIGGER: fully automatic. When the toggle is on, an enemy is within melee range, and we're not already mid-
+	-- combo, run the whole uppercut/downslam sequence. (No anim counting — the user wants it done FOR them.)
+	local function nearEnemy()
+		local me = myModel(); local mr = me and me:FindFirstChild("HumanoidRootPart"); if not mr then return false end
+		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local rr = plr.Character:FindFirstChild("HumanoidRootPart"); if rr and (rr.Position - mr.Position).Magnitude <= 14 then return true end end end
+		local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local rr = m:FindFirstChild("HumanoidRootPart"); local hh = m:FindFirstChildOfClass("Humanoid"); if rr and hh and hh.Health > 0 and (rr.Position - mr.Position).Magnitude <= 14 then return true end end end end
+		return false
 	end
-	task.spawn(function() while true do if mode ~= "Off" then pcall(hookSelf) end task.wait(0.6) end end)
+	task.spawn(function()
+		while true do
+			if mode ~= "Off" and not busy and nearEnemy() then finisher() end
+			task.wait(0.4)
+		end
+	end)
 	M1ComboApi = {
 		setMode = function(m) mode = m or "Off"; count = 0; busy = false end,
 		setDelay = function() end,
-		-- PER-CHARACTER chain length ("every character has a different number of M1s before the launch"):
-		-- the slider sets how many chain hits open the launcher window (2 for short-chain characters, 4 for long).
-		setCount = function(n) needHits = math.clamp(math.floor(tonumber(n) or 3), 2, 5); count = 0 end,
+		setCount = function() end,   -- (chain-length slider no longer used; the combo is fully auto now)
 	}
 end
 
@@ -3931,70 +3919,50 @@ do
 			for _, w in ipairs({ ... }) do if string.find(hay, string.lower(w), 1, true) then return true end end
 			return false
 		end
-		local function dbgAir(msg) print("[DreamHub AutoAir] " .. msg) if VX_NOTIFY then pcall(function() VX_NOTIFY("AutoAir: " .. msg, nil) end) end end   -- F9 print + ON-SCREEN toast so you SEE it fire
+		local function dbgAir(msg) if _G.VX_BF_DEBUG then print("[DreamHub AutoAir] " .. msg) end end
+		-- MOVE-BASED detection (user's exact captures): check YOUR Moveset for the move name, not the character name.
+		local function hasMove(name)
+			local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+			local mv = c and c:FindFirstChild("Moveset"); if not mv then return false end
+			for _, mm in ipairs(mv:GetChildren()) do if string.find(string.lower(mm.Name), string.lower(name), 1, true) then return true end end
+			return false
+		end
 		local function holdJump() _G.VX_INJECT_UNTIL = tick() + 0.35; _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 0.5; pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.08); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end
+		local kc = input.KeyCode
 
-		-- GAMBLER: when you M1 (click) -> press 3 + JUMP at the SAME time (launcher)
-		if autoAirOn and input.UserInputType == Enum.UserInputType.MouseButton1 and charIs("hakari", "rough energy", "gambler") then
-			_G.VX_BUSY = tick() + 1.2
-			dbgAir("Gambler: M1 -> 3 + Jump")
-			task.spawn(function() tapKey(Enum.KeyCode.Three) end)
-			task.spawn(function() holdJump() end)
+		-- KEY 4 = Twofold Kick -> press R  (user capture)
+		if autoAirOn and kc == Enum.KeyCode.Four and hasMove("Twofold Kick") then
+			_G.VX_BUSY = tick() + 1.4; dbgAir("Twofold Kick (4) -> R")
+			task.delay(0.32, function() if autoAirOn then tapKey(Enum.KeyCode.R) end end)
 		end
-
-		-- KEY 1
-		if autoAirOn and input.KeyCode == Enum.KeyCode.One then
-			if charIs("gojo") then
-				-- GOJO Lapse Blue: you press 1 -> press R (key + the R remote as backup, aimed at your target)
-				_G.VX_BUSY = tick() + 1.6; dbgAir("Gojo: 1 (Lapse Blue) -> R")
-				task.delay(0.4, function()
-					if not autoAirOn then return end
-					tapKey(Enum.KeyCode.R)
-					local mdl = lastM1Tgt or nearestEnemyChar()
-					if mdl then faceTargetNow(mdl); local re = gojoRE(); if re then pcall(function() re:FireServer(asPlayerCharacter(mdl)) end) end end
-				end)
-			end
+		-- KEY 1 = Lapse Blue -> press R
+		if autoAirOn and kc == Enum.KeyCode.One and hasMove("Lapse Blue") then
+			_G.VX_BUSY = tick() + 1.4; dbgAir("Lapse Blue (1) -> R")
+			task.delay(0.35, function() if autoAirOn then tapKey(Enum.KeyCode.R) end end)
 		end
-
-		-- KEY 2
-		if autoAirOn and input.KeyCode == Enum.KeyCode.Two then
-			if charIs("gojo") then
-				-- GOJO Twofold Kick: you press 2 -> press R (key + the R remote as backup)
-				_G.VX_BUSY = tick() + 1.6; dbgAir("Gojo: 2 (Twofold) -> R")
-				task.delay(0.35, function()
-					if not autoAirOn then return end
-					tapKey(Enum.KeyCode.R)
-					local mdl = lastM1Tgt or nearestEnemyChar()
-					if mdl then faceTargetNow(mdl); local re = gojoRE(); if re then pcall(function() re:FireServer(asPlayerCharacter(mdl)) end) end end
-				end)
-			elseif charIs("megumi", "nue", "rabbit") then
-				-- TEN SHADOWS: you press 2 (Nue) -> press R
-				_G.VX_BUSY = tick() + 1.5; dbgAir("Shadows: 2 -> R")
-				task.delay(0.45, function() if autoAirOn then tapKey(Enum.KeyCode.R) end end)
-			end
+		-- KEY 2 = Nue (Ten Shadows) -> press R
+		if autoAirOn and kc == Enum.KeyCode.Two and hasMove("Nue") then
+			_G.VX_BUSY = tick() + 1.4; dbgAir("Nue (2) -> R")
+			task.delay(0.4, function() if autoAirOn then tapKey(Enum.KeyCode.R) end end)
 		end
-
-		-- KEY 3 (Locust)
-		if autoAirOn and input.KeyCode == Enum.KeyCode.Three and charIs("locust") then
-			_G.VX_BUSY = tick() + 5; dbgAir("Locust: 3 -> R until airborne")
-			task.delay(2, function()
-				local t0 = tick()
-				while autoAirOn and tick() - t0 < 2.6 and not airborneMe() do tapKey(Enum.KeyCode.R); task.wait(0.22) end
-			end)
-		end
-
-		-- KEY R (Ten Shadows)
-		if autoAirOn and input.KeyCode == Enum.KeyCode.R and charIs("megumi", "nue", "rabbit") then
-			_G.VX_BUSY = tick() + 1.5; dbgAir("Shadows: R -> 1")
+		-- KEY R = Megumi RightActivated -> press 1
+		if autoAirOn and kc == Enum.KeyCode.R and hasMove("Nue") then
+			_G.VX_BUSY = tick() + 1.4; dbgAir("Megumi R -> 1")
 			task.delay(0.12, function() if autoAirOn then tapKey(Enum.KeyCode.One) end end)
 		end
-
-		-- JUMP (Vessel): you jump -> click 1
-		if autoAirOn and input.KeyCode == Enum.KeyCode.Space and charIs("vessel", "itadori", "sukuna", "black flash", "divergent") then
-			if tick() - (lastVesselAir or 0) > 0.9 then
-				lastVesselAir = tick(); _G.VX_BUSY = tick() + 1.2; dbgAir("Vessel: Jump -> 1")
-				task.delay(0.12, function() if autoAirOn then tapKey(Enum.KeyCode.One) end end)
-			end
+		-- KEY 3 = Rough Energy (Gambler) -> SPACE JUMP at the same instant, then space again
+		if autoAirOn and kc == Enum.KeyCode.Three and hasMove("Rough Energy") then
+			_G.VX_BUSY = tick() + 1.4; dbgAir("Rough Energy (3) -> jump + space")
+			task.spawn(function() holdJump() end)
+			task.delay(0.22, function() if autoAirOn then holdJump() end end)
+		end
+		-- KEY 3 = Crushing Jaws -> SPAM R for 7 seconds
+		if autoAirOn and kc == Enum.KeyCode.Three and hasMove("Crushing Jaws") then
+			_G.VX_BUSY = tick() + 7.2; dbgAir("Crushing Jaws (3) -> spam R 7s")
+			task.spawn(function()
+				local t0 = tick()
+				while autoAirOn and tick() - t0 < 7 do tapKey(Enum.KeyCode.R); task.wait(0.2) end
+			end)
 		end
 	end)
 	-- AUTO AIR anim triggers: Twofold Kick (Gojo) kicks them UP -> click R (RightActivated at the target).
@@ -8467,12 +8435,6 @@ do
         bfSec:Slider({ Name = "Range", Min = 10, Max = 60, Default = 30, Decimals = 1, Callback = function(v) if ChainApi then ChainApi.setLockRange(v) end end })
     end
     local blockSec = bfSub:Section({ Name = "Auto Block", Side = 2 })
-    -- DEBUG COMBAT: one switch that turns on EVERY combat trace (BF, uppercut/downslam, air, skills, dash, yuta).
-    -- Turn it ON, do the broken action once, open F9 — the console shows exactly which step fired and which returned.
-    blockSec:Toggle({ Name = "Debug Combat (F9 trace)", Default = false, Callback = function(b)
-        _G.VX_BF_DEBUG = b == true
-        if vxSetDebug then pcall(function() vxSetDebug(b == true) end) end
-    end })
     blockSec:Toggle({ Name = "Dash Block", Default = false, Callback = function(b) BlockFlags.Dash = b end })
     blockSec:Toggle({ Name = "M1 Block", Default = false, Callback = function(b) BlockFlags.M1 = b end })
     blockSec:Toggle({ Name = "Abilities Block", Default = false, Callback = function(b) BlockFlags.Abilities = b end })
