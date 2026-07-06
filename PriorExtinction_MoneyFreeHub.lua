@@ -364,15 +364,14 @@ local function installHook()
 							return
 						end
 						-- ═══ INF STAM — THE REAL FIX (user-captured remote) ═══ Sprinting fires
-						-- ReplicaSignal(id,"SetAction","Run",true) and the SERVER drains stamina the ENTIRE time it
-						-- believes Run is true. So we SWALLOW the Run=true report → the server never starts the drain →
-						-- the bar never drops. (Run=false passes through so the state can always clear.) Swallowing Run
-						-- alone made you "slow" before, because the server then rubber-bands you to walk speed — so the
-						-- velocity drive further down (see the InfStam Heartbeat) re-asserts your sprint speed every frame
-						-- AFTER replication, which the server can't override. No-drain + speed drive = fast + full bar.
+						-- ReplicaSignal(id,"SetAction","Run",true). We used to SWALLOW that, but swallowing it makes the
+						-- server treat you as WALKING = the "very slow" bug (the speed-keeper could only shove you back to
+						-- ~RunSpeed). So now we LET Run=true PASS (you keep the game's real full sprint speed) and instead
+						-- keep the STAMINA itself pinned to max — the SetProperty rewrite just below + the refill loop report
+						-- a full bar the same way the game does, so the server never enforces exhaustion. Full speed + full bar.
 						if CFG.InfStam and action=="SetAction" and a[3]=="Run" and a[4]==true then
-							__gg.MH_wantRun = tick()   -- remember you're trying to sprint so the drive knows to push speed
-							return                     -- SWALLOW: the server never hears "Run=true" = never drains
+							__gg.MH_wantRun = tick()   -- note we're sprinting (speed-keeper only tops up if you're BELOW target)
+							-- (no swallow — fall through so Run replicates and you move at real sprint speed)
 						end
 						-- (stamina DRAIN report is blocked below so it never drops while you sprint.)
 						-- REWRITE stamina SetProperty to max so the server always sees a full bar.
@@ -1492,7 +1491,7 @@ do local p=Pages["Visuals"]
 	local _,e=mkSec(p,"ESP (name / dist / dino / stage / HP)",1)
 	mkToggle(e,"ESP Creatures + Players","ESPPlayers",1)
 	mkToggle(e,"ESP Corpses","ESPCorpses",2)
-	mkToggle(e,"Food ESP (highlights corpses + food)","FoodESP",3)
+	mkToggle(e,"Plant ESP (herbivore plants, GREEN)","FoodESP",3)
 	mkToggle(e,"Fish ESP","FishESP",4)
 	mkToggle(e,"Gem + Fossil ESP","GemESP",5)
 	mkSlider(e,"ESP Range","ESPRange",100,3000,6,50)
@@ -1549,7 +1548,7 @@ do local p=Pages["Settings"]
 	mkBtn(t,"Cycle Accent Color",function() CFG.AccentIndex=(CFG.AccentIndex % #ACCENTS)+1; T.Accent=ACCENTS[CFG.AccentIndex]; T.On=T.Accent; if accentBar then accentBar.BackgroundColor3=T.Accent end for key,ref in pairs(toggleRefs) do if CFG[key] and ref[1] then ref[1].BackgroundColor3=T.On end end showPage(currentPage); saveCfg() end,1)
 	mkSlider(t,"UI Scale (bigger = crisp on 4K)","UIScale",1,3,2,0.1)
 	local _,k=mkSec(p,"Keybinds (click then press a key)",2)
-	local binds = { {"Open/Close UI","UIKey"},{"Aim Lock","AimKey"},{"Aimbot","Aimbot"},{"Silent Aim","SilentAim"},{"Lock On","LockOn"},{"Turn Hack","TurnHack"},{"Hitbox","HitboxExpand"},{"Auto Click","AutoClick"},{"Float","Float"},{"Fly","Fly"},{"Speed Hack","SpeedHack"},{"Noclip","Noclip"},{"Inf Jump","InfJump"},{"INF Food","InfFood"},{"INF Water","InfWater"},{"INF Stam","InfStam"},{"Anti Drown","AntiDrown"},{"Walk on Water","WalkWater"},{"Anti Fall","AntiFall"},{"Save Dino","SaveDino"},{"Auto Farm Player","AutoFarmPlayer"},{"Auto Farm Fossil","AutoFarmFossil"},{"Auto Farm Gem","AutoFarmGem"},{"ESP","ESPPlayers"},{"Food ESP","FoodESP"},{"Fish ESP","FishESP"},{"Full Bright","FullBright"},{"No Night","NightVision"},{"INF Light","InfLight"},{"INF Zoom","InfZoom"} }
+	local binds = { {"Open/Close UI","UIKey"},{"Aim Lock","AimKey"},{"Aimbot","Aimbot"},{"Silent Aim","SilentAim"},{"Lock On","LockOn"},{"Turn Hack","TurnHack"},{"Hitbox","HitboxExpand"},{"Auto Click","AutoClick"},{"Float","Float"},{"Fly","Fly"},{"Speed Hack","SpeedHack"},{"Noclip","Noclip"},{"Inf Jump","InfJump"},{"INF Food","InfFood"},{"INF Water","InfWater"},{"INF Stam","InfStam"},{"Anti Drown","AntiDrown"},{"Walk on Water","WalkWater"},{"Anti Fall","AntiFall"},{"Save Dino","SaveDino"},{"Auto Farm Player","AutoFarmPlayer"},{"Auto Farm Fossil","AutoFarmFossil"},{"Auto Farm Gem","AutoFarmGem"},{"ESP","ESPPlayers"},{"Plant ESP","FoodESP"},{"Fish ESP","FishESP"},{"Full Bright","FullBright"},{"No Night","NightVision"},{"INF Light","InfLight"},{"INF Zoom","InfZoom"} }
 	for i,kb in ipairs(binds) do mkKeybind(k, kb[1], kb[2], i) end
 end
 local HUD={}  -- debug-panel status refs (one table instead of 4 locals — Luau 200-local-cap mgmt)
@@ -2989,37 +2988,45 @@ local function botNearWater()
 	if CharacterState then pcall(function() nearW = CharacterState.FoundWater==true or typeof(CharacterState.WaterLevel)=="number" end) end
 	return nearW
 end
--- MOVEMENT DRIVE: velocity-walk toward BOT.goal at the bot speed (server-safe — no CFrame writes), steering the
--- body with angular velocity so the dino visibly TURNS toward where it walks (looks like a real player).
+-- MOVEMENT DRIVE — HOLD W/A/S/D (the fix): writing AssemblyLinearVelocity got overridden by PE's server-authoritative
+-- movement controller, so the dino just stood still ("hold stop"). Now the bot drives the game's OWN movement by
+-- HOLDING the real WASD keys toward the goal (camera-relative, same as a human), so the game moves the dino normally.
+local BOT_KC = {W=Enum.KeyCode.W, A=Enum.KeyCode.A, S=Enum.KeyCode.S, D=Enum.KeyCode.D}
+BOT.held = BOT.held or {}
+local function botSetKey(name, down)
+	if BOT.held[name]==down then return end            -- only fire on a state CHANGE (not every frame)
+	BOT.held[name]=down
+	pcall(function() VIM:SendKeyEvent(down, BOT_KC[name], false, game) end)
+end
+local function botReleaseKeys() for n in pairs(BOT_KC) do botSetKey(n,false) end end
+__gg.MH_botReleaseKeys = botReleaseKeys                 -- so the on/off + death paths can stop the walk
+-- press the WASD combo that moves toward desFlat given the current camera facing (release all if no direction)
+local function botDriveToward(desFlat)
+	if not desFlat or desFlat.Magnitude<0.05 then botReleaseKeys(); return end
+	local des=Vector3.new(desFlat.X,0,desFlat.Z); if des.Magnitude<0.05 then botReleaseKeys(); return end; des=des.Unit
+	local cf=Cam.CFrame
+	local look=Vector3.new(cf.LookVector.X,0,cf.LookVector.Z); if look.Magnitude<0.05 then botReleaseKeys(); return end; look=look.Unit
+	local right=Vector3.new(cf.RightVector.X,0,cf.RightVector.Z).Unit
+	local fwd=des:Dot(look); local rgt=des:Dot(right)
+	botSetKey("W", fwd> 0.35); botSetKey("S", fwd< -0.35)
+	botSetKey("D", rgt> 0.35); botSetKey("A", rgt< -0.35)
+end
 conn(RunService.Heartbeat:Connect(function()
-	if not (CFG.AutoPlayBot and alive()) then return end
-	if CFG.Fly or CFG.SpeedHack then return end          -- user-controlled movement wins
-	local r=hrp(); if not r then return end
+	if not (CFG.AutoPlayBot and alive()) then if next(BOT.held) then botReleaseKeys() end return end
+	if CFG.Fly or CFG.SpeedHack then botReleaseKeys(); return end   -- user-controlled movement wins
+	local r=hrp(); if not r then botReleaseKeys(); return end
 	local goal=BOT.goal
-	if BOT.sleeping or not goal then return end          -- resting / no destination = stand still
+	if BOT.sleeping or not goal then botReleaseKeys(); return end   -- resting / no destination = stand still
 	local to=goal-r.Position; local flat=Vector3.new(to.X,0,to.Z)
-	if flat.Magnitude<4 then return end                  -- arrived (state loop decides what's next)
-	local spd=math.clamp(tonumber(CFG.BotSpeed) or 18, 14, 24)
+	if flat.Magnitude<4 then botReleaseKeys(); return end           -- arrived (state loop decides what's next)
 	if tick()<BOT.unstuckUntil then
-		-- UNSTICK: hop + angled strafe for a moment to clear the rock/tree we're wedged on
+		-- UNSTICK: strafe at an angle + hop (Space) to clear the rock/tree we're wedged on
 		local side=flat.Unit:Cross(Vector3.yAxis)
-		local v=(flat.Unit*0.5+side*0.85).Unit*spd
-		pcall(function() r.AssemblyLinearVelocity=Vector3.new(v.X, math.max(r.AssemblyLinearVelocity.Y, 24), v.Z) end)
+		botDriveToward((flat.Unit*0.5+side*0.85))
+		pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
 	else
-		local dir=flat.Unit*spd
-		pcall(function() r.AssemblyLinearVelocity=Vector3.new(dir.X, r.AssemblyLinearVelocity.Y, dir.Z) end)
+		botDriveToward(flat)
 	end
-	-- steer the body to face the walk direction (same mechanism as Turn Hack — angular velocity, no CFrame)
-	pcall(function()
-		local cur=r.CFrame.LookVector; local curFlat=Vector3.new(cur.X,0,cur.Z)
-		if curFlat.Magnitude>0.05 then
-			curFlat=curFlat.Unit; local des=flat.Unit
-			local cross=curFlat:Cross(des).Y; local dot=math.clamp(curFlat:Dot(des),-1,1)
-			local ang=math.acos(dot)*((cross<0) and -1 or 1)
-			local v=r.AssemblyAngularVelocity
-			r.AssemblyAngularVelocity=Vector3.new(v.X, math.clamp(ang*4,-6,6), v.Z)
-		end
-	end)
 end))
 -- STUCK WATCCHDOG: if the bot has a goal but has barely moved for ~3s, trigger the unstick hop + re-path.
 task.spawn(function() while RUNNING do task.wait(1)
@@ -3383,9 +3390,24 @@ task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
 			end
 		end
 	end
-	-- CORPSES: models named "Corpse_..." (authoritative), PLUS any "Investigate" ProximityPrompt as a fallback.
-	-- FOOD ESP runs this too — corpses ARE carnivore food, so Food ESP now highlights Corpse + food together.
-	if CFG.ESPCorpses or CFG.FoodESP then
+	-- CORPSES (RED): use the SAME authoritative source as Carnivore Meat TP — the CorpseSpawns DinosaurSpawn markers
+	-- that actually have a body spawned in them — PLUS "Corpse_..." models and "Investigate" prompts as a fallback.
+	if CFG.ESPCorpses then
+		-- 1) CorpseSpawns.DinosaurSpawn markers with a real body inside (the parts the user pointed us at)
+		local ci=WS:FindFirstChild("CharacterIgnore"); local cs=ci and ci:FindFirstChild("CorpseSpawns")
+		if cs then for _,dsp in ipairs(cs:GetChildren()) do
+			if count>=MAX then break end
+			local body
+			for _,x in ipairs(dsp:GetDescendants()) do
+				if x:IsA("Humanoid") then local p=x.Parent; body=(p and (rootOf(p) or p:FindFirstChildWhichIsA("BasePart"))); if body then break end
+				elseif x:IsA("MeshPart") and x.Transparency<0.95 then body=x; break
+				elseif x:IsA("Model") and x~=dsp then body=rootOf(x) or x:FindFirstChildWhichIsA("BasePart"); if body then break end end
+			end
+			if body then local dd=dist(me.Position, body.Position); if dd<=CFG.ESPRange then
+				local mdl=body:FindFirstAncestorWhichIsA("Model") or (body.Parent and body.Parent:IsA("Model") and body.Parent) or (dsp:IsA("Model") and dsp) or body
+				addESP(mdl, Color3.fromRGB(235,60,60), "Corpse ["..math.floor(dd).."m]"); count+=1 end end
+		end end
+		-- 2) fallback: named Corpse_ models + Investigate prompts anywhere else
 		local scanned=0
 		for _,d in ipairs(WS:GetDescendants()) do
 			if count>=MAX then break end
@@ -3395,7 +3417,7 @@ task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
 			elseif d:IsA("ProximityPrompt") then local at=(d.ActionText or ""):lower(); local nm=(d.Name or ""):lower()
 				if at:find("investigate") or nm:find("investigate") or nm:find("corpse") then local p=d.Parent; model=(p and p:IsA("Model")) and p or (p and p:FindFirstAncestorWhichIsA("Model")) or p end
 			end
-			if model then
+			if model and not ESP.objs[model] then
 				local part=getHitbox(model) or rootOf(model) or (model:IsA("BasePart") and model)
 				if part then local dd=dist(me.Position, part.Position); if dd<=CFG.ESPRange then addESP(model, Color3.fromRGB(235,60,60), "Corpse ["..math.floor(dd).."m]"); count+=1 end end
 			end
@@ -3435,7 +3457,11 @@ task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
 				local n=m.Name:lower()
 				local hit,color,tag
 				if CFG.FishESP and isFishName(n) then hit=true; color=Color3.fromRGB(90,210,255); tag="Fish: "..m.Name
-				elseif CFG.FoodESP and isFoodName(n) then local meat=(n:find("meat") or n:find("corpse") or n:find("carcass") or n:find("carrion") or n:find("chunk") or n:find("rotten") or n:find("flesh") or n:find("remains") or isFishName(n)); hit=true; color=meat and Color3.fromRGB(235,70,70) or Color3.fromRGB(120,235,90); tag=(meat and "Carnivore food: " or "Plant: ")..m.Name end
+				elseif CFG.FoodESP and isFoodName(n) then
+					-- PLANT ESP: herbivore plants ONLY, always GREEN. Skip meat/corpse/fish (those are Corpse ESP's job).
+					local meat=(n:find("meat") or n:find("corpse") or n:find("carcass") or n:find("carrion") or n:find("chunk") or n:find("rotten") or n:find("flesh") or n:find("remains") or isFishName(n))
+					if not meat then hit=true; color=Color3.fromRGB(70,235,70); tag="Plant: "..m.Name end
+				end
 				if hit then local r=rootOf(m); if r then local d=dist(me.Position,r.Position); if d<=CFG.ESPRange then addESP(m,color,tag.." ["..math.floor(d).."m]"); count+=1 end end end
 			end
 		end
