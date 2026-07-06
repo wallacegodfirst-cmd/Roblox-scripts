@@ -647,16 +647,14 @@ end
 -- Left/Right Arm parts: the native detector then reaches far enemies and fires the correct UseM1A for us.
 -- We also clear YOUR HitLog (workspace.<You>.HitLog) so repeated swings keep landing on the same target.
 -- ============================================================
-local armOriginal = {}
+-- We do NOT resize the real arm (that flung you off the map / tripped a character reset = "tp to map and die").
+-- Instead each arm gets an invisible ANCHORED follower hitbox that tracks it every frame: Anchored + CanCollide
+-- off = zero physics force on your body (no fling, no death), while still presenting a big CanQuery/CanTouch
+-- volume around your arm for the game's hit detection.
+local armHb = {}   -- real arm part -> its follower hitbox part
 local function restoreArms()
-    for part, orig in pairs(armOriginal) do
-        if part and part.Parent then pcall(function()
-            part.Size = orig.size; part.Transparency = orig.transp
-            part.Massless = orig.massless; part.CanCollide = orig.collide
-            part.CanTouch = orig.touch; part.CanQuery = orig.query
-        end) end
-    end
-    armOriginal = {}
+    for _, hb in pairs(armHb) do pcall(function() hb:Destroy() end) end
+    armHb = {}
 end
 local function myArmParts()
     local out = {}
@@ -684,21 +682,26 @@ hook(RunService.Heartbeat, function()
     local armSz = 0
     if S.M1Hitbox or S.AutoFarm or S.AutoPlay then armSz = math.max(armSz, S.M1HitboxSize) end
     if armSz > 0 then
-        for part in pairs(armOriginal) do if not part or not part.Parent then armOriginal[part] = nil end end
+        -- prune followers whose arm despawned (respawn) so they can't leak
+        for arm, hb in pairs(armHb) do if (not arm) or (not arm.Parent) or (not hb) or (not hb.Parent) then if hb then pcall(function() hb:Destroy() end) end; armHb[arm] = nil end end
         local acube = Vector3.new(armSz, armSz, armSz)
-        for _,part in ipairs(myArmParts()) do
-            if not armOriginal[part] then
-                armOriginal[part] = { size=part.Size, transp=part.Transparency,
-                    massless=part.Massless, collide=part.CanCollide, touch=part.CanTouch, query=part.CanQuery }
+        for _,arm in ipairs(myArmParts()) do
+            local hb = armHb[arm]
+            if not hb then
+                hb = Instance.new("Part")
+                hb.Name = "MH_ArmReach"; hb.Anchored = true; hb.CanCollide = false; hb.CanTouch = true
+                hb.CanQuery = true; hb.Massless = true; hb.Transparency = 0.75
+                hb.Color = Color3.fromRGB(120, 200, 255); hb.Material = Enum.Material.ForceField
+                pcall(function() hb.Parent = arm end)   -- child of the arm so the game's per-character scan finds it
+                armHb[arm] = hb
             end
             pcall(function()
-                part.Massless = true; part.CanCollide = false; part.CanTouch = true; part.CanQuery = true
-                if part.Size ~= acube then part.Size = acube end
-                part.Transparency = 0.7
+                if hb.Size ~= acube then hb.Size = acube end
+                hb.CFrame = arm.CFrame   -- follow the arm (anchored = no physics, so we drive it by CFrame)
             end)
         end
         clearMyHitLog()
-    elseif next(armOriginal) then restoreArms() end
+    elseif next(armHb) then restoreArms() end
 
     local sz = wantedHitboxSize()
     if sz <= 0 then
