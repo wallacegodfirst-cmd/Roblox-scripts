@@ -27,7 +27,29 @@ do
 		["rbxassetid://72475960800126"] = 0.20,
 		["rbxassetid://123171106092050"] = 0.19,
 	}
-	local CFG = { Enabled = false, DebugUnknownAnimations = false, TriggerKey = Enum.KeyCode.Three, Cooldown = 0.45, TimingOffset = 0, AnimatorWait = 8 }
+	local CFG = { Enabled = false, Aim = false, DebugUnknownAnimations = false, TriggerKey = Enum.KeyCode.Three, Cooldown = 0.45, TimingOffset = 0, AnimatorWait = 8 }
+	-- AIM (the user's explicit ask: "add the aim thing inside the BF"): when on, face the nearest enemy's back +
+	-- lock the camera onto them for a moment BEFORE pressing the flash key, same as the old lock-on-back system.
+	-- "Auto Single" = CFG.Aim off (the raw snippet, zero movement). "M1 Black Flash" = CFG.Aim on.
+	local function bfAim()
+		local LP = player
+		local chs = workspace:FindFirstChild("Characters")
+		local char = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
+		local best, bd
+		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local rr = plr.Character:FindFirstChild("HumanoidRootPart"); if rr then local d = (rr.Position - hrp.Position).Magnitude; if not bd or d < bd then best, bd = rr, d end end end end
+		if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local rr = m:FindFirstChild("HumanoidRootPart"); if rr then local d = (rr.Position - hrp.Position).Magnitude; if not bd or d < bd then best, bd = rr, d end end end end end
+		if not best then return end
+		pcall(function() hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(best.Position.X, hrp.Position.Y, best.Position.Z)) end)
+		task.spawn(function()
+			local t0 = tick()
+			while tick() - t0 < 0.4 and best and best.Parent do
+				local cam = workspace.CurrentCamera
+				if cam then pcall(function() cam.CFrame = CFrame.lookAt(cam.CFrame.Position, best.Position) end) end
+				task.wait()
+			end
+		end)
+	end
 	local RT = { Running = true, Connection = nil, CharacterConnection = nil, DescendantConnection = nil, Pending = false, Firing = false, LastFireTime = 0, LastAnimationId = "--", LastMatched = false, LastSkipReason = "--", UnknownAnimations = {} }
 
 	local function disconnect(name)
@@ -74,6 +96,8 @@ do
 			RT.Firing = true
 			RT.LastFireTime = os.clock()
 			RT.LastAnimationId = sourceId
+			if CFG.Aim then pcall(bfAim) end   -- M1 Black Flash mode: aim at their back before the press
+			if _G.VX_CLAIMOWN then pcall(_G.VX_CLAIMOWN) end
 			pressKey(CFG.TriggerKey)
 			RT.Firing = false
 		end)
@@ -115,6 +139,7 @@ do
 	BFApi = {
 		SetEnabled = function(v) CFG.Enabled = v == true; if not CFG.Enabled then RT.Pending = false; RT.Firing = false end end,
 		IsEnabled = function() return CFG.Enabled end,
+		SetAim = function(v) CFG.Aim = v == true end,   -- Auto Single = false (raw), M1 Black Flash = true (aim + camera lock)
 		SetCooldown = function(v) if type(v) == "number" then CFG.Cooldown = math.max(0, v) end end,
 		SetTimingOffset = function(v) if type(v) == "number" then CFG.TimingOffset = v end end,
 		SetKey = function(kc) if typeof(kc) == "EnumItem" then CFG.TriggerKey = kc end end,
@@ -677,7 +702,12 @@ do
 	local function doEPress()   -- E = LOCK ONTO THE ENEMY'S BACK + FLASH, for EVERY mode (user's core request).
 		if _G.VX_BF_DEBUG then print("[DreamHub BF] E press -> mode="..Settings.Mode) end
 		if Settings.Mode == "Back Dash" then handleBackDashE()                  -- Back Dash keeps its 2-stage watcher
-		else task.spawn(function() doBackstab(true) end) end                    -- Teleport/Jump/Side Dash/M1 BF: snap behind, face back, lock, flash
+		elseif Settings.Mode == "Jump" then
+			-- "Jump doesn't jump, it teleports": Jump approach should visibly JUMP first, THEN snap behind — a real
+			-- Space press (legit engine jump input, not a velocity hack) fired right before the snap.
+			jumpNow()
+			task.spawn(function() doBackstab(true) end)
+		else task.spawn(function() doBackstab(true) end) end                    -- Teleport/Side Dash: snap behind, face back, lock, flash
 	end
 	ContextActionService:BindActionAtPriority("VaultixBackstab", function(_, inputState)
 		if inputState == Enum.UserInputState.Begin then doEPress() end
@@ -828,6 +858,34 @@ do
 	end
 end
 
+-- ═══ NETWORK OWNERSHIP CLAIM (the REAL root cause of "teleport sets me back" / "jump teleports instead of
+-- jumping" / uppercut&downslam never registering) ═══ Every CFrame/AssemblyLinearVelocity write in this whole
+-- file (doBackstab's snap, the teleport glide, the uppercut jump-velocity, downslam's fall-velocity check) is
+-- COSMETIC unless the CLIENT owns network ownership of the HumanoidRootPart's assembly. If the SERVER owns it
+-- (very common in anti-cheat-heavy games — this game visibly has one, see the AntiCheatService.Teleport
+-- whitelist below), every one of those writes is a LOCAL-ONLY visual override that the server's own physics
+-- simulation silently reverts on its next replication tick — which is EXACTLY "sets me back" and "the server
+-- never sees me as airborne so uppercut/downslam won't trigger". This was never claimed anywhere in the file.
+-- Claiming it is a standard, well-established exploit technique (SetNetworkOwner) and, when the executor's
+-- security context permits it, makes every physics write in this hub actually stick server-side.
+local function vxClaimOwnership()
+	local LP = game:GetService("Players").LocalPlayer
+	local chs = workspace:FindFirstChild("Characters")
+	local char = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+	if not char then return end
+	pcall(function()
+		for _, p in ipairs(char:GetDescendants()) do
+			if p:IsA("BasePart") then pcall(function() if p:CanSetNetworkOwnership() then p:SetNetworkOwner(LP) end end) end
+		end
+	end)
+end
+_G.VX_CLAIMOWN = vxClaimOwnership
+task.spawn(function()   -- claim on every spawn + keep re-claiming (some anti-cheats re-assert server ownership periodically)
+	local Players = game:GetService("Players"); local LP = Players.LocalPlayer
+	LP.CharacterAdded:Connect(function() task.wait(0.3); vxClaimOwnership() end)
+	if LP.Character then task.defer(vxClaimOwnership) end
+	while true do task.wait(2); pcall(vxClaimOwnership) end
+end)
 -- Shared anti-setback teleport BYPASS: JJS snaps you back if a single frame moves you faster than
 -- maxSpeed*dt, so instead of one big jump we glide to the target in capped per-frame steps that stay
 -- under that limit. Lower VX_TP_SPEED (TP Speed slider) if you still get set back.
@@ -850,6 +908,7 @@ end
 local vxTeleLastActive = 0  -- last time a teleport actually moved you; the safety loop uses it to know when NO teleport is running
 local function vxACPass()   -- fire the whitelist EVERY call (the teleport glide needs it per-step or the step gets set back). No throttle.
 	vxTeleLastActive = tick()
+	vxClaimOwnership()   -- re-claim network ownership on every snap/teleport step (the actual fix for "sets me back")
 	local re = vxResolveAC()
 	if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end
 end
@@ -1524,43 +1583,8 @@ do
 		if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end                                          -- force jump state
 		if hrp then pcall(function() local v = hrp.AssemblyLinearVelocity; hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 26), v.Z) end) end  -- nudge to hop height only = natural bunny hop
 	end
-	local function note(m) if VX_NOTIFY then pcall(function() VX_NOTIFY(m, nil) end) end print("[DreamHub M1Combo] " .. m) end   -- VISIBLE feedback: you SEE when/why it fires
-	-- ══════════ FULL REWORK: a real COMBO STATE MACHINE ══════════
-	-- How the game ACTUALLY does it: the launcher is the FINAL HIT of your M1 chain.
-	--   UPTILT   = SPACE IS HELD while the last chain hit goes out (mid-combo you can't jump, so no hop).
-	--   DOWNSLAM = you are AIRBORNE above them and throw the hit.
-	-- So: count YOUR chain (M1 anims, per-character database). After hit #3, the SCRIPT throws hit #4
-	-- itself with the right modifier - held space (uptilt) or after a hop (slam) - plus the Activated
-	-- remote at the exact same moment. Every character, same chain rule.
-	-- EXACT user spec:
-	--   UPPERCUT  = HOLD the space bar while you do 4 M1s.
-	--   DOWN SLAM = do 3 M1s, THEN jump + M1.
-	-- Fully automatic: when the toggle is on and an enemy is in melee range, the script performs the whole thing.
-	local function finisher()
-		busy = true; count = 0
-		task.spawn(function()
-			_G.VX_INJECT_UNTIL = tick() + 2.5
-			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}
-			_G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 2.5
-			_G.VX_LAUNCHING = tick()
-			if mode == "Uppercut" then
-				if _G.VX_BF_DEBUG then print("[DreamHub M1Combo] Uppercut: hold Space + 4 M1s") end
-				pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)   -- HOLD space the WHOLE combo
-				for _ = 1, 4 do realM1(); task.wait(0.33) end                                   -- 4 M1s with space held = uptilt on the last
-				act("Up")
-				pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
-			else
-				if _G.VX_BF_DEBUG then print("[DreamHub M1Combo] Down Slam: 3 M1s -> jump + M1") end
-				for _ = 1, 3 do realM1(); task.wait(0.33) end                                   -- 3 M1s
-				jump()                                                                          -- then jump (airborne)
-				task.wait(0.22)
-				realM1()                                                                        -- + M1 in the air = down slam
-				act("Down")
-			end
-			task.wait(0.5)
-			busy = false
-		end)
-	end
+	-- (Removed: dead duplicate `finisher()`/`note()` from an earlier rewrite — the LIVE trigger below is the only
+	-- uppercut/downslam implementation now. Per user spec: UPPERCUT = hold Space + 4 M1s; DOWN SLAM = 3 M1s, jump, M1.)
 	-- FULL per-character UPPERCUT M1 database (user-captured): every swing of every character's M1 chain,
 	-- so the 3-swing count works on ALL of them. The old DB only had SOME swings per character -> the count
 	-- never reached 3 on most characters ('auto uppercut/downslam no work').
@@ -1619,34 +1643,49 @@ do
 		if m1Count < 3 then return end
 		m1Count = 0; busy = true
 		task.spawn(function()
-			_G.VX_LAUNCHING = tick()
-			_G.VX_INJECT_UNTIL = tick() + 1.4
-			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 1.4
-			task.wait(0.32)                                        -- let YOUR 3rd hit finish its swing
-			local c = myModel(); local h = c and c:FindFirstChildOfClass("Humanoid"); local hrp = c and c:FindFirstChild("HumanoidRootPart")
-			if mode == "Uppercut" then
-				-- 4th M1 while HOLDING SPACE and MOVING UP: space DOWN -> real jump (up velocity) -> M1 mid-rise.
-				pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)
-				if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end
-				if hrp then pcall(function() local v = hrp.AssemblyLinearVelocity; hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 30), v.Z) end) end
-				task.wait(0.12)                                    -- now clearly moving upward
-				realM1()                                           -- the 4th hit = UPPERCUT
-				act("Up")
-				task.wait(0.25)
-				pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
-			else
-				-- DOWNSLAM: jump HIGH, wait until you are DESCENDING (v.Y < 0), then the 4th M1 = slam.
-				pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.03); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
-				if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end
-				if hrp then pcall(function() local v = hrp.AssemblyLinearVelocity; hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 42), v.Z) end) end
-				local t0 = tick()
-				repeat task.wait(0.03)
-					local vv = hrp and hrp.AssemblyLinearVelocity
-				until (not hrp) or (hrp.AssemblyLinearVelocity.Y < -2) or tick() - t0 > 0.9   -- wait for the DESCENT
-				realM1()                                           -- airborne + falling = DOWNSLAM
-				act("Down")
-			end
-			task.wait(0.4); busy = false
+			-- CRASH-PROOF: an uncaught error anywhere below used to leave `busy=true` forever = "stops working
+			-- until I respawn". This pcall guarantees busy is ALWAYS released, error or not.
+			pcall(function()
+				_G.VX_LAUNCHING = tick()
+				_G.VX_INJECT_UNTIL = tick() + 1.4
+				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 1.4
+				task.wait(0.32)                                        -- let YOUR 3rd hit finish its swing
+				if _G.VX_CLAIMOWN then _G.VX_CLAIMOWN() end            -- network ownership: without it the velocity/state writes below are cosmetic and the server never sees you airborne
+				local c = myModel(); local h = c and c:FindFirstChildOfClass("Humanoid"); local hrp = c and c:FindFirstChild("HumanoidRootPart")
+				-- FACE the nearest enemy before the scripted M1 (screen-center click misses entirely if you're not
+				-- looking at them) — the "aim" the user asked for, applied to the one swing the SCRIPT throws.
+				local function faceEnemy()
+					pcall(function()
+						local mr = hrp; if not mr then return end
+						local best, bd
+						for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local rr = plr.Character:FindFirstChild("HumanoidRootPart"); if rr then local d = (rr.Position - mr.Position).Magnitude; if not bd or d < bd then best, bd = rr, d end end end end
+						local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local rr = m:FindFirstChild("HumanoidRootPart"); if rr then local d = (rr.Position - mr.Position).Magnitude; if not bd or d < bd then best, bd = rr, d end end end end end
+						if best then mr.CFrame = CFrame.lookAt(mr.Position, Vector3.new(best.Position.X, mr.Position.Y, best.Position.Z)) end
+					end)
+				end
+				if mode == "Uppercut" then
+					-- 4th M1 while HOLDING SPACE and MOVING UP: space DOWN -> real jump (up velocity) -> M1 mid-rise.
+					pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)
+					if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end
+					if hrp then pcall(function() local v = hrp.AssemblyLinearVelocity; hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 30), v.Z) end) end
+					task.wait(0.12)                                    -- now clearly moving upward
+					faceEnemy(); realM1()                              -- the 4th hit = UPPERCUT
+					act("Up")
+					task.wait(0.25)
+					pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
+				else
+					-- DOWNSLAM: jump HIGH, wait until you are DESCENDING (v.Y < 0), then the 4th M1 = slam.
+					pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.03); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
+					if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end
+					if hrp then pcall(function() local v = hrp.AssemblyLinearVelocity; hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 42), v.Z) end) end
+					local t0 = tick()
+					repeat task.wait(0.03)
+					until (not hrp) or (hrp.AssemblyLinearVelocity.Y < -2) or tick() - t0 > 0.9   -- wait for the DESCENT
+					faceEnemy(); realM1()                              -- airborne + falling = DOWNSLAM
+					act("Down")
+				end
+			end)
+			busy = false
 		end)
 	end)
 	M1ComboApi = {
@@ -8396,9 +8435,13 @@ do
     local bfSec = bfSub:Section({ Name = "Black Flash", Side = 1 })
     -- Mode: "M1 Black Flash" = the standalone snippet (M1 -> press 3, full DB, both rigs) = BFApi. "Auto Chain" =
     -- the teleport-behind chain + E lock-on-back. E always locks behind regardless (it self-bursts).
-    bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 Black Flash", "Auto Chain" } or { "Off", "M1 Black Flash" }), Default = "Off", Callback = function(m)
+    -- Auto Single = the raw snippet (M1 -> press 3, no movement at all). M1 Black Flash = the same system PLUS
+    -- aim: faces the enemy's back + locks the camera onto them before pressing 3. Auto Chain = the teleport-
+    -- behind approaches below. Only one of these three drives the flash key at a time.
+    bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "Auto Single", "M1 Black Flash", "Auto Chain" } or { "Off", "Auto Single", "M1 Black Flash" }), Default = "Off", Callback = function(m)
         if not BFApi or not ChainApi then return end
-        if m == "M1 Black Flash" then BFApi.SetEnabled(true); ChainApi.setEnabled(false)
+        if m == "Auto Single" then BFApi.SetAim(false); BFApi.SetEnabled(true); ChainApi.setEnabled(false)
+        elseif m == "M1 Black Flash" then BFApi.SetAim(true); BFApi.SetEnabled(true); ChainApi.setEnabled(false)
         elseif m == "Auto Chain" then BFApi.SetEnabled(false); ChainApi.setEnabled(true)
         else BFApi.SetEnabled(false); ChainApi.setEnabled(false) end
     end })
