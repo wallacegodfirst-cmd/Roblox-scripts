@@ -1848,9 +1848,17 @@ while RUNNING do
 			pcall(function() local rp=RaycastParams.new(); rp.IgnoreWater=false; rp.FilterType=Enum.RaycastFilterType.Exclude; rp.FilterDescendantsInstances={getMyModel()}; local res=WS:Raycast(r.Position+Vector3.new(0,60,0), Vector3.new(0,-130,0), rp); if res and res.Material==Enum.Material.Water then surf=res.Position.Y end end)
 			if not surf then
 				if tick()-wT > 3 then wParts={}; wT=tick(); local c=0
+					-- AUTHORITATIVE (user's Explorer): all water lives in workspace.Water (ArkoseRiver / GarnetRiver /
+					-- Karst River / WaterFlow / Waterfalls / Pond / WetCave). Scan its BaseParts DIRECTLY first — this is
+					-- the real water, so Anti-Drown + Walk-on-Water now work on EVERY river/pond regardless of part name.
+					local waterFolder=WS:FindFirstChild("Water")
+					if waterFolder then for _,d in ipairs(waterFolder:GetDescendants()) do
+						if d:IsA("BasePart") and (d.Size.X*d.Size.Z)>60 then wParts[#wParts+1]=d end
+					end end
+					-- fallback: name-matched big water parts anywhere else on the map
 					for _,d in ipairs(WS:GetDescendants()) do c+=1; if c>9000 then break end
 						if d:IsA("BasePart") then local n=d.Name:lower()
-							if (n:find("water") or n:find("lake") or n:find("wave") or n:find("ocean") or n:find("pond") or n:find("lagoon") or n:find("sea") or n:find("swamp")) and (d.Size.X*d.Size.Z)>200 then wParts[#wParts+1]=d end
+							if (n:find("water") or n:find("lake") or n:find("wave") or n:find("ocean") or n:find("pond") or n:find("lagoon") or n:find("sea") or n:find("swamp") or n:find("river") or n:find("waterfall")) and (d.Size.X*d.Size.Z)>200 then wParts[#wParts+1]=d end
 						end
 					end
 				end
@@ -2011,14 +2019,8 @@ local function scentPart(m)
 	end
 	return rootOf(m)
 end
--- keep the scent system ACTIVE: press F (the game's own sniff key) periodically so ScentHighlight objects exist
--- and stay current. Only while Carnivore Meat TP is on, and never while you're typing.
-task.spawn(function() while RUNNING do
-	if CFG.CarnMeatTP and alive() and not UIS:GetFocusedTextBox() then
-		pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.F, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.F, false, game) end)
-		task.wait(2)
-	else task.wait(1) end
-end end)
+-- (No auto-F sniff anymore — user wants it STEALTHY so nobody sees the sniff. We now find corpses/meat directly
+--  from the game's own folders, CorpseSpawns, and ragdolls, so we never need to press F.)
 -- DOWNED-BODY DETECTOR (user's screenshot): a dino lying on the ground = a corpse to eat. We detect it by POSTURE +
 -- STATE, not name: a Model (not us, not a live player) whose main part is (a) tilted like a ragdoll — its UpVector
 -- points sideways/down instead of up — or (b) has a dead Humanoid, or (c) carries PE's corpse markers, or (d) is
@@ -2070,12 +2072,31 @@ local function nearestMeat(range)
 		if not f then return end
 		for _,m in ipairs(f:GetChildren()) do consider(m) end
 	end
+	-- DEEP scan for a folder that holds SPAWN markers (CorpseSpawns): a spawn point that actually has a corpse/mesh
+	-- spawned at it counts; empty markers are skipped so we don't teleport onto a bare spawn dot.
+	local function scanSpawns(f)
+		if not f then return end
+		for _,d in ipairs(f:GetChildren()) do
+			-- a spawn with a real corpse = the marker has a Model child OR a MeshPart, OR the marker itself is a
+			-- meshed corpse part. A plain empty spawn Part (no mesh, no model child) is skipped.
+			local hasCorpse = d:IsA("Model") or d:FindFirstChildOfClass("Model") or d:FindFirstChildOfClass("MeshPart") or (d:IsA("MeshPart"))
+			if hasCorpse then consider(d) end
+		end
+	end
+	-- FOOD folder: every child that is meat/bone/carcass (NOT plants) — covers Meat, CollectedMeat, and any bone item.
 	local food = WS:FindFirstChild("Food")
-	if food then scanChildren(food:FindFirstChild("Meat")); scanChildren(food:FindFirstChild("CollectedMeat")) end
+	if food then for _,sub in ipairs(food:GetChildren()) do
+		local n=sub.Name:lower()
+		if n:find("meat",1,true) or n:find("bone",1,true) or n:find("carcass",1,true) or n:find("corpse",1,true) or n:find("flesh",1,true) or n:find("collect",1,true) then
+			if #sub:GetChildren()>0 then scanChildren(sub) else consider(sub) end
+		end
+	end end
 	scanChildren(WS:FindFirstChild("DinosaurRagdolls"))
-	-- any folder whose name contains "corpse" (CorpseSpawns / FishCorpseSpawns / Corpses …)
+	-- any folder whose name marks corpses/bones/ragdolls/carcasses anywhere in the workspace
 	for _,f in ipairs(WS:GetChildren()) do
-		if f:IsA("Folder") and f.Name:lower():find("corpse",1,true) then scanChildren(f) end
+		if f:IsA("Folder") then local fn=f.Name:lower()
+			if fn:find("corpse",1,true) or fn:find("carcass",1,true) or fn:find("ragdoll",1,true) or fn:find("remains",1,true) or fn:find("deadbod",1,true) then scanSpawns(f) end
+		end
 	end
 	if best then return best,bpart,bd end   -- found real meat/corpse in the folders = go there, done. No heuristics.
 	-- ═══ FALLBACK (only when the folders held nothing): the game's own RED scent corpse, then a marked/named corpse
