@@ -655,16 +655,29 @@ do
 			-- This is what stops the conflict with Auto Single (which sets ScriptEnabled=false).
 			if not (ScriptEnabled or tick() < burstUntil) or tick() < bfSuppressUntil then return end
 			local mode = Settings.Mode
-			-- M1 Black Flash is handled by the standalone Mode="M1 Black Flash" system (BFApi) now, NOT here — that
-			-- removes the duplicate. This chain path only does Side Dash + the teleport-behind approaches.
+			-- ═══ NO E — YOU CLICK, WE PRESS 3 ═══ The M1 swing itself drives the FULL mode combo for EVERY mode
+			-- (Side Dash / Back Dash / Jump / Teleport). On the FIRST swing of a burst we play the visible mode approach
+			-- (the jump / back-dash / side-dash movement), then press the black flash; chained swings just snap+flash so
+			-- the chain stays fast. M1 Black Flash mode is still the standalone BFApi (M1 -> press 3).
 			if mode == "Side Dash" then
 				dashLeft()
 				task.delay(delayTime, function() if Settings.Mode == "Side Dash" then faceBack(); playCombo("Side Dash"); pressFlash() end end)
-			else   -- Teleport / Jump / Back Dash = snap behind + flash + lock (the "lock on to the back" system)
-				if mode == "Jump" then playCombo("Jump") end   -- user-captured Jump BF anim sequence
-				task.delay(delayTime, function()
-					if Settings.Mode ~= "Side Dash" then doBackstab(false) end
-				end)
+			else   -- Teleport / Jump / Back Dash = (approach on first hit) + snap behind + flash + lock
+				local firstOfBurst = tick() - lastApproach > 1.0
+				if firstOfBurst and (mode == "Jump" or mode == "Back Dash") then
+					lastApproach = tick()
+					if mode == "Jump" then playCombo("Jump") else playCombo("Side Dash") end
+					task.spawn(function()   -- run the visible approach without blocking the anim listener, THEN flash
+						local tgt = getNearestEnemy(Settings.LockRange)
+						if tgt then local tr = getHRP(tgt); local mh = getHRP(myCharResolved())
+							if tr and mh then chainTarget = tgt; chainTargetT = tick(); doApproach(tr, mh) end end
+						doBackstab(false)
+					end)
+				else
+					task.delay(delayTime, function()
+						if Settings.Mode ~= "Side Dash" then doBackstab(false) end
+					end)
+				end
 			end
 		end
 		local function matchDelay(animId)
