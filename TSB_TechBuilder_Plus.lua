@@ -1475,51 +1475,67 @@ function comboText()
 end
 function refreshCombo() if comboBtn then pcall(function() comboBtn:Set(comboText()) end) end end
 rebuildSteps = refreshCombo
--- ═══ ADAPT REC — record the TARGET's every move/animation, then Save / Favorite / send to the Combo Builder ═══
-local AR = { on=false, buf={}, last=0, conn=nil, saved={}, favs={}, n=0 }
+-- ═══ ADAPT REC — record the TARGET (whoever's fighting you): their attacks AND their W/A/S/D movement, then
+--     Save / Favorite / send to the Combo Builder. Target = your lock-on, else the nearest enemy (the one hitting you). ═══
+local AR = { on=false, buf={}, last=0, conn=nil, saved={}, favs={}, n=0, root=nil, lastDir=nil, lastDirT=0 }
 function AR.model()
-	local p = currentTargetPart and currentTargetPart(); if not p then return nil end
-	return p:FindFirstAncestorWhichIsA("Model") or p.Parent
+	if lockPart and lockPart.Parent then return lockPart:FindFirstAncestorWhichIsA("Model") or lockPart.Parent end   -- lock target
+	local ne = nearestEnemy and nearestEnemy(); if ne then local p=partOf(ne); if p then return p:FindFirstAncestorWhichIsA("Model") or p.Parent end end  -- whoever's hitting you
+	local dp = nearestDummyPart and nearestDummyPart(); if dp then return dp:FindFirstAncestorWhichIsA("Model") or dp.Parent end  -- lobby dummy
+	return nil
 end
+function AR.push(e) if AR.on and #AR.buf<120 then local now=tick(); e.gap=math.clamp(math.floor((now-AR.last)*1000),0,6000); AR.last=now; AR.buf[#AR.buf+1]=e end end
 function AR.start()
 	if AR.on then notify("Adapt Rec","Already recording — Stop first.",2); return end
 	local m=AR.model(); local hum=m and m:FindFirstChildOfClass("Humanoid"); local an=hum and hum:FindFirstChildOfClass("Animator")
-	if not an then notify("Adapt Rec","No target — lock an enemy (C) or face one, then hit Rec.",4); return end
-	AR.on=true; AR.buf={}; AR.last=tick()
-	AR.conn = an.AnimationPlayed:Connect(function(track)
+	if not an then notify("Adapt Rec","No target — lock an enemy (C) or let one hit you, then hit Rec.",4); return end
+	AR.on=true; AR.buf={}; AR.last=tick(); AR.root=m:FindFirstChild("HumanoidRootPart") or (hum and hum.RootPart) or m:FindFirstChildWhichIsA("BasePart"); AR.lastDir=nil; AR.lastDirT=0
+	AR.conn = an.AnimationPlayed:Connect(function(track)   -- ATTACKS: every animation the target plays
 		if not AR.on then return end
-		local id=(track and track.Animation and track.Animation.AnimationId) or "?"
-		local now=tick(); local gap=math.clamp(math.floor((now-AR.last)*1000),0,6000); AR.last=now
-		if #AR.buf<80 then AR.buf[#AR.buf+1]={gap=gap, id=id} end
+		AR.push({kind="atk", id=(track and track.Animation and track.Animation.AnimationId) or "?"})
 	end)
-	notify("Adapt Rec","REC — capturing "..(m and m.Name or "target").."'s moves. Stop when done.",3)
+	task.spawn(function()   -- MOVEMENT (W/A/S/D): sample the target's velocity; a dash in a NEW direction becomes a WASD step
+		while AR.on do
+			local r=AR.root
+			if r and r.Parent then
+				local v=r.AssemblyLinearVelocity; local flat=Vector3.new(v.X,0,v.Z)
+				if flat.Magnitude>16 then
+					local lf=r.CFrame.LookVector; lf=Vector3.new(lf.X,0,lf.Z)
+					if lf.Magnitude>0.05 then lf=lf.Unit; local rt=r.CFrame.RightVector; rt=Vector3.new(rt.X,0,rt.Z).Unit
+						local dir=flat.Unit; local fwd=dir:Dot(lf); local rgt=dir:Dot(rt)
+						local key=(math.abs(fwd)>=math.abs(rgt)) and (fwd>0 and "W" or "S") or (rgt>0 and "D" or "A")
+						if key~=AR.lastDir or (tick()-AR.lastDirT)>0.5 then AR.lastDir=key; AR.lastDirT=tick(); AR.push({kind="move", dir=key}) end
+					end
+				else AR.lastDir=nil end
+			end
+			task.wait(0.1)
+		end
+	end)
+	notify("Adapt Rec","REC — capturing "..(m and m.Name or "target").."'s attacks + dashes. Stop when done.",3)
 end
 function AR.stop()
 	if AR.conn then pcall(function() AR.conn:Disconnect() end); AR.conn=nil end
-	AR.on=false
+	AR.on=false; AR.root=nil
 	notify("Adapt Rec",(#AR.buf).." moves captured — Save / Favorite / To Builder.",4)
 end
+function AR.copy(buf) local cp={}; for i,e in ipairs(buf) do cp[i]={gap=e.gap, id=e.id, kind=e.kind, dir=e.dir} end; return cp end
 function AR.save(name)
 	if #AR.buf==0 then notify("Adapt Rec","Nothing recorded yet — hit Rec first.",3); return end
-	AR.n=AR.n+1; name=(name and name~="" and name) or ("Adapt "..AR.n)
-	local cp={}; for i,e in ipairs(AR.buf) do cp[i]={gap=e.gap, id=e.id} end; AR.saved[name]=cp
+	AR.n=AR.n+1; name=(name and name~="" and name) or ("Adapt "..AR.n); AR.saved[name]=AR.copy(AR.buf)
 	notify("Adapt Rec","Saved as '"..name.."'.",3)
 end
 function AR.fav()
 	if #AR.buf==0 then notify("Adapt Rec","Nothing recorded to favorite.",3); return end
-	local cp={}; for i,e in ipairs(AR.buf) do cp[i]={gap=e.gap, id=e.id} end; AR.favs[#AR.favs+1]=cp
-	notify("Adapt Rec","Favorited ("..#AR.favs..").",3)
+	AR.favs[#AR.favs+1]=AR.copy(AR.buf); notify("Adapt Rec","Favorited ("..#AR.favs..").",3)
 end
 function AR.toBuilder()
 	if #AR.buf==0 then notify("Adapt Rec","Nothing to send — Rec first.",3); return end
-	-- each captured move → an M1 spaced by the recorded gap = a timing skeleton of the target's combo you can edit
-	-- (swap the M1s for the real skills/dashes in the Builder).
 	for _,e in ipairs(AR.buf) do
 		if e.gap and e.gap>60 then addStep(WAIT(math.min(e.gap,1200))) end
-		addStep(M1(1))
+		if e.kind=="move" and e.dir then addStep(DASH(e.dir)) else addStep(M1(1)) end   -- movement → WASD dash, attack → M1
 	end
 	refreshCombo()
-	notify("Adapt Rec","Sent "..#AR.buf.." moves to the Combo Builder.",5)
+	notify("Adapt Rec","Sent "..#AR.buf.." steps to the Combo Builder — swap M1s for your real skills.",5)
 end
 function loadPreset(name, alsoRun)
 	local p = name and PRESETS[name]
