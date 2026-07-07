@@ -2192,12 +2192,15 @@ local function pxBackDash()
 		VIM:SendKeyEvent(false,KC.S,false,game)
 	end)
 end
--- teleport dodge: jump ~55 studs PERPENDICULAR to the beam (out of a straight-line ranged attack)
+-- ANTI dodge: TELEPORT FAR AWAY from the attacker (straight away from them, well out of range).
+-- Used for EVERY anti-move now (melee + ranged) — the user wants to be flung far, not back-dashed.
+local PX_DODGE_DIST = 120   -- how far the teleport throws you from the enemy
 local function pxDodgeTP(enemyPos)
 	local me=myHRP(); if not me then return end
-	local dir=me.Position-enemyPos; dir=Vector3.new(dir.X,0,dir.Z); if dir.Magnitude<0.1 then dir=me.CFrame.LookVector end
-	local perp=Vector3.new(-dir.Z,0,dir.X).Unit
-	pxTP(CFrame.new(me.Position + perp*55 + Vector3.new(0,3,0)), 0.5)
+	local dir=me.Position-enemyPos; dir=Vector3.new(dir.X,0,dir.Z)   -- vector pointing straight AWAY from them
+	if dir.Magnitude<0.1 then dir=me.CFrame.LookVector end
+	dir=dir.Unit
+	pxTP(CFrame.new(me.Position + dir*PX_DODGE_DIST + Vector3.new(0,4,0)), 0.6)
 end
 -- send a chat message (works on both the new TextChatService and the legacy chat system)
 local function pxChat(msg)
@@ -2277,7 +2280,7 @@ track(RunSvc.Heartbeat:Connect(function()
 						for _,t in ipairs(tr) do
 							for _,e in ipairs(PX_ANTI) do if PX[e.f] and trackMatches(t, e.ids) then
 								pxLastDodge=os.clock()
-								if e.tp then pxDodgeTP(pt.Position) else pxBackDash() end
+								pxDodgeTP(pt.Position)   -- ALL antis now fling you far away from the attacker
 								return
 							end end
 						end
