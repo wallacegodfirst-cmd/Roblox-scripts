@@ -1342,6 +1342,14 @@ if FWindow then
 else
 	pcall(function() SG.Enabled=true end)  -- Fluent failed to load → show the built-in window so there's always a menu
 end
+-- UNIVERSAL toggle setter: flip a toggle's VALUE + its on/off VISUAL from code, for BOTH the built-in UI and Fluent
+-- (Fluent toggles are Fluent.Options[key]:SetValue(bool)). Used so "click Yes → Pro Food turns on" shows the switch move.
+__gg.MH_setToggle = function(key, val)
+	CFG[key] = val and true or false
+	pcall(saveCfg)
+	pcall(function() local ref=toggleRefs[key]; if ref then ref[1].BackgroundColor3=CFG[key] and T.On or T.Off; ref[2].Position=CFG[key] and UDim2.fromOffset(18,2) or UDim2.fromOffset(2,2) end end)
+	pcall(function() if Fluent and Fluent.Options and Fluent.Options[key] and Fluent.Options[key].SetValue then Fluent.Options[key]:SetValue(CFG[key]) end end)
+end
 
 -- ═══ TABS / PAGES ═══
 mkTab("Combat",1); mkTab("PvP",2); mkTab("Movement",3); mkTab("Survival",4); mkTab("Growth",5); mkTab("Auto Farm",6); mkTab("Teleport",7)
@@ -2437,7 +2445,7 @@ local function tpToCorpse(part)
 	-- not a held key) so it doesn't hijack your keyboard.
 	task.spawn(function()
 		local t0=tick()
-		while tick()-t0<0.4 and carnBusy do
+		while tick()-t0<1.1 and carnBusy do   -- hold ~1.1s so the server's rubber-band loses (fix "it keeps sending me back")
 			local rr=hrp()
 			if rr then pcall(function() rr.CFrame=goal; rr.AssemblyLinearVelocity=Vector3.zero; rr.AssemblyAngularVelocity=Vector3.zero end) end
 			RunService.Heartbeat:Wait()
@@ -2448,7 +2456,7 @@ local function tpToCorpse(part)
 			if fireprox then local oh=prompt.HoldDuration; prompt.HoldDuration=0; fireprox(prompt); prompt.HoldDuration=oh end
 		end end)
 	-- (removed the holdKey(E) — pressing/holding E every teleport is what "kept clicking" and locked your controls)
-	task.delay(0.5, function() for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end; pcall(function() if bp then bp:Destroy() end end); carnBusy=false end)
+	task.delay(1.2, function() for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end; pcall(function() if bp then bp:Destroy() end end); carnBusy=false end)
 	return true
 end
 -- go to the NEXT corpse in the list, wrapping, SKIPPING void/out-of-map spots (tpToCorpse returns false for those)
@@ -2468,9 +2476,8 @@ local function doNextCorpse()
 end
 yesBtn.MouseButton1Click:Connect(function()   -- YES = stay + AUTO-START Pro Food (the full growth loop takes over from here)
 	pcall(function() carnGui.Enabled=false end)
-	CFG.CarnMeatTP=false            -- stop the TP-cycle popup; Pro Food drives it now
-	CFG.ProFood=true; pcall(saveCfg)
-	pcall(function() local ref=toggleRefs["ProFood"]; if ref then ref[1].BackgroundColor3=T.On; ref[2].Position=UDim2.fromOffset(18,2) end end)
+	if __gg.MH_setToggle then __gg.MH_setToggle("CarnMeatTP", false) else CFG.CarnMeatTP=false end   -- stop the TP-cycle popup
+	if __gg.MH_setToggle then __gg.MH_setToggle("ProFood", true) else CFG.ProFood=true end            -- flip the Pro Food switch ON (visual too)
 	pcall(function() notify("Pro Food","Growth started — eating, then circling to grow, then next corpse. Pick a Stop-at-age in Growth.") end)
 	local r=hrp(); if r then local pos=r.Position
 		task.spawn(function() local bp=Instance.new("BodyPosition"); bp.MaxForce=Vector3.new(9e9,9e9,9e9); bp.P=2e4; bp.D=2500; bp.Position=pos; pcall(function() bp.Parent=r end)
