@@ -2466,11 +2466,15 @@ local function doNextCorpse()
 	if not ok then corpseList={}; pcall(function() carnGui.Enabled=false end); notify("Corpse TP","No in-map corpse found right now — will rescan next time."); return end
 	pcall(function() carnLabel.Text="Teleported to corpse "..corpseIdx.." / "..#corpseList.." - did it work?"; carnGui.Enabled=true end)
 end
-yesBtn.MouseButton1Click:Connect(function()   -- YES = stay + STAND STILL on the corpse (hold you in place ~1.5s so you don't drift off it)
+yesBtn.MouseButton1Click:Connect(function()   -- YES = stay + AUTO-START Pro Food (the full growth loop takes over from here)
 	pcall(function() carnGui.Enabled=false end)
+	CFG.CarnMeatTP=false            -- stop the TP-cycle popup; Pro Food drives it now
+	CFG.ProFood=true; pcall(saveCfg)
+	pcall(function() local ref=toggleRefs["ProFood"]; if ref then ref[1].BackgroundColor3=T.On; ref[2].Position=UDim2.fromOffset(18,2) end end)
+	pcall(function() notify("Pro Food","Growth started — eating, then circling to grow, then next corpse. Pick a Stop-at-age in Growth.") end)
 	local r=hrp(); if r then local pos=r.Position
 		task.spawn(function() local bp=Instance.new("BodyPosition"); bp.MaxForce=Vector3.new(9e9,9e9,9e9); bp.P=2e4; bp.D=2500; bp.Position=pos; pcall(function() bp.Parent=r end)
-			local t0=tick(); while tick()-t0<1.5 do local rr=hrp(); if rr then pcall(function() rr.AssemblyLinearVelocity=Vector3.zero end) end; task.wait(0.1) end
+			local t0=tick(); while tick()-t0<1.2 do local rr=hrp(); if rr then pcall(function() rr.AssemblyLinearVelocity=Vector3.zero end) end; task.wait(0.1) end
 			pcall(function() bp:Destroy() end)
 		end)
 	end
@@ -2542,13 +2546,21 @@ do
 			end end
 			return false
 		end
-		-- nearby food first (already on/near a corpse)
-		local list=nearbyFood(80)
-		for _,fd in ipairs(list) do local part=fd[2]; if part and part.Parent and not dinoNear(part.Position) then return fd, false end end
-		-- else pick a corpse to TP to (skip ones with dinos around)
+		local function eatPrompt(m) return m and m:FindFirstChildWhichIsA("ProximityPrompt",true) end
+		-- 1) ALREADY on/near a real EATABLE corpse (has an eat prompt) → eat in place, no TP
+		for _,fd in ipairs(nearbyFood(40)) do local m,part=fd[1],fd[2]
+			if part and part.Parent and (fd.prompt or eatPrompt(m)) and not dinoNear(part.Position) then return fd, false end
+		end
+		-- 2) TP to a REAL corpse from the CORPSE FOLDER only. Must be an actual body (visible mesh / Humanoid) or have an
+		--    eat prompt — this SKIPS the empty invisible DinosaurSpawn markers (that was "it keeps TPing to not a corpse")
+		--    and skips any corpse with a dino within 30 studs.
 		local corpses = __gg.MH_collectCorpses and __gg.MH_collectCorpses() or {}
 		local best,bd
-		for _,part in ipairs(corpses) do if part and part.Parent and not dinoNear(part.Position) then local d=(part.Position-me.Position).Magnitude; if not bd or d<bd then best=part; bd=d end end end
+		for _,part in ipairs(corpses) do if part and part.Parent then
+			local m = part:FindFirstAncestorWhichIsA("Model")
+			local realCorpse = (tonumber(part.Transparency) or 0)<0.95 or (m and m:FindFirstChildOfClass("Humanoid")) or eatPrompt(m)
+			if realCorpse and not dinoNear(part.Position) then local d=(part.Position-me.Position).Magnitude; if not bd or d<bd then best=part; bd=d end end
+		end end
 		if best then return {nil,best,bd}, true end
 		return nil
 	end
