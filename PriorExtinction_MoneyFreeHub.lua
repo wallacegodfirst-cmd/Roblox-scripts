@@ -2579,6 +2579,15 @@ do
 		holdKey(Enum.KeyCode.E, 0.35); task.wait(0.1); holdKey(Enum.KeyCode.E, 0.35)   -- E, then E again (as requested)
 		pcall(fakeEat)
 	end
+	-- eat the corpse at a specific part IN PLACE (no TP) — fire its prompt + hold E + replay bites
+	local function eatAt(part)
+		if not part then return end
+		local m=part:FindFirstAncestorWhichIsA("Model")
+		local prompt=(m and m:FindFirstChildWhichIsA("ProximityPrompt",true)) or part:FindFirstChildWhichIsA("ProximityPrompt")
+		if prompt then pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(prompt.MaxActivationDistance or 8,40); prompt.HoldDuration=0; if fireprox then fireprox(prompt) end end) end
+		holdKey(Enum.KeyCode.E, 0.4)
+		pcall(fakeEat)
+	end
 	-- FULL → circle to grow: no trot/sprint, slow steady circle
 	local function circle()
 		local r=hrp(); if not r then return end
@@ -2589,25 +2598,28 @@ do
 	end
 	task.spawn(function() while RUNNING do
 		if CFG.ProFood and alive() and tick()>=(__gg.MH_spawnGrace or 0) then
-			if reachedAge() then CFG.ProFood=false; pcall(function() notify("Pro Food","Reached "..tostring(CFG.ProFoodStopAge).." — growth stopped.") end)
+			if reachedAge() then CFG.ProFood=false; if __gg.MH_setToggle then __gg.MH_setToggle("ProFood",false) end; pcall(function() notify("Pro Food","Reached "..tostring(CFG.ProFoodStopAge).." — growth stopped.") end)
 			else
-				local ff = foodFrac()
+				local ff = foodFrac(); local r = hrp()
 				if ff and ff>=0.96 then
-					circle()                    -- full → circle to grow faster
-					task.wait(0.15)
+					PRO.cur=nil; circle(); task.wait(0.15)          -- FULL → circle to grow (drop the corpse lock)
+				elseif PRO.cur and PRO.cur.Parent and r and (PRO.cur.Position - r.Position).Magnitude < 60 then
+					-- STICKY: still on the current corpse → EAT IN PLACE, never re-teleport. If food stops rising for
+					-- ~5s the corpse is finished → drop it so we move to the next one.
+					if ff and (not PRO.lastFood or ff > PRO.lastFood + 0.001) then PRO.lastFood=ff; PRO.foodT=tick() end
+					if PRO.foodT and tick()-PRO.foodT > 5 then PRO.cur=nil
+					else eatAt(PRO.cur); task.wait(0.4) end
 				else
-					local fd, needTP = pickSafeFood()
-					if fd then
-						if needTP and tick()-PRO.lastTP>1.5 and __gg.MH_tpToCorpse then PRO.lastTP=tick(); pcall(function() __gg.MH_tpToCorpse(fd[2]) end); task.wait(0.6) end
-						if tick()-PRO.lastEat>0.5 then PRO.lastEat=tick(); eat(fd) end
-						task.wait(0.4)
-					else
-						pcall(fakeEat)          -- nothing safe nearby → still replay captured bites while we wait
-						task.wait(0.6)
-					end
+					-- no corpse locked (or it's gone/far) → pick a new SAFE corpse and TELEPORT ONCE, then lock it
+					local fd = pickSafeFood()
+					if fd and fd[2] then
+						PRO.cur=fd[2]; PRO.lastFood=ff; PRO.foodT=tick()
+						if r and (fd[2].Position - r.Position).Magnitude > 14 and __gg.MH_tpToCorpse then pcall(function() __gg.MH_tpToCorpse(fd[2]) end); task.wait(0.9) end
+						eatAt(fd[2]); task.wait(0.4)
+					else circle(); task.wait(0.4) end
 				end
 			end
-		else task.wait(0.4) end
+		else PRO.cur=nil; task.wait(0.4) end
 	end end)
 end
 task.spawn(function() while RUNNING do
