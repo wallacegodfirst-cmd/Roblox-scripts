@@ -1628,6 +1628,9 @@ do
 		for _,x in ipairs(e) do print("  "..(x.status=="warn" and "[warn]" or "[ERR] ").." "..((x.row and x.row>0) and ("#"..x.row.." ") or "")..tostring(x.text)) end
 	end })
 	tab:CreateKeybind({ Name = "Run / STOP hotkey", CurrentKeybind = CFG.runKey or "T", HoldToInteract = false, Callback = function() triggerRun() end })
+	tab:CreateSection("Auto moves (fire on their own)")
+	tab:CreateToggle({ Name="Auto Uppercut", CurrentValue=false, Callback=function(v) PX.autoUpper=v; if v then PX.autoDownslam=false end; pxSetAutoMoves() end })
+	tab:CreateToggle({ Name="Auto Downslam", CurrentValue=false, Callback=function(v) PX.autoDownslam=v; if v then PX.autoUpper=false end; pxSetAutoMoves() end })
 end
 
 -- ───────── CHARACTER tab ─────────
@@ -2467,9 +2470,7 @@ do
 	tab:CreateToggle({ Name="Noclip", CurrentValue=false, Callback=function(v) pxSetNoclip(v) end })
 	tab:CreateToggle({ Name="Infinite Jump", CurrentValue=false, Callback=function(v) PX.infJump=v end })
 	tab:CreateSlider({ Name="Jump Power", Range={50,300}, Increment=5, Suffix="", CurrentValue=50, Callback=function(v) PX.jumpPow=v end })
-	tab:CreateSection("Combat")
-	tab:CreateToggle({ Name="Auto Uppercut", CurrentValue=false, Callback=function(v) PX.autoUpper=v; if v then PX.autoDownslam=false end; pxSetAutoMoves() end })
-	tab:CreateToggle({ Name="Auto Downslam", CurrentValue=false, Callback=function(v) PX.autoDownslam=v; if v then PX.autoUpper=false end; pxSetAutoMoves() end })
+	-- (Auto Uppercut / Auto Downslam moved to the Builder tab.)
 	tab:CreateSection("Survival")
 	tab:CreateToggle({ Name="Anti-Ragdoll", CurrentValue=false, Callback=function(v) PX.antiRagdoll=v end })
 	tab:CreateToggle({ Name="Anti-Void", CurrentValue=false, Callback=function(v) PX.antiVoid=v end })
@@ -2531,9 +2532,7 @@ end
 
 do
 	local tab = Window:CreateTab("Exploits", 4483362458)
-	tab:CreateSection("Combat")
-	tab:CreateToggle({ Name="Auto Uppercut", CurrentValue=false, Callback=function(v) PX.autoUpper=v; if v then PX.autoDownslam=false end; pxSetAutoMoves() end })
-	tab:CreateToggle({ Name="Auto Downslam", CurrentValue=false, Callback=function(v) PX.autoDownslam=v; if v then PX.autoUpper=false end; pxSetAutoMoves() end })
+	-- (Auto Uppercut / Auto Downslam moved to the Builder tab.)
 	tab:CreateSection("Defense")
 	tab:CreateToggle({ Name="Anti-Ragdoll", CurrentValue=false, Callback=function(v) PX.antiRagdoll=v end })
 	tab:CreateToggle({ Name="Anti-Void", CurrentValue=false, Callback=function(v) PX.antiVoid=v end })
