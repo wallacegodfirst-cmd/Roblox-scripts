@@ -1479,16 +1479,15 @@ rebuildSteps = refreshCombo
 --     Save / Favorite / send to the Combo Builder. Target = your lock-on, else the nearest enemy (the one hitting you). ═══
 local AR = { on=false, buf={}, last=0, conn=nil, saved={}, favs={}, n=0, root=nil, lastDir=nil, lastDirT=0 }
 function AR.model()
-	if lockPart and lockPart.Parent then return lockPart:FindFirstAncestorWhichIsA("Model") or lockPart.Parent end   -- lock target
-	local ne = nearestEnemy and nearestEnemy(); if ne then local p=partOf(ne); if p then return p:FindFirstAncestorWhichIsA("Model") or p.Parent end end  -- whoever's hitting you
-	local dp = nearestDummyPart and nearestDummyPart(); if dp then return dp:FindFirstAncestorWhichIsA("Model") or dp.Parent end  -- lobby dummy
+	-- MUST be your LOCK-ON target — nothing else. Lock an enemy (C) first, then Rec records exactly that one.
+	if lockPart and lockPart.Parent then return lockPart:FindFirstAncestorWhichIsA("Model") or lockPart.Parent end
 	return nil
 end
 function AR.push(e) if AR.on and #AR.buf<120 then local now=tick(); e.gap=math.clamp(math.floor((now-AR.last)*1000),0,6000); AR.last=now; AR.buf[#AR.buf+1]=e end end
 function AR.start()
 	if AR.on then notify("Adapt Rec","Already recording — Stop first.",2); return end
 	local m=AR.model(); local hum=m and m:FindFirstChildOfClass("Humanoid"); local an=hum and hum:FindFirstChildOfClass("Animator")
-	if not an then notify("Adapt Rec","No target — lock an enemy (C) or let one hit you, then hit Rec.",4); return end
+	if not an then notify("Adapt Rec","No LOCK-ON target — lock an enemy first (press C / Lock-On), then hit Rec.",4); return end
 	AR.on=true; AR.buf={}; AR.last=tick(); AR.root=m:FindFirstChild("HumanoidRootPart") or (hum and hum.RootPart) or m:FindFirstChildWhichIsA("BasePart"); AR.lastDir=nil; AR.lastDirT=0
 	AR.conn = an.AnimationPlayed:Connect(function(track)   -- ATTACKS: every animation the target plays
 		if not AR.on then return end
@@ -2568,7 +2567,7 @@ do
 	local tab = Window:CreateTab("Keybinds", 4483362458)
 	tab:CreateSection("Keybinds")
 	tab:CreateKeybind({ Name="Anime Teleport", CurrentKeybind="V", HoldToInteract=false, Callback=function() pxAnimeTP() end })
-	tab:CreateToggle({ Name="Ghost Mode", CurrentValue=false, Callback=function(v) pxSetGhost(v) end })
+	-- (Ghost Mode removed per request.)
 	tab:CreateToggle({ Name="HRP Freeze", CurrentValue=false, Callback=function(v) pxSetFreeze(v) end })
 	tab:CreateKeybind({ Name="HRP Freeze Key", CurrentKeybind="H", HoldToInteract=false, Callback=function() pxSetFreeze(not PX.freeze) end })
 	tab:CreateSection("Gojo")
