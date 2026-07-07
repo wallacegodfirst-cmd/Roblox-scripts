@@ -112,14 +112,30 @@ do
     pcall(function() FluLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mc4121ban/Fluriore-UI/main/source.lua"))() end)
 
     if type(FluLib) == "table" and type(FluLib.MakeGui) == "function" then
-        local ACCENT = Color3.fromRGB(255, 45, 45)   -- Dream Hub: original RED accent
-        -- ---- Make Fluriore's GUI VERY BLACK, keeping the red accents ----
+        local ACCENT = Color3.fromRGB(255, 32, 32)   -- Dream Hub v2 GUI: punchier glowing RED accent
+        -- ---- New GUI: DEEP-BLACK panels with RED edge outlines, keeping the red accents ----
         -- Fluriore ships a dark theme (Main = RGB 15,15,15). We push every non-red dark
-        -- background to pure black for a "very black" look; red accents / light text stay.
+        -- background to pure black, then trace the larger panels with a thin red stroke so the
+        -- whole hub reads as glowing-red-on-black. Red accents / light text are never touched.
         local CoreGuiSvc = game:GetService("CoreGui")
         local VBLACK = Color3.fromRGB(0,0,0)
+        local EDGE   = Color3.fromRGB(150, 22, 22)   -- subtle red panel outline
         local function lum(c) return 0.299*c.R + 0.587*c.G + 0.114*c.B end
         local function isReddish(c) return c.R > c.G + 0.12 and c.R > c.B + 0.12 end  -- protect red accents
+        local function edgeOne(o)
+            -- Trace ONLY the larger black panels with a faint red outline. We tag them so we
+            -- never double-stroke, and skip small controls/text to keep it clean.
+            pcall(function()
+                if not (o:IsA("Frame") or o:IsA("ScrollingFrame")) then return end
+                if o:GetAttribute("DreamEdged") then return end
+                local sz = o.AbsoluteSize
+                if sz.X < 120 or sz.Y < 26 then return end
+                o:SetAttribute("DreamEdged", true)
+                local st = Instance.new("UIStroke")
+                st.Color = EDGE; st.Thickness = 1; st.Transparency = 0.25
+                st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; st.Parent = o
+            end)
+        end
         local function recolorOne(o)
             if not o then return end
             pcall(function()
@@ -127,7 +143,10 @@ do
                     local bg = o.BackgroundColor3
                     -- Only darken genuinely-dark, non-red panels -> pure black. Never touch red
                     -- accents (selected-tab bar, toggles-on, section gradient) or light text.
-                    if (not isReddish(bg)) and lum(bg) < 0.30 then o.BackgroundColor3 = VBLACK end
+                    if (not isReddish(bg)) and lum(bg) < 0.30 then
+                        o.BackgroundColor3 = VBLACK
+                        edgeOne(o)
+                    end
                 end
             end)
         end
@@ -290,7 +309,7 @@ local S = {
     DashBehind=false, DashRange=45,
     AutoDash=false, AutoDashKey="Q", AutoDashDelay=0.6,
     CamLock=false, CamLockRange=120,
-    AimAssist=false, AimAssistRange=140, AimAssistLead=0.12,
+    AimAssist=false, AimAssistRange=140, AimAssistLead=0.12, AimStrong=false, AimSmooth=0.35, AimOnM1=true,
     Fly=false, FlySpeed=60,
     Noclip=false,
     SpeedHack=false, Speed=16,
@@ -562,6 +581,11 @@ end
 local function faceTo(pos)
     local root = getRoot()
     if root then root.CFrame = CFrame.new(root.Position, Vector3.new(pos.X, root.Position.Y, pos.Z)) end
+end
+local function faceToSmooth(pos, alpha)   -- gentle continuous turn (no hard snap) for the "hold on target" aim
+    local root = getRoot(); if not root then return end
+    local goal = CFrame.new(root.Position, Vector3.new(pos.X, root.Position.Y, pos.Z))
+    root.CFrame = root.CFrame:Lerp(goal, math.clamp(alpha or 0.3, 0.05, 1))
 end
 
 -- ============================================================
@@ -1143,6 +1167,17 @@ local VFX_PRESETS = {
     Void      = {Shape="Ball",Color=Color3.fromRGB(25,0,35),Color2=Color3.fromRGB(150,0,210),Texture="Smoke",Rate=110,Speed=2,Spread=200,Light=true,Brightness=4,Rings=true,RingCount=2,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=7,Transp=0.4},
     Sakura    = {Shape="Ball",Color=Color3.fromRGB(255,150,200),Color2=Color3.fromRGB(255,215,235),Texture="Sparkles",Rate=80,Speed=3,Spread=200,Light=true,Brightness=3,Rings=false,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=5,Transp=0.6},
     Nuke      = {Shape="Ball",Color=Color3.fromRGB(255,150,0),Color2=Color3.fromRGB(255,40,0),Texture="Fire",Rate=110,Speed=14,Spread=200,Light=true,Brightness=10,Rings=true,RingCount=2,Beams=true,Trail=false,Rainbow=false,ShapeOn=true,Size=8,Transp=0.3},
+    -- ── new auras ──
+    Inferno   = {Shape="Ball",Color=Color3.fromRGB(255,60,0),Color2=Color3.fromRGB(255,0,0),Texture="Fire",Rate=180,Speed=15,Spread=90,Light=true,Brightness=10,Rings=true,RingCount=3,Beams=true,Trail=true,Rainbow=false,ShapeOn=true,Size=7,Transp=0.35},
+    Frostbite = {Shape="Ball",Color=Color3.fromRGB(80,180,255),Color2=Color3.fromRGB(180,240,255),Texture="Sparkles",Rate=120,Speed=3,Spread=200,Light=true,Brightness=6,Rings=true,RingCount=3,Beams=true,Trail=true,Rainbow=false,ShapeOn=true,Size=6,Transp=0.45},
+    Blood     = {Shape="Ball",Color=Color3.fromRGB(150,0,0),Color2=Color3.fromRGB(255,40,40),Texture="Smoke",Rate=100,Speed=4,Spread=180,Light=true,Brightness=5,Rings=false,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=6,Transp=0.4},
+    Cursed    = {Shape="Ball",Color=Color3.fromRGB(120,0,0),Color2=Color3.fromRGB(20,0,0),Texture="Smoke",Rate=130,Speed=5,Spread=200,Light=true,Brightness=6,Rings=true,RingCount=2,Beams=true,Trail=true,Rainbow=false,ShapeOn=true,Size=7,Transp=0.35},
+    Storm     = {Shape="Ball",Color=Color3.fromRGB(90,120,200),Color2=Color3.fromRGB(230,240,255),Texture="Sparkles",Rate=200,Speed=18,Spread=200,Light=true,Brightness=9,Rings=false,Beams=true,Trail=false,Rainbow=false,ShapeOn=false,Size=6,Transp=0.4},
+    Emerald   = {Shape="Ball",Color=Color3.fromRGB(0,200,90),Color2=Color3.fromRGB(160,255,190),Texture="Sparkles",Rate=110,Speed=4,Spread=180,Light=true,Brightness=6,Rings=true,RingCount=2,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=5,Transp=0.45},
+    Phoenix   = {Shape="Ball",Color=Color3.fromRGB(255,120,0),Color2=Color3.fromRGB(255,220,60),Texture="Fire",Rate=160,Speed=13,Spread=120,Light=true,Brightness=9,Rings=true,RingCount=3,Beams=true,Trail=true,Rainbow=false,ShapeOn=true,Size=7,Transp=0.35},
+    Nebula    = {Shape="Ball",Color=Color3.fromRGB(190,80,255),Color2=Color3.fromRGB(60,120,255),Texture="Sparkles",Rate=130,Speed=3,Spread=210,Light=true,Brightness=6,Rings=true,RingCount=4,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=7,Transp=0.5},
+    Divine    = {Shape="Ball",Color=Color3.fromRGB(255,255,200),Color2=Color3.fromRGB(255,215,120),Texture="Sparkles",Rate=140,Speed=6,Spread=160,Light=true,Brightness=10,Rings=true,RingCount=3,Beams=true,Trail=true,Rainbow=false,ShapeOn=true,Size=6,Transp=0.5},
+    Cyber     = {Shape="Ball",Color=Color3.fromRGB(0,255,200),Color2=Color3.fromRGB(0,140,255),Texture="Sparkles",Rate=150,Speed=8,Spread=190,Light=true,Brightness=8,Rings=true,RingCount=3,Beams=true,Trail=true,Rainbow=false,ShapeOn=true,Size=6,Transp=0.4},
 }
 local function applyVFXPreset(name)
     local pr = VFX_PRESETS[name]; if not pr then return end
@@ -1941,13 +1976,25 @@ local AIM_KEYS = {
     [Enum.KeyCode.T]=true, [Enum.KeyCode.F]=true,
 }
 hook(UserInputService.InputBegan, function(i, gpe)
-    if gpe or not S.AimAssist then return end
-    if not AIM_KEYS[i.KeyCode] or typingNow() then return end
+    if gpe or not S.AimAssist or typingNow() then return end
+    local isSkill = AIM_KEYS[i.KeyCode]
+    local isM1 = (i.UserInputType == Enum.UserInputType.MouseButton1) and S.AimOnM1   -- also snap on your M1 so basic attacks land
+    if not (isSkill or isM1) then return end
     local tgt = nearestPlayer(S.AimAssistRange)
     local tr  = tgt and tgt.Character and charPart(tgt.Character)
     if not tr then return end
     local lead = tr.Position + tr.AssemblyLinearVelocity * (S.AimAssistLead or 0.12)
     faceTo(lead)
+end)
+-- STRONG AIM (hold on target): while on, smoothly keep facing the nearest enemy (with prediction) EVERY frame, not
+-- just on a keypress — so both your M1s and directional abilities track them. Smoothed by the Aim Smoothness slider.
+hook(RunService.RenderStepped, function()
+    if not (S.AimAssist and S.AimStrong) or typingNow() then return end
+    local tgt = nearestPlayer(S.AimAssistRange)
+    local tr  = tgt and tgt.Character and charPart(tgt.Character)
+    if not tr then return end
+    local lead = tr.Position + tr.AssemblyLinearVelocity * (S.AimAssistLead or 0.12)
+    faceToSmooth(lead, S.AimSmooth or 0.35)
 end)
 
 -- Auto Farm / Auto Play: ORIGINAL v2.9.6 brute-force. Teleport your root to
@@ -2218,6 +2265,9 @@ CombatTab:CreateSection("Aim")
 CombatTab:CreateToggle({Name="Camera Lock (nearest)", CurrentValue=false, Flag="CamLock", Callback=function(v) S.CamLock=v end})
 CombatTab:CreateSlider({Name="Cam Lock Range", Range={20,300}, Increment=5, Suffix="studs", CurrentValue=120, Flag="CamLockRange", Callback=function(v) S.CamLockRange=v end})
 CombatTab:CreateToggle({Name="Ability Aim Assist (face enemy on skill cast)", CurrentValue=false, Flag="AimAssist", Callback=function(v) S.AimAssist=v end})
+CombatTab:CreateToggle({Name="Strong Aim (hold on target every frame)", CurrentValue=false, Flag="AimStrong", Callback=function(v) S.AimStrong=v end})
+CombatTab:CreateToggle({Name="Aim on M1 (snap to enemy on left-click)", CurrentValue=true, Flag="AimOnM1", Callback=function(v) S.AimOnM1=v end})
+CombatTab:CreateSlider({Name="Aim Smoothness (lower = smoother)", Range={5,100}, Increment=5, Suffix="%", CurrentValue=35, Flag="AimSmooth100", Callback=function(v) S.AimSmooth=v/100 end})
 CombatTab:CreateSlider({Name="Aim Assist Range", Range={20,400}, Increment=10, Suffix="studs", CurrentValue=140, Flag="AimAssistRange", Callback=function(v) S.AimAssistRange=v end})
 CombatTab:CreateSlider({Name="Aim Assist Lead (prediction)", Range={0,50}, Increment=1, Suffix="x0.01s", CurrentValue=12, Flag="AimAssistLead100", Callback=function(v) S.AimAssistLead=v/100 end})
 
@@ -2344,7 +2394,7 @@ VisualsTab:CreateSection("AURA / VFX MAKER")
 VisualsTab:CreateParagraph({Title="Aura Maker", Content="Build your own aura like the Aura games - presets, dual colour / rainbow, particles, light, spinning rings, beams, trail. Client-side (only you see it)."})
 local function reVFX() if S.VFXOn then applyCustomVFX() end end
 VisualsTab:CreateToggle({Name="Apply My Aura", CurrentValue=false, Flag="VFXOn", Callback=function(v) S.VFXOn=v; if v then applyCustomVFX() else clearCustomVFX() end end})
-VisualsTab:CreateDropdown({Name="Preset", Options={"Fire","Ice","Lightning","Galaxy","Shadow","Holy","Toxic","Rainbow","Void","Sakura","Nuke"}, CurrentOption={}, Flag="VFXPreset", Callback=function(o)
+VisualsTab:CreateDropdown({Name="Preset", Options={"Fire","Ice","Lightning","Galaxy","Shadow","Holy","Toxic","Rainbow","Void","Sakura","Nuke","Inferno","Frostbite","Blood","Cursed","Storm","Emerald","Phoenix","Nebula","Divine","Cyber"}, CurrentOption={}, Flag="VFXPreset", Callback=function(o)
     local nm; if type(o)=="table" then nm=o[1] else nm=o end   -- empty table -> nm=nil (Fluriore fires this on creation)
     if not nm or nm=="" then return end                        -- so no red aura applies on spawn
     applyVFXPreset(nm); S.VFXOn=true; applyCustomVFX()
