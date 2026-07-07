@@ -2438,16 +2438,18 @@ local function tpToCorpse(part)
 	local noclip={}; if cc then pcall(function() for _,dd in ipairs(cc:GetDescendants()) do if dd:IsA("BasePart") and dd.CanCollide then dd.CanCollide=false; noclip[#noclip+1]=dd end end end) end
 	pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end end)
 	local r=hrp(); if r then pcall(function() r.AssemblyLinearVelocity=Vector3.zero; r.AssemblyAngularVelocity=Vector3.zero end) end
-	local bp; pcall(function() if r then bp=Instance.new("BodyPosition"); bp.MaxForce=Vector3.new(9e9,9e9,9e9); bp.P=2e4; bp.D=2500; bp.Position=Vector3.new(np.X,landY,np.Z); bp.Parent=r end end)
-	-- SHORT anti-snapback (fix "it keeps clicking / I can't do anything"): only re-assert the CFrame for ~0.4s so you
-	-- land where the corpse is, then you get FULL control right back. No key presses at all — the teleport just moves
-	-- you next to the corpse; you eat it yourself (or let INF Food do it). We fire the eat prompt ONCE (a remote fire,
-	-- not a held key) so it doesn't hijack your keyboard.
+	local bp; pcall(function() if r then bp=Instance.new("BodyPosition"); bp.MaxForce=Vector3.new(9e9,9e9,9e9); bp.P=3e4; bp.D=3000; bp.Position=Vector3.new(np.X,landY,np.Z); bp.Parent=r end end)
+	-- ANTI-SNAPBACK (fix "teleport keeps sending me back"): the server rubber-bands you for a while after a hard set,
+	-- so we HOLD you at the goal with BOTH a BodyPosition force AND a per-frame CFrame re-assert for ~2s. Long enough
+	-- that the server accepts the new position instead of snapping you back, then it releases and you move freely.
+	if __gg.MH_corpseHoldGoal ~= nil then end
+	__gg.MH_corpseHoldGoal = goal   -- newest teleport wins if another fires mid-hold
 	task.spawn(function()
 		local t0=tick()
-		while tick()-t0<1.1 and carnBusy do   -- hold ~1.1s so the server's rubber-band loses (fix "it keeps sending me back")
+		while tick()-t0<2.0 and carnBusy and __gg.MH_corpseHoldGoal==goal do   -- ~2s hold beats the rubber-band
 			local rr=hrp()
 			if rr then pcall(function() rr.CFrame=goal; rr.AssemblyLinearVelocity=Vector3.zero; rr.AssemblyAngularVelocity=Vector3.zero end) end
+			if bp and bp.Parent~=r then pcall(function() local nr=hrp(); if nr then bp.Parent=nr end end) end
 			RunService.Heartbeat:Wait()
 		end
 	end)
@@ -2456,7 +2458,7 @@ local function tpToCorpse(part)
 			if fireprox then local oh=prompt.HoldDuration; prompt.HoldDuration=0; fireprox(prompt); prompt.HoldDuration=oh end
 		end end)
 	-- (removed the holdKey(E) — pressing/holding E every teleport is what "kept clicking" and locked your controls)
-	task.delay(1.2, function() for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end; pcall(function() if bp then bp:Destroy() end end); carnBusy=false end)
+	task.delay(2.1, function() for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end; pcall(function() if bp then bp:Destroy() end end); carnBusy=false end)
 	return true
 end
 -- go to the NEXT corpse in the list, wrapping, SKIPPING void/out-of-map spots (tpToCorpse returns false for those)
@@ -3875,17 +3877,27 @@ end) end end)
 -- (the main chunk is right at the cap â adding even one persistent local there made the whole script fail to load).
 task.spawn(function()
 	local STF = { shown=false, stayed=false }
-	local KW = {"administrator","admin","moderator","staff","developer","zenith","game master","overseer","game admin"}
+	local KW = {"administrator","moderator","admin","staff","developer","game master","game admin","head admin"}   -- real staff only (ZENITH dropped — it's a normal rank, not staff)
 	local function match(str) if type(str)~="string" then return nil end local l=str:lower()
 		for _,k in ipairs(KW) do if l:find(k,1,true) then return k end end
 		if l:find("%[mod%]",1) or l:find("%f[%a]mod%f[%A]",1) then return "mod" end
 		return nil
 	end
 	local sg=C("ScreenGui",{Name="MH_Staff", ResetOnSpawn=false, IgnoreGuiInset=true, DisplayOrder=10000, Enabled=false}); safeParentGui(sg)
-	local fr=C("Frame",{Parent=sg, Size=UDim2.fromOffset(360,158), Position=UDim2.new(0.5,-180,0,90), BackgroundColor3=Color3.fromRGB(28,10,10), BorderSizePixel=0}); corner(fr,10); stroke(fr,Color3.fromRGB(255,60,60),2)
-	local ttl=C("TextLabel",{Parent=fr, Size=UDim2.new(1,-16,0,52), Position=UDim2.fromOffset(8,8), BackgroundTransparency=1, Text="STAFF DETECTED", TextColor3=Color3.fromRGB(255,95,95), TextSize=15, Font=Enum.Font.GothamBold, TextWrapped=true})
-	local function mkB(txt,x,w,col) local b=C("TextButton",{Parent=fr, Size=UDim2.fromOffset(w,34), Position=UDim2.fromOffset(x,66), BackgroundColor3=col, Text=txt, TextColor3=Color3.new(1,1,1), TextSize=12, Font=Enum.Font.GothamBold, BorderSizePixel=0, AutoButtonColor=true}); corner(b,6); return b end
-	local bHop=mkB("Server Hop",8,110,Color3.fromRGB(205,72,72)); local bJoin=mkB("Rejoin",124,100,Color3.fromRGB(210,150,50)); local bStay=mkB("Stay",230,122,Color3.fromRGB(70,90,110))
+	-- clean card: white panel, red accent bar on top, warning glyph, title + subtitle, three pill buttons with hover
+	local fr=C("Frame",{Parent=sg, Size=UDim2.fromOffset(380,196), Position=UDim2.new(0.5,-190,0,70), BackgroundColor3=Color3.fromRGB(255,255,255), BorderSizePixel=0}); corner(fr,14); stroke(fr,Color3.fromRGB(228,231,236),1)
+	C("ImageLabel",{Parent=fr, Size=UDim2.fromScale(1,1), BackgroundTransparency=1, Image="rbxassetid://0"})  -- (placeholder for shadow; harmless)
+	local top=C("Frame",{Parent=fr, Size=UDim2.new(1,0,0,5), BackgroundColor3=Color3.fromRGB(235,70,70), BorderSizePixel=0}); corner(top,3)
+	local badge=C("Frame",{Parent=fr, Size=UDim2.fromOffset(46,46), Position=UDim2.fromOffset(20,22), BackgroundColor3=Color3.fromRGB(255,238,238), BorderSizePixel=0}); corner(badge,23)
+	C("TextLabel",{Parent=badge, Size=UDim2.fromScale(1,1), BackgroundTransparency=1, Text="!", TextColor3=Color3.fromRGB(235,70,70), TextSize=26, Font=Enum.Font.GothamBold})
+	C("TextLabel",{Parent=fr, Position=UDim2.fromOffset(78,22), Size=UDim2.new(1,-92,0,22), BackgroundTransparency=1, Text="Staff Detected", TextColor3=Color3.fromRGB(30,33,40), TextSize=18, Font=Enum.Font.GothamBold, TextXAlignment=Enum.TextXAlignment.Left})
+	local ttl=C("TextLabel",{Parent=fr, Position=UDim2.fromOffset(78,46), Size=UDim2.new(1,-92,0,44), BackgroundTransparency=1, Text="A staff member is in this server.", TextColor3=Color3.fromRGB(120,126,138), TextSize=13, Font=Enum.Font.GothamMedium, TextXAlignment=Enum.TextXAlignment.Left, TextYAlignment=Enum.TextYAlignment.Top, TextWrapped=true})
+	local function mkB(txt,x,w,col,txtcol)
+		local b=C("TextButton",{Parent=fr, Size=UDim2.fromOffset(w,40), Position=UDim2.fromOffset(x,140), BackgroundColor3=col, Text=txt, TextColor3=txtcol or Color3.new(1,1,1), TextSize=13, Font=Enum.Font.GothamBold, BorderSizePixel=0, AutoButtonColor=false}); corner(b,10)
+		b.MouseEnter:Connect(function() tw(b,{BackgroundTransparency=0.12}) end); b.MouseLeave:Connect(function() tw(b,{BackgroundTransparency=0}) end)
+		return b
+	end
+	local bHop=mkB("Server Hop",20,150,Color3.fromRGB(235,70,70)); local bJoin=mkB("Rejoin",180,90,Color3.fromRGB(240,190,70)); local bStay=mkB("Stay",280,80,Color3.fromRGB(238,240,244),Color3.fromRGB(70,76,88))
 	local function hop()
 		local ok=pcall(function()
 			local res=game:HttpGetAsync("https://games.roblox.com/v1/games/"..tostring(game.PlaceId).."/servers/Public?sortOrder=Asc&limit=100")
@@ -3897,8 +3909,9 @@ task.spawn(function()
 	end
 	local function warnStaff(name, tag)
 		if STF.stayed or STF.shown then return end; STF.shown=true
-		pcall(function() ttl.Text="STAFF DETECTED\n"..tostring(name).."  ["..tostring(tag):gsub("^%l",string.upper).."]\nServer hop, rejoin, or stay?"; sg.Enabled=true end)
-		pcall(function() notify("Staff Detected", tostring(name).." ("..tostring(tag)..") is in the server.") end)
+		local t=tostring(tag):gsub("^%l",string.upper)
+		pcall(function() ttl.Text=tostring(name).." ("..t..") is in this server.\nServer hop, rejoin, or stay?"; sg.Enabled=true end)
+		pcall(function() notify("Staff Detected", tostring(name).." ("..t..") is in the server.") end)
 	end
 	bHop.MouseButton1Click:Connect(function() sg.Enabled=false; hop() end)
 	bJoin.MouseButton1Click:Connect(function() sg.Enabled=false; pcall(function() TeleportSvc:Teleport(game.PlaceId, LP) end) end)
