@@ -1383,17 +1383,10 @@ do local p=Pages["Movement"]
 	mkToggle(n,"Anti-Snapback Teleports","BypassTP",3)
 end
 do local p=Pages["Survival"]
-	local _,f=mkSec(p,"Food / Water / Stamina",1)
-	if not _G.PE_HIDE_LITE then   -- INF Food lives in the separate Lite hub; the wrapper hides it here
-		mkToggle(f,"INF Food","InfFood",1)
-		mkLabel(f,"Herbivore: turn on, then eat one plant once.")
-		mkSlider(f,"INF Food grow speed","FoodEatSpeed",1,10,3,1)
-		mkToggle(f,"Carnivore Meat TP","CarnMeatTP",4)
-		mkBtn(f,"Teleport Back",function() if __gg.MH_corpseBack then __gg.MH_corpseBack() end end,4)
-	end
-	mkToggle(f,"INF Water","InfWater",5)
-	mkToggle(f,"INF Stamina","InfStam",6)
-	mkSlider(f,"INF Stam Run Speed","RunSpeed",12,26,7,1)
+	-- (INF Food / INF Water / Carnivore Meat TP / Teleport Back moved to the Growth tab.) Stamina stays here.
+	local _,f=mkSec(p,"Stamina",1)
+	mkToggle(f,"INF Stamina","InfStam",1)
+	mkSlider(f,"INF Stam Run Speed","RunSpeed",12,26,2,1)
 	local _,pr=mkSec(p,"Protection",2)
 	mkToggle(pr,"Anti Drown","AntiDrown",1)
 	mkToggle(pr,"Walk on Water","WalkWater",2)
@@ -1455,9 +1448,11 @@ do local p=Pages["Growth"]
 		mkDropdown(g,"Stop at age", function() return {"Off","Juvenile","Teen","Adolescent","Sub Adult","Adult","Elder"} end, function() return CFG.ProFoodStopAge~="" and CFG.ProFoodStopAge or "Off" end, function(opt) CFG.ProFoodStopAge=opt; saveCfg() end, 2)
 		local _,fw=mkSec(p,"Food & Water",2)
 		mkToggle(fw,"INF Food","InfFood",1)
-		mkToggle(fw,"INF Water","InfWater",2)
-		mkToggle(fw,"TP Food","CarnMeatTP",3)
-		mkBtn(fw,"Teleport Back",function() if __gg.MH_corpseBack then __gg.MH_corpseBack() end end,4)
+		mkLabel(fw,"Herbivore: turn on, then eat one plant once.")
+		mkSlider(fw,"INF Food grow speed","FoodEatSpeed",1,10,3,1)
+		mkToggle(fw,"INF Water","InfWater",4)
+		mkToggle(fw,"Carnivore Meat TP","CarnMeatTP",5)
+		mkBtn(fw,"Teleport Back",function() if __gg.MH_corpseBack then __gg.MH_corpseBack() end end,6)
 	end
 	local _,pg=mkSec(p,"Progress",3)
 	mkBtn(pg,"Progress Restore",function() progressRestore() end,1)
