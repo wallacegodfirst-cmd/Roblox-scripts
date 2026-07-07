@@ -2554,21 +2554,33 @@ do
 			return false
 		end
 		local function eatPrompt(m) return m and m:FindFirstChildWhichIsA("ProximityPrompt",true) end
+		-- a DEAD BODY = a dead player/dino corpse (the good eatable ones): a Humanoid at 0 HP, or it sits in a
+		-- dead-body folder (LeftCharacters = players who died/left, DinosaurRagdolls, Bonepiles).
+		local function isDeadBody(part)
+			local m = part:FindFirstAncestorWhichIsA("Model") or part
+			local h = m:FindFirstChildOfClass("Humanoid"); if h and h.MaxHealth>0 and h.Health<=0 then return true end
+			for _,fn in ipairs({"LeftCharacters","DinosaurRagdolls","Bonepiles"}) do if part:FindFirstAncestor(fn) then return true end end
+			return false
+		end
 		-- 1) ALREADY on/near a real EATABLE corpse (has an eat prompt) → eat in place, no TP
 		for _,fd in ipairs(nearbyFood(40)) do local m,part=fd[1],fd[2]
 			if part and part.Parent and (fd.prompt or eatPrompt(m)) and not dinoNear(part.Position) then return fd, false end
 		end
-		-- 2) TP to a REAL corpse from the CORPSE FOLDER only. Must be an actual body (visible mesh / Humanoid) or have an
-		--    eat prompt — this SKIPS the empty invisible DinosaurSpawn markers (that was "it keeps TPing to not a corpse")
-		--    and skips any corpse with a dino within 30 studs.
+		-- 2) TP: PREFER DEAD BODIES (dead players/dinos) first, then any other real corpse. Skips empty invisible spawn
+		--    markers + any corpse with a dino within 30 studs.
 		local corpses = __gg.MH_collectCorpses and __gg.MH_collectCorpses() or {}
-		local best,bd
+		local bestBody,bdB, bestAny,bdA
 		for _,part in ipairs(corpses) do if part and part.Parent then
 			local m = part:FindFirstAncestorWhichIsA("Model")
 			local realCorpse = (tonumber(part.Transparency) or 0)<0.95 or (m and m:FindFirstChildOfClass("Humanoid")) or eatPrompt(m)
-			if realCorpse and not dinoNear(part.Position) then local d=(part.Position-me.Position).Magnitude; if not bd or d<bd then best=part; bd=d end end
+			if realCorpse and not dinoNear(part.Position) then
+				local d=(part.Position-me.Position).Magnitude
+				if isDeadBody(part) then if not bdB or d<bdB then bestBody=part; bdB=d end
+				else if not bdA or d<bdA then bestAny=part; bdA=d end end
+			end
 		end end
-		if best then return {nil,best,bd}, true end
+		local best = bestBody or bestAny
+		if best then return {nil,best,(bestBody and bdB or bdA)}, true end
 		return nil
 	end
 	local function eat(fd)
@@ -2595,14 +2607,10 @@ do
 	local function setKey(k, down) if PRO.held[k]==down then return end; PRO.held[k]=down; pcall(function() VIM:SendKeyEvent(down, PWK[k], false, game) end) end
 	local function releaseWASD() for k in pairs(PWK) do setKey(k,false) end end
 	local function circle()
+		-- HOLD W + D: forward + right. The camera follows your dino, so holding these two keeps curving you right =
+		-- a continuous circle (the classic third-person circle-strafe). Trot/sprint off so it's a slow growth walk.
 		pcall(function() replicaAction("SetAction","Run",false) end); pcall(function() replicaAction("SetAction","Trot",false) end)
-		PRO.ang = (PRO.ang or 0) + 0.16
-		local des = Vector3.new(math.cos(PRO.ang),0,math.sin(PRO.ang))
-		local cf = Cam.CFrame
-		local look = Vector3.new(cf.LookVector.X,0,cf.LookVector.Z); if look.Magnitude<0.05 then return end; look=look.Unit
-		local right = Vector3.new(cf.RightVector.X,0,cf.RightVector.Z).Unit
-		local fwd = des:Dot(look); local rgt = des:Dot(right)
-		setKey("W", fwd> 0.35); setKey("S", fwd< -0.35); setKey("D", rgt> 0.35); setKey("A", rgt< -0.35)   -- press the keys that walk toward the rotating point = a circle
+		setKey("W", true); setKey("D", true); setKey("A", false); setKey("S", false)
 	end
 	task.spawn(function() while RUNNING do
 		if CFG.ProFood and alive() and tick()>=(__gg.MH_spawnGrace or 0) then
