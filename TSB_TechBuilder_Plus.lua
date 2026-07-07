@@ -1468,6 +1468,19 @@ local Window = Rayfield:CreateWindow({
 
 local comboBtn, lockToggle, selChar
 onLockChanged = function(v) if lockToggle then pcall(function() lockToggle:Set(v) end) end end
+-- Rayfield keybinds (HoldToInteract=false) fire the callback on BOTH press AND release, so a
+-- naive `not CFG.lockOn` toggled twice per tap → net no change (the "off, off, off" bug). Debounce
+-- so one physical key press = exactly ONE flip, then sync the toggle + notify.
+local _lockKeyT = 0
+function toggleLockKey()
+	if (os.clock() - _lockKeyT) < 0.30 then return end   -- swallow the release half of the double-fire
+	_lockKeyT = os.clock()
+	CFG.lockOn = not CFG.lockOn
+	if not CFG.lockOn then lockTarget, lockPart = nil, nil end   -- drop target + reticle immediately when turning OFF
+	saveCfg()
+	if lockToggle then pcall(function() lockToggle:Set(CFG.lockOn) end) end
+	notify("Lock-on", CFG.lockOn and "ON" or "OFF", 2)
+end
 function comboText()
 	if #seq==0 then return "Combo is empty — add moves below" end
 	local parts={}; for _,s in ipairs(seq) do parts[#parts+1]=(s.label or s.act or "?") end
@@ -1639,11 +1652,7 @@ do
 	tab:CreateSection("Aim")
 	lockToggle = tab:CreateToggle({ Name = "Lock-On (console-style: enemy centered)", CurrentValue = CFG.lockOn and true or false, Callback = function(v) CFG.lockOn = v; if not v then lockTarget=nil end; saveCfg() end })
 	tab:CreateKeybind({ Name = "Run / STOP", CurrentKeybind = CFG.runKey or "T", HoldToInteract = false, Callback = function() triggerRun() end })
-	tab:CreateKeybind({ Name = "Toggle lock-on", CurrentKeybind = CFG.lockKey or "C", HoldToInteract = false, Callback = function()
-		CFG.lockOn = not CFG.lockOn; if not CFG.lockOn then lockTarget=nil end; saveCfg()
-		if lockToggle then pcall(function() lockToggle:Set(CFG.lockOn) end) end
-		notify("Lock-on", CFG.lockOn and "ON" or "OFF", 2)
-	end })
+	tab:CreateKeybind({ Name = "Toggle lock-on", CurrentKeybind = CFG.lockKey or "C", HoldToInteract = false, Callback = toggleLockKey })
 end
 
 -- ───────── BUILDER tab ─────────
@@ -1829,11 +1838,7 @@ do
 	tab:CreateToggle({ Name = "Auto-approach target on RUN (needs Chase ON)", CurrentValue = CFG.approach and true or false, Callback = function(v) CFG.approach = v; saveCfg() end })
 	tab:CreateSection("Hotkeys")
 	tab:CreateKeybind({ Name = "Run / STOP", CurrentKeybind = CFG.runKey or "T", HoldToInteract = false, Callback = function() triggerRun() end })
-	tab:CreateKeybind({ Name = "Toggle lock-on", CurrentKeybind = CFG.lockKey or "C", HoldToInteract = false, Callback = function()
-		CFG.lockOn = not CFG.lockOn; if not CFG.lockOn then lockTarget=nil end; saveCfg()
-		if lockToggle then pcall(function() lockToggle:Set(CFG.lockOn) end) end
-		notify("Lock-on", CFG.lockOn and "ON" or "OFF", 2)
-	end })
+	tab:CreateKeybind({ Name = "Toggle lock-on", CurrentKeybind = CFG.lockKey or "C", HoldToInteract = false, Callback = toggleLockKey })
 	tab:CreateSection("Diagnostics")
 	tab:CreateButton({ Name = "Test M1 / Dash / Walk (3s)", Callback = function() notify("Input test","tab into the game NOW",4); runDiagnostic() end })
 	tab:CreateButton({ Name = "Unload script", Callback = function() if getgenv and type(getgenv().__TSB_UNLOAD)=="function" then getgenv().__TSB_UNLOAD() end end })
@@ -1902,7 +1907,9 @@ track(RunSvc.RenderStepped:Connect(function(dt)
 	if pxFK.D then d+=cam.CFrame.RightVector end
 	if pxFK.U then d+=Vector3.yAxis end
 	if pxFK.Dn then d-=Vector3.yAxis end
-	pcall(function() r.AssemblyLinearVelocity=Vector3.zero; if d.Magnitude>0 then r.CFrame=r.CFrame+d.Unit*PX.flySpd*dt end end)
+	-- SMOOTH hold-to-move: drive the velocity directly. Holding W = continuous glide forward,
+	-- no key = hover in place. (The old CFrame+=d*dt teleport felt like taps at low FPS.)
+	pcall(function() r.AssemblyLinearVelocity = (d.Magnitude>0) and (d.Unit*PX.flySpd) or Vector3.zero end)
 end))
 local pxFlyTrack
 local function pxFlyAnimPrio()
@@ -1919,7 +1926,14 @@ function pxSetFly(v)
 		end) end
 	else
 		if pxFlyTrack then pcall(function() pxFlyTrack:Stop(0.15) end); pxFlyTrack=nil end
-		if h then pcall(function() h.PlatformStand=false; h:ChangeState(Enum.HumanoidStateType.GettingUp) end) end
+		local r=myHRP()
+		if r then pcall(function() r.AssemblyLinearVelocity=Vector3.zero end) end   -- kill fly momentum so you don't keep drifting after landing
+		if h then pcall(function()
+			-- FULL recovery so you can walk again instantly (fixes "fall down, can't get up / can't move").
+			h.PlatformStand=false; h.Sit=false; h.AutoRotate=true
+			h:ChangeState(Enum.HumanoidStateType.GettingUp)
+			h:ChangeState(Enum.HumanoidStateType.Running)
+		end) end
 	end
 end
 -- keep ONLY the flight animation showing while flying (stop walk/idle, re-play if it drops), loop it
