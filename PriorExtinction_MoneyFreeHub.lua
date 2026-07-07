@@ -3870,55 +3870,61 @@ task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
 	end
 end) end end)
 
--- ═══ STAFF DETECTION — warn on admins / mods, offer Server Hop / Rejoin / Stay ═══ (one table = no 200-local cap hit)
-local STF = { KW={"administrator","admin","moderator","staff","developer","zenith","game master","overseer","game admin"}, shown=false, stayed=false }
-function STF.match(s) if type(s)~="string" then return nil end local l=s:lower()
-	for _,k in ipairs(STF.KW) do if l:find(k,1,true) then return k end end
-	if l:find("%[mod%]",1) or l:find("%f[%a]mod%f[%A]",1) then return "mod" end
-	return nil
-end
-STF.sg=C("ScreenGui",{Name="MH_Staff", ResetOnSpawn=false, IgnoreGuiInset=true, DisplayOrder=10000, Enabled=false}); safeParentGui(STF.sg)
-STF.fr=C("Frame",{Parent=STF.sg, Size=UDim2.fromOffset(360,158), Position=UDim2.new(0.5,-180,0,90), BackgroundColor3=Color3.fromRGB(28,10,10), BorderSizePixel=0}); corner(STF.fr,10); stroke(STF.fr,Color3.fromRGB(255,60,60),2)
-STF.ttl=C("TextLabel",{Parent=STF.fr, Size=UDim2.new(1,-16,0,52), Position=UDim2.fromOffset(8,8), BackgroundTransparency=1, Text="STAFF DETECTED", TextColor3=Color3.fromRGB(255,95,95), TextSize=15, Font=Enum.Font.GothamBold, TextWrapped=true})
-do local function mkB(txt,x,w,col) local b=C("TextButton",{Parent=STF.fr, Size=UDim2.fromOffset(w,34), Position=UDim2.fromOffset(x,66), BackgroundColor3=col, Text=txt, TextColor3=Color3.new(1,1,1), TextSize=12, Font=Enum.Font.GothamBold, BorderSizePixel=0, AutoButtonColor=true}); corner(b,6); return b end
-	STF.bHop=mkB("Server Hop",8,110,Color3.fromRGB(205,72,72)); STF.bJoin=mkB("Rejoin",124,100,Color3.fromRGB(210,150,50)); STF.bStay=mkB("Stay",230,122,Color3.fromRGB(70,90,110)) end
-function STF.hop()
-	local ok=pcall(function()
-		local res=game:HttpGetAsync("https://games.roblox.com/v1/games/"..tostring(game.PlaceId).."/servers/Public?sortOrder=Asc&limit=100")
-		local data=HttpService:JSONDecode(res)
-		for _,s in ipairs(data.data or {}) do if s.id~=game.JobId and (tonumber(s.playing) or 0)<(tonumber(s.maxPlayers) or 100) then TeleportSvc:TeleportToPlaceInstance(game.PlaceId, s.id, LP); return true end end
-		error("no server")
-	end)
-	if not ok then pcall(function() TeleportSvc:Teleport(game.PlaceId, LP) end) end
-end
-STF.bHop.MouseButton1Click:Connect(function() STF.sg.Enabled=false; STF.hop() end)
-STF.bJoin.MouseButton1Click:Connect(function() STF.sg.Enabled=false; pcall(function() TeleportSvc:Teleport(game.PlaceId, LP) end) end)
-STF.bStay.MouseButton1Click:Connect(function() STF.sg.Enabled=false; STF.shown=false; STF.stayed=true end)
-function STF.warn(name, tag)
-	if STF.stayed or STF.shown then return end; STF.shown=true
-	pcall(function() STF.ttl.Text="STAFF DETECTED\n"..tostring(name).."  ["..tostring(tag):gsub("^%l",string.upper).."]\nServer hop, rejoin, or stay?"; STF.sg.Enabled=true end)
-	pcall(function() notify("Staff Detected", tostring(name).." ("..tostring(tag)..") is in the server.") end)
-end
-pcall(function()   -- CHAT TAGS: watch every TextChannel for a staff tag in the message prefix/metadata
-	local TCS=game:GetService("TextChatService")
-	local function onMsg(message)
-		local tag = STF.match(message.PrefixText) or STF.match(message.Metadata)
-		if tag then local pl; pcall(function() local src=message.TextSource; if src then pl=Players:GetPlayerByUserId(src.UserId) end end)
-			if pl~=LP then STF.warn((pl and pl.Name) or "A player", tag) end
-		end
+-- âââ STAFF DETECTION â warn on admins / mods, offer Server Hop / Rejoin / Stay âââ
+-- Wrapped in one spawned function so ALL its locals live in THIS function's own 200-local budget, not the main chunk
+-- (the main chunk is right at the cap â adding even one persistent local there made the whole script fail to load).
+task.spawn(function()
+	local STF = { shown=false, stayed=false }
+	local KW = {"administrator","admin","moderator","staff","developer","zenith","game master","overseer","game admin"}
+	local function match(str) if type(str)~="string" then return nil end local l=str:lower()
+		for _,k in ipairs(KW) do if l:find(k,1,true) then return k end end
+		if l:find("%[mod%]",1) or l:find("%f[%a]mod%f[%A]",1) then return "mod" end
+		return nil
 	end
-	for _,ch in ipairs(TCS:GetDescendants()) do if ch:IsA("TextChannel") then ch.MessageReceived:Connect(onMsg) end end
-	conn(TCS.DescendantAdded:Connect(function(d) if d:IsA("TextChannel") then d.MessageReceived:Connect(onMsg) end end))
+	local sg=C("ScreenGui",{Name="MH_Staff", ResetOnSpawn=false, IgnoreGuiInset=true, DisplayOrder=10000, Enabled=false}); safeParentGui(sg)
+	local fr=C("Frame",{Parent=sg, Size=UDim2.fromOffset(360,158), Position=UDim2.new(0.5,-180,0,90), BackgroundColor3=Color3.fromRGB(28,10,10), BorderSizePixel=0}); corner(fr,10); stroke(fr,Color3.fromRGB(255,60,60),2)
+	local ttl=C("TextLabel",{Parent=fr, Size=UDim2.new(1,-16,0,52), Position=UDim2.fromOffset(8,8), BackgroundTransparency=1, Text="STAFF DETECTED", TextColor3=Color3.fromRGB(255,95,95), TextSize=15, Font=Enum.Font.GothamBold, TextWrapped=true})
+	local function mkB(txt,x,w,col) local b=C("TextButton",{Parent=fr, Size=UDim2.fromOffset(w,34), Position=UDim2.fromOffset(x,66), BackgroundColor3=col, Text=txt, TextColor3=Color3.new(1,1,1), TextSize=12, Font=Enum.Font.GothamBold, BorderSizePixel=0, AutoButtonColor=true}); corner(b,6); return b end
+	local bHop=mkB("Server Hop",8,110,Color3.fromRGB(205,72,72)); local bJoin=mkB("Rejoin",124,100,Color3.fromRGB(210,150,50)); local bStay=mkB("Stay",230,122,Color3.fromRGB(70,90,110))
+	local function hop()
+		local ok=pcall(function()
+			local res=game:HttpGetAsync("https://games.roblox.com/v1/games/"..tostring(game.PlaceId).."/servers/Public?sortOrder=Asc&limit=100")
+			local data=HttpService:JSONDecode(res)
+			for _,srv in ipairs(data.data or {}) do if srv.id~=game.JobId and (tonumber(srv.playing) or 0)<(tonumber(srv.maxPlayers) or 100) then TeleportSvc:TeleportToPlaceInstance(game.PlaceId, srv.id, LP); return true end end
+			error("no server")
+		end)
+		if not ok then pcall(function() TeleportSvc:Teleport(game.PlaceId, LP) end) end
+	end
+	local function warnStaff(name, tag)
+		if STF.stayed or STF.shown then return end; STF.shown=true
+		pcall(function() ttl.Text="STAFF DETECTED\n"..tostring(name).."  ["..tostring(tag):gsub("^%l",string.upper).."]\nServer hop, rejoin, or stay?"; sg.Enabled=true end)
+		pcall(function() notify("Staff Detected", tostring(name).." ("..tostring(tag)..") is in the server.") end)
+	end
+	bHop.MouseButton1Click:Connect(function() sg.Enabled=false; hop() end)
+	bJoin.MouseButton1Click:Connect(function() sg.Enabled=false; pcall(function() TeleportSvc:Teleport(game.PlaceId, LP) end) end)
+	bStay.MouseButton1Click:Connect(function() sg.Enabled=false; STF.shown=false; STF.stayed=true end)
+	pcall(function()   -- CHAT TAGS: watch every TextChannel for a staff tag in the message prefix/metadata
+		local TCS=game:GetService("TextChatService")
+		local function onMsg(message)
+			local tag = match(message.PrefixText) or match(message.Metadata)
+			if tag then local pl; pcall(function() local src=message.TextSource; if src then pl=Players:GetPlayerByUserId(src.UserId) end end)
+				if pl~=LP then warnStaff((pl and pl.Name) or "A player", tag) end
+			end
+		end
+		for _,ch in ipairs(TCS:GetDescendants()) do if ch:IsA("TextChannel") then ch.MessageReceived:Connect(onMsg) end end
+		conn(TCS.DescendantAdded:Connect(function(d) if d:IsA("TextChannel") then d.MessageReceived:Connect(onMsg) end end))
+	end)
+	task.wait(3); local seen={}
+	while RUNNING do   -- PLAYER SCAN: staff rank in an attribute/value
+		pcall(function() for _,pl in ipairs(Players:GetPlayers()) do if pl~=LP and not seen[pl] then
+			local tag
+			pcall(function() for k,v in pairs(pl:GetAttributes()) do tag=tag or match(tostring(k)) or match(tostring(v)) end end)
+			if not tag then pcall(function() for _,d in ipairs(pl:GetDescendants()) do if d:IsA("StringValue") then tag=tag or match(d.Name) or match(d.Value) end if tag then break end end end) end
+			if tag then seen[pl]=true; warnStaff(pl.Name, tag) end
+		end end end)
+		task.wait(6)
+	end
 end)
-task.spawn(function() task.wait(3); local seen={} while RUNNING do   -- PLAYER SCAN: staff rank in an attribute/value
-	pcall(function() for _,pl in ipairs(Players:GetPlayers()) do if pl~=LP and not seen[pl] then
-		local tag
-		pcall(function() for k,v in pairs(pl:GetAttributes()) do tag=tag or STF.match(tostring(k)) or STF.match(tostring(v)) end end)
-		if not tag then pcall(function() for _,d in ipairs(pl:GetDescendants()) do if d:IsA("StringValue") then tag=tag or STF.match(d.Name) or STF.match(d.Value) end if tag then break end end end) end
-		if tag then seen[pl]=true; STF.warn(pl.Name, tag) end
-	end end end)
-	task.wait(6)
-end end)
 
 -- INPUT (UI key + feature keybinds)
 local function toggleKey(key) CFG[key]=not CFG[key]; local ref=toggleRefs[key]; if ref then tw(ref[1],{BackgroundColor3=CFG[key] and T.On or T.Off}); tw(ref[2],{Position=CFG[key] and UDim2.fromOffset(18,2) or UDim2.fromOffset(2,2)}) end saveCfg() end
