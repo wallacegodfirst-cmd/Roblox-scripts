@@ -1875,7 +1875,7 @@ local PX = { wsOn=false, ws=16, fly=false, flySpd=60, noclip=false, invis=false,
 	autoUpper=false, autoDownslam=false, aura=false, auraName="Fire", auraRainbow=false, auraSize=1.4,
 	aimlock=false, aimRange=250, streak=false, lastKills=nil, lastStreak=nil,
 	antiTableFlip=false, antiSerious=false, antiOmni=false, antiGarou=false, antiIncin=false, antiDeath=false, antiDC=false, ultAlert=false,
-	jumpOnCounter=false, counterLockOnly=false, adapt=false,
+	dcAlert=false, jumpOnCounter=false, counterLockOnly=false, adapt=false,
 	gojoSel="Repulse", disgName="", disgOn=false, idleId="", walkId="", fps=false, fpsSaved=nil, spots={}, flingBV=nil, nameTag=nil }
 
 -- ── anti-send-back teleport ──
@@ -2026,13 +2026,30 @@ track(RunSvc.Heartbeat:Connect(function()
 		local st=c:GetAttribute("Stamina"); if type(st)=="number" then c:SetAttribute("Stamina",100) end end)
 end))
 
--- ── TRASH CAN THROW — grab EVERY trash can in Map.Trash and hurl them at a picked player (or All) ──
+-- ── TRASH CAN THROW — grab EVERY trash can and hurl them at a picked player (or All) ──
+-- FIX: cans are usually MODELS named "TrashCan" whose inner parts are named "Part"/"Mesh", so the old
+-- "BasePart named trash" scan found nothing. We now match Models too, resolve each to one part, dedupe
+-- nested matches (so the same can isn't grabbed twice = the "same spot" bug), and scan the whole map.
+function isTrashName(nm) nm=string.lower(nm); return (nm:find("trash") or nm:find("garbage")) ~= nil end
+function trashRepPart(o)
+	if o:IsA("BasePart") then return o end
+	if o:IsA("Model") then return o.PrimaryPart or o:FindFirstChildWhichIsA("BasePart", true) end
+	return nil
+end
 local function allTrashParts()
 	local out={}
-	local root=WS:FindFirstChild("Map"); root=(root and root:FindFirstChild("Trash")) or WS
-	for _,o in ipairs(root:GetDescendants()) do
-		if o:IsA("BasePart") and string.lower(o.Name):find("trash") then out[#out+1]=o end
+	local function scan(container)
+		for _,o in ipairs(container:GetDescendants()) do
+			if isTrashName(o.Name) then
+				local topMost=true; local a=o.Parent          -- only the OUTER-most trash object (dedupe model + its parts)
+				while a and a~=container do if isTrashName(a.Name) then topMost=false; break end a=a.Parent end
+				if topMost then local p=trashRepPart(o); if p then out[#out+1]=p end end
+			end
+		end
 	end
+	local root=WS:FindFirstChild("Map"); local tf=root and root:FindFirstChild("Trash")
+	if tf then scan(tf) end
+	if #out==0 then scan(WS) end                               -- fallback: cans live somewhere else in this map
 	return out
 end
 function pxTrashTargets()   -- dropdown options: All + every enemy
@@ -2055,10 +2072,20 @@ local function nearestCan()
 	for _,c in ipairs(allTrashParts()) do if c.Parent then local d=(c.Position-me.Position).Magnitude; if not bd or d<bd then best,bd=c,d end end end
 	return best
 end
+-- FIX "they're not here": match the dropdown name against username AND display name (case-insensitive,
+-- then partial) so a picked player is always found even if the dropdown label differs from their username.
+function findPlayerByName(name)
+	if not name or name=="" or name=="All" then return nil end
+	local exact=Players:FindFirstChild(name); if exact and exact~=LP then return exact end
+	local low=string.lower(name)
+	for _,p in ipairs(Players:GetPlayers()) do if p~=LP and (string.lower(p.Name)==low or string.lower(p.DisplayName)==low) then return p end end
+	for _,p in ipairs(Players:GetPlayers()) do if p~=LP and (string.lower(p.Name):find(low,1,true) or string.lower(p.DisplayName):find(low,1,true)) then return p end end
+	return nil
+end
 local function trashTargets(targetName)
 	local t={}
-	if targetName=="All" then for _,p in ipairs(Players:GetPlayers()) do if p~=LP then t[#t+1]=p end end
-	else local p=Players:FindFirstChild(targetName); if p then t[1]=p end end
+	if (not targetName) or targetName=="All" then for _,p in ipairs(Players:GetPlayers()) do if p~=LP then t[#t+1]=p end end
+	else local p=findPlayerByName(targetName); if p then t[1]=p end end
 	return t
 end
 -- grab ONE specific can (TP to it, M1 to pick up)
@@ -2255,9 +2282,30 @@ local function isCounterStance(plr, tr)
 	end
 	return false
 end
+-- DEATH COUNTER ALERT: teleporting away still ate the hit, so instead we WARN you (3 quick alerts) and
+-- turn you AWAY + a short back-step so you don't feed the counter. No teleport (that was the broken part).
+DC_IDS = { "11343318134", ANIM_COUNTER.deathblow }
+dcAlertLast = 0
+function pxDCAlert(plr)
+	if os.clock()-dcAlertLast < 2 then return end
+	dcAlertLast=os.clock()
+	local nm=(plr and plr.Name) or "enemy"
+	task.spawn(function()
+		local me=myHRP(); local pt=plr and partOf(plr)
+		if me and pt then
+			pcall(function()
+				local away=me.Position-pt.Position; away=Vector3.new(away.X,0,away.Z)   -- face directly away from them
+				if away.Magnitude>0.1 then me.CFrame=CFrame.lookAt(me.Position, me.Position+away.Unit) end
+			end)
+			pcall(function() VIM:SendKeyEvent(true,KC.S,false,game) end)                  -- hold back-step while we warn
+		end
+		for _=1,3 do notify("DEATH COUNTER", nm.." is countering — DON'T hit!", 1); task.wait(0.4) end
+		pcall(function() VIM:SendKeyEvent(false,KC.S,false,game) end)
+	end)
+end
 track(RunSvc.Heartbeat:Connect(function()
 	local anyDodge=false; for _,e in ipairs(PX_ANTI) do if PX[e.f] then anyDodge=true break end end
-	local wantCounter = PX.jumpOnCounter or PX.ultAlert
+	local wantCounter = PX.jumpOnCounter or PX.ultAlert or PX.dcAlert
 	if not (anyDodge or wantCounter) then return end
 	local me=myHRP(); if not me then return end
 	for _,plr in ipairs(Players:GetPlayers()) do if plr~=LP and plr.Character then
@@ -2271,6 +2319,7 @@ track(RunSvc.Heartbeat:Connect(function()
 					-- 1) counter stance? -> alert / smooth jump-on-head + "EZ BOY"
 					if wantCounter and lockOK and isCounterStance(plr, tr) then
 						if PX.ultAlert then notify("COUNTER", plr.Name.." is countering!", 2) end
+							if PX.dcAlert then for _,t in ipairs(tr) do if trackMatches(t, DC_IDS) then pxDCAlert(plr); break end end end   -- DEATH COUNTER -> alert + turn away (no teleport)
 						if PX.jumpOnCounter and os.clock()-pxLastHead>1.0 then
 							pxLastHead=os.clock(); pxJumpOnHead(plr, pt)
 						end
@@ -2568,7 +2617,10 @@ do
 	tab:CreateSection("Trash Can")
 	local trashTgt="All"
 	local ttdrop = tab:CreateDropdown({ Name="Target", Options=pxTrashTargets(), CurrentOption="All", Callback=function(o) trashTgt=(type(o)=="table") and o[1] or o end })
-	tab:CreateButton({ Name="Refresh Targets", Callback=function() pcall(function() ttdrop:Refresh(pxTrashTargets(), false) end) end })
+	local function ttRefresh() pcall(function() ttdrop:Refresh(pxTrashTargets(), false) end) end
+	track(Players.PlayerAdded:Connect(function() task.wait(0.4); ttRefresh() end))   -- keep the list live so joined players always show
+	track(Players.PlayerRemoving:Connect(function() task.wait(0.2); ttRefresh() end))
+	tab:CreateButton({ Name="Refresh Targets", Callback=ttRefresh })
 	tab:CreateButton({ Name="Throw Trash (one)", Callback=function() pxThrowTrash(trashTgt) end })
 	tab:CreateButton({ Name="Throw ALL Trash", Callback=function() pxThrowAllTrash(trashTgt) end })
 	tab:CreateButton({ Name="STOP Trash", Callback=function() pxStopTrash() end })
@@ -2626,6 +2678,7 @@ do
 	tab:CreateSection("Counter")
 	tab:CreateToggle({ Name="Lock-On Target Only", CurrentValue=false, Callback=function(v) PX.counterLockOnly=v end })
 	tab:CreateToggle({ Name="Ultimate Alert", CurrentValue=false, Callback=function(v) PX.ultAlert=v end })
+	tab:CreateToggle({ Name="Death Counter Alert (warn 3x + turn you away, no TP)", CurrentValue=false, Callback=function(v) PX.dcAlert=v; notify("Death Counter Alert", v and "ON" or "OFF", 2) end })
 	tab:CreateToggle({ Name="Jump On Counter (walk on head + 'EZ BOY')", CurrentValue=false, Callback=function(v) PX.jumpOnCounter=v end })
 end
 
