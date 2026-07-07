@@ -2591,14 +2591,14 @@ do
 		holdKey(Enum.KeyCode.E, 0.35); task.wait(0.1); holdKey(Enum.KeyCode.E, 0.35)   -- E, then E again (as requested)
 		pcall(fakeEat)
 	end
-	-- eat the corpse at a specific part IN PLACE (no TP) — fire its prompt + hold E + replay bites
+	-- eat the corpse IN PLACE with NO key presses at all (user: "don't click E, not at all"). We fire the eat REMOTELY
+	-- (the prompt's own remote + the captured Bite remotes) so the bar still fills, but the E key is never touched.
 	local function eatAt(part)
 		if not part then return end
 		local m=part:FindFirstAncestorWhichIsA("Model")
 		local prompt=(m and m:FindFirstChildWhichIsA("ProximityPrompt",true)) or part:FindFirstChildWhichIsA("ProximityPrompt")
 		if prompt then pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(prompt.MaxActivationDistance or 8,40); prompt.HoldDuration=0; if fireprox then fireprox(prompt) end end) end
-		holdKey(Enum.KeyCode.E, 0.4)
-		pcall(fakeEat)
+		pcall(fakeEat)   -- captured Bite remotes — fills the bar without pressing E
 	end
 	-- FULL → walk in a CIRCLE using the real W/A/S/D keys (native movement, no velocity snap). We press the WASD combo
 	-- toward a direction that slowly ROTATES, so you trace a circle. Trot/sprint off so it stays a slow growth walk.
@@ -3869,6 +3869,65 @@ task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
 		end
 	end
 end) end end)
+
+-- ═══ STAFF DETECTION — warn on admins / mods, offer Server Hop / Rejoin / Stay ═══
+do
+	local STAFF_KW = {"administrator","admin","moderator","staff","developer","zenith","game master","overseer","game admin","in-game admin"}
+	local function staffIn(s) if type(s)~="string" then return nil end local l=s:lower()
+		for _,k in ipairs(STAFF_KW) do if l:find(k,1,true) then return k end end
+		-- standalone "mod" (avoid matching "model"/"module") — only when it's a bracketed/whole-word tag
+		if l:find("%[mod%]",1) or l:find("%f[%a]mod%f[%A]",1) then return "mod" end
+		return nil
+	end
+	local shown, stayed = false, false
+	-- popup
+	local sg=C("ScreenGui",{Name="MH_Staff", ResetOnSpawn=false, IgnoreGuiInset=true, DisplayOrder=10000, Enabled=false}); safeParentGui(sg)
+	local fr=C("Frame",{Parent=sg, Size=UDim2.fromOffset(360,158), Position=UDim2.new(0.5,-180,0,90), BackgroundColor3=Color3.fromRGB(28,10,10), BorderSizePixel=0}); corner(fr,10); stroke(fr,Color3.fromRGB(255,60,60),2)
+	local ttl=C("TextLabel",{Parent=fr, Size=UDim2.new(1,-16,0,52), Position=UDim2.fromOffset(8,8), BackgroundTransparency=1, Text="STAFF DETECTED", TextColor3=Color3.fromRGB(255,95,95), TextSize=15, Font=Enum.Font.GothamBold, TextWrapped=true})
+	local function mkB(txt,x,w,col) local b=C("TextButton",{Parent=fr, Size=UDim2.fromOffset(w,34), Position=UDim2.fromOffset(x,66), BackgroundColor3=col, Text=txt, TextColor3=Color3.new(1,1,1), TextSize=12, Font=Enum.Font.GothamBold, BorderSizePixel=0, AutoButtonColor=true}); corner(b,6); return b end
+	local bHop  = mkB("Server Hop",  8, 110, Color3.fromRGB(205,72,72))
+	local bJoin = mkB("Rejoin",    124, 100, Color3.fromRGB(210,150,50))
+	local bStay = mkB("Stay",      230, 122, Color3.fromRGB(70,90,110))
+	local function serverHop()
+		local ok=pcall(function()
+			local res=game:HttpGetAsync("https://games.roblox.com/v1/games/"..tostring(game.PlaceId).."/servers/Public?sortOrder=Asc&limit=100")
+			local data=HttpService:JSONDecode(res)
+			for _,s in ipairs(data.data or {}) do if s.id~=game.JobId and (tonumber(s.playing) or 0)<(tonumber(s.maxPlayers) or 100) then TeleportSvc:TeleportToPlaceInstance(game.PlaceId, s.id, LP); return true end end
+			error("no server")
+		end)
+		if not ok then pcall(function() TeleportSvc:Teleport(game.PlaceId, LP) end) end   -- fallback = rejoin (usually a new server)
+	end
+	bHop.MouseButton1Click:Connect(function() sg.Enabled=false; serverHop() end)
+	bJoin.MouseButton1Click:Connect(function() sg.Enabled=false; pcall(function() TeleportSvc:Teleport(game.PlaceId, LP) end) end)
+	bStay.MouseButton1Click:Connect(function() sg.Enabled=false; shown=false; stayed=true end)
+	local function warn2(name, tag)
+		if stayed or shown then return end; shown=true
+		pcall(function() ttl.Text="STAFF DETECTED\n"..tostring(name).."  ["..tostring(tag):gsub("^%l",string.upper).."]\nServer hop, rejoin, or stay?"; sg.Enabled=true end)
+		pcall(function() notify("Staff Detected", tostring(name).." ("..tostring(tag)..") is in the server.") end)
+	end
+	-- 1) CHAT TAGS (what the screenshots show): watch every TextChannel for a staff tag in the message prefix/metadata.
+	pcall(function()
+		local TCS=game:GetService("TextChatService")
+		local function onMsg(message)
+			local tag = staffIn(message.PrefixText) or staffIn(message.Metadata)
+			if tag then local pl; pcall(function() local src=message.TextSource; if src then pl=Players:GetPlayerByUserId(src.UserId) end end)
+				if pl~=LP then warn2((pl and pl.Name) or "A player", tag) end
+			end
+		end
+		for _,ch in ipairs(TCS:GetDescendants()) do if ch:IsA("TextChannel") then ch.MessageReceived:Connect(onMsg) end end
+		conn(TCS.DescendantAdded:Connect(function(d) if d:IsA("TextChannel") then d.MessageReceived:Connect(onMsg) end end))
+	end)
+	-- 2) PLAYER SCAN: a staff rank often lives in an attribute / value on the Player. Check keys + values for the tags.
+	task.spawn(function() task.wait(3); local seen={} while RUNNING do
+		pcall(function() for _,pl in ipairs(Players:GetPlayers()) do if pl~=LP and not seen[pl] then
+			local tag
+			pcall(function() for k,v in pairs(pl:GetAttributes()) do tag=tag or staffIn(tostring(k)) or staffIn(tostring(v)) end end)
+			if not tag then pcall(function() for _,d in ipairs(pl:GetDescendants()) do if d:IsA("StringValue") then tag=tag or staffIn(d.Name) or staffIn(d.Value) end if tag then break end end end) end
+			if tag then seen[pl]=true; warn2(pl.Name, tag) end
+		end end end)
+		task.wait(6)
+	end end)
+end
 
 -- INPUT (UI key + feature keybinds)
 local function toggleKey(key) CFG[key]=not CFG[key]; local ref=toggleRefs[key]; if ref then tw(ref[1],{BackgroundColor3=CFG[key] and T.On or T.Off}); tw(ref[2],{Position=CFG[key] and UDim2.fromOffset(18,2) or UDim2.fromOffset(2,2)}) end saveCfg() end
