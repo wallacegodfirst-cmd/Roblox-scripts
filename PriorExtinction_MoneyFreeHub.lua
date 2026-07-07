@@ -2588,13 +2588,21 @@ do
 		holdKey(Enum.KeyCode.E, 0.4)
 		pcall(fakeEat)
 	end
-	-- FULL → circle to grow: no trot/sprint, slow steady circle
+	-- FULL → walk in a CIRCLE using the real W/A/S/D keys (native movement, no velocity snap). We press the WASD combo
+	-- toward a direction that slowly ROTATES, so you trace a circle. Trot/sprint off so it stays a slow growth walk.
+	local PWK = {W=Enum.KeyCode.W, A=Enum.KeyCode.A, S=Enum.KeyCode.S, D=Enum.KeyCode.D}
+	PRO.held = PRO.held or {}
+	local function setKey(k, down) if PRO.held[k]==down then return end; PRO.held[k]=down; pcall(function() VIM:SendKeyEvent(down, PWK[k], false, game) end) end
+	local function releaseWASD() for k in pairs(PWK) do setKey(k,false) end end
 	local function circle()
-		local r=hrp(); if not r then return end
 		pcall(function() replicaAction("SetAction","Run",false) end); pcall(function() replicaAction("SetAction","Trot",false) end)
-		PRO.ang = PRO.ang + 0.22
-		local dir=Vector3.new(math.cos(PRO.ang),0,math.sin(PRO.ang))
-		pcall(function() r.AssemblyLinearVelocity=Vector3.new(dir.X*7, r.AssemblyLinearVelocity.Y, dir.Z*7) end)   -- gentle circle
+		PRO.ang = (PRO.ang or 0) + 0.16
+		local des = Vector3.new(math.cos(PRO.ang),0,math.sin(PRO.ang))
+		local cf = Cam.CFrame
+		local look = Vector3.new(cf.LookVector.X,0,cf.LookVector.Z); if look.Magnitude<0.05 then return end; look=look.Unit
+		local right = Vector3.new(cf.RightVector.X,0,cf.RightVector.Z).Unit
+		local fwd = des:Dot(look); local rgt = des:Dot(right)
+		setKey("W", fwd> 0.35); setKey("S", fwd< -0.35); setKey("D", rgt> 0.35); setKey("A", rgt< -0.35)   -- press the keys that walk toward the rotating point = a circle
 	end
 	task.spawn(function() while RUNNING do
 		if CFG.ProFood and alive() and tick()>=(__gg.MH_spawnGrace or 0) then
@@ -2608,9 +2616,10 @@ do
 					-- ~5s the corpse is finished → drop it so we move to the next one.
 					if ff and (not PRO.lastFood or ff > PRO.lastFood + 0.001) then PRO.lastFood=ff; PRO.foodT=tick() end
 					if PRO.foodT and tick()-PRO.foodT > 5 then PRO.cur=nil
-					else eatAt(PRO.cur); task.wait(0.4) end
+					else releaseWASD(); eatAt(PRO.cur); task.wait(0.4) end   -- eating = keys off (not circling)
 				else
 					-- no corpse locked (or it's gone/far) → pick a new SAFE corpse and TELEPORT ONCE, then lock it
+					releaseWASD()
 					local fd = pickSafeFood()
 					if fd and fd[2] then
 						PRO.cur=fd[2]; PRO.lastFood=ff; PRO.foodT=tick()
@@ -2619,7 +2628,7 @@ do
 					else circle(); task.wait(0.4) end
 				end
 			end
-		else PRO.cur=nil; task.wait(0.4) end
+		else PRO.cur=nil; releaseWASD(); task.wait(0.4) end   -- Pro Food off → let go of the keys
 	end end)
 end
 task.spawn(function() while RUNNING do
