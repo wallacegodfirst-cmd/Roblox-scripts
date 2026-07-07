@@ -1443,22 +1443,22 @@ if type(Rayfield)~="table" then
 end
 local function notify(title, content, dur) pcall(function() Rayfield:Notify({Title=title, Content=content, Duration=dur or 3}) end) end
 
--- Dream Hub theme: STRONG black (dark-dark, near-pure black) with WHITE outlines everywhere.
+-- Dream Hub theme: RED + BLACK — near-pure black backgrounds with RED accents/outlines everywhere.
 local RED = {
 	TextColor = Color3.fromRGB(245,245,245), Background = Color3.fromRGB(0,0,0),
 	Topbar = Color3.fromRGB(8,8,8), Shadow = Color3.fromRGB(0,0,0),
-	NotificationBackground = Color3.fromRGB(5,5,5), NotificationActionsBackground = Color3.fromRGB(255,255,255),
-	TabBackground = Color3.fromRGB(12,12,12), TabStroke = Color3.fromRGB(255,255,255),
-	TabBackgroundSelected = Color3.fromRGB(255,255,255), TabTextColor = Color3.fromRGB(200,200,200),
-	SelectedTabTextColor = Color3.fromRGB(0,0,0), ElementBackground = Color3.fromRGB(10,10,10),
-	ElementBackgroundHover = Color3.fromRGB(24,24,24), SecondaryElementBackground = Color3.fromRGB(6,6,6),
-	ElementStroke = Color3.fromRGB(255,255,255), SecondaryElementStroke = Color3.fromRGB(210,210,210),
-	SliderBackground = Color3.fromRGB(35,35,35), SliderProgress = Color3.fromRGB(255,255,255), SliderStroke = Color3.fromRGB(255,255,255),
-	ToggleBackground = Color3.fromRGB(18,18,18), ToggleEnabled = Color3.fromRGB(255,255,255), ToggleDisabled = Color3.fromRGB(80,80,80),
-	ToggleEnabledStroke = Color3.fromRGB(255,255,255), ToggleDisabledStroke = Color3.fromRGB(120,120,120),
-	ToggleEnabledOuterStroke = Color3.fromRGB(255,255,255), ToggleDisabledOuterStroke = Color3.fromRGB(60,60,60),
-	DropdownSelected = Color3.fromRGB(24,24,24), DropdownUnselected = Color3.fromRGB(8,8,8),
-	InputBackground = Color3.fromRGB(10,10,10), InputStroke = Color3.fromRGB(255,255,255), PlaceholderColor = Color3.fromRGB(140,140,140),
+	NotificationBackground = Color3.fromRGB(5,5,5), NotificationActionsBackground = Color3.fromRGB(220,40,40),
+	TabBackground = Color3.fromRGB(12,12,12), TabStroke = Color3.fromRGB(180,30,30),
+	TabBackgroundSelected = Color3.fromRGB(200,35,35), TabTextColor = Color3.fromRGB(210,120,120),
+	SelectedTabTextColor = Color3.fromRGB(255,255,255), ElementBackground = Color3.fromRGB(10,10,10),
+	ElementBackgroundHover = Color3.fromRGB(30,14,14), SecondaryElementBackground = Color3.fromRGB(6,6,6),
+	ElementStroke = Color3.fromRGB(200,35,35), SecondaryElementStroke = Color3.fromRGB(130,25,25),
+	SliderBackground = Color3.fromRGB(45,12,12), SliderProgress = Color3.fromRGB(225,45,45), SliderStroke = Color3.fromRGB(225,45,45),
+	ToggleBackground = Color3.fromRGB(22,10,10), ToggleEnabled = Color3.fromRGB(225,45,45), ToggleDisabled = Color3.fromRGB(80,80,80),
+	ToggleEnabledStroke = Color3.fromRGB(240,70,70), ToggleDisabledStroke = Color3.fromRGB(120,120,120),
+	ToggleEnabledOuterStroke = Color3.fromRGB(200,35,35), ToggleDisabledOuterStroke = Color3.fromRGB(60,60,60),
+	DropdownSelected = Color3.fromRGB(40,14,14), DropdownUnselected = Color3.fromRGB(8,8,8),
+	InputBackground = Color3.fromRGB(10,10,10), InputStroke = Color3.fromRGB(200,35,35), PlaceholderColor = Color3.fromRGB(150,90,90),
 }
 local Window = Rayfield:CreateWindow({
 	Name = "Dream Hub", LoadingTitle = "Dream Hub", LoadingSubtitle = "TSB Tech Builder v3.0 · reworked",

@@ -1444,22 +1444,22 @@ if type(Rayfield)~="table" then
 end
 local function notify(title, content, dur) pcall(function() Rayfield:Notify({Title=title, Content=content, Duration=dur or 3}) end) end
 
--- Dream Hub theme: STRONG black (dark-dark, near-pure black) with WHITE outlines everywhere.
+-- Dream Hub theme: RED + BLACK — near-pure black backgrounds with RED accents/outlines everywhere.
 local RED = {
 	TextColor = Color3.fromRGB(245,245,245), Background = Color3.fromRGB(0,0,0),
 	Topbar = Color3.fromRGB(8,8,8), Shadow = Color3.fromRGB(0,0,0),
-	NotificationBackground = Color3.fromRGB(5,5,5), NotificationActionsBackground = Color3.fromRGB(255,255,255),
-	TabBackground = Color3.fromRGB(12,12,12), TabStroke = Color3.fromRGB(255,255,255),
-	TabBackgroundSelected = Color3.fromRGB(255,255,255), TabTextColor = Color3.fromRGB(200,200,200),
-	SelectedTabTextColor = Color3.fromRGB(0,0,0), ElementBackground = Color3.fromRGB(10,10,10),
-	ElementBackgroundHover = Color3.fromRGB(24,24,24), SecondaryElementBackground = Color3.fromRGB(6,6,6),
-	ElementStroke = Color3.fromRGB(255,255,255), SecondaryElementStroke = Color3.fromRGB(210,210,210),
-	SliderBackground = Color3.fromRGB(35,35,35), SliderProgress = Color3.fromRGB(255,255,255), SliderStroke = Color3.fromRGB(255,255,255),
-	ToggleBackground = Color3.fromRGB(18,18,18), ToggleEnabled = Color3.fromRGB(255,255,255), ToggleDisabled = Color3.fromRGB(80,80,80),
-	ToggleEnabledStroke = Color3.fromRGB(255,255,255), ToggleDisabledStroke = Color3.fromRGB(120,120,120),
-	ToggleEnabledOuterStroke = Color3.fromRGB(255,255,255), ToggleDisabledOuterStroke = Color3.fromRGB(60,60,60),
-	DropdownSelected = Color3.fromRGB(24,24,24), DropdownUnselected = Color3.fromRGB(8,8,8),
-	InputBackground = Color3.fromRGB(10,10,10), InputStroke = Color3.fromRGB(255,255,255), PlaceholderColor = Color3.fromRGB(140,140,140),
+	NotificationBackground = Color3.fromRGB(5,5,5), NotificationActionsBackground = Color3.fromRGB(220,40,40),
+	TabBackground = Color3.fromRGB(12,12,12), TabStroke = Color3.fromRGB(180,30,30),
+	TabBackgroundSelected = Color3.fromRGB(200,35,35), TabTextColor = Color3.fromRGB(210,120,120),
+	SelectedTabTextColor = Color3.fromRGB(255,255,255), ElementBackground = Color3.fromRGB(10,10,10),
+	ElementBackgroundHover = Color3.fromRGB(30,14,14), SecondaryElementBackground = Color3.fromRGB(6,6,6),
+	ElementStroke = Color3.fromRGB(200,35,35), SecondaryElementStroke = Color3.fromRGB(130,25,25),
+	SliderBackground = Color3.fromRGB(45,12,12), SliderProgress = Color3.fromRGB(225,45,45), SliderStroke = Color3.fromRGB(225,45,45),
+	ToggleBackground = Color3.fromRGB(22,10,10), ToggleEnabled = Color3.fromRGB(225,45,45), ToggleDisabled = Color3.fromRGB(80,80,80),
+	ToggleEnabledStroke = Color3.fromRGB(240,70,70), ToggleDisabledStroke = Color3.fromRGB(120,120,120),
+	ToggleEnabledOuterStroke = Color3.fromRGB(200,35,35), ToggleDisabledOuterStroke = Color3.fromRGB(60,60,60),
+	DropdownSelected = Color3.fromRGB(40,14,14), DropdownUnselected = Color3.fromRGB(8,8,8),
+	InputBackground = Color3.fromRGB(10,10,10), InputStroke = Color3.fromRGB(200,35,35), PlaceholderColor = Color3.fromRGB(150,90,90),
 }
 local Window = Rayfield:CreateWindow({
 	Name = "Dream Hub PLUS", LoadingTitle = "Dream Hub PLUS", LoadingSubtitle = "TSB Tech Builder v3.0 + extras",
@@ -1475,6 +1475,52 @@ function comboText()
 end
 function refreshCombo() if comboBtn then pcall(function() comboBtn:Set(comboText()) end) end end
 rebuildSteps = refreshCombo
+-- ═══ ADAPT REC — record the TARGET's every move/animation, then Save / Favorite / send to the Combo Builder ═══
+local AR = { on=false, buf={}, last=0, conn=nil, saved={}, favs={}, n=0 }
+function AR.model()
+	local p = currentTargetPart and currentTargetPart(); if not p then return nil end
+	return p:FindFirstAncestorWhichIsA("Model") or p.Parent
+end
+function AR.start()
+	if AR.on then notify("Adapt Rec","Already recording — Stop first.",2); return end
+	local m=AR.model(); local hum=m and m:FindFirstChildOfClass("Humanoid"); local an=hum and hum:FindFirstChildOfClass("Animator")
+	if not an then notify("Adapt Rec","No target — lock an enemy (C) or face one, then hit Rec.",4); return end
+	AR.on=true; AR.buf={}; AR.last=tick()
+	AR.conn = an.AnimationPlayed:Connect(function(track)
+		if not AR.on then return end
+		local id=(track and track.Animation and track.Animation.AnimationId) or "?"
+		local now=tick(); local gap=math.clamp(math.floor((now-AR.last)*1000),0,6000); AR.last=now
+		if #AR.buf<80 then AR.buf[#AR.buf+1]={gap=gap, id=id} end
+	end)
+	notify("Adapt Rec","REC — capturing "..(m and m.Name or "target").."'s moves. Stop when done.",3)
+end
+function AR.stop()
+	if AR.conn then pcall(function() AR.conn:Disconnect() end); AR.conn=nil end
+	AR.on=false
+	notify("Adapt Rec",(#AR.buf).." moves captured — Save / Favorite / To Builder.",4)
+end
+function AR.save(name)
+	if #AR.buf==0 then notify("Adapt Rec","Nothing recorded yet — hit Rec first.",3); return end
+	AR.n=AR.n+1; name=(name and name~="" and name) or ("Adapt "..AR.n)
+	local cp={}; for i,e in ipairs(AR.buf) do cp[i]={gap=e.gap, id=e.id} end; AR.saved[name]=cp
+	notify("Adapt Rec","Saved as '"..name.."'.",3)
+end
+function AR.fav()
+	if #AR.buf==0 then notify("Adapt Rec","Nothing recorded to favorite.",3); return end
+	local cp={}; for i,e in ipairs(AR.buf) do cp[i]={gap=e.gap, id=e.id} end; AR.favs[#AR.favs+1]=cp
+	notify("Adapt Rec","Favorited ("..#AR.favs..").",3)
+end
+function AR.toBuilder()
+	if #AR.buf==0 then notify("Adapt Rec","Nothing to send — Rec first.",3); return end
+	-- each captured move → an M1 spaced by the recorded gap = a timing skeleton of the target's combo you can edit
+	-- (swap the M1s for the real skills/dashes in the Builder).
+	for _,e in ipairs(AR.buf) do
+		if e.gap and e.gap>60 then addStep(WAIT(math.min(e.gap,1200))) end
+		addStep(M1(1))
+	end
+	refreshCombo()
+	notify("Adapt Rec","Sent "..#AR.buf.." moves to the Combo Builder.",5)
+end
 function loadPreset(name, alsoRun)
 	local p = name and PRESETS[name]
 	if not (p and p.steps) then notify("No combo", tostring(name), 3); return end
@@ -1785,6 +1831,14 @@ do
 	tab:CreateButton({ Name = "Start recording", Callback = function() startRecord(); notify("Recording","play your combo in-game",3) end })
 	tab:CreateButton({ Name = "Stop recording", Callback = function() stopRecord(); refreshCombo(); printCombo() end })
 	tab:CreateButton({ Name = "Print recorded combo (F9)", Callback = printCombo })
+	tab:CreateSection("Adapt Rec — record the TARGET's moves")
+	tab:CreateButton({ Name = "REC (capture target's moves)", Callback = function() AR.start() end })
+	tab:CreateButton({ Name = "Stop", Callback = function() AR.stop() end })
+	local arName = ""
+	tab:CreateInput({ Name = "Save name (blank = auto)", PlaceholderText = "e.g. Rex bread-and-butter", RemoveTextAfterFocusLost = false, Callback = function(t) arName = t or "" end })
+	tab:CreateButton({ Name = "Save", Callback = function() AR.save(arName) end })
+	tab:CreateButton({ Name = "Bring to Combo Builder", Callback = function() AR.toBuilder() end })
+	tab:CreateButton({ Name = "Favorite", Callback = function() AR.fav() end })
 end
 
 
@@ -2492,14 +2546,7 @@ do
 	tab:CreateToggle({ Name="Streak Notifier", CurrentValue=false, Callback=function(v) PX.streak=v; if v then PX.lastStreak=pxStreakText() end end })
 end
 
-do
-	local tab = Window:CreateTab("Auras", 4483362458)
-	tab:CreateSection("Client Aura")
-	tab:CreateToggle({ Name="Enable Aura", CurrentValue=false, Callback=function(v) pxSetAura(v) end })
-	tab:CreateDropdown({ Name="Aura", Options=AURA_ORDER, CurrentOption="Fire", Callback=function(o) PX.auraName=(type(o)=="table") and o[1] or o; if PX.aura then applyAura() end end })
-	tab:CreateSlider({ Name="Size", Range={5,40}, Increment=1, Suffix="", CurrentValue=14, Callback=function(v) PX.auraSize=v/10; if PX.aura then applyAura() end end })
-	tab:CreateToggle({ Name="Rainbow", CurrentValue=false, Callback=function(v) PX.auraRainbow=v end })
-end
+-- (Auras tab removed per request.)
 
 do
 	local tab = Window:CreateTab("Keybinds", 4483362458)
