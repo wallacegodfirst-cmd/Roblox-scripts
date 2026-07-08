@@ -8,6 +8,9 @@ __gg.__PRIOR_EXT_HUB = nil
 -- IS running -> press RightShift for the menu. If you DON'T see it, the executor failed to FETCH the
 -- script (blocked/cached HttpGet) -> use the retry loader.
 pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", {Title="Dream Hub", Text="Prior Extinction loading... press RightShift for the menu", Duration=6}) end)
+-- LOAD-STAGE CHECKPOINTS: on executors that hide line numbers, the LAST toast you see before it dies tells
+-- us exactly which section aborted. Toggle off by setting __gg.PE_NO_STAGES = true.
+local function MS(tag) if __gg.PE_NO_STAGES then return end pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", {Title="PE stage", Text=tostring(tag), Duration=10}) end) end
 
 -- ═══ SERVICES ═══
 local Players      = game:GetService("Players")
@@ -92,6 +95,7 @@ loadCfg()
 -- keeps sending me back". Any saved value ABOVE the safe band gets reset to 20 (the sweet spot: clearly faster
 -- than walking, low enough the server doesn't snap you); values you set inside 14-28 are kept as-is.
 do local rs = tonumber(CFG.RunSpeed) or 19; CFG.RunSpeed = (rs > 26 or rs < 12) and 19 or rs end   -- ~normal sprint speed
+MS("1 config ok")
 CFG.Keybinds = CFG.Keybinds or {}
 CFG.Keybinds.UIKey = CFG.Keybinds.UIKey or CFG.UIKey
 CFG.Keybinds.AimKey = CFG.Keybinds.AimKey or CFG.AimKey
@@ -1042,6 +1046,7 @@ local function pad(o,l,r,t,b) C("UIPadding",{Parent=o, PaddingLeft=UDim.new(0,l 
 local function lay(o,padpx,dir) local u=C("UIListLayout",{Parent=o, Padding=UDim.new(0,padpx or 6), SortOrder=Enum.SortOrder.LayoutOrder, FillDirection=dir or Enum.FillDirection.Vertical}); return u end
 local function tw(o,goal,t) pcall(function() TweenService:Create(o, TweenInfo.new(t or 0.18, Enum.EasingStyle.Quad), goal):Play() end) end
 
+MS("2 helpers ok - building window")
 -- Built-in window starts HIDDEN so it never flashes before Fluent loads; shown only if Fluent fails (fallback).
 SG = C("ScreenGui",{Name="MoneyHubPE", Enabled=false, ResetOnSpawn=false, ZIndexBehavior=Enum.ZIndexBehavior.Sibling, IgnoreGuiInset=true})
 safeParentGui(SG)
@@ -1325,6 +1330,7 @@ local _guiHost = (typeof(gethui)=="function" and gethui()) or CoreGui
 local _before = {}
 pcall(function() for _,g in ipairs(_guiHost:GetChildren()) do _before[g]=true end end)
 pcall(function() for _,g in ipairs(CoreGui:GetChildren()) do _before[g]=true end end)
+MS("3 window built - loading menu lib")
 -- Escape hatch: run `_G.PE_BUILTIN_UI = true` before the loadstring to skip Fluent and use the built-in UI.
 if not (__gg.PE_BUILTIN_UI or _G.PE_BUILTIN_UI) then
 	pcall(function()
@@ -1375,6 +1381,7 @@ __gg.MH_setToggle = function(key, val)
 	pcall(function() if Fluent and Fluent.Options and Fluent.Options[key] and Fluent.Options[key].SetValue then Fluent.Options[key]:SetValue(CFG[key]) end end)
 end
 
+MS("4 menu ready ("..(USE_FLUENT and "Fluent" or "built-in")..") - building tabs")
 -- ═══ TABS / PAGES ═══
 mkTab("Combat",1); mkTab("PvP",2); mkTab("Movement",3); mkTab("Survival",4); mkTab("Growth",5); mkTab("Auto Farm",6); mkTab("Teleport",7)
 mkTab("Visuals",8); mkTab("Skins",9); mkTab("Misc",10); mkTab("Settings",11); mkTab("Info",12)
@@ -4089,5 +4096,6 @@ G.__PRIOR_EXT_HUB = function()
 	saveCfg()
 	G.__PRIOR_EXT_HUB=nil
 end
+MS("5 DONE - all tabs built, menu ready")
 notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
 print("[Dream Hub · Prior Extinction v6.1] Loaded — enemy-only hitbox (never yours), fixed restore camera+controls, BodyVelocity walk-on-water/anti-drown, server-side INF stam, food ESP highlights corpses, teleport farm, anti-injury report-block")
