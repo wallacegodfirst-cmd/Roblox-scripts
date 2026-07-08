@@ -1317,10 +1317,30 @@ end
 
 -- ═══ FLUENT UI (primary) — clean library; auto-falls-back to the built-in window if it can't load ═══
 local Fluent, FWindow, USE_FLUENT = nil, nil, false
-pcall(function()
-	Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
-	FWindow = Fluent:CreateWindow({ Title="Dream Hub", SubTitle="Prior Extinction", TabWidth=150, Size=UDim2.fromOffset(580,460), Acrylic=true, Theme="Light", MinimizeKey=Enum.KeyCode.RightShift })
-end)
+-- Load Fluent, but VERIFY it actually rendered. On weaker executors (Real/Medium/Xeno) Fluent's CreateWindow can
+-- "succeed" (no error) yet draw NOTHING (acrylic blur / gethui quirks) — that's the "successfully loaded, no UI"
+-- report. We snapshot the GUI host before/after; if Fluent added no ScreenGui we treat it as failed and use the
+-- fully self-contained built-in window (which always renders). Acrylic is OFF for the same reason.
+local _guiHost = (typeof(gethui)=="function" and gethui()) or CoreGui
+local _before = {}
+pcall(function() for _,g in ipairs(_guiHost:GetChildren()) do _before[g]=true end end)
+pcall(function() for _,g in ipairs(CoreGui:GetChildren()) do _before[g]=true end end)
+-- Escape hatch: run `_G.PE_BUILTIN_UI = true` before the loadstring to skip Fluent and use the built-in UI.
+if not (__gg.PE_BUILTIN_UI or _G.PE_BUILTIN_UI) then
+	pcall(function()
+		Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+		FWindow = Fluent:CreateWindow({ Title="Dream Hub", SubTitle="Prior Extinction", TabWidth=150, Size=UDim2.fromOffset(580,460), Acrylic=false, Theme="Light", MinimizeKey=Enum.KeyCode.RightShift })
+	end)
+end
+if FWindow then
+	task.wait()   -- let Fluent parent its ScreenGui, then confirm it actually drew one
+	local rendered=false
+	pcall(function()
+		for _,g in ipairs(_guiHost:GetChildren()) do if not _before[g] and g:IsA("ScreenGui") then rendered=true break end end
+		if not rendered then for _,g in ipairs(CoreGui:GetChildren()) do if not _before[g] and g:IsA("ScreenGui") then rendered=true break end end end
+	end)
+	if not rendered then FWindow=nil; pcall(function() if Fluent and Fluent.Destroy then Fluent:Destroy() end end) end
+end
 if FWindow then
 	USE_FLUENT = true
 	local Options = Fluent.Options
