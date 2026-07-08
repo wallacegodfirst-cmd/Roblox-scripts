@@ -1594,10 +1594,21 @@ end)
 -- Click TP moved to V (T is an ability key in this game - it was clashing)
 hook(UserInputService.InputBegan, function(i, gpe)
     if gpe then return end
-    if S.ClickTP and i.KeyCode == Enum.KeyCode.V then
+    -- V on PC; on mobile (no keyboard) a screen TAP teleports to the tapped spot. gpe already filters GUI taps.
+    if S.ClickTP and (i.KeyCode == Enum.KeyCode.V or i.UserInputType == Enum.UserInputType.Touch) then
         pcall(function()
-            local m = LP:GetMouse()
-            if m and m.Target and m.Hit then tpTo(CFrame.new(m.Hit.Position + Vector3.new(0,4,0))) end
+            local pos
+            if i.UserInputType == Enum.UserInputType.Touch then
+                local cam = Workspace.CurrentCamera
+                local ray = cam:ViewportPointToRay(i.Position.X, i.Position.Y)
+                local rp = RaycastParams.new(); rp.FilterType = Enum.RaycastFilterType.Exclude
+                rp.FilterDescendantsInstances = { LP.Character }
+                local res = Workspace:Raycast(ray.Origin, ray.Direction * 2000, rp)
+                if res then pos = res.Position end
+            else
+                local m = LP:GetMouse(); if m and m.Target and m.Hit then pos = m.Hit.Position end
+            end
+            if pos then tpTo(CFrame.new(pos + Vector3.new(0,4,0))) end
         end)
     end
 end)
@@ -1651,6 +1662,15 @@ hook(RunService.RenderStepped, function(dt)
     if flyKeys.D    then dir += cam.CFrame.RightVector end
     if flyKeys.Up   then dir += Vector3.yAxis end
     if flyKeys.Down then dir -= Vector3.yAxis end
+    -- MOBILE: no keyboard, so drive horizontal fly from the thumbstick (Humanoid.MoveDirection is world-space).
+    -- Without this, enabling Fly on Delta/mobile strands you (PlatformStand on, but you can't move anywhere).
+    if hum then
+        local horiz = Vector3.new(dir.X, 0, dir.Z)
+        if horiz.Magnitude == 0 then
+            local md = hum.MoveDirection
+            if md.Magnitude > 0 then dir = Vector3.new(md.X, dir.Y, md.Z) end
+        end
+    end
     pcall(function()
         root.AssemblyLinearVelocity = Vector3.zero
         if dir.Magnitude > 0 then
@@ -1658,6 +1678,34 @@ hook(RunService.RenderStepped, function(dt)
         end
     end)
 end)
+-- ── MOBILE controls (Delta/touch) ── Fluriore's menu only reopens on RightShift, which a touchscreen has no
+-- way to press; and Fly's up/down are Space/LeftControl. So on touch devices we build a small on-screen panel:
+-- a MENU toggle (fires RightShift virtually so the UI shows/hides) + Fly ascend/descend buttons.
+if UserInputService.TouchEnabled then
+    pcall(function()
+        local mg = Instance.new("ScreenGui")
+        mg.Name = "DreamAA_Mobile"; mg.ResetOnSpawn = false; mg.IgnoreGuiInset = true; mg.DisplayOrder = 99998
+        mg.Parent = (gethui and gethui()) or game:GetService("CoreGui")
+        if not mg.Parent then mg.Parent = LP:WaitForChild("PlayerGui") end
+        local function mkBtn(txt, offY)
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.fromOffset(50,50); b.Position = UDim2.new(0, 12, 0.5, offY)
+            b.BackgroundColor3 = Color3.fromRGB(16,16,16); b.Text = txt; b.TextColor3 = Color3.fromRGB(255,60,60)
+            b.TextSize = 22; b.Font = Enum.Font.GothamBold; b.AutoButtonColor = true; b.Parent = mg
+            Instance.new("UICorner", b).CornerRadius = UDim.new(0,10)
+            local st = Instance.new("UIStroke"); st.Color = Color3.fromRGB(255,45,45); st.Thickness = 1.2; st.Parent = b
+            return b
+        end
+        local menuB = mkBtn("≡", -92)
+        menuB.MouseButton1Click:Connect(function()
+            pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.RightShift, false, game); task.wait(); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.RightShift, false, game) end)
+        end)
+        local upB = mkBtn("▲", -26)
+        upB.MouseButton1Down:Connect(function() flyKeys.Up=true end);   upB.MouseButton1Up:Connect(function() flyKeys.Up=false end)
+        local dnB = mkBtn("▼", 40)
+        dnB.MouseButton1Down:Connect(function() flyKeys.Down=true end); dnB.MouseButton1Up:Connect(function() flyKeys.Down=false end)
+    end)
+end
 task.spawn(function()
     local wasFlying = false
     while task.wait(0.1) do
@@ -1930,7 +1978,7 @@ local lastDashHit = 0
 hook(UserInputService.InputBegan, function(i, gpe)
     if gpe then return end
     if not S.DashBehind then return end
-    if i.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+    if i.UserInputType ~= Enum.UserInputType.MouseButton1 and i.UserInputType ~= Enum.UserInputType.Touch then return end   -- accept touch = mobile M1
     if typingNow() or mouseOverGui() then return end
     local now = tick()
     if now - lastDashHit < 0.25 then return end

@@ -1946,6 +1946,7 @@ do local bpSaved={}
 	end end)
 end
 local FLY={}  -- bv/bg/conn (one table instead of 3 locals — Luau 200-local-cap mgmt)
+local MB={up=false, down=false}  -- mobile fly up/down state, set by the on-screen touch buttons
 local function stopFly() if FLY.conn then FLY.conn:Disconnect(); FLY.conn=nil end if FLY.bv then FLY.bv:Destroy(); FLY.bv=nil end if FLY.bg then FLY.bg:Destroy(); FLY.bg=nil end local h=hum(); if h then pcall(function() h.PlatformStand=false end) end end
 local function startFly()
 	local r=hrp(); if not r then return end
@@ -1964,6 +1965,12 @@ local function startFly()
 		if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end
 		if UIS:IsKeyDown(Enum.KeyCode.Space) then dir+=Vector3.new(0,1,0) end
 		if UIS:IsKeyDown(Enum.KeyCode.LeftControl) or UIS:IsKeyDown(Enum.KeyCode.LeftShift) then dir-=Vector3.new(0,1,0) end
+		-- MOBILE (no keyboard): thumbstick (MoveDirection) drives horizontal, on-screen buttons drive up/down.
+		if UIS.TouchEnabled then
+			if Vector3.new(dir.X,0,dir.Z).Magnitude==0 then local hh0=hum(); local md=hh0 and hh0.MoveDirection; if md and md.Magnitude>0 then dir+=Vector3.new(md.X,0,md.Z) end end
+			if MB.up then dir+=Vector3.new(0,1,0) end
+			if MB.down then dir-=Vector3.new(0,1,0) end
+		end
 		FLY.bv.Velocity=(dir.Magnitude>0 and dir.Unit or Vector3.zero)*CFG.FlySpeed; FLY.bg.CFrame=cf
 		local hh=hum(); if hh then pcall(function() hh:ChangeState(Enum.HumanoidStateType.Physics) end) end
 	end)
@@ -1971,7 +1978,7 @@ end
 -- SPEED HACK ONLY drives the body by velocity. INF Stam does NOT touch your movement anymore — driving velocity
 -- made the server snap you back AND counted as sprinting (which drained stamina, then exhausted = slow when you
 -- toggled off). INF Stam now just suppresses the drain (hook + stat pin), so you move at NORMAL speed, stam full.
-conn(RunService.Heartbeat:Connect(function() if CFG.SpeedHack and alive() and not CFG.Fly then local r=hrp(); if r then local spd=CFG.SpeedVal; local dir=Vector3.zero; local cf=Cam.CFrame if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end if dir.Magnitude>0 then dir=Vector3.new(dir.X,0,dir.Z).Unit*spd; r.AssemblyLinearVelocity=Vector3.new(dir.X,r.AssemblyLinearVelocity.Y,dir.Z) end end end end))
+conn(RunService.Heartbeat:Connect(function() if CFG.SpeedHack and alive() and not CFG.Fly then local r=hrp(); if r then local spd=CFG.SpeedVal; local dir=Vector3.zero; local cf=Cam.CFrame if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end if dir.Magnitude<=0 and UIS.TouchEnabled then local hh=hum(); local md=hh and hh.MoveDirection; if md and md.Magnitude>0 then dir=md end end if dir.Magnitude>0 then dir=Vector3.new(dir.X,0,dir.Z).Unit*spd; r.AssemblyLinearVelocity=Vector3.new(dir.X,r.AssemblyLinearVelocity.Y,dir.Z) end end end end))
 -- INF STAM SPEED KEEPER: since we SWALLOW the "Run=true" report (so the server never drains stamina), the server
 -- also stops sprinting you = it would rubber-band you to walk speed ("slow"). This re-asserts your sprint speed
 -- every frame AFTER replication, so the server can't drag you down. It ONLY pushes you UP to the sprint target and
@@ -1989,6 +1996,7 @@ conn(RunService.Heartbeat:Connect(function()
 	if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end
 	if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end
 	if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end
+	if Vector3.new(dir.X,0,dir.Z).Magnitude<=0 and UIS.TouchEnabled then local hh=hum(); local md=hh and hh.MoveDirection; if md and md.Magnitude>0 then dir+=md end end   -- mobile: thumbstick keeps sprint speed
 	dir=Vector3.new(dir.X,0,dir.Z)
 	-- ensure the BodyVelocity exists (X/Z force only, Y=0 so it never lifts/pins you vertically)
 	local bv=__gg.MH_stamBV
@@ -3995,6 +4003,15 @@ if UIS.TouchEnabled then   -- only build the floating button on touch devices (P
 			dragging=false
 		end
 	end))
+	-- Fly ascend/descend buttons (Space/LeftControl can't be pressed on a touchscreen). Only affect Fly while it's on.
+	local function flyBtn(txt, yoff, down, up)
+		local b = C("TextButton",{Parent=tg, Size=UDim2.fromOffset(46,46), Position=UDim2.new(1,-60,0.5,yoff), BackgroundColor3=(T and T.Accent) or Color3.fromRGB(200,40,40), Text=txt, TextColor3=Color3.fromRGB(255,255,255), TextSize=22, Font=UIFONT, AutoButtonColor=true, ZIndex=50})
+		Instance.new("UICorner", b).CornerRadius = UDim.new(0,10)
+		local s2=Instance.new("UIStroke"); s2.Color=Color3.fromRGB(0,0,0); s2.Thickness=1.5; s2.Parent=b
+		b.MouseButton1Down:Connect(down); b.MouseButton1Up:Connect(up)
+	end
+	flyBtn("▲", -52, function() MB.up=true end,   function() MB.up=false end)
+	flyBtn("▼",   6, function() MB.down=true end, function() MB.down=false end)
 end
 task.spawn(function() local last=false; while RUNNING do task.wait(0.1); if CFG.Fly~=last then last=CFG.Fly; if CFG.Fly then startFly() else stopFly() end end end end)
 conn(LP.CharacterAdded:Connect(function()

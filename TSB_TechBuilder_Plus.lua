@@ -911,7 +911,7 @@ function buildMobileBar()
 	local sg=Instance.new("ScreenGui"); sg.Name="Dream_Mobile"; sg.ResetOnSpawn=false; sg.IgnoreGuiInset=true; sg.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 	pcall(function() sg.Parent=(gethui and gethui()) or game:GetService("CoreGui") end)
 	if not sg.Parent then pcall(function() sg.Parent=LP:FindFirstChildOfClass("PlayerGui") end) end
-	local bar=Instance.new("Frame"); bar.Size=UDim2.fromOffset(338,44); bar.Position=UDim2.new(0.5,0,0,8); bar.AnchorPoint=Vector2.new(0.5,0); bar.BackgroundColor3=Color3.fromRGB(20,14,16); bar.BackgroundTransparency=0.1; bar.BorderSizePixel=0; bar.ZIndex=50; bar.Parent=sg
+	local bar=Instance.new("Frame"); bar.Size=UDim2.fromOffset(404,44); bar.Position=UDim2.new(0.5,0,0,8); bar.AnchorPoint=Vector2.new(0.5,0); bar.BackgroundColor3=Color3.fromRGB(20,14,16); bar.BackgroundTransparency=0.1; bar.BorderSizePixel=0; bar.ZIndex=50; bar.Parent=sg
 	local bc=Instance.new("UICorner"); bc.CornerRadius=UDim.new(0,10); bc.Parent=bar
 	local lay=Instance.new("UIListLayout"); lay.FillDirection=Enum.FillDirection.Horizontal; lay.HorizontalAlignment=Enum.HorizontalAlignment.Center; lay.VerticalAlignment=Enum.VerticalAlignment.Center; lay.Padding=UDim.new(0,5); lay.Parent=bar
 	local pdg=Instance.new("UIPadding"); pdg.PaddingLeft=UDim.new(0,5); pdg.PaddingRight=UDim.new(0,5); pdg.Parent=bar
@@ -920,6 +920,7 @@ function buildMobileBar()
 		local cc=Instance.new("UICorner"); cc.CornerRadius=UDim.new(0,7); cc.Parent=b
 		b.MouseButton1Click:Connect(function() pcall(cb) end)
 	end
+	btn("MENU",52,function() pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.RightShift, false, game); task.wait(); VIM:SendKeyEvent(false, Enum.KeyCode.RightShift, false, game) end) end)   -- open/close the Rayfield menu (no keyboard on mobile)
 	btn("RUN/STOP",80,function() triggerRun() end)
 	btn("STOP",48,function() stopSeq() end)
 	btn("LOCK",48,function() CFG.lockOn=not CFG.lockOn; if not CFG.lockOn then lockTarget=nil end; if CFG.lockOn then refreshLock() end; if onLockChanged then pcall(onLockChanged, CFG.lockOn) end end)
@@ -1464,6 +1465,7 @@ local RED = {
 local Window = Rayfield:CreateWindow({
 	Name = "Dream Hub PLUS", LoadingTitle = "Dream Hub PLUS", LoadingSubtitle = "TSB Tech Builder v3.0 + extras",
 	Theme = RED, DisableRayfieldPrompts = true, ConfigurationSaving = { Enabled = false }, KeySystem = false,
+	ToggleUIKeybind = CFG.uiKey or "RightShift",   -- actually wire the advertised open/close key (was never bound)
 })
 
 local comboBtn, lockToggle, selChar
@@ -1907,6 +1909,10 @@ track(RunSvc.RenderStepped:Connect(function(dt)
 	if pxFK.D then d+=cam.CFrame.RightVector end
 	if pxFK.U then d+=Vector3.yAxis end
 	if pxFK.Dn then d-=Vector3.yAxis end
+	-- MOBILE (no keyboard): steer horizontal fly from the thumbstick so Fly isn't a trap on Delta.
+	if UIS.TouchEnabled and Vector3.new(d.X,0,d.Z).Magnitude==0 and h then
+		local md=h.MoveDirection; if md.Magnitude>0 then d+=Vector3.new(md.X,0,md.Z) end
+	end
 	-- SMOOTH hold-to-move: drive the velocity directly. Holding W = continuous glide forward,
 	-- no key = hover in place. (The old CFrame+=d*dt teleport felt like taps at low FPS.)
 	pcall(function() r.AssemblyLinearVelocity = (d.Magnitude>0) and (d.Unit*PX.flySpd) or Vector3.zero end)
