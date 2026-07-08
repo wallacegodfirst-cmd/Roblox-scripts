@@ -6,7 +6,12 @@
       proxy, and tells you in plain words what happened.  ]]
 
 _G.PE_HIDE_LITE = true   -- hide the food/alert/bot sections (No-Food build)
-local URL = "https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/claude/improve-ai-system-tUhhn/PriorExtinction_MoneyFreeHub.lua"
+-- TWO mirrors of the same file: if an executor proxy has poisoned its cache for one host,
+-- the other host path fetches clean.
+local URLS = {
+	"https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/claude/improve-ai-system-tUhhn/PriorExtinction_MoneyFreeHub.lua",
+	"https://github.com/wallacegodfirst-cmd/roblox-scripts/raw/claude/improve-ai-system-tUhhn/PriorExtinction_MoneyFreeHub.lua",
+}
 local StarterGui = game:GetService("StarterGui")
 local function toast(msg, dur)
 	pcall(function() StarterGui:SetCore("SendNotification", {Title="Dream Hub loader", Text=msg, Duration=dur or 6}) end)
@@ -39,7 +44,10 @@ end
 
 local src, how, bad
 for i=1,4 do
-	src, how, bad = fetch(URL.."?cb="..tostring(math.floor(os.clock()*100000)+i))   -- cache-buster: never accept a stale copy
+	for _,base in ipairs(URLS) do
+		src, how, bad = fetch(base.."?cb="..tostring(math.floor(os.clock()*100000)+i))   -- cache-buster: never accept a stale copy
+		if src then break end
+	end
 	if src then break end
 	toast("try "..i.."/4 failed - retrying...", 3)
 	task.wait(1)

@@ -742,10 +742,17 @@ local function clearMyHitLog()
     end)
 end
 
+local armSpawnT = 0   -- spawn grace: never touch the arms right at spawn (that was killing people in the spawn room)
+hook(LP.CharacterAdded, function() armSpawnT = tick() end)
 hook(RunService.Heartbeat, function()
     -- grow YOUR arms whenever M1 reach is wanted (this is the primary Ability-Arena mechanism now)
     local armSz = 0
     if S.M1Hitbox or S.AutoFarm or S.AutoPlay then armSz = math.max(armSz, S.M1HitboxSize) end
+    -- ARM CAP: the big reach comes from growing the ENEMY hitboxes (full slider, below). The arms only need a
+    -- moderate boost — at the full 50 the box centered on your own arm engulfs YOURSELF, the game's hit query
+    -- returns your own hitbox, and the swing gets eaten ("can't even swing"). 22 keeps swings landing.
+    armSz = math.min(armSz, 22)
+    if tick() - armSpawnT < 3 then armSz = 0 end   -- 3s spawn grace: normal arms while the game places you
     if armSz > 0 then
         -- prune entries whose arm despawned (respawn) so we don't leak / restore onto a dead part
         for arm in pairs(realArmOriginals) do if (not arm) or (not arm.Parent) then realArmOriginals[arm] = nil end end
@@ -759,9 +766,9 @@ hook(RunService.Heartbeat, function()
                 arm.CanCollide = false                                    -- primary fling-guard (works even if the group didn't register)
                 arm.Massless   = true                                     -- no extra mass on the assembly = no catapult
                 arm.CanQuery   = true                                     -- game's GetPartBoundsInBox MUST see the arm
-                arm.CanTouch   = true
+                arm.CanTouch   = false                                    -- queries DON'T need Touch — true let kill/damage zones touch-kill you at spawn
                 if arm.Size ~= targetSize then arm.Size = targetSize end  -- grow the REAL arm (the game tracks its velocity)
-                arm.LocalTransparencyModifier = 0.85                      -- hide the giant arm on YOUR screen only (doesn't affect the hit query)
+                arm.LocalTransparencyModifier = 0.5                       -- arms stay VISIBLE (0.85 looked like "my arms got removed")
             end)
         end
         clearMyHitLog()
