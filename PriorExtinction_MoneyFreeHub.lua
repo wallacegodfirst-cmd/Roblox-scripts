@@ -3959,6 +3959,43 @@ conn(UIS.InputBegan:Connect(function(input, gp)
 		end
 	end
 end))
+
+-- ── MOBILE menu toggle (Delta & other touch executors have NO keyboard, so RightShift can't open the menu) ──
+local function toggleMenu()
+	if USE_FLUENT then
+		-- replay the Fluent MinimizeKey (RightShift) virtually so Fluent shows/hides itself
+		pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.RightShift, false, game); task.wait(); VIM:SendKeyEvent(false, Enum.KeyCode.RightShift, false, game) end)
+	else
+		SG.Enabled = not SG.Enabled; if SG.Enabled then task.defer(clampWindow) end
+	end
+end
+if UIS.TouchEnabled then   -- only build the floating button on touch devices (PC users just press RightShift)
+	local tg = C("ScreenGui",{Name="MH_Toggle", ResetOnSpawn=false, IgnoreGuiInset=true, DisplayOrder=10001, Enabled=true})
+	safeParentGui(tg)
+	local btn = C("TextButton",{Parent=tg, Size=UDim2.fromOffset(46,46), Position=UDim2.new(0,14,0.35,0), BackgroundColor3=(T and T.Accent) or Color3.fromRGB(200,40,40), Text="≡", TextColor3=Color3.fromRGB(255,255,255), TextSize=24, Font=UIFONT, AutoButtonColor=true, ZIndex=50})
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(1,0)
+	local st = Instance.new("UIStroke"); st.Color=Color3.fromRGB(0,0,0); st.Thickness=1.5; st.Parent=btn
+	-- tap = toggle menu; drag = reposition (so it never blocks gameplay). We tell them apart by movement.
+	local dragging, dragStart, startPos, moved = false, nil, nil, false
+	btn.InputBegan:Connect(function(i)
+		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
+			dragging=true; moved=false; dragStart=i.Position; startPos=btn.Position
+		end
+	end)
+	conn(UIS.InputChanged:Connect(function(i)
+		if dragging and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then
+			local d=i.Position-dragStart
+			if (math.abs(d.X)+math.abs(d.Y))>6 then moved=true end
+			btn.Position=UDim2.new(startPos.X.Scale, startPos.X.Offset+d.X, startPos.Y.Scale, startPos.Y.Offset+d.Y)
+		end
+	end))
+	conn(UIS.InputEnded:Connect(function(i)
+		if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
+			if dragging and not moved then toggleMenu() end
+			dragging=false
+		end
+	end))
+end
 task.spawn(function() local last=false; while RUNNING do task.wait(0.1); if CFG.Fly~=last then last=CFG.Fly; if CFG.Fly then startFly() else stopFly() end end end end)
 conn(LP.CharacterAdded:Connect(function()
 	-- ═══ SPAWN SAFETY (fix "I keep dying when I spawn — fall damage / teleported outside the map") ═══ For 10s after
