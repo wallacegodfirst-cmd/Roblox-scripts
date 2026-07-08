@@ -476,7 +476,43 @@ local function progressRestore()
 	local b = getBridge(); if not b then notify("Progress Restore","Progress loading…"); return false end
 	local pp = __gg.MH_restore
 	if type(pp)~="table" then notify("Progress Restore","Progress loading…"); return false end
+	local backPos; pcall(function() local r=hrp(); backPos = r and r.Position end)   -- keep your spot across the restore
 	local ok = pcall(function() b:FireServer(pp) end)
+	-- UNDER-MAP GUARD (fix "after restore I keep falling under the map / my teleport doesn't save"): the game
+	-- respawns your dino BEFORE the map has streamed in at the landing spot, so there's no ground yet and you
+	-- fall through. For ~25s: force the map to stream in around your saved spot, find the REAL ground there by
+	-- raycast, and whenever you're below the surface or free-falling into nothing, snap you on top and hold
+	-- briefly (anti-snapback). Also returns you to where you stood when you clicked Restore.
+	local oldRoot; pcall(function() oldRoot=hrp() end)
+	task.spawn(function()
+		local t0=tick()
+		local rescued=false
+		while tick()-t0<25 and RUNNING do
+			pcall(function()
+				local r=hrp(); if not r then return end
+				local isNew = (r ~= oldRoot)                                            -- the restored dino has spawned
+				local base = backPos or r.Position
+				pcall(function() LP:RequestStreamAroundAsync(base, 2) end)              -- make the client LOAD the map there
+				local rp=RaycastParams.new(); rp.FilterType=Enum.RaycastFilterType.Exclude; rp.IgnoreWater=true
+				rp.FilterDescendantsInstances={ LP.Character, WS:FindFirstChild("Characters"), WS:FindFirstChild("CharacterIgnore") }
+				local ground=WS:Raycast(Vector3.new(base.X, base.Y+400, base.Z), Vector3.new(0,-2000,0), rp)
+				if not ground then return end                                           -- not streamed in yet: keep waiting
+				local below = r.Position.Y < ground.Position.Y - 6                      -- you're UNDER the map surface
+				local down = WS:Raycast(r.Position, Vector3.new(0,-800,0), rp)
+				local voidFall = (r.AssemblyLinearVelocity.Y < -20) and not down        -- free-falling with NOTHING beneath
+				if below or voidFall or (backPos and isNew and not rescued) then
+					rescued=true
+					local goal=CFrame.new(ground.Position + Vector3.new(0,6,0))
+					local holdT=tick()+1.2
+					while tick()<holdT and RUNNING do
+						local rr=hrp(); if rr then rr.CFrame=goal; rr.AssemblyLinearVelocity=Vector3.zero end
+						RunService.Heartbeat:Wait()
+					end
+				end
+			end)
+			task.wait(0.25)
+		end
+	end)
 	-- POST-RESTORE FIX (camera tilted UP + weird controls): the game's spawn/growth machine runs a cutscene cam that
 	-- points the camera UP and leaves the controls strange. The old Scriptable camera hold is REMOVED (it was half
 	-- the weirdness). Instead we COUNTER the game, for ~10 seconds:
