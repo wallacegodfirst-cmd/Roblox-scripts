@@ -4,6 +4,10 @@ print("[Dream Hub PE] script fetched OK - booting")   -- if you see THIS in F9 b
 local __gg = (typeof(getgenv)=="function") and getgenv() or _G
 if __gg.__PRIOR_EXT_HUB then pcall(__gg.__PRIOR_EXT_HUB) end
 __gg.__PRIOR_EXT_HUB = nil
+-- EARLY visible proof-of-life (for console-less mobile executors): if you see this toast the script
+-- IS running -> press RightShift for the menu. If you DON'T see it, the executor failed to FETCH the
+-- script (blocked/cached HttpGet) -> use the retry loader.
+pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", {Title="Dream Hub", Text="Prior Extinction loading... press RightShift for the menu", Duration=6}) end)
 
 -- ═══ SERVICES ═══
 local Players      = game:GetService("Players")
