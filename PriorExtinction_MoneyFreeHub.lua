@@ -8,9 +8,9 @@ __gg.__PRIOR_EXT_HUB = nil
 -- IS running -> press RightShift for the menu. If you DON'T see it, the executor failed to FETCH the
 -- script (blocked/cached HttpGet) -> use the retry loader.
 pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", {Title="Dream Hub", Text="Prior Extinction loading... press RightShift for the menu", Duration=6}) end)
--- LOAD-STAGE CHECKPOINTS: on executors that hide line numbers, the LAST toast you see before it dies tells
--- us exactly which section aborted. Toggle off by setting __gg.PE_NO_STAGES = true.
-local function MS(tag) if __gg.PE_NO_STAGES then return end pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", {Title="PE stage", Text=tostring(tag), Duration=10}) end) end
+-- LOAD-STAGE CHECKPOINTS (debug): OFF by default. If a load ever dies with no UI, run `_G.PE_STAGES = true`
+-- before the loadstring — the LAST toast you see before it stops tells us exactly which section aborted.
+local function MS(tag) if not (__gg.PE_STAGES or _G.PE_STAGES) then return end pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", {Title="PE stage", Text=tostring(tag), Duration=10}) end) end
 
 -- ═══ SERVICES ═══
 local Players      = game:GetService("Players")
@@ -3056,73 +3056,60 @@ end end)
 -- AUTO FARM FOSSIL + GEMSTONE
 -- Real in-game layout (from screenshot): <Container> > Spawned > <ResourceModel e.g. Topaz_151> >
 --   MineralBase (BasePart) + GemstonePrompt (ProximityPrompt). Fossils similar (SpawnedFossils > ... > FossilS).
+-- keyword sets. CONTAINER match is kept TIGHT so we never grab dino/bone folders; the last-resort prompt
+-- scan can be a little broader because it also inspects the prompt itself.
+local FARM_CKW = { fossil = {"fossil"}, gem = {"gem","mineral","gemstone","crystal"} }
+local FARM_PKW = { fossil = {"fossil","excavat","dig","unearth"}, gem = {"gem","mineral","gemstone","crystal","topaz","quartz","ruby","emerald","amethyst","sapphire","diamond","harvest","mine"} }
+local function kwHit(name, list) if not name then return false end name=name:lower(); for _,k in ipairs(list) do if name:find(k,1,true) then return true end end return false end
 local function farmContainers(kind)
 	local cs={}
 	local function add(inst) if inst and not table.find(cs,inst) then cs[#cs+1]=inst end end
-	local names = (kind=="fossil") and {"SpawnedFossils","FossilSpawns","Fossils"}
-	                                 or {"GemstoneSpawns","SpawnedGemstones","SpawnedGems","Gemstones"}
-	-- O(1) top-level lookups ONLY (the containers are direct children of WS / CharacterIgnore). NO recursive
-	-- FindFirstChild(nm,true) — that's a full-workspace descendant walk per missing name = the farm lag.
+	-- match ANY direct child of WS / CharacterIgnore whose name CONTAINS the kind keyword (covers
+	-- SpawnedFossils / GemstoneSpawns / Fossils / Gems / Minerals … without needing exact names).
 	for _,root in ipairs({WS, WS:FindFirstChild("CharacterIgnore")}) do
 		if root then
-			for _,nm in ipairs(names) do
-				local f=root:FindFirstChild(nm)
-				if f then add(f); local sp=f:FindFirstChild("Spawned"); if sp then add(sp) end end
+			for _,child in ipairs(root:GetChildren()) do
+				if (child:IsA("Folder") or child:IsA("Model")) and kwHit(child.Name, FARM_CKW[kind]) then
+					add(child); local sp=child:FindFirstChild("Spawned"); if sp then add(sp) end
+				end
 			end
 		end
 	end
 	return cs
 end
--- A node = {model, part, dist}. Detected via ProximityPrompt (preferred — covers GemstonePrompt) or a
--- resource-named BasePart (covers FossilS / MineralBase). Empty spawn markers have neither, so they're ignored.
+-- A node = {holder, part, dist}. We scan the matched containers' DESCENDANTS (bounded to the resource
+-- folders, so cheap AND complete) for ProximityPrompts (the collect trigger) and resource parts. If NO
+-- container matched at all, we fall back to a full-map prompt scan with a MUCH higher cap (the old 3000
+-- cap was hit long before reaching the nodes in this game's huge workspace = "farm never teleports").
 local function gatherNodes(kind, range)
 	local me=hrp(); if not me then return {} end
-	local out={}
-	-- Each numbered holder has MineralBase (gems) / FossilS (fossils) as a DIRECT child — grab it with
-	-- FindFirstChild (O(1)), no deep GetDescendants over the whole container (that was the farm lag).
-	local function fromHolder(h)
-		local part = h:FindFirstChild("MineralBase") or h:FindFirstChild("FossilS")
-		if not part then for _,d in ipairs(h:GetChildren()) do if d:IsA("BasePart") then part=d; break end end end
-		part = part or rootOf(h)
-		if part and part:IsA("BasePart") then local d=dist(me.Position, part.Position); if d<=range then out[#out+1]={h, part, d} end end
+	local out, seen = {}, {}
+	local function addNode(holder, part)
+		if not (part and part:IsA("BasePart") and part.Parent) or seen[part] then return end
+		local d=dist(me.Position, part.Position); if d<=range then seen[part]=true; out[#out+1]={holder or part.Parent or part, part, d} end
 	end
-	-- HARD bound on TOTAL holders scanned (not just in-range matches) so a map with hundreds of nodes can't
-	-- cause a hitch when you toggle the farm on/off.
 	local scanned=0
 	for _,folder in ipairs(farmContainers(kind)) do
-		for _,child in ipairs(folder:GetChildren()) do
-			if #out>=150 or scanned>=1500 then break end
-			if child.Name=="Spawned" then
-				for _,sub in ipairs(child:GetChildren()) do scanned+=1; if #out>=150 or scanned>=1500 then break end if sub:IsA("Folder") or sub:IsA("Model") then fromHolder(sub) end end
-			elseif child:IsA("Folder") or child:IsA("Model") then scanned+=1; fromHolder(child)
-			elseif child:IsA("BasePart") then scanned+=1; local d=dist(me.Position, child.Position); if d<=range then out[#out+1]={child, child, d} end end
+		for _,d in ipairs(folder:GetDescendants()) do
+			scanned+=1; if scanned>10000 or #out>=250 then break end
+			if d:IsA("ProximityPrompt") then
+				local part=d.Parent
+				if part and part:IsA("BasePart") then addNode(part.Parent, part) end
+			elseif d:IsA("BasePart") and (d.Name=="MineralBase" or d.Name=="FossilS" or kwHit(d.Name, FARM_CKW[kind])) then
+				addNode(d.Parent, d)
+			end
 		end
-		if #out>=150 or scanned>=1500 then break end
+		if scanned>10000 or #out>=250 then break end
 	end
-	-- FALLBACK: if the named-folder scan found nothing, walk workspace descendants for ProximityPrompts
-	-- whose ActionText/Name/parent-chain suggests the right resource kind. Handles non-standard folder
-	-- layouts without scanning the whole workspace on every successful pass (early-exit when #out>0).
-	if #out == 0 then
-		local kw = (kind=="fossil") and {"fossil","excavat","bone","dig"}
-		                             or {"gem","mineral","crystal","topaz","quartz","ruby","emerald","amethyst","harvest","collect"}
-		local function hasKW(s) if not s then return false end; s=s:lower(); for _,k in ipairs(kw) do if s:find(k,1,true) then return true end end; return false end
+	-- LAST RESORT: no container matched -> classify prompts across the whole map by keyword (high cap).
+	if #out==0 then
 		local sc2=0
 		for _,d in ipairs(WS:GetDescendants()) do
-			sc2+=1; if sc2>3000 or #out>=150 then break end
+			sc2+=1; if sc2>25000 or #out>=250 then break end
 			if d:IsA("ProximityPrompt") then
-				local hit=hasKW(d.ActionText) or hasKW(d.Name)
-				if not hit then
-					local p=d.Parent
-					for _=1,3 do if p then if hasKW(p.Name) then hit=true; break end; p=p.Parent end end
-				end
-				if hit then
-					local part=d.Parent
-					if part and part:IsA("BasePart") then
-						local holder=part.Parent or part
-						local dd=dist(me.Position,part.Position)
-						if dd<=range then out[#out+1]={holder,part,dd} end
-					end
-				end
+				local hit = kwHit(d.ActionText, FARM_PKW[kind]) or kwHit(d.Name, FARM_PKW[kind])
+				if not hit then local p=d.Parent; for _=1,4 do if p then if kwHit(p.Name, FARM_PKW[kind]) then hit=true; break end; p=p.Parent end end end
+				if hit then local part=d.Parent; if part and part:IsA("BasePart") then addNode(part.Parent, part) end end
 			end
 		end
 	end
