@@ -63,6 +63,7 @@ local CFG = {
 	SaveDino=false, SaveHP=30, NoSleep=true, AutoHealBlood=false,
 	AutoFarmPlayer=false, FarmPlayerRange=120, AutoFarmFossil=false, FarmFossilRange=1000000,
 	ESPPlayers=false, ESPCorpses=false, FoodESP=false, FishESP=false, GemESP=false, ESPRange=900, ESPColor="Default",
+	RemoveTrees=false, Radar=false, RadarRange=450, RadarDeath=true,
 	AlertEnabled=false, AlertDino="", AlertRange=350, CarnMeatTP=false,
 	ProFood=false, ProFoodStopAge="Off", CarnYesHold=false,
 	FullBright=false, NightVision=false, NoDarkWater=true, InfLight=false, UnlockMouse=false,
@@ -112,7 +113,7 @@ if not (tonumber(CFG.FarmReach) and CFG.FarmReach>=30 and CFG.FarmReach<=120) th
 for _,key in ipairs({
 	"Aimbot","SilentAim","LockOn","BoneProtect","TurnHack","Fly","SpeedHack","Noclip","InfJump",
 	"InfFood","InfWater","InfStam","InfOxygen","SaveDino","AutoFarmPlayer","AutoFarmFossil","AutoFarmGem","AutoPlayBot",
-	"ESPPlayers","ESPCorpses","FoodESP","FishESP","GemESP","AlertEnabled","CarnMeatTP","ProFood","FullBright","NightVision","NoDarkWater","WaterClear","NoClouds","AlwaysDamage","NoGrabLimit",
+	"ESPPlayers","ESPCorpses","FoodESP","FishESP","GemESP","AlertEnabled","CarnMeatTP","ProFood","FullBright","NightVision","NoDarkWater","WaterClear","NoClouds","AlwaysDamage","NoGrabLimit","RemoveTrees","Radar",
 	"Float","GodMode","InfLight","UnlockFOV","InfZoom","AntiDrown","WalkWater","AutoClean","AntiFracture","AntiBleed","Invis",
 	"AntiBreakHead","AntiBreakNeck","AntiBreakLeg","AntiBreakTail","AntiBreakTorso","NoSleep","AntiAFK","UnlockMouse","__SpyOn",
 	"AutoClick","AutoEatFood","DebugPanel","LogRemotes","BypassTP","SafeTP",
@@ -1633,6 +1634,11 @@ do local p=Pages["Visuals"]
 		mkDropdown(al,"Alert Dino", function() return DINO_NAMES end, function() return CFG.AlertDino~="" and CFG.AlertDino or "(pick a dino)" end, function(opt) CFG.AlertDino=opt; saveCfg() end, 2)
 		mkSlider(al,"Alert Range","AlertRange",100,2000,3,50)
 	end
+	local _,rf=mkSec(p,"Radar + FPS",4)
+	mkToggle(rf,"Minimap Radar (see players anywhere)","Radar",1)
+	mkSlider(rf,"Radar Zoom (studs across)","RadarRange",100,2000,2,50)
+	mkToggle(rf,"Radar: Show My Death Point","RadarDeath",3)
+	mkToggle(rf,"Remove Trees (big FPS boost - edible plants kept)","RemoveTrees",4)
 end
 local skinDropdownRef, dinoLabel
 do local p=Pages["Skins"]
@@ -4089,6 +4095,132 @@ task.spawn(function() while RUNNING do task.wait(2)
 	local ok,dt,st = pcall(skGetCharInfo)
 	if ok and dt and dt~=lastSkinDino then lastSkinDino=dt; if dinoLabel then dinoLabel.Text="Dino: "..tostring(dt).." | Stage: "..tostring(st) end if skinDropdownRef then skinDropdownRef.refresh() end end
 end end)
+
+-- ═══ REMOVE TREES (FPS BOOST) ═══ Trees are the map's heaviest meshes. We UNPARENT (not destroy) every
+-- decorative tree so toggling off restores them. CRITICAL: in this game herbivores EAT trees/plants via
+-- ProximityPrompts — anything containing a prompt is FOOD and is always kept. Terrain grass is disabled too.
+local TREES = {removed={}, conn=nil, decor=nil, kw={"tree","palm","pine","oak","birch","spruce","redwood","sequoia","conifer","cycad","ginkgo","gingko","willow","cedar","araucaria","acacia","leaves","leaf","branch","trunk","stump"}}
+local function isTreeName(n) n=string.lower(n); for _,k in ipairs(TREES.kw) do if n:find(k,1,true) then return true end end return false end
+local function treeRemovable(inst)
+	local chars=WS:FindFirstChild("Characters"); if chars and inst:IsDescendantOf(chars) then return false end
+	local ci=WS:FindFirstChild("CharacterIgnore"); if ci and inst:IsDescendantOf(ci) then return false end
+	if inst:FindFirstChildWhichIsA("ProximityPrompt", true) then return false end   -- has a prompt = edible = FOOD, keep it
+	return true
+end
+local function treeTop(d)   -- lift a matched part to its outermost tree-named ancestor so the whole tree goes at once
+	local top=d; local p=d.Parent
+	while p and p~=WS do if (p:IsA("Model") or p:IsA("Folder")) and isTreeName(p.Name) then top=p end p=p.Parent end
+	return top
+end
+local function setTrees(on)
+	if on then
+		pcall(function() local t=WS:FindFirstChildOfClass("Terrain"); if t then TREES.decor=t.Decoration; t.Decoration=false end end)
+		task.spawn(function()
+			local i=0
+			for _,d in ipairs(WS:GetDescendants()) do
+				if not CFG.RemoveTrees then break end
+				i+=1; if i%2500==0 then task.wait() end   -- yield so the one-time sweep can't freeze the game
+				if (d:IsA("Model") or d:IsA("BasePart")) and d.Parent and isTreeName(d.Name) then
+					local top=treeTop(d)
+					if top.Parent and treeRemovable(top) then pcall(function() TREES.removed[#TREES.removed+1]={top, top.Parent}; top.Parent=nil end) end
+				end
+			end
+			if CFG.RemoveTrees then notify("Remove Trees","Removed "..#TREES.removed.." tree objects.") end
+		end)
+		TREES.conn=WS.DescendantAdded:Connect(function(d)   -- streaming keeps adding trees back — remove those too
+			if not CFG.RemoveTrees then return end
+			if (d:IsA("Model") or d:IsA("BasePart")) and isTreeName(d.Name) then
+				task.delay(0.5, function()   -- wait so a food tree's prompt has streamed in before we judge it
+					if CFG.RemoveTrees and d.Parent then
+						local top=treeTop(d)
+						if top.Parent and treeRemovable(top) then pcall(function() TREES.removed[#TREES.removed+1]={top, top.Parent}; top.Parent=nil end) end
+					end
+				end)
+			end
+		end)
+	else
+		pcall(function() if TREES.conn then TREES.conn:Disconnect(); TREES.conn=nil end end)
+		pcall(function() local t=WS:FindFirstChildOfClass("Terrain"); if t and TREES.decor~=nil then t.Decoration=TREES.decor; TREES.decor=nil end end)
+		for _,e in ipairs(TREES.removed) do pcall(function() if e[1] and e[2] then e[1].Parent=e[2] end end) end
+		TREES.removed={}
+		notify("Remove Trees","Trees restored.")
+	end
+end
+task.spawn(function() local last=false; while RUNNING do task.wait(0.2); if CFG.RemoveTrees~=last then last=CFG.RemoveTrees; setTrees(last) end end end)
+
+-- ═══ MINIMAP RADAR ═══ Rotating radar (up = where your camera faces). Red dots = other players' dinos —
+-- clamped to the edge when beyond zoom, so you ALWAYS see their direction no matter how far. White ✕ = the
+-- spot you last died at (RadarDeath). Zoom slider = how many studs the circle spans.
+local RADAR = {gui=nil, frame=nil, dots={}, deathDot=nil, lastPos=nil, hadChar=false, deathPos=nil}
+local function radarBuild()
+	if RADAR.gui and RADAR.gui.Parent then return end
+	pcall(function() if RADAR.gui then RADAR.gui:Destroy() end end)
+	RADAR.dots={}; RADAR.deathDot=nil
+	local g=C("ScreenGui",{Name="MH_Radar", ResetOnSpawn=false, IgnoreGuiInset=true, DisplayOrder=9997})
+	safeParentGui(g)
+	local fr=C("Frame",{Parent=g, Size=UDim2.fromOffset(170,170), AnchorPoint=Vector2.new(1,0), Position=UDim2.new(1,-12,0,120), BackgroundColor3=Color3.fromRGB(8,8,8), BackgroundTransparency=0.35, BorderSizePixel=0, ClipsDescendants=true})
+	C("UICorner",{Parent=fr, CornerRadius=UDim.new(1,0)})
+	C("UIStroke",{Parent=fr, Color=T.Accent, Thickness=1.4, Transparency=0.15})
+	C("TextLabel",{Parent=fr, Size=UDim2.new(1,0,0,12), Position=UDim2.new(0,0,0,6), BackgroundTransparency=1, Text="RADAR", TextColor3=T.Accent, TextSize=9, Font=UIFONT})
+	local me=C("Frame",{Parent=fr, Size=UDim2.fromOffset(8,8), AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.new(0.5,0,0.5,0), BackgroundColor3=Color3.fromRGB(255,255,255), BorderSizePixel=0, ZIndex=4})
+	C("UICorner",{Parent=me, CornerRadius=UDim.new(1,0)})
+	C("UIStroke",{Parent=me, Color=T.Accent, Thickness=1.4})
+	RADAR.gui=g; RADAR.frame=fr
+end
+local function radarDot(key, isDeath)
+	local d=RADAR.dots[key]
+	if d and d[1].Parent then return d end
+	local f=C("Frame",{Parent=RADAR.frame, Size=UDim2.fromOffset(7,7), AnchorPoint=Vector2.new(0.5,0.5), BackgroundColor3=isDeath and Color3.fromRGB(235,235,235) or Color3.fromRGB(255,45,45), BackgroundTransparency=isDeath and 1 or 0, BorderSizePixel=0, ZIndex=3})
+	if not isDeath then C("UICorner",{Parent=f, CornerRadius=UDim.new(1,0)}) end
+	local lb=C("TextLabel",{Parent=f, Size=UDim2.fromOffset(60,10), AnchorPoint=Vector2.new(0.5,0), Position=UDim2.new(0.5,0,1,1), BackgroundTransparency=1, Text=isDeath and "" or key, TextColor3=Color3.fromRGB(235,235,235), TextSize=8, Font=UIFONT, TextTransparency=0.15, ZIndex=3})
+	if isDeath then C("TextLabel",{Parent=f, Size=UDim2.fromScale(1,1), BackgroundTransparency=1, Text="✕", TextColor3=Color3.fromRGB(240,240,240), TextSize=12, Font=UIFONT, ZIndex=3}) end
+	d={f,lb}; RADAR.dots[key]=d
+	return d
+end
+local function radarPlace(dotFrame, rel, fwd, right, radius, scale)
+	local dx, dz = rel:Dot(right), rel:Dot(fwd)
+	local v=Vector2.new(dx*scale, -dz*scale)
+	if v.Magnitude>radius then v=v.Unit*radius end   -- beyond zoom: pin to the edge = direction always visible
+	dotFrame.Position=UDim2.new(0.5, v.X, 0.5, v.Y)
+end
+task.spawn(function()
+	while RUNNING do
+		task.wait(0.12)
+		pcall(function()
+			-- death-point tracking runs even with the radar off, so the ✕ is ready when you enable it
+			local r=hrp()
+			if r then RADAR.hadChar=true; RADAR.lastPos=r.Position
+			elseif RADAR.hadChar then RADAR.hadChar=false; RADAR.deathPos=RADAR.lastPos end
+			if not CFG.Radar then if RADAR.gui then RADAR.gui.Enabled=false end return end
+			radarBuild(); RADAR.gui.Enabled=true
+			if not r then return end
+			local look=Cam and Cam.CFrame.LookVector or Vector3.new(0,0,-1)
+			local fwd=Vector3.new(look.X,0,look.Z); fwd=(fwd.Magnitude>0.05) and fwd.Unit or Vector3.new(0,0,-1)
+			local right=Vector3.new(-fwd.Z,0,fwd.X)
+			local radius=76
+			local scale=(radius*2)/math.max(CFG.RadarRange or 450, 50)   -- studs across the circle
+			local used={}
+			local chars=WS:FindFirstChild("Characters")
+			for _,plr in ipairs(Players:GetPlayers()) do
+				if plr~=LP then
+					local m=(chars and chars:FindFirstChild(plr.Name)) or plr.Character
+					local part=m and rootOf(m)
+					if part then
+						used[plr.Name]=true
+						local d=radarDot(plr.Name, false)
+						radarPlace(d[1], part.Position-r.Position, fwd, right, radius, scale)
+					end
+				end
+			end
+			for key,d in pairs(RADAR.dots) do if not used[key] then pcall(function() d[1]:Destroy() end); RADAR.dots[key]=nil end end
+			if CFG.RadarDeath and RADAR.deathPos then
+				if not (RADAR.deathDot and RADAR.deathDot.Parent) then local dd=radarDot("__death", true); RADAR.deathDot=dd[1]; RADAR.dots["__death"]=nil end
+				radarPlace(RADAR.deathDot, RADAR.deathPos-r.Position, fwd, right, radius, scale)
+				RADAR.deathDot.Visible=true
+			elseif RADAR.deathDot then RADAR.deathDot.Visible=false end
+		end)
+	end
+end)
 
 -- HUD STATUS
 task.spawn(function() while RUNNING do task.wait(0.4); pcall(function() local us=MF:FindFirstChildOfClass("UIScale"); if us then us.Scale=math.clamp(tonumber(CFG.UIScale) or 1,0.5,3) end end) end end)
