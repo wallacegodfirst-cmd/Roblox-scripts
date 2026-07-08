@@ -1,5 +1,11 @@
--- Dream Hub | Ability Arena | v2.16.0
+-- Dream Hub | Ability Arena | v2.17.0
 -- by Dream Hub Owner
+-- v2.17.0: M1 HITBOX REWORK (the real fix). Ability Arena does CLIENT-SIDE hit reg off your REAL arm parts +
+--          their velocity. The old anchored MH_ArmReach follower parts had 0 velocity (Jolt ignores anchored
+--          parts) and the wrong name, so the game never queried them. Now we resize the REAL arms and drop them
+--          into a collision group that collides with NOTHING (+ CanCollide off, Massless on) so Jolt can't fling
+--          or reset you; CanQuery/CanTouch stay on so the game's GetPartBoundsInBox registers the hit. Also
+--          stopped forcing enemy hitboxes to Block (that shrank Ball hitboxes under shape-aware queries).
 -- v2.16.0: NEW ANTI-CHEAT NEUTRALIZED - the game added client-side anti-cheat initializers
 --          (ReplicatedStorage.Files.Client._Client_Initializers._Client_AntiFling etc). They run on
 --          YOUR client, so we disable the running copies AND pre-disable the templates (clones of a
@@ -680,14 +686,40 @@ end
 -- Left/Right Arm parts: the native detector then reaches far enemies and fires the correct UseM1A for us.
 -- We also clear YOUR HitLog (workspace.<You>.HitLog) so repeated swings keep landing on the same target.
 -- ============================================================
--- We do NOT resize the real arm (that flung you off the map / tripped a character reset = "tp to map and die").
--- Instead each arm gets an invisible ANCHORED follower hitbox that tracks it every frame: Anchored + CanCollide
--- off = zero physics force on your body (no fling, no death), while still presenting a big CanQuery/CanTouch
--- volume around your arm for the game's hit detection.
-local armHb = {}   -- real arm part -> its follower hitbox part
+-- Ability Arena uses CLIENT-SIDE hit registration (your client runs a GetPartBoundsInBox query off your REAL
+-- arm parts + their velocity, then sends the hit list to the server which trusts it). The old anchored
+-- MH_ArmReach follower parts failed for two reasons: (1) anchored parts get 0 AssemblyLinearVelocity in Jolt,
+-- so the game thought you weren't swinging and skipped detection; (2) the game only scans parts NAMED like real
+-- arms, not "MH_ArmReach". So we now resize the REAL arms. To stop Jolt flinging/resetting you (giant parts
+-- overlapping your torso/floor), we drop the arms into a collision group that collides with NOTHING, and keep
+-- CanCollide off + Massless on. CanQuery/CanTouch stay TRUE so the game's spatial query still registers the hit.
+local PhysicsService = game:GetService("PhysicsService")
+local HITBOX_GROUP = "MH_M1NoCollide"
+pcall(function() PhysicsService:RegisterCollisionGroup(HITBOX_GROUP) end)
+pcall(function()
+    -- make our group collide with NOTHING (every registered group, incl Default/Players) so Jolt never pushes it
+    PhysicsService:CollisionGroupSetCollidable(HITBOX_GROUP, "Default", false)
+    for _,g in ipairs(PhysicsService:GetRegisteredCollisionGroups()) do
+        pcall(function() PhysicsService:CollisionGroupSetCollidable(HITBOX_GROUP, g.name, false) end)
+    end
+end)
+
+local realArmOriginals = {}   -- real arm part -> {size, group, collide, massless, query, touch}
 local function restoreArms()
-    for _, hb in pairs(armHb) do pcall(function() hb:Destroy() end) end
-    armHb = {}
+    for arm, o in pairs(realArmOriginals) do
+        if arm and arm.Parent then
+            pcall(function()
+                arm.Size = o.size
+                pcall(function() arm.CollisionGroup = o.group end)
+                arm.CanCollide = o.collide
+                arm.Massless = o.massless
+                arm.CanQuery = o.query
+                arm.CanTouch = o.touch
+                arm.LocalTransparencyModifier = 0
+            end)
+        end
+    end
+    realArmOriginals = {}
 end
 local function myArmParts()
     local out = {}
@@ -715,26 +747,25 @@ hook(RunService.Heartbeat, function()
     local armSz = 0
     if S.M1Hitbox or S.AutoFarm or S.AutoPlay then armSz = math.max(armSz, S.M1HitboxSize) end
     if armSz > 0 then
-        -- prune followers whose arm despawned (respawn) so they can't leak
-        for arm, hb in pairs(armHb) do if (not arm) or (not arm.Parent) or (not hb) or (not hb.Parent) then if hb then pcall(function() hb:Destroy() end) end; armHb[arm] = nil end end
-        local acube = Vector3.new(armSz, armSz, armSz)
+        -- prune entries whose arm despawned (respawn) so we don't leak / restore onto a dead part
+        for arm in pairs(realArmOriginals) do if (not arm) or (not arm.Parent) then realArmOriginals[arm] = nil end end
+        local targetSize = Vector3.new(armSz, armSz, armSz)
         for _,arm in ipairs(myArmParts()) do
-            local hb = armHb[arm]
-            if not hb then
-                hb = Instance.new("Part")
-                hb.Name = "MH_ArmReach"; hb.Anchored = true; hb.CanCollide = false; hb.CanTouch = true
-                hb.CanQuery = true; hb.Massless = true; hb.Transparency = 0.75
-                hb.Color = Color3.fromRGB(120, 200, 255); hb.Material = Enum.Material.ForceField
-                pcall(function() hb.Parent = arm end)   -- child of the arm so the game's per-character scan finds it
-                armHb[arm] = hb
+            if not realArmOriginals[arm] then
+                realArmOriginals[arm] = { size=arm.Size, group=arm.CollisionGroup, collide=arm.CanCollide, massless=arm.Massless, query=arm.CanQuery, touch=arm.CanTouch }
             end
             pcall(function()
-                if hb.Size ~= acube then hb.Size = acube end
-                hb.CFrame = arm.CFrame   -- follow the arm (anchored = no physics, so we drive it by CFrame)
+                pcall(function() arm.CollisionGroup = HITBOX_GROUP end)   -- Jolt: this group hits nothing -> no fling/reset
+                arm.CanCollide = false                                    -- primary fling-guard (works even if the group didn't register)
+                arm.Massless   = true                                     -- no extra mass on the assembly = no catapult
+                arm.CanQuery   = true                                     -- game's GetPartBoundsInBox MUST see the arm
+                arm.CanTouch   = true
+                if arm.Size ~= targetSize then arm.Size = targetSize end  -- grow the REAL arm (the game tracks its velocity)
+                arm.LocalTransparencyModifier = 0.85                      -- hide the giant arm on YOUR screen only (doesn't affect the hit query)
             end)
         end
         clearMyHitLog()
-    elseif next(armHb) then restoreArms() end
+    elseif next(realArmOriginals) then restoreArms() end
 
     local sz = wantedHitboxSize()
     if sz <= 0 then
@@ -762,9 +793,9 @@ hook(RunService.Heartbeat, function()
                 part.CanCollide  = false
                 part.CanQuery    = true
                 part.CanTouch    = true
-                -- Force a BLOCK shape so a Ball/Cylinder hitbox part becomes a proper cube (a Ball renders as a
-                -- circle AND its overlap volume is smaller than a cube of the same size = weaker reach).
-                if part:IsA("Part") and part.Shape ~= Enum.PartType.Block then part.Shape = Enum.PartType.Block end
+                -- KEEP the part's original shape (Bug 4): forcing a Ball -> Block leaves the corners empty, and if
+                -- the game uses a shape-aware query (GetPartBoundsInPart) that made the hitbox HARDER to hit. A Ball
+                -- grown to `sz` already has radius sz/2 in every direction = plenty of reach with its native shape.
                 -- Compare ALL 3 axes (was X-only): a part whose X already matched sz but was thin on Y/Z used to
                 -- stay flat = no real reach. THIS was the core "hitbox doesn't work" bug (same one PE fixed).
                 if part.Size ~= cube then part.Size = cube end
