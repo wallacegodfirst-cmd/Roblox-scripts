@@ -1635,9 +1635,11 @@ do local p=Pages["Visuals"]
 		mkSlider(al,"Alert Range","AlertRange",100,2000,3,50)
 	end
 	local _,rf=mkSec(p,"Radar + FPS",4)
-	mkToggle(rf,"Minimap Radar (see players anywhere)","Radar",1)
-	mkSlider(rf,"Radar Zoom (studs across)","RadarRange",100,2000,2,50)
-	mkToggle(rf,"Radar: Show My Death Point","RadarDeath",3)
+	if not _G.PE_HIDE_LITE then   -- Radar is PLUS (food) build only — hidden in No-Food
+		mkToggle(rf,"Minimap Radar (see players anywhere)","Radar",1)
+		mkSlider(rf,"Radar Zoom (studs across)","RadarRange",100,2000,2,50)
+		mkToggle(rf,"Radar: Show My Death Point","RadarDeath",3)
+	end
 	mkToggle(rf,"Remove Trees (big FPS boost - edible plants kept)","RemoveTrees",4)
 end
 local skinDropdownRef, dinoLabel
@@ -2027,19 +2029,19 @@ local function startFly()
 		local root=hrp(); if not root then return end
 		if FLY.bv.Parent~=root then FLY.bv.Parent=root end if FLY.bg.Parent~=root then FLY.bg.Parent=root end
 		pcall(function() root.Anchored=false end)
-		local cf=Cam.CFrame; local dir=Vector3.zero
+		local cf=workspace.CurrentCamera and workspace.CurrentCamera.CFrame or CFrame.new(); local dir=Vector3.zero
 		if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end
 		if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end
 		if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end
 		if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end
 		if UIS:IsKeyDown(Enum.KeyCode.Space) then dir+=Vector3.new(0,1,0) end
 		if UIS:IsKeyDown(Enum.KeyCode.LeftControl) or UIS:IsKeyDown(Enum.KeyCode.LeftShift) then dir-=Vector3.new(0,1,0) end
-		-- MOBILE (no keyboard): thumbstick (MoveDirection) drives horizontal, on-screen buttons drive up/down.
-		if UIS.TouchEnabled then
-			if Vector3.new(dir.X,0,dir.Z).Magnitude==0 then local hh0=hum(); local md=hh0 and hh0.MoveDirection; if md and md.Magnitude>0 then dir+=Vector3.new(md.X,0,md.Z) end end
-			if MB.up then dir+=Vector3.new(0,1,0) end
-			if MB.down then dir-=Vector3.new(0,1,0) end
-		end
+		-- MOBILE / thumbstick: whenever no WASD is down, the thumbstick (MoveDirection) drives horizontal fly.
+		-- NOT gated on TouchEnabled (some mobile executors misreport it) — MoveDirection is only non-zero when
+		-- the player is actually steering, so this is safe on PC too. On-screen buttons drive up/down.
+		if Vector3.new(dir.X,0,dir.Z).Magnitude==0 then local hh0=hum(); local md=hh0 and hh0.MoveDirection; if md and md.Magnitude>0 then dir+=Vector3.new(md.X,0,md.Z) end end
+		if MB.up then dir+=Vector3.new(0,1,0) end
+		if MB.down then dir-=Vector3.new(0,1,0) end
 		FLY.bv.Velocity=(dir.Magnitude>0 and dir.Unit or Vector3.zero)*CFG.FlySpeed; FLY.bg.CFrame=cf
 		local hh=hum(); if hh then pcall(function() hh:ChangeState(Enum.HumanoidStateType.Physics) end) end
 	end)
@@ -2047,7 +2049,7 @@ end
 -- SPEED HACK ONLY drives the body by velocity. INF Stam does NOT touch your movement anymore — driving velocity
 -- made the server snap you back AND counted as sprinting (which drained stamina, then exhausted = slow when you
 -- toggled off). INF Stam now just suppresses the drain (hook + stat pin), so you move at NORMAL speed, stam full.
-conn(RunService.Heartbeat:Connect(function() if CFG.SpeedHack and alive() and not CFG.Fly then local r=hrp(); if r then local spd=CFG.SpeedVal; local dir=Vector3.zero; local cf=Cam.CFrame if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end if dir.Magnitude<=0 and UIS.TouchEnabled then local hh=hum(); local md=hh and hh.MoveDirection; if md and md.Magnitude>0 then dir=md end end if dir.Magnitude>0 then dir=Vector3.new(dir.X,0,dir.Z).Unit*spd; r.AssemblyLinearVelocity=Vector3.new(dir.X,r.AssemblyLinearVelocity.Y,dir.Z) end end end end))
+conn(RunService.Heartbeat:Connect(function() if CFG.SpeedHack and alive() and not CFG.Fly then local r=hrp(); if r then local spd=CFG.SpeedVal; local dir=Vector3.zero; local cf=workspace.CurrentCamera and workspace.CurrentCamera.CFrame or CFrame.new() if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end if dir.Magnitude<=0 then local hh=hum(); local md=hh and hh.MoveDirection; if md and md.Magnitude>0 then dir=md end end if dir.Magnitude>0 then dir=Vector3.new(dir.X,0,dir.Z).Unit*spd; r.AssemblyLinearVelocity=Vector3.new(dir.X,r.AssemblyLinearVelocity.Y,dir.Z) end end end end))
 -- INF STAM SPEED KEEPER: since we SWALLOW the "Run=true" report (so the server never drains stamina), the server
 -- also stops sprinting you = it would rubber-band you to walk speed ("slow"). This re-asserts your sprint speed
 -- every frame AFTER replication, so the server can't drag you down. It ONLY pushes you UP to the sprint target and
@@ -2793,7 +2795,11 @@ conn(RunService.Heartbeat:Connect(function() pcall(function()
 	end
 end) end))
 pcall(function() conn(LP.Idled:Connect(function() if CFG.AntiAFK then pcall(function() VirtualUser:CaptureController(); VirtualUser:ClickButton2(Vector2.new()) end) end end)) end)
-conn(RunService.RenderStepped:Connect(function() if CFG.UnlockFOV and Cam then pcall(function() Cam.FieldOfView=CFG.FOV end) end if CFG.InfZoom then if not SAVED.zoom then SAVED.zoom={LP.CameraMaxZoomDistance,LP.CameraMinZoomDistance} end pcall(function() LP.CameraMaxZoomDistance=100000; LP.CameraMinZoomDistance=0.5 end) elseif SAVED.zoom then pcall(function() LP.CameraMaxZoomDistance=SAVED.zoom[1]; LP.CameraMinZoomDistance=SAVED.zoom[2] end); SAVED.zoom=nil end end))
+conn(RunService.RenderStepped:Connect(function()
+	local cam = workspace.CurrentCamera   -- FRESH each frame: the cached Cam goes stale after respawn = "FOV changer doesn't work"
+	if CFG.UnlockFOV and cam then pcall(function() cam.FieldOfView = tonumber(CFG.FOV) or 70 end) end
+	if CFG.InfZoom then if not SAVED.zoom then SAVED.zoom={LP.CameraMaxZoomDistance,LP.CameraMinZoomDistance} end pcall(function() LP.CameraMaxZoomDistance=100000; LP.CameraMinZoomDistance=0.5 end) elseif SAVED.zoom then pcall(function() LP.CameraMaxZoomDistance=SAVED.zoom[1]; LP.CameraMinZoomDistance=SAVED.zoom[2] end); SAVED.zoom=nil end
+end))
 -- Always Damage (PvP): auto-fire the captured Attack remote at EVERY nearby character within DamageRange.
 -- Works in normal play AND Sandbox (scans workspace.Characters + sandbox folders + nil-parented dino models).
 task.spawn(function() while RUNNING do
