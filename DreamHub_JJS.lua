@@ -888,10 +888,7 @@ do
 			end)
 		else task.spawn(function() doBackstab(true) end) end   -- Teleport: instant snap behind, face back, lock, flash
 	end
-	ContextActionService:BindActionAtPriority("VaultixBackstab", function(_, inputState)
-		if inputState == Enum.UserInputState.Begin then doEPress() end
-		return Enum.ContextActionResult.Sink
-	end, false, 1000, Enum.KeyCode.E)
+	-- (Old E-key chain trigger REMOVED — the BF chain keybind is now 3, handled by the VXBF2 engine below.)
 	do  -- FEINT input hooks (click/key based - the anim path missed on most characters)
 		local UIS_F = game:GetService("UserInputService")
 		local MOVEKEYS = { [Enum.KeyCode.One] = true, [Enum.KeyCode.Two] = true, [Enum.KeyCode.Three] = true, [Enum.KeyCode.Four] = true }
@@ -1835,6 +1832,239 @@ do
         setChoice = function(c) choice = tostring(c or "Silence") end,
         setDelay = function(v) if type(v) == "number" then clickDelay = v / 100 end end,   -- slider is 0-100 -> 0-1s
     }
+end
+
+-- ============================================================
+-- MODULE: VXBF2  — reworked Black Flash chain engine (keybind 3, not E). No GUI; driven by _G.VXBF2 setters.
+-- Ported from the user's v13.0 logic, adapted for JJS: bodies live under workspace.Characters, teleports use
+-- the anti-cheat whitelist (_G.VX_ACPASS) so they don't get set back.
+-- ============================================================
+do
+    local Players = game:GetService("Players")
+    local RunService = game:GetService("RunService")
+    local UserInputService = game:GetService("UserInputService")
+    local VIM = game:GetService("VirtualInputManager")
+    local LocalPlayer = Players.LocalPlayer
+
+    local Settings = {
+        DashKey = Enum.KeyCode.Q, DashRange = 80, DashCooldown = 0.20,
+        SideChoice = "Auto", SideCurveTime = 0.35, SideM1 = true, SideFaceAfter = true,
+        Enabled = false, Mode = "Side Dash", BFKey = Enum.KeyCode.Three,
+        BFCooldown = 0.5, BFTeleportDist = 3.0, BFM1 = false,
+        SideAssist = false, BackAssist = false,
+    }
+    local AnimationTriggers = {
+        ["rbxassetid://100962226150441"] = 0.19, ["rbxassetid://95852624447551"] = 0.19,
+        ["rbxassetid://74145636023952"] = 0.19, ["rbxassetid://72475960800126"] = 0.20,
+        ["rbxassetid://123171106092050"] = 0.19,
+    }
+    local R = { held = {}, stamp = {}, lastDash = 0, lockTarget = nil, lockKind = nil, lockEnd = 0, bfCD = 0, bfActive = false, curving = false }
+    local WIN = 0.15
+    local function status(t) if VX_NOTIFY then VX_NOTIFY(t, true) end end
+    local function acPass() if _G.VX_ACPASS then _G.VX_ACPASS() end end
+    local function GetChar() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LocalPlayer.Name)) or LocalPlayer.Character end
+    local function GetRoot() local c = GetChar(); return c and c:FindFirstChild("HumanoidRootPart") end
+    local function IsAlive() local c = GetChar(); local h = c and c:FindFirstChildOfClass("Humanoid"); return h ~= nil and h.Health > 0 end
+    local function VKeyDown(k) if not k then return end R.stamp[k] = tick(); if not R.held[k] then R.held[k] = true; VIM:SendKeyEvent(true, k, false, game) end end
+    local function VKeyUp(k) if not k then return end if R.held[k] then R.held[k] = nil; VIM:SendKeyEvent(false, k, false, game) end end
+    local function VKeyTap(k, hold) VKeyDown(k); task.wait(hold or 0.05); VKeyUp(k) end
+    local function VMouseClick() VIM:SendMouseButtonEvent(0, 0, 0, true, game, 0); task.wait(0.03); VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0) end
+    local function ReleaseAll() for k in pairs(R.held) do pcall(function() VIM:SendKeyEvent(false, k, false, game) end) end table.clear(R.held) end
+    local function markThree() R.stamp[Enum.KeyCode.Three] = tick(); _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.4 end
+    local function pressBF() markThree(); VIM:SendKeyEvent(true, Settings.BFKey, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Settings.BFKey, false, game) end
+    local function GetClosestTarget(maxD)
+        local myRoot = GetRoot(); if not myRoot then return nil end
+        local folder = workspace:FindFirstChild("Characters") or workspace
+        local me = GetChar(); local best, bd = nil, maxD or 60
+        for _, ch in ipairs(folder:GetChildren()) do
+            if ch:IsA("Model") and ch ~= me and ch.Name ~= LocalPlayer.Name then
+                local root = ch:FindFirstChild("HumanoidRootPart"); local hum = ch:FindFirstChildOfClass("Humanoid")
+                if root and hum and hum.Health > 0 then local d = (myRoot.Position - root.Position).Magnitude; if d < bd then best, bd = ch, d end end
+            end
+        end
+        return best
+    end
+    local function aimCameraDir(dir) local cam = workspace.CurrentCamera; if not cam then return end local pos = cam.CFrame.Position; local flat = Vector3.new(dir.X, 0, dir.Z); if flat.Magnitude < 0.01 then return end cam.CFrame = CFrame.new(pos, pos + flat.Unit) end
+    local function aimCameraAt(p) local cam = workspace.CurrentCamera; if not cam then return end local pos = cam.CFrame.Position; cam.CFrame = CFrame.new(pos, Vector3.new(p.X, pos.Y, p.Z)) end
+    local function faceRootDir(dir) local r = GetRoot(); if not r then return end local flat = Vector3.new(dir.X, 0, dir.Z); if flat.Magnitude < 0.01 then return end acPass(); r.CFrame = CFrame.new(r.Position, r.Position + flat.Unit) end
+    local function faceEnemyBack(t)
+        local p = GetRoot(); local e = t and t:FindFirstChild("HumanoidRootPart"); if not p or not e then return end
+        local fwd = Vector3.new(e.CFrame.LookVector.X, 0, e.CFrame.LookVector.Z)
+        if fwd.Magnitude > 0.01 then acPass(); p.CFrame = CFrame.new(e.Position - fwd * 3, e.Position) end
+    end
+    local function autoSide(p, e) local eR = Vector3.new(e.CFrame.RightVector.X, 0, e.CFrame.RightVector.Z); if eR.Magnitude < 0.01 then return -1 end eR = eR.Unit; local off = Vector3.new((p.Position - e.Position).X, 0, (p.Position - e.Position).Z); return (off:Dot(eR) >= 0) and 1 or -1 end
+    local function chooseSide(p, e, c) if UserInputService:IsKeyDown(Enum.KeyCode.A) then return -1 end if UserInputService:IsKeyDown(Enum.KeyCode.D) then return 1 end if c == "Left" then return -1 end if c == "Right" then return 1 end return autoSide(p, e) end
+    local function smoothTP(pos) local p = GetRoot(); if not p then return end acPass(); p.CFrame = CFrame.new(pos); local cc = GetChar(); if cc then pcall(function() cc:PivotTo(CFrame.new(pos)) end) end end
+
+    -- lock-on: hold you behind the target for the flash window
+    RunService.RenderStepped:Connect(function()
+        if not R.lockTarget or tick() >= R.lockEnd then return end
+        local e = R.lockTarget:FindFirstChild("HumanoidRootPart"); if not e then return end
+        local p = GetRoot(); if not p then return end
+        local fwd = Vector3.new(e.CFrame.LookVector.X, 0, e.CFrame.LookVector.Z)
+        if fwd.Magnitude < 0.01 then return end
+        fwd = fwd.Unit
+        if R.lockKind == "bf_back" then
+            local pos = e.Position + (-fwd * 3)
+            acPass(); p.CFrame = CFrame.new(pos, pos + fwd)
+            aimCameraAt(e.Position + fwd * 50)
+        end
+    end)
+
+    -- SIDE DASH: tap Q, curve the camera from the side back onto the enemy (no teleport)
+    local function doSideDash(isBF)
+        if tick() - R.lastDash < Settings.DashCooldown and not isBF then return false end
+        if R.curving then return false end
+        local p = GetRoot(); if not p then return false end
+        local t = GetClosestTarget(Settings.DashRange); if not t then return false end
+        local e = t:FindFirstChild("HumanoidRootPart"); if not e then return false end
+        if not isBF then R.lastDash = tick() end
+        local sign = chooseSide(p, e, Settings.SideChoice)
+        local sideDir = e.CFrame.RightVector * sign
+        ReleaseAll(); task.wait(0.01); R.curving = true
+        aimCameraDir(sideDir); faceRootDir(sideDir)
+        VKeyTap(Settings.DashKey, 0.04)
+        local t0 = tick(); local conn
+        conn = RunService.Heartbeat:Connect(function()
+            local lp = GetRoot(); local le = t and t:FindFirstChild("HumanoidRootPart")
+            if not lp or not le then if conn then conn:Disconnect() end R.curving = false return end
+            local blend = math.clamp((tick() - t0) / Settings.SideCurveTime, 0, 1)
+            aimCameraDir((sideDir * (1 - blend)) + ((le.Position - lp.Position) * blend))
+            if tick() - t0 > Settings.SideCurveTime then
+                conn:Disconnect(); R.curving = false
+                if Settings.SideM1 and not isBF then task.spawn(VMouseClick) end
+                if Settings.SideFaceAfter and not isBF then task.delay(0.05, function() local l2 = GetRoot(); local e2 = t and t:FindFirstChild("HumanoidRootPart"); if l2 and e2 then local to = Vector3.new((e2.Position - l2.Position).X, 0, (e2.Position - l2.Position).Z); if to.Magnitude > 0.01 then faceRootDir(to); aimCameraAt(e2.Position) end end end) end
+            end
+        end)
+        if not isBF then status("Side Dash Curve") end
+        return true
+    end
+    -- BACK DASH: W+Q through them, M1 their back (no teleport)
+    local function doBackDash(isBF)
+        if tick() - R.lastDash < Settings.DashCooldown and not isBF then return false end
+        local p = GetRoot(); if not p then return false end
+        local t = GetClosestTarget(Settings.DashRange); if not t then return false end
+        local e = t:FindFirstChild("HumanoidRootPart"); if not e then return false end
+        if not isBF then R.lastDash = tick() end
+        ReleaseAll(); task.wait(0.01)
+        aimCameraAt(e.Position)
+        local to = Vector3.new((e.Position - p.Position).X, 0, (e.Position - p.Position).Z)
+        if to.Magnitude > 0.01 then faceRootDir(to) end
+        VKeyDown(Enum.KeyCode.W); task.wait(0.02); VKeyTap(Settings.DashKey, 0.05)
+        task.delay(0.20, function() VKeyUp(Enum.KeyCode.W) end)
+        if not isBF then task.delay(0.25, function() faceEnemyBack(t); VMouseClick() end); status("Back Dash + M1") end
+        return true
+    end
+    -- BF MODES
+    local function doBFTeleport()
+        if tick() - R.bfCD < Settings.BFCooldown or R.bfActive then return end
+        local t = GetClosestTarget(Settings.DashRange); if not t then return end
+        local e = t:FindFirstChild("HumanoidRootPart"); if not e then return end
+        R.bfCD = tick(); R.bfActive = true
+        local fwd = Vector3.new(e.CFrame.LookVector.X, 0, e.CFrame.LookVector.Z).Unit
+        smoothTP(e.Position - fwd * Settings.BFTeleportDist); faceEnemyBack(t)
+        R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.0
+        task.wait(0.1); pressBF(); task.delay(0.3, function() R.bfActive = false end); status("BF Teleport")
+    end
+    local function doBFJump()
+        if tick() - R.bfCD < Settings.BFCooldown or R.bfActive then return end
+        local t = GetClosestTarget(Settings.DashRange); if not t then return end
+        local e = t:FindFirstChild("HumanoidRootPart"); if not e then return end
+        R.bfCD = tick(); R.bfActive = true; ReleaseAll()
+        pressBF(); task.wait(0.1); aimCameraAt(e.Position)
+        VKeyDown(Enum.KeyCode.Space); VKeyDown(Enum.KeyCode.W); task.wait(0.4); VKeyUp(Enum.KeyCode.Space); VKeyUp(Enum.KeyCode.W)
+        R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.0
+        task.delay(0.3, function() R.bfActive = false end); status("BF Jump Chain")
+    end
+    local function doBFSideDash()
+        if tick() - R.bfCD < Settings.BFCooldown or R.bfActive then return end
+        local t = GetClosestTarget(Settings.DashRange); if not t then return end
+        R.bfCD = tick(); R.bfActive = true
+        local e = t:FindFirstChild("HumanoidRootPart"); if not e then R.bfActive = false return end
+        pressBF(); task.wait(0.05); doSideDash(true); task.wait(0.15)
+        local fwd = Vector3.new(e.CFrame.LookVector.X, 0, e.CFrame.LookVector.Z).Unit
+        smoothTP(e.Position - fwd * Settings.BFTeleportDist); faceEnemyBack(t)
+        R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.0
+        task.delay(0.3, function() R.bfActive = false end); status("BF Side Chain")
+    end
+    local function doBFBackDash()
+        if tick() - R.bfCD < Settings.BFCooldown or R.bfActive then return end
+        local t = GetClosestTarget(Settings.DashRange); if not t then return end
+        R.bfCD = tick(); R.bfActive = true
+        local e = t:FindFirstChild("HumanoidRootPart"); if not e then R.bfActive = false return end
+        ReleaseAll(); VKeyTap(Enum.KeyCode.Space, 0.1); task.wait(0.15)
+        aimCameraAt(e.Position); VKeyDown(Enum.KeyCode.W); task.wait(0.02); VKeyTap(Settings.DashKey, 0.05); task.wait(0.2); VKeyUp(Enum.KeyCode.W)
+        local fwd = Vector3.new(e.CFrame.LookVector.X, 0, e.CFrame.LookVector.Z).Unit
+        smoothTP(e.Position - fwd * Settings.BFTeleportDist); faceEnemyBack(t)
+        R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.0
+        task.wait(0.05); pressBF(); task.delay(0.3, function() R.bfActive = false end); status("BF Back Chain")
+    end
+    local function doBFM1Chain()
+        if tick() - R.bfCD < Settings.BFCooldown or R.bfActive then return end
+        R.bfCD = tick(); R.bfActive = true
+        local t = GetClosestTarget(Settings.DashRange); if not t then R.bfActive = false return end
+        task.wait(0.1); doSideDash(true); task.wait(0.2)
+        local e = t and t:FindFirstChild("HumanoidRootPart")
+        if e then faceEnemyBack(t); R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.0 end
+        task.wait(0.05); pressBF(); task.delay(0.3, function() R.bfActive = false end); status("BF M1 Chain")
+    end
+    local function doBlackFlash()
+        if not Settings.Enabled or R.bfActive then return end
+        local m = Settings.Mode
+        if m == "Teleport" then doBFTeleport() elseif m == "Jump" then doBFJump()
+        elseif m == "Side Dash" then doBFSideDash() elseif m == "Back Dash" then doBFBackDash()
+        elseif m == "M1" then doBFM1Chain() end
+    end
+
+    -- ANIM HOOK: simple BF M1 (press 3 on the BF animation) + is-this-an-M1 helper
+    local function onChar(char)
+        if not char then return end
+        local hum = char:WaitForChild("Humanoid", 5); if not hum then return end
+        local animator = hum:FindFirstChildOfClass("Animator"); if not animator then return end
+        animator.AnimationPlayed:Connect(function(track)
+            local id = track.Animation and track.Animation.AnimationId
+            local dly = id and AnimationTriggers[id]
+            if dly and Settings.BFM1 then task.delay(dly, function() if Settings.BFM1 then pressBF() end end) end
+        end)
+    end
+    task.spawn(function()
+        -- hook BOTH the standard character and the workspace.Characters body (JJS uses the latter)
+        if LocalPlayer.Character then pcall(onChar, LocalPlayer.Character) end
+        LocalPlayer.CharacterAdded:Connect(function(c) pcall(onChar, c) end)
+        while true do task.wait(1); local chs = workspace:FindFirstChild("Characters"); local b = chs and chs:FindFirstChild(LocalPlayer.Name); if b and not b:GetAttribute("VXBF2Hooked") then b:SetAttribute("VXBF2Hooked", true); pcall(onChar, b) end end
+    end)
+
+    -- INPUT: press 3 -> run the current chain (does NOT sink 3, so the real move still fires). M1 -> M1 chain.
+    UserInputService.InputBegan:Connect(function(input, _)
+        if UserInputService:GetFocusedTextBox() then return end
+        local st = R.stamp[input.KeyCode]; if st and tick() - st < WIN then return end   -- ignore our own injected 3
+        if input.KeyCode == Settings.BFKey and Settings.Enabled and Settings.Mode ~= "M1" then
+            doBlackFlash(); return
+        end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 and Settings.Enabled and Settings.Mode == "M1" then
+            task.spawn(doBFM1Chain); return
+        end
+    end)
+    LocalPlayer.CharacterAdded:Connect(ReleaseAll)
+
+    _G.VXBF2 = {
+        setEnabled = function(v) Settings.Enabled = v == true end,
+        setMode = function(m) if type(m) == "string" then Settings.Mode = m end end,   -- Side Dash / Back Dash / Jump / Teleport / M1
+        setBFM1 = function(v) Settings.BFM1 = v == true end,
+        setSideAssist = function(v) Settings.SideAssist = v == true end,
+        setBackAssist = function(v) Settings.BackAssist = v == true end,
+        setCooldown = function(v) if type(v) == "number" then Settings.BFCooldown = v end end,
+        setTeleportDist = function(v) if type(v) == "number" then Settings.BFTeleportDist = v end end,
+        doSide = function() doSideDash(false) end,
+        doBack = function() doBackDash(false) end,
+    }
+    -- assist keys: Q = side dash assist, E = back dash assist (only when their toggle is on)
+    UserInputService.InputBegan:Connect(function(input, _)
+        if UserInputService:GetFocusedTextBox() then return end
+        local st = R.stamp[input.KeyCode]; if st and tick() - st < WIN then return end
+        if input.KeyCode == Enum.KeyCode.Q and Settings.SideAssist and not Settings.Enabled then doSideDash(false) end
+        if input.KeyCode == Enum.KeyCode.E and Settings.BackAssist then doBackDash(false) end
+    end)
 end
 
 -- MODULE: AUTO SKILLS  (press chosen keys 1/2/3/4 on a nearby enemy)
@@ -9052,16 +9282,19 @@ do
     -- Auto Single = the raw snippet (M1 -> press 3, no movement at all). M1 Black Flash = the same system PLUS
     -- aim: faces the enemy's back + locks the camera onto them before pressing 3. Auto Chain = the teleport-
     -- behind approaches below. Only one of these three drives the flash key at a time.
-    bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "Auto Single", "M1 Black Flash", "Auto Chain" } or { "Off", "Auto Single", "M1 Black Flash" }), Default = "Off", Callback = function(m)
-        if not BFApi or not ChainApi then return end
-        if m == "Auto Single" then BFApi.SetAim(false); BFApi.SetEnabled(true); ChainApi.setEnabled(false)
-        elseif m == "M1 Black Flash" then BFApi.SetAim(true); BFApi.SetEnabled(true); ChainApi.setEnabled(false)
-        elseif m == "Auto Chain" then BFApi.SetEnabled(false); ChainApi.setEnabled(true)
-        else BFApi.SetEnabled(false); ChainApi.setEnabled(false) end
+    -- BF ENGINE = VXBF2 (reworked v13). Keybind is 3. "M1 BF (simple)" = press 3 on the BF anim.
+    -- The chain modes fire when you press 3 (M1 Chain fires on your M1). Free gets M1 BF + Side/Back/Jump; premium adds Teleport + M1 Chain.
+    bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 BF (simple)", "Side Dash", "Back Dash", "Jump", "Teleport", "M1 Chain" } or { "Off", "M1 BF (simple)", "Side Dash", "Back Dash", "Jump" }), Default = "Off", Callback = function(m)
+        m = (type(m) == "table") and m[1] or m
+        if not _G.VXBF2 then return end
+        if m == "Off" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false)
+        elseif m == "M1 BF (simple)" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(true)
+        elseif m == "M1 Chain" then _G.VXBF2.setBFM1(false); _G.VXBF2.setMode("M1"); _G.VXBF2.setEnabled(true)
+        else _G.VXBF2.setBFM1(false); _G.VXBF2.setMode(m); _G.VXBF2.setEnabled(true) end
+        if VX_NOTIFY then VX_NOTIFY("BF: " .. m, m ~= "Off") end
     end })
-    if tier("premium") then   -- FREE: no auto-chain approaches (side/back dash live here) — premium only
-        bfSec:Dropdown({ Name = "Approach (Auto Chain)", Items = { "Teleport", "Jump", "Side Dash", "Back Dash" }, Default = "Teleport", Callback = function(m) if ChainApi then ChainApi.setMode(m) end end })
-    end
+    bfSec:Slider({ Name = "BF Cooldown", Min = 0.1, Max = 2, Default = 0.5, Decimals = 0.05, Suffix = "s", Callback = function(v) if _G.VXBF2 then _G.VXBF2.setCooldown(v) end end })
+    if tier("premium") then bfSec:Slider({ Name = "Teleport/Jump Dist", Min = 2, Max = 8, Default = 3, Decimals = 0.5, Callback = function(v) if _G.VXBF2 then _G.VXBF2.setTeleportDist(v) end end }) end
     -- FREE feint keeps only M1 + Moves(skills); premium adds Feint Black Flash
     bfSec:Dropdown({ Name = "Auto Feint", Items = (tier("premium") and { "Off", "Feint Black Flash", "Feint M1", "Feint Moves" } or { "Off", "Feint M1", "Feint Moves" }), Default = "Off", Callback = function(v)
         if ChainApi then ChainApi.setFeintMode(v == "Feint Black Flash" and "BF" or (v == "Feint M1" and "M1" or (v == "Feint Moves" and "Moves" or "Off"))) end
@@ -9109,7 +9342,9 @@ do
 
     local defSub = CombatPage:SubPage({ Name = "Defense", Columns = 2 })
     local counterSec = defSub:Section({ Name = "Counter", Side = 1 })
-    if tier("premium") then counterSec:Toggle({ Name = "Side Dash Assist", Callback = function(b) if SideDashApi then SideDashApi.set(b) end end }) end   -- FREE: no side dash
+    -- Side/Back Dash Assist now use the reworked VXBF2 engine (Q = side curve, E = back-through). Free gets both.
+    counterSec:Toggle({ Name = "Side Dash Assist (Q)", Callback = function(b) if _G.VXBF2 then _G.VXBF2.setSideAssist(b) end end })
+    counterSec:Toggle({ Name = "Back Dash Assist (E)", Callback = function(b) if _G.VXBF2 then _G.VXBF2.setBackAssist(b) end end })
     counterSec:Toggle({ Name = "Anti Counter", Callback = function(b) if AntiCounterApi then AntiCounterApi.set(b) end end })
     if tier("premium") then   -- FREE: no Emote / Jump-On-Head counter reactions (Anti Counter keeps its default)
         counterSec:Dropdown({ Name = "On Counter", Items = { "Jump On Head", "Emote" }, Default = "Jump On Head", Callback = function(v) if AntiCounterApi then AntiCounterApi.setMode(v) end end })
