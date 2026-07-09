@@ -672,17 +672,9 @@ do
 			if not animId then return end
 			-- (M1 Black Flash triggers ONLY from the landed-click path now - the anim path double-fired the chain
 			-- on top of it: two overlapping snap-holds = the fling.)
-			-- AUTO FEINT Mode B ("Feint M1"): count YOUR M1 swings (Vessel/any M1 anim + a click); after feintM1Count, press R (feint) then the chosen move (1-4).
-			if feintMode == "M1" and _G.VX_IS_M1 and _G.VX_IS_M1(track) then
-				if tick() - lastM1Feint > 1.5 then m1FeintCount = 0 end   -- reset if you stopped M1ing
-				lastM1Feint = tick(); m1FeintCount = m1FeintCount + 1
-				if m1FeintCount >= feintM1Count then
-					m1FeintCount = 0
-					task.delay(0.08, function() pressR(); task.wait(0.06); pressMove(feintMove) end)   -- feint, then the move
-				end
-			end
-			-- (BF conversion moved OUT of this LP.Character listener — see the SINGLE resolved-model conversion
-			--  authority below. This listener now only does Feint-M1 counting above.)
+			-- (Feint M1 is handled SOLELY by the click path below — R only, no move key. The old anim path here also
+			--  pressed a skill 1-4 after R, which is exactly what "overlapped" Yuji's skills. Removed.)
+			-- (BF conversion also lives in the SINGLE resolved-model conversion authority below, not here.)
 		end)
 	end
 	if LocalPlayer.Character then setupCharacter(LocalPlayer.Character) end
@@ -2000,9 +1992,17 @@ do
         local hum = char:WaitForChild("Humanoid", 5); if not hum then return end
         local animator = hum:FindFirstChildOfClass("Animator"); if not animator then return end
         animator.AnimationPlayed:Connect(function(track)
+            if not Settings.BFM1 then return end
             local id = track.Animation and track.Animation.AnimationId
             local dly = id and AnimationTriggers[id]
-            if dly and Settings.BFM1 then task.delay(dly, function() if Settings.BFM1 and tick() - R.bfCD >= Settings.BFCooldown then R.bfCD = tick(); pressBF() end end) end
+            -- BEST timing = ride the M1 ANIMATION. A known BF-anim id uses its exact window; ANY real M1 swing
+            -- (per-character DB via VX_IS_M1) falls back to the standard 0.19s window so it flashes on EVERY
+            -- character, not just the 5 hardcoded ids. This is the reliable path (click timing was too early).
+            if not dly and _G.VX_IS_M1 and _G.VX_IS_M1(track) then dly = 0.19 end
+            if dly and tick() - R.bfCD >= Settings.BFCooldown then
+                R.bfCD = tick()
+                task.delay(dly, function() if Settings.BFM1 then pressBF() end end)
+            end
         end)
     end
     task.spawn(function()
@@ -2022,14 +2022,16 @@ do
         if input.UserInputType == Enum.UserInputType.MouseButton1 and Settings.Enabled and Settings.Mode == "M1" then
             task.spawn(doBFM1Chain); return
         end
-        -- M1 BF (simple): the reliable path. Every real M1 CLICK presses the flash key a beat later so the M1
-        -- turns into a Black Flash — no dependence on matching a specific animation id (that's why it "did nothing"
-        -- on some characters). Cooldown-gated so a fast click-burst only fires one flash.
+        -- M1 BF (simple) CLICK FALLBACK: only for characters whose M1 anim isn't in the DB (so the anim path above
+        -- can't catch them). Fires LATE (0.30s) and only if the anim path DIDN'T already flash within the cooldown —
+        -- so on known characters the better-timed anim window always wins and this never double-presses.
         if input.UserInputType == Enum.UserInputType.MouseButton1 and Settings.BFM1 and Settings.Mode ~= "M1" then
-            if tick() - R.bfCD >= Settings.BFCooldown then
-                R.bfCD = tick()
-                task.delay(0.12, function() if Settings.BFM1 then pressBF() end end)
-            end
+            task.delay(0.30, function()
+                if Settings.BFM1 and tick() - R.bfCD >= Settings.BFCooldown then
+                    R.bfCD = tick()
+                    pressBF()
+                end
+            end)
         end
     end)
     LocalPlayer.CharacterAdded:Connect(ReleaseAll)
@@ -9188,10 +9190,27 @@ do
             local function guard(o) return setmetatable(o, { __index = function() return function() return STUB end end }) end   -- any UNDEFINED method -> safe stub (menu can never crash on a missing method)
             function adapter:Window(cfg)
                 cfg = cfg or {}
+                -- snapshot the GUI hosts BEFORE MakeGui so we can find the exact ScreenGui it creates -> the Dream
+                -- icon can then hide/show it. (Under Fluriore the original _G.VX_HARDTOGGLE never runs = "icon no work".)
+                local hosts = {}
+                pcall(function() if gethui then hosts[#hosts + 1] = gethui() end end)
+                pcall(function() hosts[#hosts + 1] = game:GetService("CoreGui") end)
+                pcall(function() hosts[#hosts + 1] = game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui") end)
+                local before = {}
+                for _, h in ipairs(hosts) do pcall(function() for _, g in ipairs(h:GetChildren()) do before[g] = true end end) end
                 pcall(function() flWin = FluLib:MakeGui({ NameHub = cfg.Name or "Dream Hub", Description = cfg.SubTitle or "", Color = RED }) end)
+                local flScreen
+                for _, h in ipairs(hosts) do pcall(function() for _, g in ipairs(h:GetChildren()) do if not before[g] and g:IsA("ScreenGui") then flScreen = g; break end end end); if flScreen then break end end
+                _G.VX_HARDTOGGLE = function()   -- the Dream icon calls this: flip the Fluriore menu's visibility
+                    if flWin then
+                        if type(flWin.Toggle) == "function" then pcall(function() flWin:Toggle() end); return end
+                        if type(flWin.SetOpen) == "function" then pcall(function() flWin:SetOpen(not flWin.IsOpen) end); return end
+                    end
+                    if flScreen then pcall(function() flScreen.Enabled = not flScreen.Enabled end) end
+                end
                 local W = {}
                 function W:Category() end   -- Fluriore has no categories; wiring calls this as a bare statement
-                function W:SetOpen() end    -- minimize button calls this; Fluriore has its own toggle key
+                function W:SetOpen() if _G.VX_HARDTOGGLE then pcall(_G.VX_HARDTOGGLE) end end   -- minimize button routes through the hard toggle
                 function W:Page(pc)
                     pc = pc or {}
                     local flTab; pcall(function() flTab = flWin:CreateTab({ Name = pc.Name or "Tab", Icon = pc.Icon and ("rbxassetid://" .. tostring(pc.Icon)) or nil }) end)
