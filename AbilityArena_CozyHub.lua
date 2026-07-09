@@ -798,8 +798,8 @@ hook(RunService.Heartbeat, function()
                     pcall(function() arm.CollisionGroup = HITBOX_GROUP end)   -- Jolt: this group hits nothing -> no fling/reset
                     arm.CanCollide = false                                    -- primary fling-guard (works even if the group didn't register)
                     arm.Massless   = true                                     -- no extra mass on the assembly = no catapult
-                    arm.CanQuery   = true                                     -- GetPartBoundsInBox reads this
-                    arm.CanTouch   = true                                     -- Bug 8: also feed any .Touched fallback detection (group prevents physical fling)
+                    arm.CanQuery   = true                                     -- GetPartBoundsInBox reads this (this is what the game uses)
+                    arm.CanTouch   = false                                    -- MUST stay false: CanTouch=true let the main-map KILL BRICKS' .Touched fire on your giant arms = death on spawn. Queries don't need Touch.
                     if (arm.Size - targetSize).Magnitude > 0.1 then arm.Size = targetSize end
                     arm.LocalTransparencyModifier = 0.3                       -- clearly visible so you SEE your big arms swing
                     -- Bug 1: refresh the forward push EVERY frame from the ORIGINAL C0, so changing the slider
