@@ -2574,12 +2574,29 @@ end)
 noBtn.MouseButton1Click:Connect(function() task.spawn(doNextCorpse) end)                        -- try a different one
 __gg.MH_corpseBack = function()   -- "Teleport Back" button -> return to where you were
 	local o=carnOrigin; if not o then notify("Corpse TP","No saved spot yet - use Carnivore Meat TP first."); return end
+	-- KILL the corpse-TP hold first: tpToCorpse pins you at the corpse for ~2s via MH_corpseHoldGoal. If it's still
+	-- running when you hit Teleport Back, it yanks you straight back to the corpse ("teleport back doesn't work").
+	__gg.MH_corpseHoldGoal = nil
+	carnBusy = false
 	local cc=getMyModel(); local r=hrp()
 	if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
+	local goal=CFrame.new(o)
 	local noclip={}; if cc then pcall(function() for _,dd in ipairs(cc:GetDescendants()) do if dd:IsA("BasePart") and dd.CanCollide then dd.CanCollide=false; noclip[#noclip+1]=dd end end end) end
-	pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(CFrame.new(o)) elseif r then r.CFrame=CFrame.new(o) end end)
-	if r then pcall(function() r.AssemblyLinearVelocity=Vector3.zero end) end
-	task.delay(0.5, function() for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end end)
+	pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) elseif r then r.CFrame=goal end end)
+	if r then pcall(function() r.AssemblyLinearVelocity=Vector3.zero; r.AssemblyAngularVelocity=Vector3.zero end) end
+	-- ANTI-SNAPBACK on the way home too: hold the origin with a BodyPosition + per-frame CFrame re-assert for ~1.6s so
+	-- the server accepts the return instead of rubber-banding you back to the corpse.
+	local bp; pcall(function() if r then bp=Instance.new("BodyPosition"); bp.MaxForce=Vector3.new(9e9,9e9,9e9); bp.P=3e4; bp.D=3000; bp.Position=o; bp.Parent=r end end)
+	task.spawn(function()
+		local t0=tick()
+		while tick()-t0<1.6 do
+			local rr=hrp()
+			if rr then pcall(function() rr.CFrame=goal; rr.AssemblyLinearVelocity=Vector3.zero; rr.AssemblyAngularVelocity=Vector3.zero end) end
+			RunService.Heartbeat:Wait()
+		end
+		pcall(function() if bp then bp:Destroy() end end)
+	end)
+	task.delay(1.7, function() for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end end)
 	pcall(function() carnGui.Enabled=false end)
 	notify("Corpse TP","Teleported back to where you were.")
 end
