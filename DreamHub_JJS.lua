@@ -2002,7 +2002,7 @@ do
         animator.AnimationPlayed:Connect(function(track)
             local id = track.Animation and track.Animation.AnimationId
             local dly = id and AnimationTriggers[id]
-            if dly and Settings.BFM1 then task.delay(dly, function() if Settings.BFM1 then pressBF() end end) end
+            if dly and Settings.BFM1 then task.delay(dly, function() if Settings.BFM1 and tick() - R.bfCD >= Settings.BFCooldown then R.bfCD = tick(); pressBF() end end) end
         end)
     end
     task.spawn(function()
@@ -2021,6 +2021,15 @@ do
         end
         if input.UserInputType == Enum.UserInputType.MouseButton1 and Settings.Enabled and Settings.Mode == "M1" then
             task.spawn(doBFM1Chain); return
+        end
+        -- M1 BF (simple): the reliable path. Every real M1 CLICK presses the flash key a beat later so the M1
+        -- turns into a Black Flash — no dependence on matching a specific animation id (that's why it "did nothing"
+        -- on some characters). Cooldown-gated so a fast click-burst only fires one flash.
+        if input.UserInputType == Enum.UserInputType.MouseButton1 and Settings.BFM1 and Settings.Mode ~= "M1" then
+            if tick() - R.bfCD >= Settings.BFCooldown then
+                R.bfCD = tick()
+                task.delay(0.12, function() if Settings.BFM1 then pressBF() end end)
+            end
         end
     end)
     LocalPlayer.CharacterAdded:Connect(ReleaseAll)
@@ -9312,7 +9321,7 @@ do
     if tier("premium") then bfSec:Dropdown({ Name = "Stop After", Items = { "1", "2", "3", "4" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintBFStop(v) end end }) end
     if tier("premium") then bfSec:Dropdown({ Name = "Move After Feint", Items = { "1", "2", "3", "4" }, Default = "1", Callback = function(v) if ChainApi then ChainApi.setFeintMove(v) end end }) end
     bfSec:Toggle({ Name = "Feint Abilities", Default = false, Callback = function(b) if ChainApi and ChainApi.setFeintMoves then ChainApi.setFeintMoves(b) end end })
-    bfSec:Toggle({ Name = "Aim Assist", Default = false, Callback = function(b) if AimAssistApi then AimAssistApi.set(b) end end })
+    if tier("premium") then bfSec:Toggle({ Name = "Aim Assist", Default = false, Callback = function(b) if AimAssistApi then AimAssistApi.set(b) end end }) end
     bfSec:Toggle({ Name = "Yuta Black Flash", Default = false, Callback = function(b) if YutaBFApi then YutaBFApi.setManual(b) end end })
     bfSec:Slider({ Name = "Cooldown", Min = 0.1, Max = 1, Default = 0.45, Decimals = 0.01, Suffix = "s", Callback = function(v) if BFApi then BFApi.SetCooldown(v) end end })
     bfSec:Toggle({ Name = "Mobile BF Button", Default = false, Callback = function(b)   -- phone: floating tap button that fires the black flash for the current mode
@@ -9449,17 +9458,43 @@ do
     end
     tSec:Textbox({ Name = "Player Name", Placeholder = "Type a username here", Default = "", Flag = "VX_TargetName", Callback = function(v) if TargetApi then TargetApi.setName(v); liveInfo() end end })
     -- THE TEXTBOX CALLBACK DOESN'T FIRE on this UI lib (it only fires on Enter/focus-lost, not as you type),
-    -- so we POLL the live TextBox by its placeholder and push the value every 0.35s = info updates as you type.
+    -- so we POLL the live TextBox and push its value every 0.3s = info updates as you type. The active library
+    -- (Fluriore) does NOT carry our placeholder onto the real TextBox, so matching by placeholder found nothing
+    -- (= "info stays N/A"). Instead: match a box whose placeholder/nearby title says username/player, and if none
+    -- match, fall back to the ONLY input box in the menu (the Fluriore build has just this one).
     task.spawn(function()
         local host = (gethui and gethui()) or game:GetService("CoreGui")
         local last = nil
-        while true do
-            task.wait(0.35)
-            pcall(function()
-                local box
-                for _, g in ipairs(host:GetDescendants()) do
-                    if g:IsA("TextBox") and string.find(string.lower(g.PlaceholderText or ""), "type a username", 1, true) then box = g; break end
+        local function findBox()
+            local match, only, count = nil, nil, 0
+            for _, g in ipairs(host:GetDescendants()) do
+                if g:IsA("TextBox") then
+                    count = count + 1; only = g
+                    local ph = string.lower(g.PlaceholderText or "")
+                    if string.find(ph, "username", 1, true) or string.find(ph, "player name", 1, true) or string.find(ph, "type a name", 1, true) then
+                        return g
+                    end
+                    local par = g.Parent
+                    for _ = 1, 3 do
+                        if not par then break end
+                        for _, s in ipairs(par:GetChildren()) do
+                            if s:IsA("TextLabel") then
+                                local t = string.lower(s.Text or "")
+                                if string.find(t, "player name", 1, true) or string.find(t, "username", 1, true) then match = g end
+                            end
+                        end
+                        par = par.Parent
+                    end
                 end
+            end
+            if match then return match end
+            if count == 1 then return only end   -- Fluriore build: the ONLY input box is the target one
+            return nil
+        end
+        while true do
+            task.wait(0.3)
+            pcall(function()
+                local box = findBox()
                 if box then
                     local v = box.Text
                     if v ~= last then last = v; if TargetApi then TargetApi.setName(v); liveInfo() end end
