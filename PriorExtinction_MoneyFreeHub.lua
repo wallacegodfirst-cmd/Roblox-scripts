@@ -3202,8 +3202,22 @@ local function runFarm(enabledKey, kind, rangeKey)
 						local holder,part=nd[1],nd[2]
 						FARM.tried[holder]=tick()
 						pcall(function()
-							local cc=getMyModel(); local goal=CFrame.new(part.Position+Vector3.new(0,1.5,0))   -- SAFER: land right ON the node (was +4 = a visible high pop between every dig)
-							if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end
+							-- SAFE STEPPED TELEPORT (user: "don't jump high, it triggers the kick"): glide to the node
+							-- in small ~26-stud steps and zero velocity each frame, so no single frame moves far enough
+							-- to trip the anti-cheat, and there's no high arc/pop between digs.
+							local cc=getMyModel(); local r=hrp()
+							if r then
+								local target=part.Position+Vector3.new(0,1.5,0)
+								local start=r.Position
+								local steps=math.max(1, math.ceil((target-start).Magnitude/26))
+								for s=1,steps do
+									local rr=hrp(); if not rr then break end
+									local p=start:Lerp(target, s/steps)
+									if cc and cc.PrimaryPart then pcall(function() cc:PivotTo(CFrame.new(p)) end) else pcall(function() rr.CFrame=CFrame.new(p) end) end
+									pcall(function() rr.AssemblyLinearVelocity=Vector3.zero; rr.AssemblyAngularVelocity=Vector3.zero end)
+									task.wait()
+								end
+							end
 						end)
 						local r0=hrp(); if r0 then pcall(function() r0.AssemblyLinearVelocity=Vector3.zero; r0.AssemblyAngularVelocity=Vector3.zero end) end
 						task.wait(0.2)

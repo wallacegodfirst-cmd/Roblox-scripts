@@ -90,51 +90,8 @@ pcall(function()
     end)
 end)
 
--- ═══ DREAM CIRCLE: floating round button — CLICK IT AND THE GUI GOES AWAY (click again = back). Draggable. ═══
-task.spawn(function()
-    local Players = game:GetService("Players")
-    local VIM = game:GetService("VirtualInputManager")
-    local UIS = game:GetService("UserInputService")
-    local LP = Players.LocalPlayer
-    local g = Instance.new("ScreenGui"); g.Name = "VX_DreamCircle"; g.ResetOnSpawn = false; g.IgnoreGuiInset = true; g.DisplayOrder = 9800
-    pcall(function() g.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
-    if not g.Parent then g.Parent = LP:WaitForChild("PlayerGui") end
-    -- Dream logo icon. Set _G.JJS_DREAM_ICON = "rbxassetid://<your logo id>" before the loadstring to use your
-    -- image; otherwise it shows the "Dream" text badge. (Send me the logo id and I'll bake it in as the default.)
-    local ICON = _G.JJS_DREAM_ICON
-    local b = Instance.new("ImageButton"); b.Size = UDim2.fromOffset(46, 46); b.Position = UDim2.new(1, -64, 0, 14)
-    b.BackgroundColor3 = Color3.fromRGB(8, 8, 8); b.AutoButtonColor = true; b.Parent = g
-    b.Image = (type(ICON) == "string" and ICON) or ""
-    b.ScaleType = Enum.ScaleType.Fit
-    Instance.new("UICorner", b).CornerRadius = UDim.new(1, 0)
-    local st = Instance.new("UIStroke"); st.Color = Color3.fromRGB(255, 255, 255); st.Thickness = 1.2; st.Transparency = 0.35; st.Parent = b
-    if b.Image == "" then   -- no logo id given: show the "Dream" text badge
-        local txt = Instance.new("TextLabel"); txt.BackgroundTransparency = 1; txt.Size = UDim2.fromScale(1,1)
-        txt.Text = "Dream"; txt.TextColor3 = Color3.fromRGB(255,255,255); txt.TextSize = 11; txt.Font = Enum.Font.GothamBold; txt.Parent = b
-    end
-    -- tap = toggle the menu (fires the menu key virtually); drag = reposition
-    local dragging, dragStart, startPos, moved = false, nil, nil, false
-    b.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-            dragging = true; moved = false; dragStart = i.Position; startPos = b.Position
-        end
-    end)
-    UIS.InputChanged:Connect(function(i)
-        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
-            local d = i.Position - dragStart
-            if (math.abs(d.X) + math.abs(d.Y)) > 6 then moved = true end
-            b.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
-        end
-    end)
-    UIS.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-            if dragging and not moved then
-                pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.RightShift, false, game); task.wait(); VIM:SendKeyEvent(false, Enum.KeyCode.RightShift, false, game) end)
-            end
-            dragging = false
-        end
-    end)
-end)
+-- (Removed the duplicate VX_DreamCircle button — the GUI's own logo toggle button, which uses the Dream logo
+--  image LOGO_ID = 82151574125055, is the single one now.)
 
 -- ===================== SHARED STATE (the GUI flips these; the modules read them) =====================
 local BlockFlags = { Dash = false, M1 = false, Abilities = false, CameraFollow = true }
@@ -9319,7 +9276,8 @@ do
     -- behind approaches below. Only one of these three drives the flash key at a time.
     -- BF ENGINE = VXBF2 (reworked v13). Keybind is 3. "M1 BF (simple)" = press 3 on the BF anim.
     -- The chain modes fire when you press 3 (M1 Chain fires on your M1). Free gets M1 BF + Side/Back/Jump; premium adds Teleport + M1 Chain.
-    bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 BF (simple)", "Side Dash", "Back Dash", "Jump", "Teleport", "M1 Chain" } or { "Off", "M1 BF (simple)", "Side Dash", "Back Dash", "Jump" }), Default = "Off", Callback = function(m)
+    -- FREE gets ONLY Off + M1 BF (simple). All chain modes (Side/Back Dash, Jump, Teleport, M1 Chain) are premium.
+    bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 BF (simple)", "Side Dash", "Back Dash", "Jump", "Teleport", "M1 Chain" } or { "Off", "M1 BF (simple)" }), Default = "Off", Callback = function(m)
         m = (type(m) == "table") and m[1] or m
         if not _G.VXBF2 then return end
         if m == "Off" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false)
@@ -9331,11 +9289,10 @@ do
     bfSec:Slider({ Name = "BF Cooldown", Min = 0.1, Max = 2, Default = 0.5, Decimals = 0.05, Suffix = "s", Callback = function(v) if _G.VXBF2 then _G.VXBF2.setCooldown(v) end end })
     if tier("premium") then bfSec:Slider({ Name = "Teleport/Jump Dist", Min = 2, Max = 8, Default = 3, Decimals = 0.5, Callback = function(v) if _G.VXBF2 then _G.VXBF2.setTeleportDist(v) end end }) end
     -- FREE feint keeps only M1 + Moves(skills); premium adds Feint Black Flash
-    bfSec:Dropdown({ Name = "Auto Feint", Items = (tier("premium") and { "Off", "Feint Black Flash", "Feint M1", "Feint Moves" } or { "Off", "Feint M1", "Feint Moves" }), Default = "Off", Callback = function(v)
-        if ChainApi then ChainApi.setFeintMode(v == "Feint Black Flash" and "BF" or (v == "Feint M1" and "M1" or (v == "Feint Moves" and "Moves" or "Off"))) end
-    end })
+    -- Feint M1 as a direct TOGGLE (dropdown Callbacks are unreliable on this UI lib; toggles always fire).
+    bfSec:Toggle({ Name = "Feint M1 (R after N M1s)", Default = false, Callback = function(b) if ChainApi then ChainApi.setFeintMode(b and "M1" or "Off") end end })
+    bfSec:Dropdown({ Name = "Feint After (M1 count)", Items = { "1", "2", "3" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintM1Count(v) end end })
     if tier("premium") then bfSec:Dropdown({ Name = "Stop After", Items = { "1", "2", "3", "4" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintBFStop(v) end end }) end
-    bfSec:Dropdown({ Name = "Feint After", Items = { "1", "2", "3" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintM1Count(v) end end })
     if tier("premium") then bfSec:Dropdown({ Name = "Move After Feint", Items = { "1", "2", "3", "4" }, Default = "1", Callback = function(v) if ChainApi then ChainApi.setFeintMove(v) end end }) end
     bfSec:Toggle({ Name = "Feint Abilities", Default = false, Callback = function(b) if ChainApi and ChainApi.setFeintMoves then ChainApi.setFeintMoves(b) end end })
     bfSec:Toggle({ Name = "Aim Assist", Default = false, Callback = function(b) if AimAssistApi then AimAssistApi.set(b) end end })
