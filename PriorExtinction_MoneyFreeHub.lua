@@ -79,7 +79,7 @@ local CFG = {
 	AlwaysDamage=false, DamageRange=120, DamageRate=4, DamagePart="Auto", NoGrabLimit=false,
 }
 
-local FILE = "PriorExtinction_Config.json"
+FILE = "PriorExtinction_Config.json"
 local function saveCfg()
 	if not writefile then return end
 	pcall(function() writefile(FILE, HttpService:JSONEncode(CFG)) end)
@@ -186,7 +186,7 @@ local function clickMouse()
 end
 
 -- ═══ FOOD + FISH DATABASE ═══
-local FOOD_KEYWORDS = {
+FOOD_KEYWORDS = {
 	"corpse","carcass","rotten","meat","chunk","fish","egg","ant","food","fruit","berry","berries","plant","sapling","tree","fern",
 	"lepisosteus","gar","acipenser","onchopristis","alligator gar","anthill","termite","meganeura",
 	"blechnace","blechnaceae","gleichenia","osmunda","horsetail","dawn redwood","redwood","zingiberopsis","ditaxocladus",
@@ -201,7 +201,7 @@ local function isFoodName(n)
 	for _,k in ipairs(FOOD_KEYWORDS) do if n:find(k,1,true) then return true end end
 	return false
 end
-local FISH_KEYWORDS = { "lepisosteus","onchopristis","acipenser","concavotectum","bawitius","mawsonia","gar","sturgeon","coelacanth","sawfish","bichir" }
+FISH_KEYWORDS = { "lepisosteus","onchopristis","acipenser","concavotectum","bawitius","mawsonia","gar","sturgeon","coelacanth","sawfish","bichir" }
 local function isFishName(n)
 	n = n:lower()
 	for _,k in ipairs(FISH_KEYWORDS) do if n:find(k,1,true) then return true end end
@@ -209,7 +209,7 @@ local function isFishName(n)
 end
 
 -- ═══ SKIN DATABASE (fallback name list; live list comes from Shared.SkinData) ═══
-local SKINS = {
+SKINS = {
 	["Acrocanthosaurus"]={"Default","Mossy","Canis","Panthera","Boreal","Zombie","Arid","Leucistic","Melanistic"},
 	["Allosaurus"]={"Default","Ochre","Arid","Pharaoh","Boreal","Garden","Serpentine","Leucistic","Melanistic","Retro","Lustrous"},
 	["Arbovenator"]={"Default","Peafowl","Prismatic","Leucistic","Melanistic"},
@@ -280,7 +280,7 @@ local SKINS = {
 	["Quetzalcoatlus"]={"Default","Leucistic","Melanistic","Carved","Marovato"},
 	["Tupandactylus"]={"Default"},
 }
-local DINO_NAMES = {}
+DINO_NAMES = {}
 for k in pairs(SKINS) do DINO_NAMES[#DINO_NAMES+1]=k end
 table.sort(DINO_NAMES)
 
@@ -320,14 +320,14 @@ local function detectDino()
 end
 
 -- ═══ REPLICA ID CAPTURE (lightweight namecall hook — no hot-path allocation) ═══
-local myReplicaId = nil
-local seenIds = {}
-local seenSet = {}
+myReplicaId = nil
+seenIds = {}
+seenSet = {}
 local function noteReplicaId(id)
 	if typeof(id)=="number" and not seenSet[id] then seenSet[id]=true; seenIds[#seenIds+1]=id end
 	myReplicaId = id
 end
-local hookInstalled=false
+hookInstalled=false
 local function installHook()
 	if hookInstalled or not hookmeta then return end
 	hookInstalled=true
@@ -427,8 +427,8 @@ end
 pcall(installHook)
 
 -- ═══ REAL GAME REMOTES ═══
-local SPAWN_BRIDGE_ID = "w+\179/\215s@\135\149\210;\129\019\145lV"
-local RCACHE = {}  -- consolidated remote-instance cache (bridge / sig / sound) — one local instead of three
+SPAWN_BRIDGE_ID = "w+\179/\215s@\135\149\210;\129\019\145lV"
+RCACHE = {}  -- consolidated remote-instance cache (bridge / sig / sound) — one local instead of three
 local function getBridge()
 	if RCACHE.bridge and RCACHE.bridge.Parent then return RCACHE.bridge end
 	local bn = RS:FindFirstChild("darkestdev_bridgenet2@1.0.2") or RS:FindFirstChild("darkestdev_bridgenet2")
@@ -615,7 +615,7 @@ local function replicaAction(...) return replicaFire(...) end
 -- them every tick — the current map's id always lands, so INF Water now works on EVERY land, anywhere (no
 -- need to stand at water / capture an id first). Cretaceous Lowland 3028 / Archipelago 3251 / Jurassic 2910 /
 -- Cretaceous Upland 2195. The current land is auto-detected (see currentLand) for the debug panel.
-local WATER_IDS = { ["Cretaceous Lowland"]=3028, ["Cretaceous Archipelago"]=3251, ["Jurassic"]=2910, ["Cretaceous Upland"]=2195 }
+WATER_IDS = { ["Cretaceous Lowland"]=3028, ["Cretaceous Archipelago"]=3251, ["Jurassic"]=2910, ["Cretaceous Upland"]=2195 }
 local function fakeDrink()
 	local rs=getReplicaSignal(); if not rs then return end
 	for _,id in pairs(WATER_IDS) do pcall(function() rs:FireServer(id, "Sip") end) end  -- the map's real water id
@@ -627,7 +627,7 @@ end
 --   (dinoId,"SetAction","Consuming",true) → (sourceId,"Bite",buffer) → (dinoId,"SetAction","Consuming",false)
 --   → (dinoId,"AnimationEnded","Eat"). The source id = the land's generic id (same set as the water ids), so we
 -- fire the Bite to ALL of them every tick = works on every land. Buffer captured = "\027\206\000\000\001".
-local EAT_BUFFER = "\027\206\000\000\001"
+EAT_BUFFER = "\027\206\000\000\001"
 local function fakeEat()
 	local rs=getReplicaSignal(); if not rs then return end
 	replicaFire("SetAction","Consuming",true)              -- dino: start eating
@@ -660,7 +660,7 @@ end
 -- Bone groups so Always Damage can target a CHOSEN part (Head/Neck/Spine/Leg/Tail/Hip), or Auto (best available).
 -- Names match the REAL hit-PARTS inside model.Hitbox (the lowercase container, per the Explorer screenshots):
 -- Head, Neck/.001-.004, Spine/.001/.002, LegIK.L/R, Tail/.00x, Hip — each a BasePart at that bone's world position.
-local ATK_GROUPS = {
+ATK_GROUPS = {
 	Auto = {{g="Body",n="Spine.001"},{g="Head",n="Head"},{g="Body",n="Spine"},{g="Body",n="Spine.002"},{g="Neck",n="Neck.001"},{g="Neck",n="Neck"},{g="Body",n="Hip"},{g="Leg",n="LegIK.L"},{g="Leg",n="LegIK.R"}},
 	Head = {{g="Head",n="Head"},{g="Head",n="Jaw"},{g="Head",n="Skull"}},
 	Neck = {{g="Neck",n="Neck.001"},{g="Neck",n="Neck.002"},{g="Neck",n="Neck"},{g="Neck",n="Neck.003"},{g="Neck",n="Neck.004"}},
@@ -780,8 +780,8 @@ local function fireAttack(targetModel, skipSound, clickedPart)
 end
 
 -- ═══ SKIN CHANGER (working standalone — SurfaceAppearance swap on MeshModel) ═══
-local STAGE_SK = {"Hatchling","Juvenile","Teen","Adolescent","SubAdult","Sub-Adult","Adult","Elder","Monster"}
-local SKN = { skinData=nil, skinFolder=nil, saBack={}, busy=false }
+STAGE_SK = {"Hatchling","Juvenile","Teen","Adolescent","SubAdult","Sub-Adult","Adult","Elder","Monster"}
+SKN = { skinData=nil, skinFolder=nil, saBack={}, busy=false }
 function getMyModel()  -- assigns the forward-declared upvalue above (NOT a new local)
 	if LP.Character and LP.Character.Parent then return LP.Character end
 	local ch = WS:FindFirstChild("Characters")
@@ -935,7 +935,7 @@ local function clearStatus(numKeywords, attrKeywords)
 	end
 	scan(char()); scan(hum()); scan(LP)
 end
-local remoteCache = {}
+remoteCache = {}
 local function findRemote(keywords, class)
 	local key = table.concat(keywords,"|")..(class or "")
 	if remoteCache[key] and remoteCache[key].Parent then return remoteCache[key] end
@@ -958,7 +958,7 @@ end
 
 -- (Dead teleport helpers bypassTP/tpTo/safeMoveTo removed — freed locals.)
 -- shared farm/food state (one table instead of several chunk-level locals — Luau caps locals at 200)
-local FARM = {tried={}, nodeCache={}, food={t=0,list={}}, dig=nil, digSearched=false, lastDeepPin=0, count={fossil=0,gem=0}}
+FARM = {tried={}, nodeCache={}, food={t=0,list={}}, dig=nil, digSearched=false, lastDeepPin=0, count={fossil=0,gem=0}}
 -- The REAL targetable/hittable part the game uses is Characters[name].HitBox (user-confirmed). Prefer it
 -- for aim / hitbox-expand / ESP / farm; fall back to the steer body. Name can vary, so try a few.
 local function getHitbox(model)
@@ -978,7 +978,7 @@ end
 -- Spine/Head/etc. are BONE rigs under MeshModel>RootPart (Spine.002, Spine.001, ...), not BaseParts — search
 -- a priority list of real bone names so "Always hit Spine" actually finds a bone, else fall back to the Hitbox.
 -- Real hit-PART names inside model.Hitbox (per the screenshots).
-local AIM_BONES = {
+AIM_BONES = {
 	Spine={"Spine.001","Spine","Spine.002","Hip"},
 	Head={"Head","Neck.001","Neck","Spine.002"},
 	Neck={"Neck.001","Neck.002","Neck","Neck.003"},
@@ -1065,7 +1065,7 @@ end
 
 -- ═══ GUI FRAMEWORK (purple theme — monospace; this is the FALLBACK window if Venyx can't load) ═══
 local UIFONT = Enum.Font.GothamMedium  -- clean sans-serif (was monospace) for a cleaner look
-local ACCENTS = {
+ACCENTS = {
 	Color3.fromRGB(46,196,110), Color3.fromRGB(40,170,230), Color3.fromRGB(120,200,60),
 	Color3.fromRGB(235,185,40), Color3.fromRGB(140,110,240), Color3.fromRGB(240,110,90),
 }
@@ -1087,25 +1087,25 @@ MS("2 helpers ok - building window")
 -- Built-in window starts HIDDEN so it never flashes before Fluent loads; shown only if Fluent fails (fallback).
 SG = C("ScreenGui",{Name="MoneyHubPE", Enabled=false, ResetOnSpawn=false, ZIndexBehavior=Enum.ZIndexBehavior.Sibling, IgnoreGuiInset=true})
 safeParentGui(SG)
-local Shd = C("Frame",{Parent=SG, Size=UDim2.fromOffset(664,454), Position=UDim2.new(0.5,-332,0.5,-227), BackgroundColor3=Color3.new(0,0,0), BackgroundTransparency=0.45, BorderSizePixel=0}); corner(Shd,4)
+Shd = C("Frame",{Parent=SG, Size=UDim2.fromOffset(664,454), Position=UDim2.new(0.5,-332,0.5,-227), BackgroundColor3=Color3.new(0,0,0), BackgroundTransparency=0.45, BorderSizePixel=0}); corner(Shd,4)
 local MF = C("Frame",{Parent=SG, Size=UDim2.fromOffset(650,440), Position=UDim2.new(0.5,-325,0.5,-220), BackgroundColor3=T.Main, BorderSizePixel=0, ClipsDescendants=true}); corner(MF,3); stroke(MF,T.Stroke,1)
 C("UIScale",{Parent=MF, Scale=tonumber(CFG.UIScale) or 1})  -- scale up for crisp HiDPI / 4K (Settings > UI Scale)
-local TB = C("Frame",{Parent=MF, Size=UDim2.new(1,0,0,46), BackgroundColor3=T.Top, BorderSizePixel=0})
-local accentBar = C("Frame",{Parent=TB, Size=UDim2.new(1,0,0,2), Position=UDim2.new(0,0,1,-2), BackgroundColor3=T.Accent, BorderSizePixel=0})
+TB = C("Frame",{Parent=MF, Size=UDim2.new(1,0,0,46), BackgroundColor3=T.Top, BorderSizePixel=0})
+accentBar = C("Frame",{Parent=TB, Size=UDim2.new(1,0,0,2), Position=UDim2.new(0,0,1,-2), BackgroundColor3=T.Accent, BorderSizePixel=0})
 C("TextLabel",{Parent=TB, Position=UDim2.fromOffset(16,0), Size=UDim2.new(0,170,1,0), BackgroundTransparency=1, Text="Dream Hub", TextColor3=T.Text, TextSize=14, Font=UIFONT, TextXAlignment=Enum.TextXAlignment.Left})
 C("TextLabel",{Parent=TB, Position=UDim2.fromOffset(160,0), Size=UDim2.new(0,170,1,0), BackgroundTransparency=1, Text="| Prior Extinction", TextColor3=T.Accent, TextSize=11, Font=UIFONT, TextXAlignment=Enum.TextXAlignment.Left})
-local chf = C("Frame",{Parent=TB, Size=UDim2.fromOffset(64,28), Position=UDim2.new(1,-74,0.5,-14), BackgroundTransparency=1}); lay(chf,4,Enum.FillDirection.Horizontal)
-local minBtn = C("TextButton",{Parent=chf, Size=UDim2.fromOffset(28,28), BackgroundColor3=T.Panel2, Text="-", TextColor3=T.Sub, TextSize=16, Font=UIFONT, AutoButtonColor=false, BorderSizePixel=0, LayoutOrder=1}); corner(minBtn,3); stroke(minBtn,T.Stroke,1)
-local closeBtn = C("TextButton",{Parent=chf, Size=UDim2.fromOffset(28,28), BackgroundColor3=T.Panel2, Text="X", TextColor3=T.Accent, TextSize=12, Font=UIFONT, AutoButtonColor=false, BorderSizePixel=0, LayoutOrder=2}); corner(closeBtn,3); stroke(closeBtn,T.Stroke,1)
+chf = C("Frame",{Parent=TB, Size=UDim2.fromOffset(64,28), Position=UDim2.new(1,-74,0.5,-14), BackgroundTransparency=1}); lay(chf,4,Enum.FillDirection.Horizontal)
+minBtn = C("TextButton",{Parent=chf, Size=UDim2.fromOffset(28,28), BackgroundColor3=T.Panel2, Text="-", TextColor3=T.Sub, TextSize=16, Font=UIFONT, AutoButtonColor=false, BorderSizePixel=0, LayoutOrder=1}); corner(minBtn,3); stroke(minBtn,T.Stroke,1)
+closeBtn = C("TextButton",{Parent=chf, Size=UDim2.fromOffset(28,28), BackgroundColor3=T.Panel2, Text="X", TextColor3=T.Accent, TextSize=12, Font=UIFONT, AutoButtonColor=false, BorderSizePixel=0, LayoutOrder=2}); corner(closeBtn,3); stroke(closeBtn,T.Stroke,1)
 closeBtn.MouseButton1Click:Connect(function() SG.Enabled=false end)
-local Ftr = C("Frame",{Parent=MF, Position=UDim2.new(0,0,1,-20), Size=UDim2.new(1,0,0,20), BackgroundColor3=T.Top, BorderSizePixel=0})
+Ftr = C("Frame",{Parent=MF, Position=UDim2.new(0,0,1,-20), Size=UDim2.new(1,0,0,20), BackgroundColor3=T.Top, BorderSizePixel=0})
 C("Frame",{Parent=Ftr, Size=UDim2.new(1,0,0,1), BackgroundColor3=T.DarkRed, BorderSizePixel=0})
 C("TextLabel",{Parent=Ftr, Size=UDim2.fromScale(1,1), BackgroundTransparency=1, Text="Dream Hub · Prior Extinction · RightShift to toggle", TextColor3=T.Muted, TextSize=10, Font=UIFONT, TextXAlignment=Enum.TextXAlignment.Center})
-local Bod = C("Frame",{Parent=MF, Position=UDim2.fromOffset(0,46), Size=UDim2.new(1,0,1,-66), BackgroundTransparency=1})
-local Side = C("Frame",{Parent=Bod, Size=UDim2.new(0,158,1,0), BackgroundColor3=T.Top, BorderSizePixel=0})
+Bod = C("Frame",{Parent=MF, Position=UDim2.fromOffset(0,46), Size=UDim2.new(1,0,1,-66), BackgroundTransparency=1})
+Side = C("Frame",{Parent=Bod, Size=UDim2.new(0,158,1,0), BackgroundColor3=T.Top, BorderSizePixel=0})
 C("Frame",{Parent=Bod, Size=UDim2.new(0,1,1,0), Position=UDim2.fromOffset(158,0), BackgroundColor3=T.DarkRed, BorderSizePixel=0})
 local SideList = C("ScrollingFrame",{Parent=Side, Size=UDim2.new(1,0,1,-46), BackgroundTransparency=1, BorderSizePixel=0, ScrollBarThickness=3, CanvasSize=UDim2.new(), AutomaticCanvasSize=Enum.AutomaticSize.Y, ScrollBarImageColor3=T.Accent}); pad(SideList,8,6,8,4); lay(SideList,3)
-local PB = C("Frame",{Parent=Side, Size=UDim2.new(1,0,0,46), Position=UDim2.new(0,0,1,-46), BackgroundColor3=T.Top, BorderSizePixel=0})
+PB = C("Frame",{Parent=Side, Size=UDim2.new(1,0,0,46), Position=UDim2.new(0,0,1,-46), BackgroundColor3=T.Top, BorderSizePixel=0})
 C("Frame",{Parent=PB, Size=UDim2.new(1,0,0,1), BackgroundColor3=T.DarkRed, BorderSizePixel=0})
 do local img=C("ImageLabel",{Parent=PB, Position=UDim2.fromOffset(10,12), Size=UDim2.fromOffset(22,22), BackgroundColor3=T.Panel3, BorderSizePixel=0, Image=""}); corner(img,999); task.spawn(function() local ok,u=pcall(function() return Players:GetUserThumbnailAsync(LP.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48) end); if ok and u then img.Image=u end end) end  -- async: the thumbnail web call must NOT block the load thread
 C("TextLabel",{Parent=PB, Position=UDim2.fromOffset(38,0), Size=UDim2.new(1,-44,1,0), BackgroundTransparency=1, Text=(LP.DisplayName~="" and LP.DisplayName or LP.Name), TextColor3=T.Text, TextSize=11, Font=UIFONT, TextXAlignment=Enum.TextXAlignment.Left})
@@ -1130,7 +1130,7 @@ clampWindow = function()
 		MF.Position=UDim2.fromOffset(nx,ny); Shd.Position=UDim2.fromOffset(nx-7,ny-7)
 	end)
 end
-local minimized=false
+minimized=false
 minBtn.MouseButton1Click:Connect(function() minimized=not minimized; Bod.Visible=not minimized; Ftr.Visible=not minimized; Shd.Visible=not minimized; accentBar.Visible=not minimized; MF.Size=minimized and UDim2.fromOffset(650,46) or UDim2.fromOffset(650,440) end)
 
 local Pages, Tabs = {}, {}
@@ -1162,7 +1162,7 @@ local function mkTab(name, order)
 end
 
 -- ═══ WIDGETS ═══
-local toggleRefs = {}
+toggleRefs = {}
 local function mkSec(par, title, order)
 	local sec = C("Frame",{Parent=par, Size=UDim2.new(1,0,0,34), BackgroundColor3=T.Panel, BorderSizePixel=0, AutomaticSize=Enum.AutomaticSize.Y, LayoutOrder=order or 0}); corner(sec,4); stroke(sec,T.Stroke,1)
 	C("TextLabel",{Parent=sec, Size=UDim2.new(1,-24,0,16), Position=UDim2.fromOffset(12,8), BackgroundTransparency=1, Text=title, TextColor3=T.Accent, TextSize=12, Font=UIFONT, TextXAlignment=Enum.TextXAlignment.Left})
@@ -1247,8 +1247,8 @@ local function mkDropdown(par, label, getOptions, getSelected, onSelect, ord)
 	head.MouseButton1Click:Connect(function() open=not open; listBox.Visible=open; if open then rebuild() end end)
 	return {refresh=function() head.Text=(getSelected() or "-").."   v"; if open then rebuild() end end}
 end
-local capturing=nil
-local bindGuard=0
+capturing=nil
+bindGuard=0
 local function keyName(k) return CFG.Keybinds[k] or "None" end
 local function mkKeybind(par, txt, key, ord)
 	local row = C("Frame",{Parent=par, Size=UDim2.new(1,0,0,26), BackgroundTransparency=1, LayoutOrder=ord or 0})
@@ -1293,14 +1293,14 @@ local function detectDinoModel(model)
 	return nil
 end
 -- Deep stat pinner: walks the WHOLE CharacterState replica and forces matching numeric stats to max.
-local STAT_GROUPS = {
+STAT_GROUPS = {
 	{cfg="InfFood",   keys={"food","hunger","nutri","fullness","satiat","satiet"}},
 	{cfg="InfWater",  keys={"water","thirst","hydrat","drink","liquid"}},
 	{cfg="InfStam",   keys={"stamina","stam","energy","endur"}},
 	{cfg="InfOxygen", keys={"oxygen","air","breath","o2","lung"}},
 }
 -- Drain meters that go UP as you suffer — when their feature is on, force them to ZERO, never max.
-local STAT_ZERO = {
+STAT_ZERO = {
 	{cfg="InfStam",   keys={"exhaust","fatigue","tired"}},
 	{cfg="InfFood",   keys={"starv","hungry"}},
 	{cfg="InfWater",  keys={"dehydr","thirsty"}},
@@ -1363,8 +1363,8 @@ local Fluent, FWindow, USE_FLUENT = nil, nil, false
 -- "succeed" (no error) yet draw NOTHING (acrylic blur / gethui quirks) — that's the "successfully loaded, no UI"
 -- report. We snapshot the GUI host before/after; if Fluent added no ScreenGui we treat it as failed and use the
 -- fully self-contained built-in window (which always renders). Acrylic is OFF for the same reason.
-local _guiHost = (typeof(gethui)=="function" and gethui()) or CoreGui
-local _before = {}
+_guiHost = (typeof(gethui)=="function" and gethui()) or CoreGui
+_before = {}
 pcall(function() for _,g in ipairs(_guiHost:GetChildren()) do _before[g]=true end end)
 pcall(function() for _,g in ipairs(CoreGui:GetChildren()) do _before[g]=true end end)
 MS("3 window built - loading menu lib")
@@ -1684,7 +1684,7 @@ do local p=Pages["Settings"]
 	if _G.PE_HIDE_LITE then local kept={} for _,kb in ipairs(binds) do if kb[2]~="InfFood" then kept[#kept+1]=kb end end binds=kept end   -- hide the INF Food keybind row in the no-lite build
 	for i,kb in ipairs(binds) do mkKeybind(k, kb[1], kb[2], i) end
 end
-local HUD={}  -- debug-panel status refs (one table instead of 4 locals — Luau 200-local-cap mgmt)
+HUD={}  -- debug-panel status refs (one table instead of 4 locals — Luau 200-local-cap mgmt)
 do local p=Pages["Info"]
 	local _,s=mkSec(p,"Status",1)
 	HUD.hp=mkStatus(s,"Health",1); HUD.stat=mkStatus(s,"State",2); HUD.dino=mkStatus(s,"Dino",3); HUD.pos=mkStatus(s,"Position",4)
@@ -2014,8 +2014,8 @@ do local bpSaved={}
 		end
 	end end)
 end
-local FLY={}  -- bv/bg/conn (one table instead of 3 locals — Luau 200-local-cap mgmt)
-local MB={up=false, down=false}  -- mobile fly up/down state, set by the on-screen touch buttons
+FLY={}  -- bv/bg/conn (one table instead of 3 locals — Luau 200-local-cap mgmt)
+MB={up=false, down=false}  -- mobile fly up/down state, set by the on-screen touch buttons
 local function stopFly() if FLY.conn then FLY.conn:Disconnect(); FLY.conn=nil end if FLY.bv then FLY.bv:Destroy(); FLY.bv=nil end if FLY.bg then FLY.bg:Destroy(); FLY.bg=nil end local h=hum(); if h then pcall(function() h.PlatformStand=false end) end end
 local function startFly()
 	local r=hrp(); if not r then return end
@@ -2249,11 +2249,11 @@ end
 -- INF Food's eat then consumes it. Only meat is matched (never plants), and it only moves you when hunger isn't full.
 do   -- SCOPED (Luau 200-local cap): meat helpers + the Carnivore Meat TP loop live here, so their 5 locals don't
      -- persist in the main chunk. nearestMeat is exposed via __gg so the Auto Play Bot (its own do-block) can reuse it.
-local MEAT_KW = {"corpse","carcass","carrion","meat","chunk","rotten","flesh","remains","dead","fish","gar","sturgeon","bichir","coelacanth","mawsonia","sawfish","egg","grub","larva","insect","ant"}
+MEAT_KW = {"corpse","carcass","carrion","meat","chunk","rotten","flesh","remains","dead","fish","gar","sturgeon","bichir","coelacanth","mawsonia","sawfish","egg","grub","larva","insect","ant"}
 local function isMeatName(n) n=(n or ""):lower(); for _,k in ipairs(MEAT_KW) do if n:find(k,1,true) then return true end end return false end
 -- PLANT EXCLUDER (AI-analysis point the user sent): plants ALSO have eat/consume prompts, so the prompt fallback
 -- was teleporting carnivores to plants. Any model whose name matches these is NEVER meat-TP eligible.
-local PLANT_KW = {"plant","sapling","tree","fern","berry","berries","pine","needle","leaf","leaves","frond","conifer","cycad","mushroom","fungus","grass","moss","bush","shrub","flower","seed","cone","horsetail","redwood","ginkgo","gingko","sequoia","equisetum","woodwardia","blechnace","gleichenia","osmunda","zingiberopsis","dicksonia","williamsonia","weichselia","ptilophyllum","pachypteris","matonidium","cycadeoidea","elatides","dryophyllum","paleoaster","sabalite","marmarthia","coniopteris","wielandiella","hermanophyton"}
+PLANT_KW = {"plant","sapling","tree","fern","berry","berries","pine","needle","leaf","leaves","frond","conifer","cycad","mushroom","fungus","grass","moss","bush","shrub","flower","seed","cone","horsetail","redwood","ginkgo","gingko","sequoia","equisetum","woodwardia","blechnace","gleichenia","osmunda","zingiberopsis","dicksonia","williamsonia","weichselia","ptilophyllum","pachypteris","matonidium","cycadeoidea","elatides","dryophyllum","paleoaster","sabalite","marmarthia","coniopteris","wielandiella","hermanophyton"}
 local function isPlantName(n) n=(n or ""):lower(); for _,k in ipairs(PLANT_KW) do if n:find(k,1,true) then return true end end return false end
 -- RED MESHY MEAT DETECTOR (from the screenshot): PE meat chunks are small RED MeshParts/meshed Parts lying on the
 -- ground. Detect by COLOR (red clearly dominates green+blue), a mesh (MeshPart or SpecialMesh child), and a chunk-
@@ -2411,7 +2411,7 @@ local function nearestMeat(range)
 	return best,bpart,bd
 end
 __gg.MH_nearestMeat = nearestMeat   -- expose so the Auto Play Bot (separate do-block) can reuse it without a 2nd top-level local
-local carnSpawnT=tick()   -- SPAWN GRACE: never teleport in the first seconds after load/respawn.
+carnSpawnT=tick()   -- SPAWN GRACE: never teleport in the first seconds after load/respawn.
 pcall(function() LP.CharacterAdded:Connect(function() carnSpawnT=tick() end) end)
 -- ═══ CORPSE TELEPORT — cycle EVERY corpse across the WHOLE map + YES/NO confirm + teleport back ═══
 local corpseList, corpseIdx, carnOrigin, carnBusy = {}, 0, nil, false
@@ -2477,15 +2477,15 @@ local function collectCorpses()
 	return out
 end
 -- YES/NO confirmation popup
-local carnGui=Instance.new("ScreenGui"); carnGui.Name="MH_CorpseTP"; carnGui.ResetOnSpawn=false; carnGui.Enabled=false; carnGui.IgnoreGuiInset=true; carnGui.DisplayOrder=9998
+carnGui=Instance.new("ScreenGui"); carnGui.Name="MH_CorpseTP"; carnGui.ResetOnSpawn=false; carnGui.Enabled=false; carnGui.IgnoreGuiInset=true; carnGui.DisplayOrder=9998
 safeParentGui(carnGui)
-local carnFrame=Instance.new("Frame"); carnFrame.Size=UDim2.fromOffset(330,100); carnFrame.Position=UDim2.new(0.5,-165,0,80); carnFrame.BackgroundColor3=Color3.fromRGB(22,24,28); carnFrame.BorderSizePixel=0; carnFrame.Parent=carnGui
+carnFrame=Instance.new("Frame"); carnFrame.Size=UDim2.fromOffset(330,100); carnFrame.Position=UDim2.new(0.5,-165,0,80); carnFrame.BackgroundColor3=Color3.fromRGB(22,24,28); carnFrame.BorderSizePixel=0; carnFrame.Parent=carnGui
 Instance.new("UICorner",carnFrame).CornerRadius=UDim.new(0,8)
-local carnStroke=Instance.new("UIStroke"); carnStroke.Color=Color3.fromRGB(235,90,90); carnStroke.Thickness=1.5; carnStroke.Parent=carnFrame
-local carnLabel=Instance.new("TextLabel"); carnLabel.Size=UDim2.new(1,-16,0,46); carnLabel.Position=UDim2.fromOffset(8,6); carnLabel.BackgroundTransparency=1; carnLabel.Text="Did it teleport you to a corpse?"; carnLabel.TextColor3=Color3.new(1,1,1); carnLabel.TextSize=14; carnLabel.Font=Enum.Font.GothamMedium; carnLabel.TextWrapped=true; carnLabel.Parent=carnFrame
-local yesBtn=Instance.new("TextButton"); yesBtn.Size=UDim2.new(0.5,-12,0,34); yesBtn.Position=UDim2.fromOffset(8,58); yesBtn.BackgroundColor3=Color3.fromRGB(46,165,92); yesBtn.Text="YES - stay"; yesBtn.TextColor3=Color3.new(1,1,1); yesBtn.TextSize=13; yesBtn.Font=Enum.Font.GothamBold; yesBtn.BorderSizePixel=0; yesBtn.AutoButtonColor=true; yesBtn.Parent=carnFrame
+carnStroke=Instance.new("UIStroke"); carnStroke.Color=Color3.fromRGB(235,90,90); carnStroke.Thickness=1.5; carnStroke.Parent=carnFrame
+carnLabel=Instance.new("TextLabel"); carnLabel.Size=UDim2.new(1,-16,0,46); carnLabel.Position=UDim2.fromOffset(8,6); carnLabel.BackgroundTransparency=1; carnLabel.Text="Did it teleport you to a corpse?"; carnLabel.TextColor3=Color3.new(1,1,1); carnLabel.TextSize=14; carnLabel.Font=Enum.Font.GothamMedium; carnLabel.TextWrapped=true; carnLabel.Parent=carnFrame
+yesBtn=Instance.new("TextButton"); yesBtn.Size=UDim2.new(0.5,-12,0,34); yesBtn.Position=UDim2.fromOffset(8,58); yesBtn.BackgroundColor3=Color3.fromRGB(46,165,92); yesBtn.Text="YES - stay"; yesBtn.TextColor3=Color3.new(1,1,1); yesBtn.TextSize=13; yesBtn.Font=Enum.Font.GothamBold; yesBtn.BorderSizePixel=0; yesBtn.AutoButtonColor=true; yesBtn.Parent=carnFrame
 Instance.new("UICorner",yesBtn).CornerRadius=UDim.new(0,6)
-local noBtn=Instance.new("TextButton"); noBtn.Size=UDim2.new(0.5,-12,0,34); noBtn.Position=UDim2.new(0.5,4,0,58); noBtn.BackgroundColor3=Color3.fromRGB(205,72,72); noBtn.Text="NO - next corpse"; noBtn.TextColor3=Color3.new(1,1,1); noBtn.TextSize=13; noBtn.Font=Enum.Font.GothamBold; noBtn.BorderSizePixel=0; noBtn.AutoButtonColor=true; noBtn.Parent=carnFrame
+noBtn=Instance.new("TextButton"); noBtn.Size=UDim2.new(0.5,-12,0,34); noBtn.Position=UDim2.new(0.5,4,0,58); noBtn.BackgroundColor3=Color3.fromRGB(205,72,72); noBtn.Text="NO - next corpse"; noBtn.TextColor3=Color3.new(1,1,1); noBtn.TextSize=13; noBtn.Font=Enum.Font.GothamBold; noBtn.BorderSizePixel=0; noBtn.AutoButtonColor=true; noBtn.Parent=carnFrame
 Instance.new("UICorner",noBtn).CornerRadius=UDim.new(0,6)
 -- teleport onto a corpse part (noclip + hold so it can't rubber-band; eat prompt fired)
 local function tpToCorpse(part)
@@ -2773,7 +2773,7 @@ end end)
 -- keeps re-applying. Also pins TimeOfDay to noon so the game can't tick it back to dawn/dusk.
 task.spawn(function() while RUNNING do task.wait(0.1); if CFG.NightVision then pcall(function() Lighting.ClockTime=14; Lighting.TimeOfDay="14:00:00"; Lighting.Brightness=math.max(Lighting.Brightness,2); Lighting.Ambient=Color3.fromRGB(140,140,140); Lighting.OutdoorAmbient=Color3.fromRGB(170,170,170); for _,e in ipairs(Lighting:GetChildren()) do if e:IsA("ColorCorrectionEffect") and e.Name~="MH_FB" then e.Brightness=math.max(e.Brightness,0); e.Saturation=math.max(e.Saturation,-0.3) elseif e:IsA("Atmosphere") then e.Density=math.min(e.Density,0.2); e.Haze=0 elseif e:IsA("BlurEffect") then e.Enabled=false end end end) end end end)
 task.spawn(function() while RUNNING do task.wait(0.4) if CFG.InfLight and char() then local found=false; for _,l in ipairs(char():GetDescendants()) do if l:IsA("PointLight") or l:IsA("SpotLight") or l:IsA("SurfaceLight") then found=true; pcall(function() l.Range=60; l.Brightness=8; l.Enabled=true end) end end if not found then local r=hrp(); if r and not r:FindFirstChild("MH_Light") then local pl=Instance.new("PointLight"); pl.Name="MH_Light"; pl.Range=60; pl.Brightness=8; pl.Parent=r end end end end end)
-local SAVED = {light=nil, fbCC=nil, zoom=nil, water=nil}  -- consolidated saved-state (was 4 separate locals)
+SAVED = {light=nil, fbCC=nil, zoom=nil, water=nil}  -- consolidated saved-state (was 4 separate locals)
 conn(RunService.Heartbeat:Connect(function() pcall(function()
 	if CFG.FullBright then
 		if not SAVED.light then SAVED.light={Lighting.Brightness,Lighting.ClockTime,Lighting.FogEnd,Lighting.GlobalShadows,Lighting.Ambient,Lighting.OutdoorAmbient,Lighting.ExposureCompensation} end
@@ -2866,7 +2866,7 @@ conn(UIS.InputBegan:Connect(function(input, gp)
 end)) end
 task.spawn(function() while RUNNING do task.wait(0.5); local terrain=WS:FindFirstChildOfClass("Terrain"); if CFG.WaterClear and terrain then if not SAVED.water then SAVED.water={terrain.WaterTransparency,terrain.WaterReflectance,terrain.WaterWaveSize} end pcall(function() terrain.WaterTransparency=0.92; terrain.WaterReflectance=0; terrain.WaterWaveSize=0 end) elseif SAVED.water and terrain then pcall(function() terrain.WaterTransparency=SAVED.water[1]; terrain.WaterReflectance=SAVED.water[2]; terrain.WaterWaveSize=SAVED.water[3] end); SAVED.water=nil end end end)
 task.spawn(function() while RUNNING do task.wait(1) if CFG.NoClouds then pcall(function() local t=WS:FindFirstChildOfClass("Terrain"); local cl=t and t:FindFirstChildOfClass("Clouds"); if cl then cl.Cover=0; cl.Density=0; cl.Enabled=false end end) for _,e in ipairs(Lighting:GetDescendants()) do if e.ClassName=="Clouds" then pcall(function() e.Enabled=false end) end end end end end)
-local saving=false
+saving=false
 -- Save Dino: reads HP from the Humanoid (the HUD does too, so it's reliable) AND the replica Stats. When HP% drops
 -- below the threshold it does a heal/anti-death burst — NO TELEPORT. Pins health + clears EVERY injury (bleed/
 -- fracture/broken bone — the real HP drains) + fires any heal remote. (Health is server-side; stopping the drain
@@ -2899,7 +2899,7 @@ task.spawn(function() while RUNNING do if CFG.AutoClean and alive() then pcall(f
 
 -- HITBOX EXPANDER (enemy creatures + players ONLY — same targeting as the proven standalone test build:
 -- workspace.Characters children, skip YOUR model, both "HitBox"/"Hitbox" spellings, same property set)
-local hbTouched={}
+hbTouched={}
 -- EXACT working-build property set (CanTouch=false, CanQuery=true, CanCollide=false, Massless=true). This is the
 -- combo that actually lands hits. We expand EVERY BasePart inside the enemy's Hitbox/HitBox container (the per-bone
 -- parts), filtered by the chosen bone (All/Head/Neck/Arm/Leg/Body). NEVER touches your own model.
@@ -3100,8 +3100,8 @@ end end)
 --   MineralBase (BasePart) + GemstonePrompt (ProximityPrompt). Fossils similar (SpawnedFossils > ... > FossilS).
 -- keyword sets. CONTAINER match is kept TIGHT so we never grab dino/bone folders; the last-resort prompt
 -- scan can be a little broader because it also inspects the prompt itself.
-local FARM_CKW = { fossil = {"fossil"}, gem = {"gem","mineral","gemstone","crystal"} }
-local FARM_PKW = { fossil = {"fossil","excavat","dig","unearth"}, gem = {"gem","mineral","gemstone","crystal","topaz","quartz","ruby","emerald","amethyst","sapphire","diamond","harvest","mine"} }
+FARM_CKW = { fossil = {"fossil"}, gem = {"gem","mineral","gemstone","crystal"} }
+FARM_PKW = { fossil = {"fossil","excavat","dig","unearth"}, gem = {"gem","mineral","gemstone","crystal","topaz","quartz","ruby","emerald","amethyst","sapphire","diamond","harvest","mine"} }
 local function kwHit(name, list) if not name then return false end name=name:lower(); for _,k in ipairs(list) do if name:find(k,1,true) then return true end end return false end
 local function farmContainers(kind)
 	local cs={}
@@ -3283,7 +3283,7 @@ runFarm("AutoFarmGem","gem","GemRange")
 -- with stuck detection (jump + re-path when wedged) and water/void avoidance via the existing guards.
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════════════
 do   -- scoped block: the bot's locals live only here (keeps the chunk under Luau's 200-local register cap)
-local BOT = {
+BOT = {
 	state="idle",        -- current state name (for the announcer + HUD)
 	home=nil,            -- Vector3 home position, captured when the bot turns on
 	goal=nil,            -- Vector3 current movement goal (nil = stand still)
@@ -3334,7 +3334,7 @@ local function dinoDataController()   -- Knit DataController -> DinosaursData (s
 	return _botDataCtrl
 end
 -- classify ANOTHER species' diet from the game's own DinosaurData (cached). Unknown = assumed dangerous.
-local _spDietCache = {}
+_spDietCache = {}
 local function speciesDiet(species)
 	if not species then return nil end
 	if _spDietCache[species]~=nil then return _spDietCache[species] or nil end
@@ -4099,6 +4099,8 @@ end end)
 -- ═══ REMOVE TREES (FPS BOOST) ═══ Trees are the map's heaviest meshes. We UNPARENT (not destroy) every
 -- decorative tree so toggling off restores them. CRITICAL: in this game herbivores EAT trees/plants via
 -- ProximityPrompts — anything containing a prompt is FOOD and is always kept. Terrain grass is disabled too.
+-- (Wrapped in a do-block so its locals free at the end = they don't count toward the main-chunk 200-register cap.)
+do
 local TREES = {removed={}, conn=nil, decor=nil, kw={"tree","palm","pine","oak","birch","spruce","redwood","sequoia","conifer","cycad","ginkgo","gingko","willow","cedar","araucaria","acacia","leaves","leaf","branch","trunk","stump"}}
 local function isTreeName(n) n=string.lower(n); for _,k in ipairs(TREES.kw) do if n:find(k,1,true) then return true end end return false end
 local function treeRemovable(inst)
@@ -4147,10 +4149,13 @@ local function setTrees(on)
 	end
 end
 task.spawn(function() local last=false; while RUNNING do task.wait(0.2); if CFG.RemoveTrees~=last then last=CFG.RemoveTrees; setTrees(last) end end end)
+end   -- end Remove Trees do-block
 
 -- ═══ MINIMAP RADAR ═══ Rotating radar (up = where your camera faces). Red dots = other players' dinos —
 -- clamped to the edge when beyond zoom, so you ALWAYS see their direction no matter how far. White ✕ = the
 -- spot you last died at (RadarDeath). Zoom slider = how many studs the circle spans.
+-- (do-block: its locals free at the end so they don't count toward the main-chunk 200-register cap.)
+do
 local RADAR = {gui=nil, frame=nil, dots={}, deathDot=nil, lastPos=nil, hadChar=false, deathPos=nil}
 local function radarBuild()
 	if RADAR.gui and RADAR.gui.Parent then return end
@@ -4221,6 +4226,8 @@ task.spawn(function()
 		end)
 	end
 end)
+
+end   -- end Minimap Radar do-block
 
 -- HUD STATUS
 task.spawn(function() while RUNNING do task.wait(0.4); pcall(function() local us=MF:FindFirstChildOfClass("UIScale"); if us then us.Scale=math.clamp(tonumber(CFG.UIScale) or 1,0.5,3) end end) end end)
