@@ -907,6 +907,7 @@ do
 				lastM1Feint = tick(); m1FeintCount = m1FeintCount + 1
 				if m1FeintCount >= feintM1Count then
 					m1FeintCount = 0
+					if VX_NOTIFY then VX_NOTIFY("Feint M1 -> R", true) end   -- visible proof the trigger fired
 					task.delay(0.18, function() pressR() end)   -- let the M1 come out, then R = the feint
 				end
 			end
@@ -1364,6 +1365,9 @@ do
 			local f = workspace:FindFirstChild(nm)
 			if f and #f:GetChildren() > 0 then _itemsF = f; return f end
 		end
+		-- JJS: throwable items (Trash / TNT / etc) live under workspace.Destructible.Throwable
+		local d = workspace:FindFirstChild("Destructible"); local t = d and d:FindFirstChild("Throwable")
+		if t and #t:GetChildren() > 0 then _itemsF = t; return t end
 		return workspace:FindFirstChild("Items")
 	end
 	local function itemPart(m)
@@ -1554,7 +1558,11 @@ do
                 if tr and tr.Parent then
                     vxTeleportHard(tr.Position - (tr.CFrame.LookVector * 4) + Vector3.new(0, 0.5, 0), 0.5)
                     faceTo(tr.Position)
-                    pcall(function() VIM:SendMouseButtonEvent(0, 0, 0, true, game, 0); task.wait(0.04); VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0) end)
+                    pcall(function()
+                        local cam = workspace.CurrentCamera; local vp = (cam and cam.ViewportSize) or Vector2.new(1280, 720)
+                        local cx, cy = vp.X / 2, vp.Y / 2   -- click SCREEN CENTER (0,0 was hitting the GUI corner = no M1)
+                        VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.04); VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+                    end)
                     task.wait(0.28)
                 else task.wait(0.4) end
             else task.wait(0.25) end
@@ -1602,6 +1610,7 @@ do
         while true do
             task.wait(0.5)
             pcall(function()
+                if not _G.VX_TARGET_CARD then if card.gui then card.gui.Enabled = false end return end   -- info lives INSIDE the GUI now; _G.VX_TARGET_CARD=true re-enables the floating card
                 if targetName == "" then if card.gui then card.gui.Enabled = false end return end
                 local plr, mdl = resolve()
                 if not plr then if card.gui then card.gui.Enabled = false end return end
@@ -1698,7 +1707,22 @@ do
         local x, y = ap.X + sz.X / 2, ap.Y + sz.Y / 2
         pcall(function() VIM:SendMouseButtonEvent(x, y, 0, true, game, 0); task.wait(0.03); VIM:SendMouseButtonEvent(x, y, 0, false, game, 0) end)
     end
+    -- THE REAL ANSWER REMOTE (user capture): workspace.Domains.Domain.UnreliableRemoteEvent:FireServer(n)
+    -- Confess = 3, Silence = 2, Denial = 1. Keys/clicks are only the backup now.
+    local ANSWER_NUM = { confess = 3, silence = 2, denial = 1 }
+    local function fireAnswer(word)
+        local n = ANSWER_NUM[word]; if not n then return false end
+        local ok = false
+        pcall(function()
+            local doms = workspace:FindFirstChild("Domains")
+            local dom = doms and doms:FindFirstChild("Domain")
+            local re = dom and dom:FindFirstChild("UnreliableRemoteEvent")
+            if re then re:FireServer(n); ok = true end
+        end)
+        return ok
+    end
     local function pressAnswer(word)
+        if fireAnswer(word) then return end   -- remote answered: done (the reliable path)
         local kc = KEYMAP[word]; if not kc then return end
         pcall(function() VIM:SendKeyEvent(true, kc, false, game); task.wait(0.06); VIM:SendKeyEvent(false, kc, false, game) end)
     end
@@ -3528,29 +3552,40 @@ do
 
 	MahoTpApi   = { set = function(v) mahoOn = v == true end }
 	AutoQuakeApi = { set = function(v) quakeOn = v == true end }
-	-- EARTHQUAKE = PURE SKILL (user): the move only fires when 3 is HELD ~3s then released. With Auto
-	-- Earthquake ON, a quick TAP of 3 converts into our own held 3 for 3s + release = the full charged quake.
+	-- EARTHQUAKE = PURE SKILL (user): the move only fires when 3 is HELD ~3s then released. The old version
+	-- injected a second press while your real 3 was still down = the game saw your quick release and cancelled.
+	-- Now we SINK your real 3 (ContextActionService, top priority) so the game never sees the tap, and replace
+	-- it with OUR key held a full 3s + release = the charged quake, every time.
 	do
 		local VIMq = game:GetService("VirtualInputManager")
-		local UISq = game:GetService("UserInputService")
+		local CASq = game:GetService("ContextActionService")
 		local holding = false
-		UISq.InputBegan:Connect(function(input, _)
-			if UISq:GetFocusedTextBox() then return end
-			if not quakeOn or holding then return end
-			if input.KeyCode ~= Enum.KeyCode.Three then return end
-			local injK = _G.VX_INJ_KEYS
-			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end   -- our own press: ignore
-			holding = true
-			task.spawn(function()
-				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 3.6
-				pcall(function()
-					VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
-					task.wait(3.05)                                            -- hold the charge
-					VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)  -- release = quake fires
-				end)
-				holding = false
-			end)
-		end)
+		local function bindQuake()
+			CASq:BindActionAtPriority("VX_QuakeHold", function(_, state, input)
+				local injK = _G.VX_INJ_KEYS
+				if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return Enum.ContextActionResult.Pass end   -- OUR virtual press: let the game have it
+				if state ~= Enum.UserInputState.Begin then return Enum.ContextActionResult.Sink end
+				if not holding then
+					holding = true
+					task.spawn(function()
+						_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 3.6
+						pcall(function()
+							VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
+							task.wait(3.05)                                            -- hold the charge
+							VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)  -- release = quake fires
+						end)
+						holding = false
+					end)
+				end
+				return Enum.ContextActionResult.Sink   -- your real tap never reaches the game
+			end, false, 3000, Enum.KeyCode.Three)
+		end
+		local wasOn = false
+		task.spawn(function() while true do task.wait(0.2)
+			if quakeOn ~= wasOn then wasOn = quakeOn
+				if quakeOn then pcall(bindQuake) else pcall(function() CASq:UnbindAction("VX_QuakeHold") end) end
+			end
+		end end)
 	end
 	KillEmoteApi = { set = function(v) killEmoteOn = v == true end, setSlot = function(n) killEmoteSlot = tonumber(n) or 1 end }
 end
@@ -4123,10 +4158,17 @@ do
 	local Players = game:GetService("Players")
 	local LP = Players.LocalPlayer
 	ResetApi = { reset = function()
-		local c = LP.Character
-		local h = c and c:FindFirstChildOfClass("Humanoid")
-		if h then pcall(function() h.Health = 0 end) end
-		pcall(function() if c then c:BreakJoints() end end)
+		-- "works once then never": after the first respawn LP.Character goes stale in this game (bodies live in
+		-- workspace.Characters). Resolve BOTH each call and kill whichever has a live humanoid.
+		local chs = workspace:FindFirstChild("Characters")
+		for _, c in ipairs({ chs and chs:FindFirstChild(LP.Name), LP.Character }) do
+			if c then
+				local h = c:FindFirstChildOfClass("Humanoid")
+				if h then pcall(function() h.Health = 0 end) end
+				pcall(function() c:BreakJoints() end)
+			end
+		end
+		pcall(function() LP:LoadCharacter() end)   -- elevated executors: instant fresh character as backup
 	end }
 end
 
@@ -9122,18 +9164,29 @@ do
     local TargetPage = Window:Page({ Name = "Target", Icon = "72732892493295" })
     local tgSub = TargetPage:SubPage({ Name = "Target", Columns = 2 })
     local tSec = tgSub:Section({ Name = "Target", Side = 1 })
-    local infoLbl   -- fwd (textbox callback below refreshes it live)
-    local function liveInfo()   -- INSTANT popup as they type (partial names resolve)
-        if not (TargetApi and infoLbl) then return end
+    -- IN-GUI info panel (user: "show it inside the gui"): one line per stat, all live-updating.
+    local nameL, hpL, ultL, killL   -- fwd (textbox callback below refreshes them)
+    local function liveInfo()
+        if not (TargetApi and nameL) then return end
         local i = TargetApi.info()
         if i and i.found then
-            pcall(function() infoLbl:SetText(i.name .. "\nHP: " .. i.health .. " / " .. i.maxHealth .. "   Ult: " .. (i.ult and "USED" or "no") .. "   Kills: " .. (TargetApi.kills() or "?")) end)
+            pcall(function() nameL:SetText("Player:  " .. i.name) end)
+            pcall(function() hpL:SetText("Health:  " .. i.health .. " / " .. i.maxHealth) end)
+            pcall(function() ultL:SetText("Ult:  " .. (i.ult and "USED" or "no")) end)
+            pcall(function() killL:SetText("Kills:  " .. tostring(TargetApi.kills() or "?")) end)
         else
-            pcall(function() infoLbl:SetText("No match yet - keep typing") end)
+            pcall(function() nameL:SetText("Player:  no match yet") end)
+            pcall(function() hpL:SetText("Health:  N/A") end)
+            pcall(function() ultL:SetText("Ult:  N/A") end)
+            pcall(function() killL:SetText("Kills:  N/A") end)
         end
     end
-    tSec:Textbox({ Name = "Player Name", Default = "", Callback = function(v) if TargetApi then TargetApi.setName(v); liveInfo() end end })
-    infoLbl = tSec:Label("Type a username - info pops up as you type")
+    tSec:Textbox({ Name = "Player Name", Placeholder = "Type a username...", Default = "", Callback = function(v) if TargetApi then TargetApi.setName(v); liveInfo() end end })
+    nameL = tSec:Label("Player:  type a name above")
+    hpL   = tSec:Label("Health:  N/A")
+    ultL  = tSec:Label("Ult:  N/A")
+    killL = tSec:Label("Kills:  N/A")
+    local infoLbl = { SetText = function() end }   -- legacy shim (old refresh path below)
     local function refreshInfo()
         if not TargetApi then return end
         local i = TargetApi.info()
