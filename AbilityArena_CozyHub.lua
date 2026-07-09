@@ -358,6 +358,9 @@ local function charPart(char)
 end
 local function isAlive(char)
     if not char then return false end
+    if not char.Parent then return false end
+    -- Bug 10: explicit death markers first (custom-health corpses were staying "alive" = cyan ghosts forever)
+    if char:GetAttribute("Dead") == true or char:FindFirstChild("Dead") then return false end
     local h = char:FindFirstChildOfClass("Humanoid")
     if h then return h.Health > 0 end
     local hp = char:GetAttribute("Health")
@@ -643,7 +646,7 @@ local function hitboxParts(char)
         local hb = char:FindFirstChild(nm)
         if hb then
             if hb:IsA("BasePart") then out[#out+1] = hb
-            elseif hb:IsA("Model") then
+            elseif hb:IsA("Model") or hb:IsA("Folder") or hb:IsA("Configuration") then   -- Bug 11: also dig Folder/Configuration containers
                 for _,d in ipairs(hb:GetDescendants()) do if d:IsA("BasePart") then out[#out+1] = d end end
             end
         end
@@ -690,13 +693,18 @@ end
 local PhysicsService = game:GetService("PhysicsService")
 local HITBOX_GROUP = "MH_M1NoCollide"
 pcall(function() PhysicsService:RegisterCollisionGroup(HITBOX_GROUP) end)
-pcall(function()
-    -- make our group collide with NOTHING (every registered group, incl Default/Players) so Jolt never pushes it
-    PhysicsService:CollisionGroupSetCollidable(HITBOX_GROUP, "Default", false)
-    for _,g in ipairs(PhysicsService:GetRegisteredCollisionGroups()) do
-        pcall(function() PhysicsService:CollisionGroupSetCollidable(HITBOX_GROUP, g.name, false) end)
-    end
-end)
+local function sweepCollisionGroups()   -- make our group collide with NOTHING (every registered group)
+    pcall(function()
+        PhysicsService:CollisionGroupSetCollidable(HITBOX_GROUP, "Default", false)
+        for _,g in ipairs(PhysicsService:GetRegisteredCollisionGroups()) do
+            pcall(function() PhysicsService:CollisionGroupSetCollidable(HITBOX_GROUP, g.name, false) end)
+        end
+    end)
+end
+sweepCollisionGroups()
+-- Bug 6: groups registered AFTER load (Projectiles/Abilities/DamageZones) would collide with our arms and
+-- fling/reset us. Re-sweep every 5s so newly-added groups are always made non-collidable.
+task.spawn(function() while true do task.wait(5); sweepCollisionGroups() end end)
 
 local realArmOriginals = {}   -- real arm part -> {size, group, collide, massless, query, touch}
 -- FORWARD PUSH: the arms are shoved out in front of you through the SHOULDER JOINT (Motor6D.C0), never by
@@ -727,19 +735,24 @@ local function restoreArms()
     end
     realArmOriginals = {}
 end
+-- Bug 3: grow ONLY the OUTERMOST arm part (R15 Hand, else R6 Arm) — growing the whole UpperArm->LowerArm->Hand
+-- chain and offsetting each joint makes an impossible kinematic chain that Jolt rejects/flings.
 local function myArmParts()
     local out = {}
     local char = LP.Character
     if not char then return out end
-    -- every arm/hand naming variant (R6 "Left Arm", R15 "LeftUpperArm"/"LeftHand", plus a custom "Handle")
-    for _, nm in ipairs({ "Left Arm","Right Arm","LeftArm","RightArm","LeftHand","RightHand",
-                          "LeftLowerArm","RightLowerArm","LeftUpperArm","RightUpperArm" }) do
-        local a = char:FindFirstChild(nm)
-        if a and a:IsA("BasePart") then out[#out+1] = a end
+    for _, nm in ipairs({ "LeftHand","RightHand" }) do   -- R15 outermost first
+        local a = char:FindFirstChild(nm); if a and a:IsA("BasePart") then out[#out+1] = a end
+    end
+    if #out == 0 then   -- R6 fallback: the Arm parts ARE the outermost
+        for _, nm in ipairs({ "Left Arm","Right Arm","LeftArm","RightArm" }) do
+            local a = char:FindFirstChild(nm); if a and a:IsA("BasePart") then out[#out+1] = a end
+        end
     end
     return out
 end
--- clear your own HitLog so the same enemy can be hit again on the next swing (the log is the "already hit" guard)
+-- Bug 7: clear your HitLog only at the START of a swing (on M1 click), not every frame. Clearing 60x/sec
+-- made you re-hit the same target every frame (some servers flag that as too-fast repeat hits = kick).
 local function clearMyHitLog()
     pcall(function()
         local mine = Workspace:FindFirstChild(LP.Name)
@@ -747,9 +760,16 @@ local function clearMyHitLog()
         if log then for _,c in ipairs(log:GetChildren()) do c:Destroy() end end
     end)
 end
+hook(UserInputService.InputBegan, function(i, gpe)
+    if gpe then return end
+    if i.UserInputType == Enum.UserInputType.MouseButton1 and (S.M1Hitbox or S.AutoFarm or S.AutoPlay) then
+        clearMyHitLog()   -- swing start
+    end
+end)
 
-local armSpawnT = 0   -- spawn grace: never touch the arms right at spawn (that was killing people in the spawn room)
+local armSpawnT = tick()   -- Bug 4: init to NOW so the 3s grace works even when the script loads mid-game
 hook(LP.CharacterAdded, function() armSpawnT = tick() end)
+if LP.Character then armSpawnT = tick() end
 hook(RunService.Heartbeat, function()
     -- grow YOUR arms whenever M1 reach is wanted (this is the primary Ability-Arena mechanism now)
     local armSz = 0
@@ -767,25 +787,28 @@ hook(RunService.Heartbeat, function()
         local targetSize = Vector3.new(side, side, fwdLen)
         local fwdOff = fwdLen * 0.35   -- how far the shoulder joint shoves the arm out in front of you
         for _,arm in ipairs(myArmParts()) do
-            local isNew = not realArmOriginals[arm]
-            if isNew then
-                realArmOriginals[arm] = { size=arm.Size, group=arm.CollisionGroup, collide=arm.CanCollide, massless=arm.Massless, query=arm.CanQuery, touch=arm.CanTouch }
+            local m = armMotor(arm)   -- Bug 2: only grow an arm we can push forward through its joint; else it
+            if m then                 -- would sit at the shoulder engulfing your OWN hitbox (self-hit / no hit).
+                local isNew = not realArmOriginals[arm]
+                if isNew then
+                    realArmOriginals[arm] = { size=arm.Size, group=arm.CollisionGroup, collide=arm.CanCollide, massless=arm.Massless, query=arm.CanQuery, touch=arm.CanTouch }
+                    armC0[m] = armC0[m] or m.C0
+                end
+                pcall(function()
+                    pcall(function() arm.CollisionGroup = HITBOX_GROUP end)   -- Jolt: this group hits nothing -> no fling/reset
+                    arm.CanCollide = false                                    -- primary fling-guard (works even if the group didn't register)
+                    arm.Massless   = true                                     -- no extra mass on the assembly = no catapult
+                    arm.CanQuery   = true                                     -- GetPartBoundsInBox reads this
+                    arm.CanTouch   = true                                     -- Bug 8: also feed any .Touched fallback detection (group prevents physical fling)
+                    if (arm.Size - targetSize).Magnitude > 0.1 then arm.Size = targetSize end
+                    arm.LocalTransparencyModifier = 0.3                       -- clearly visible so you SEE your big arms swing
+                    -- Bug 1: refresh the forward push EVERY frame from the ORIGINAL C0, so changing the slider
+                    -- actually moves the arm forward (was set once = arm stretched inside itself on slider change).
+                    m.C0 = CFrame.new(0, 0, -fwdOff) * armC0[m]
+                end)
             end
-            pcall(function()
-                pcall(function() arm.CollisionGroup = HITBOX_GROUP end)   -- Jolt: this group hits nothing -> no fling/reset
-                arm.CanCollide = false                                    -- primary fling-guard (works even if the group didn't register)
-                arm.Massless   = true                                     -- no extra mass on the assembly = no catapult
-                arm.CanQuery   = true                                     -- game's GetPartBoundsInBox MUST see the arm
-                arm.CanTouch   = false                                    -- queries DON'T need Touch — true let kill/damage zones touch-kill you at spawn
-                if arm.Size ~= targetSize then arm.Size = targetSize end  -- grow the REAL arm (the game tracks its velocity)
-                arm.LocalTransparencyModifier = 0.3                       -- clearly visible so you SEE your big arms swing
-            end)
-            if isNew then pcall(function()                                -- push the arm forward via the shoulder joint (once per arm)
-                local m = armMotor(arm)
-                if m and armC0[m] == nil then armC0[m] = m.C0; m.C0 = CFrame.new(0, 0, -fwdOff) * m.C0 end
-            end) end
         end
-        clearMyHitLog()
+        -- (Bug 7: per-frame clearMyHitLog removed — the log is now cleared on M1 click / swing start.)
     elseif next(realArmOriginals) then restoreArms() end
 
     local sz = wantedHitboxSize()
@@ -809,27 +832,20 @@ hook(RunService.Heartbeat, function()
                     shape=(part:IsA("Part") and part.Shape or nil)
                 }
             end
+            local o = hbOriginal[part]
             pcall(function()
                 part.Massless    = true
                 part.CanCollide  = false
-                part.CanQuery    = true
-                part.CanTouch    = true
-                -- KEEP the part's original shape (Bug 4): forcing a Ball -> Block leaves the corners empty, and if
-                -- the game uses a shape-aware query (GetPartBoundsInPart) that made the hitbox HARDER to hit. A Ball
-                -- grown to `sz` already has radius sz/2 in every direction = plenty of reach with its native shape.
-                -- Compare ALL 3 axes (was X-only): a part whose X already matched sz but was thin on Y/Z used to
-                -- stay flat = no real reach. THIS was the core "hitbox doesn't work" bug (same one PE fixed).
-                if part.Size ~= cube then part.Size = cube end
-                -- Visibility: only the invisible hit parts (Hitbox/HRP) are grown now, so the person's real body
-                -- stays 100% normal and visible. "Show Hitbox" paints a FAINT cyan ghost over the grown part;
-                -- off = the part keeps its ORIGINAL look (these parts are invisible by default anyway).
+                part.CanQuery    = true                                   -- GetPartBoundsInBox reads this
+                part.CanTouch    = (o and o.touch) or false               -- Bug 9: keep the enemy's ORIGINAL CanTouch — forcing true let their Hitbox's touch-damage handler hurt YOU
+                -- KEEP the part's original shape (a Ball grown to sz already reaches sz/2 in every direction).
+                -- Bug 5: magnitude compare (float drift made == fail = a redundant write every frame).
+                if (part.Size - cube).Magnitude > 0.1 then part.Size = cube end
+                -- Bug 13: only write the visual props when they actually differ (was 180 writes/frame).
                 if S.HitboxVisible ~= false then
-                    part.Transparency = 0.82
-                    part.Color        = Color3.fromRGB(0, 220, 255)
-                    part.Material     = Enum.Material.ForceField
-                else
-                    local o = hbOriginal[part]
-                    if o then part.Transparency = o.transp; part.Color = o.color; part.Material = o.material end
+                    if part.Transparency ~= 0.82 then part.Transparency = 0.82; part.Color = Color3.fromRGB(0, 220, 255); part.Material = Enum.Material.ForceField end
+                elseif o and part.Transparency ~= o.transp then
+                    part.Transparency = o.transp; part.Color = o.color; part.Material = o.material
                 end
             end)
         end
