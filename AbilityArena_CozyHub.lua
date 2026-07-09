@@ -307,7 +307,7 @@ local S = {
     AntiRagdoll=false, AntiPush=false, AntiVoid=false,
     SaveHealth=false, SaveHealthPct=35, SaveHealthHeight=700,
     RemoveWaterBorder=false, AntiKillBricks=false,
-    M1Hitbox=false, M1HitboxSize=50,
+    M1Hitbox=false, M1HitboxSize=80,   -- 80 default: long spear-arm reach (arms = slider*1.5 forward, thin sides)
     HitboxAbility=false, HitboxAbilitySize=40, HitboxAllParts=false, HitboxVisible=true,
     AutoM1=false,
     AutoAbility=false, AutoAbilityRange=25,
@@ -699,7 +699,19 @@ pcall(function()
 end)
 
 local realArmOriginals = {}   -- real arm part -> {size, group, collide, massless, query, touch}
+-- FORWARD PUSH: the arms are shoved out in front of you through the SHOULDER JOINT (Motor6D.C0), never by
+-- setting arm.CFrame — a welded limb's CFrame moves the WHOLE character, so that "offset" would rocket you
+-- across the map every frame. C0 shifts only the limb, relative to the torso, and animations still play.
+local armC0 = {}              -- Motor6D -> original C0
+local function armMotor(arm)
+    local char = LP.Character; if not char then return nil end
+    for _,j in ipairs(char:GetDescendants()) do
+        if j:IsA("Motor6D") and j.Part1 == arm then return j end
+    end
+end
 local function restoreArms()
+    for m, c0 in pairs(armC0) do pcall(function() if m and m.Parent then m.C0 = c0 end end) end
+    armC0 = {}
     for arm, o in pairs(realArmOriginals) do
         if arm and arm.Parent then
             pcall(function()
@@ -742,17 +754,21 @@ hook(RunService.Heartbeat, function()
     -- grow YOUR arms whenever M1 reach is wanted (this is the primary Ability-Arena mechanism now)
     local armSz = 0
     if S.M1Hitbox or S.AutoFarm or S.AutoPlay then armSz = math.max(armSz, S.M1HitboxSize) end
-    -- ARM CAP: the big reach comes from growing the ENEMY hitboxes (full slider, below). The arms only need a
-    -- moderate boost — at the full 50 the box centered on your own arm engulfs YOURSELF, the game's hit query
-    -- returns your own hitbox, and the swing gets eaten ("can't even swing"). 22 keeps swings landing.
-    armSz = math.min(armSz, 22)
     if tick() - armSpawnT < 3 then armSz = 0 end   -- 3s spawn grace: normal arms while the game places you
     if armSz > 0 then
         -- prune entries whose arm despawned (respawn) so we don't leak / restore onto a dead part
         for arm in pairs(realArmOriginals) do if (not arm) or (not arm.Parent) then realArmOriginals[arm] = nil end end
-        local targetSize = Vector3.new(armSz, armSz, armSz)
+        for m in pairs(armC0) do if (not m) or (not m.Parent) then armC0[m] = nil end end
+        -- ELONGATED SPEAR ARMS (no more 22 cap): the FULL slider drives the forward length (1.5x), while the
+        -- side thickness is capped — a fat cube around your own arm engulfed your own hitbox and the game ate
+        -- the swing. Long + thin = the reach points AT the enemy and never swallows you.
+        local fwdLen = armSz * 1.5
+        local side   = math.min(armSz * 0.6, 14)
+        local targetSize = Vector3.new(side, side, fwdLen)
+        local fwdOff = fwdLen * 0.35   -- how far the shoulder joint shoves the arm out in front of you
         for _,arm in ipairs(myArmParts()) do
-            if not realArmOriginals[arm] then
+            local isNew = not realArmOriginals[arm]
+            if isNew then
                 realArmOriginals[arm] = { size=arm.Size, group=arm.CollisionGroup, collide=arm.CanCollide, massless=arm.Massless, query=arm.CanQuery, touch=arm.CanTouch }
             end
             pcall(function()
@@ -762,8 +778,12 @@ hook(RunService.Heartbeat, function()
                 arm.CanQuery   = true                                     -- game's GetPartBoundsInBox MUST see the arm
                 arm.CanTouch   = false                                    -- queries DON'T need Touch — true let kill/damage zones touch-kill you at spawn
                 if arm.Size ~= targetSize then arm.Size = targetSize end  -- grow the REAL arm (the game tracks its velocity)
-                arm.LocalTransparencyModifier = 0.5                       -- arms stay VISIBLE (0.85 looked like "my arms got removed")
+                arm.LocalTransparencyModifier = 0.3                       -- clearly visible so you SEE your big arms swing
             end)
+            if isNew then pcall(function()                                -- push the arm forward via the shoulder joint (once per arm)
+                local m = armMotor(arm)
+                if m and armC0[m] == nil then armC0[m] = m.C0; m.C0 = CFrame.new(0, 0, -fwdOff) * m.C0 end
+            end) end
         end
         clearMyHitLog()
     elseif next(realArmOriginals) then restoreArms() end
@@ -2319,7 +2339,7 @@ CombatTab:CreateToggle({Name="M1 Expand Hitbox (invisible reach - lands M1)", Cu
     S.M1Hitbox=v
     if not v then restoreHitboxes(); restoreArms() end
 end})
-CombatTab:CreateSlider({Name="M1 Expand Size (arm reach)", Range={1,300}, Increment=1, Suffix="studs", CurrentValue=50, Flag="M1HitboxSize", Callback=function(v) S.M1HitboxSize=v end})
+CombatTab:CreateSlider({Name="M1 Expand Size (arm reach)", Range={1,300}, Increment=1, Suffix="studs", CurrentValue=80, Flag="M1HitboxSize", Callback=function(v) S.M1HitboxSize=v end})
 CombatTab:CreateToggle({Name="Ability Hitbox Expander (pulses bigger on E)", CurrentValue=false, Flag="HitboxAbility", Callback=function(v)
     S.HitboxAbility=v
     if not v then destroyAbilityHb(); restoreHitboxes() end
