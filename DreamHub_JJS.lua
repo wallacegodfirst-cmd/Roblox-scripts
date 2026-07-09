@@ -1123,7 +1123,7 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 			if vxTeleGen ~= gen then return end                 -- a newer teleport superseded this one -> stop fighting over the CFrame
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
 			acPass()
-			pcall(function() hrp.CFrame = cf; if cc then cc:PivotTo(cf) end end)   -- PivotTo moves the WHOLE rig (some JJS models don't follow a bare HRP write = "teleport doesn't move me")
+			pcall(function() hrp.CFrame = cf end)   -- (reverted to the earlier working single-write; PivotTo was added and coincided with TP breaking)
 			task.wait(0.016)
 		end
 		local h0 = tick()  -- HOLD: keep re-asserting position + re-whitelisting so the anti-cheat can't revert after the move
@@ -1131,7 +1131,7 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 			if vxTeleGen ~= gen then return end                 -- superseded -> let the newer teleport own the body
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
 			acPass()
-			pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero; if cc then cc:PivotTo(cf) end end)
+			pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero end)
 			task.wait(0.03)
 		end
 		if vxTeleGen == gen then  -- only the LATEST teleport cleans up, so overlapping calls can't leave PlatformStand stuck (no more "frozen after jump")
@@ -2072,46 +2072,31 @@ do
     local VIM = game:GetService("VirtualInputManager")
     local LP = Players.LocalPlayer
     local enabled = false
-    local GRAB_ID = "72343192576784"
-    local lastEscape = 0
-    local hooked = setmetatable({}, { __mode = "k" })
-    local function myHRP() local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character; return c and c:FindFirstChild("HumanoidRootPart") end
-    local function mashSpace()
-        if tick() - lastEscape < 1.5 then return end   -- one escape burst per grab
-        lastEscape = tick()
-        task.spawn(function()
-            for _ = 1, 24 do   -- ~1.9s of fast Space taps = mash out of the grab
-                if not enabled then break end
-                pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.02); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
-                task.wait(0.06)
+    -- The grab shows a "JUMP TO ESCAPE!" QTE with a fill bar. We mash Space CONTINUOUSLY the WHOLE time that
+    -- prompt is on screen (a fixed burst only filled part of the bar). We detect the prompt by its text.
+    local function escapePromptUp()
+        local pg = LP:FindFirstChild("PlayerGui"); if not pg then return false end
+        for _, d in ipairs(pg:GetDescendants()) do
+            if d:IsA("TextLabel") and d.Visible then
+                local t = string.lower(d.Text or "")
+                if t:find("jump to escape") or (t:find("escape") and t:find("jump")) then
+                    -- only if actually rendered (its whole ancestry is enabled)
+                    local ok = true; local a = d.Parent
+                    for _ = 1, 6 do if a and a:IsA("GuiObject") and not a.Visible then ok = false break end a = a and a.Parent end
+                    if ok then return true end
+                end
             end
-        end)
-    end
-    local function onAnim(track, ownerHRP)
-        if not enabled then return end
-        local id = track.Animation and tostring(track.Animation.AnimationId)
-        if not id or not string.find(id, GRAB_ID, 1, true) then return end
-        -- only react if the grab is near YOU (you're the one being grabbed)
-        local me = myHRP()
-        if me and ownerHRP and (ownerHRP.Position - me.Position).Magnitude > 30 then return end
-        mashSpace()
-    end
-    local function hookAnimator(char)
-        local h = char and char:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
-        if not a or hooked[a] then return end
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        hooked[a] = a.AnimationPlayed:Connect(function(track) pcall(onAnim, track, char:FindFirstChild("HumanoidRootPart") or hrp) end)
+        end
+        return false
     end
     task.spawn(function()
         while true do
-            if enabled then
-                pcall(function()
-                    local chs = workspace:FindFirstChild("Characters")
-                    if chs then for _, m in ipairs(chs:GetChildren()) do if m:IsA("Model") then hookAnimator(m) end end end
-                    if LP.Character then hookAnimator(LP.Character) end
-                end)
+            if enabled and escapePromptUp() then
+                pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.015); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
+                task.wait(0.03)   -- hammer Space fast until the prompt disappears
+            else
+                task.wait(0.12)
             end
-            task.wait(1)
         end
     end)
     MahitoGrabApi = { set = function(v) enabled = v == true end }
@@ -3851,40 +3836,33 @@ do
 
 	MahoTpApi   = { set = function(v) mahoOn = v == true end }
 	AutoQuakeApi = { set = function(v) quakeOn = v == true end }
-	-- EARTHQUAKE = PURE SKILL (user): the move only fires when 3 is HELD ~3s then released. The old version
-	-- injected a second press while your real 3 was still down = the game saw your quick release and cancelled.
-	-- Now we SINK your real 3 (ContextActionService, top priority) so the game never sees the tap, and replace
-	-- it with OUR key held a full 3s + release = the charged quake, every time.
+	-- EARTHQUAKE = charged hold-3-then-release. Your quick TAP of 3 cancels the charge; so when Auto Earthquake
+	-- is on, on your 3-press we inject a CLEAN held 3 (down, hold, release) = the game sees a proper charged
+	-- hold and the shockwave fires. CAS-sink didn't work (the game reads 3 via UserInputService, which a CAS
+	-- Sink can't block). Hold duration defaults to 0.9s (the wiki charge window); tune with
+	-- `_G.VX_QUAKE_HOLD = <seconds>` before the loadstring if your character needs longer.
 	do
 		local VIMq = game:GetService("VirtualInputManager")
-		local CASq = game:GetService("ContextActionService")
+		local UISq = game:GetService("UserInputService")
 		local holding = false
-		local function bindQuake()
-			CASq:BindActionAtPriority("VX_QuakeHold", function(_, state, input)
-				local injK = _G.VX_INJ_KEYS
-				if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return Enum.ContextActionResult.Pass end   -- OUR virtual press: let the game have it
-				if state ~= Enum.UserInputState.Begin then return Enum.ContextActionResult.Sink end
-				if not holding then
-					holding = true
-					task.spawn(function()
-						_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 3.6
-						pcall(function()
-							VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
-							task.wait(3.05)                                            -- hold the charge
-							VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)  -- release = quake fires
-						end)
-						holding = false
-					end)
-				end
-				return Enum.ContextActionResult.Sink   -- your real tap never reaches the game
-			end, false, 3000, Enum.KeyCode.Three)
-		end
-		local wasOn = false
-		task.spawn(function() while true do task.wait(0.2)
-			if quakeOn ~= wasOn then wasOn = quakeOn
-				if quakeOn then pcall(bindQuake) else pcall(function() CASq:UnbindAction("VX_QuakeHold") end) end
-			end
-		end end)
+		UISq.InputBegan:Connect(function(input, _)
+			if UISq:GetFocusedTextBox() then return end
+			if not quakeOn or holding then return end
+			if input.KeyCode ~= Enum.KeyCode.Three then return end
+			local injK = _G.VX_INJ_KEYS
+			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end   -- our own injected 3: ignore
+			holding = true
+			task.spawn(function()
+				local hold = tonumber(_G.VX_QUAKE_HOLD) or 0.9
+				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + hold + 0.5
+				pcall(function()
+					VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)   -- start the charge
+					task.wait(hold)                                            -- hold it
+					VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)  -- release = shockwave
+				end)
+				task.wait(0.2); holding = false
+			end)
+		end)
 	end
 	KillEmoteApi = { set = function(v) killEmoteOn = v == true end, setSlot = function(n) killEmoteSlot = tonumber(n) or 1 end }
 end
@@ -9393,8 +9371,10 @@ do
     local defSub = CombatPage:SubPage({ Name = "Defense", Columns = 2 })
     local counterSec = defSub:Section({ Name = "Counter", Side = 1 })
     -- Side/Back Dash Assist now use the reworked VXBF2 engine (Q = side curve, E = back-through). Free gets both.
-    counterSec:Toggle({ Name = "Side Dash Assist (Q)", Callback = function(b) if _G.VXBF2 then _G.VXBF2.setSideAssist(b) end end })
-    counterSec:Toggle({ Name = "Back Dash Assist (E)", Callback = function(b) if _G.VXBF2 then _G.VXBF2.setBackAssist(b) end end })
+    if tier("premium") then   -- FREE: no Side/Back Dash Assist (premium only)
+        counterSec:Toggle({ Name = "Side Dash Assist (Q)", Callback = function(b) if _G.VXBF2 then _G.VXBF2.setSideAssist(b) end end })
+        counterSec:Toggle({ Name = "Back Dash Assist (E)", Callback = function(b) if _G.VXBF2 then _G.VXBF2.setBackAssist(b) end end })
+    end
     counterSec:Toggle({ Name = "Anti Counter", Callback = function(b) if AntiCounterApi then AntiCounterApi.set(b) end end })
     if tier("premium") then   -- FREE: no Emote / Jump-On-Head counter reactions (Anti Counter keeps its default)
         counterSec:Dropdown({ Name = "On Counter", Items = { "Jump On Head", "Emote" }, Default = "Jump On Head", Callback = function(v) if AntiCounterApi then AntiCounterApi.setMode(v) end end })
@@ -9566,7 +9546,7 @@ do
     espSec:Toggle({ Name = "Health", Default = true, Callback = function(b) if PlayerEspApi then PlayerEspApi.setOpt("health", b) end end })
     espSec:Toggle({ Name = "Distance", Default = true, Callback = function(b) if PlayerEspApi then PlayerEspApi.setOpt("distance", b) end end })
     -- ("Character" ESP row removed per request.)
-    espSec:Toggle({ Name = "Move / Skill", Callback = function(b) if PlayerEspApi then PlayerEspApi.setOpt("move", b) end end })
+    -- ("Move / Skill" ESP row removed per request.)
     espSec:Toggle({ Name = "Cooldowns", Callback = function(b) if PlayerEspApi then PlayerEspApi.setOpt("cooldowns", b) end end })
     local itemSec = visSub:Section({ Name = "Items", Side = 2 })
     itemSec:Toggle({ Name = "Item ESP", Callback = function(b) if ItemsApi then ItemsApi.setESP(b) end end })
