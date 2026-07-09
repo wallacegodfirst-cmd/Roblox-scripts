@@ -2513,10 +2513,10 @@ local function tpToCorpse(part)
 		local res=WS:Raycast(np+Vector3.new(0,60,0), Vector3.new(0,-6000,0), rp)
 		if res then landY=res.Position.Y+3; foundGround=true end
 	end)
-	-- OUT-OF-MAP GUARD (user: "sometimes it teleports like out the map"): if there's NO ground/water under the target
-	-- within 6000 studs, it's a void-parked marker = outside the map. Don't teleport — report false so the cycle skips
-	-- to the next corpse instead of throwing you into the void.
-	if not foundGround then carnBusy=false; return false end
+	-- OUT-OF-MAP GUARD: only skip a corpse if it's an OBVIOUS void marker (parked way below the map). A missed
+	-- ground ray alone must NOT skip it — that rejected EVERY corpse on this map ("next says none when it's 1/37").
+	-- When the ray misses but the corpse is at a normal height, we just teleport to the corpse's own Y.
+	if not foundGround and np.Y < -400 then carnBusy=false; return false end
 	local cc=getMyModel(); local goal=CFrame.new(np.X, landY, np.Z)
 	local noclip={}; if cc then pcall(function() for _,dd in ipairs(cc:GetDescendants()) do if dd:IsA("BasePart") and dd.CanCollide then dd.CanCollide=false; noclip[#noclip+1]=dd end end end) end
 	pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end end)
@@ -3202,22 +3202,10 @@ local function runFarm(enabledKey, kind, rangeKey)
 						local holder,part=nd[1],nd[2]
 						FARM.tried[holder]=tick()
 						pcall(function()
-							-- SAFE STEPPED TELEPORT (user: "don't jump high, it triggers the kick"): glide to the node
-							-- in small ~26-stud steps and zero velocity each frame, so no single frame moves far enough
-							-- to trip the anti-cheat, and there's no high arc/pop between digs.
-							local cc=getMyModel(); local r=hrp()
-							if r then
-								local target=part.Position+Vector3.new(0,1.5,0)
-								local start=r.Position
-								local steps=math.max(1, math.ceil((target-start).Magnitude/26))
-								for s=1,steps do
-									local rr=hrp(); if not rr then break end
-									local p=start:Lerp(target, s/steps)
-									if cc and cc.PrimaryPart then pcall(function() cc:PivotTo(CFrame.new(p)) end) else pcall(function() rr.CFrame=CFrame.new(p) end) end
-									pcall(function() rr.AssemblyLinearVelocity=Vector3.zero; rr.AssemblyAngularVelocity=Vector3.zero end)
-									task.wait()
-								end
-							end
+							-- INSTANT TELEPORT (user: "it glides me, I need it to TP me") — one snap, landing right ON
+							-- the node (low +1.5 offset = no high arc/pop that would trip the kick), velocity zeroed.
+							local cc=getMyModel(); local goal=CFrame.new(part.Position+Vector3.new(0,1.5,0))
+							if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end
 						end)
 						local r0=hrp(); if r0 then pcall(function() r0.AssemblyLinearVelocity=Vector3.zero; r0.AssemblyAngularVelocity=Vector3.zero end) end
 						task.wait(0.2)
@@ -3479,7 +3467,7 @@ __gg.MH_botReleaseKeys = BOT.releaseKeys                 -- so the on/off + deat
 function BOT.driveToward(desFlat)
 	if not desFlat or desFlat.Magnitude<0.05 then BOT.releaseKeys(); return end
 	local des=Vector3.new(desFlat.X,0,desFlat.Z); if des.Magnitude<0.05 then BOT.releaseKeys(); return end; des=des.Unit
-	local cf=Cam.CFrame
+	local cf=(workspace.CurrentCamera and workspace.CurrentCamera.CFrame) or Cam.CFrame   -- FRESH camera: the cached Cam goes stale after respawn = bot steers the wrong way ("keeps sending me back")
 	local look=Vector3.new(cf.LookVector.X,0,cf.LookVector.Z); if look.Magnitude<0.05 then BOT.releaseKeys(); return end; look=look.Unit
 	local right=Vector3.new(cf.RightVector.X,0,cf.RightVector.Z).Unit
 	local fwd=des:Dot(look); local rgt=des:Dot(right)

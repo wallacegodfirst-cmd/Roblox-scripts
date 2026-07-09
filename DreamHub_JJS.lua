@@ -869,7 +869,6 @@ do
 				lastM1Feint = tick(); m1FeintCount = m1FeintCount + 1
 				if m1FeintCount >= feintM1Count then
 					m1FeintCount = 0
-					if VX_NOTIFY then VX_NOTIFY("Feint M1 -> R", true) end   -- visible proof the trigger fired
 					task.delay(0.18, function() pressR() end)   -- let the M1 come out, then R = the feint
 				end
 			end
@@ -877,7 +876,7 @@ do
 			-- (skips OUR OWN injected keys - they were re-triggering this and breaking Feint M1 / Feint BF)
 			local injKeys = _G.VX_INJ_KEYS
 			local keyInjected = injKeys and injKeys[input.KeyCode] and tick() < injKeys[input.KeyCode]
-			if (feintMovesOn or feintMode == "Moves") and MOVEKEYS[input.KeyCode] and tick() >= (_G.VX_INJECT_UNTIL or 0) and not keyInjected then
+			if feintMode ~= "M1" and (feintMovesOn or feintMode == "Moves") and MOVEKEYS[input.KeyCode] and tick() >= (_G.VX_INJECT_UNTIL or 0) and not keyInjected then
 				task.delay(0.14, function() pressR() end)   -- (the BF chain's own flash-key press is marked injected now, so this can NO LONGER feint your black flash)
 			end
 		end)
@@ -887,6 +886,7 @@ do
 	-- MOBILE SUPPORT: a floating tap button so phone players (no keyboard E) can fire the chosen chain approach. Toggled via ChainApi.setMobile. M1 Black Flash needs no button (M1 auto-fires) but the button still works.
 	local mobileGui, mobileBtn
 	local function mobileLabel()
+		if _G.JJS_FREE then return "Black Flash" end   -- FREE: single "Black Flash" button (no chain modes)
 		local m = Settings.Mode
 		if m == "Teleport" then return "Teleport BF"
 		elseif m == "Side Dash" then return "Side Dash BF"
@@ -909,7 +909,25 @@ do
 		mobileBtn.Active = true; mobileBtn.Draggable = false; mobileBtn.Visible = false; mobileBtn.ZIndex = 20; mobileBtn.Parent = mobileGui
 		local uc = Instance.new("UICorner"); uc.CornerRadius = UDim.new(0, 9); uc.Parent = mobileBtn
 		local us = Instance.new("UIStroke"); us.Color = Color3.fromRGB(255, 255, 255); us.Thickness = 1.2; us.Transparency = 0.55; us.Parent = mobileBtn
-		mobileBtn.MouseButton1Click:Connect(function() doEPress() end)   -- tap = fire the black flash for the current mode (works on phone)
+		-- DRAGGABLE: tap = fire BF (free: press 3 / premium: old chain), drag = reposition so it never overlaps you.
+		local UISm = game:GetService("UserInputService"); local VIMm = game:GetService("VirtualInputManager")
+		local dragging, moved, ds, sp = false, false, nil, nil
+		mobileBtn.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = true; moved = false; ds = i.Position; sp = mobileBtn.Position end end)
+		UISm.InputChanged:Connect(function(i)
+			if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+				local d = i.Position - ds; if (math.abs(d.X) + math.abs(d.Y)) > 6 then moved = true end
+				mobileBtn.Position = UDim2.new(sp.X.Scale, sp.X.Offset + d.X, sp.Y.Scale, sp.Y.Offset + d.Y)
+			end
+		end)
+		UISm.InputEnded:Connect(function(i)
+			if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+				if dragging and not moved then
+					if _G.JJS_FREE then pcall(function() VIMm:SendKeyEvent(true, Enum.KeyCode.Three, false, game); task.wait(0.04); VIMm:SendKeyEvent(false, Enum.KeyCode.Three, false, game) end)
+					else pcall(doEPress) end
+				end
+				dragging = false
+			end
+		end)
 	end
 	local function setMobileBtn(v)
 		buildMobile()
@@ -939,7 +957,7 @@ do
 		setLockRange = function(v) if type(v) == "number" then Settings.LockRange = v end end,
 		setKey = function(kc) if typeof(kc) == "EnumItem" then Settings.AbilityKey = kc end end,
 		setMode = function(m) if type(m) == "string" then Settings.Mode = m; _G.VX_M1BF_ON = (m == "M1 Black Flash"); backDashStage = 0; chainTarget = nil; if mobileBtn then mobileBtn.Text = mobileLabel() end end end,   -- Teleport / Jump / Side Dash / Back Dash (2-stage E) / M1 Black Flash (M1 fires the chain)
-		setFeintMode = function(m) feintMode = (m == "BF" or m == "M1" or m == "Moves") and m or "Off"; bfCount = 0; m1FeintCount = 0; bfSuppressUntil = 0; if VX_NOTIFY then VX_NOTIFY("Feint mode: " .. feintMode, feintMode ~= "Off") end end,  -- Off / BF / M1 / Moves (toast confirms the dropdown fired)
+		setFeintMode = function(m) feintMode = (m == "BF" or m == "M1" or m == "Moves") and m or "Off"; bfCount = 0; m1FeintCount = 0; bfSuppressUntil = 0 end,  -- Off / BF / M1 / Moves (no toast: don't reveal the mechanism)
 		setFeintBFStop = function(n) feintBFStop = tonumber(n) or 2 end,                  -- Mode A: press R after this many black flashes
 		setFeintM1Count = function(n) feintM1Count = tonumber(n) or 2 end,                -- Mode B: press R after this many of your M1s
 		setFeintMove = function(n) feintMove = tonumber(n) or 1 end,                      -- Mode B: which move (1-4) to press after the feint
@@ -1827,7 +1845,7 @@ do
     }
     local R = { held = {}, stamp = {}, lastDash = 0, lockTarget = nil, lockKind = nil, lockEnd = 0, bfCD = 0, bfActive = false, curving = false }
     local WIN = 0.15
-    local function status(t) if VX_NOTIFY then VX_NOTIFY(t, true) end end
+    local function status(_) end   -- no-op: don't announce which BF mode fired (hide the mechanism)
     local function acPass() if _G.VX_ACPASS then _G.VX_ACPASS() end end
     local function GetChar() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LocalPlayer.Name)) or LocalPlayer.Character end
     local function GetRoot() local c = GetChar(); return c and c:FindFirstChild("HumanoidRootPart") end
@@ -9284,7 +9302,6 @@ do
         elseif m == "M1 BF (simple)" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(true)
         elseif m == "M1 Chain" then _G.VXBF2.setBFM1(false); _G.VXBF2.setMode("M1"); _G.VXBF2.setEnabled(true)
         else _G.VXBF2.setBFM1(false); _G.VXBF2.setMode(m); _G.VXBF2.setEnabled(true) end
-        if VX_NOTIFY then VX_NOTIFY("BF: " .. m, m ~= "Off") end
     end })
     bfSec:Slider({ Name = "BF Cooldown", Min = 0.1, Max = 2, Default = 0.5, Decimals = 0.05, Suffix = "s", Callback = function(v) if _G.VXBF2 then _G.VXBF2.setCooldown(v) end end })
     if tier("premium") then bfSec:Slider({ Name = "Teleport/Jump Dist", Min = 2, Max = 8, Default = 3, Decimals = 0.5, Callback = function(v) if _G.VXBF2 then _G.VXBF2.setTeleportDist(v) end end }) end
