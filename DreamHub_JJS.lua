@@ -99,11 +99,19 @@ task.spawn(function()
     local g = Instance.new("ScreenGui"); g.Name = "VX_DreamCircle"; g.ResetOnSpawn = false; g.IgnoreGuiInset = true; g.DisplayOrder = 9800
     pcall(function() g.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
     if not g.Parent then g.Parent = LP:WaitForChild("PlayerGui") end
-    local b = Instance.new("TextButton"); b.Size = UDim2.fromOffset(46, 46); b.Position = UDim2.new(1, -64, 0, 14)
-    b.BackgroundColor3 = Color3.fromRGB(8, 8, 8); b.Text = "Dream"; b.TextColor3 = Color3.fromRGB(255, 255, 255)
-    b.TextSize = 11; b.Font = Enum.Font.GothamBold; b.AutoButtonColor = true; b.Parent = g
+    -- Dream logo icon. Set _G.JJS_DREAM_ICON = "rbxassetid://<your logo id>" before the loadstring to use your
+    -- image; otherwise it shows the "Dream" text badge. (Send me the logo id and I'll bake it in as the default.)
+    local ICON = _G.JJS_DREAM_ICON
+    local b = Instance.new("ImageButton"); b.Size = UDim2.fromOffset(46, 46); b.Position = UDim2.new(1, -64, 0, 14)
+    b.BackgroundColor3 = Color3.fromRGB(8, 8, 8); b.AutoButtonColor = true; b.Parent = g
+    b.Image = (type(ICON) == "string" and ICON) or ""
+    b.ScaleType = Enum.ScaleType.Fit
     Instance.new("UICorner", b).CornerRadius = UDim.new(1, 0)
     local st = Instance.new("UIStroke"); st.Color = Color3.fromRGB(255, 255, 255); st.Thickness = 1.2; st.Transparency = 0.35; st.Parent = b
+    if b.Image == "" then   -- no logo id given: show the "Dream" text badge
+        local txt = Instance.new("TextLabel"); txt.BackgroundTransparency = 1; txt.Size = UDim2.fromScale(1,1)
+        txt.Text = "Dream"; txt.TextColor3 = Color3.fromRGB(255,255,255); txt.TextSize = 11; txt.Font = Enum.Font.GothamBold; txt.Parent = b
+    end
     -- tap = toggle the menu (fires the menu key virtually); drag = reposition
     local dragging, dragStart, startPos, moved = false, nil, nil, false
     b.InputBegan:Connect(function(i)
@@ -2074,19 +2082,18 @@ do
     local enabled = false
     -- The grab shows a "JUMP TO ESCAPE!" QTE with a fill bar. We mash Space CONTINUOUSLY the WHOLE time that
     -- prompt is on screen (a fixed burst only filled part of the bar). We detect the prompt by its text.
+    local function labelSaysEscape(d)
+        if not (d:IsA("TextLabel") and d.Visible) then return false end
+        local t = string.lower(d.Text or "")
+        return (t:find("jump to escape") ~= nil) or (t:find("escape") ~= nil and t:find("jump") ~= nil)
+    end
     local function escapePromptUp()
-        local pg = LP:FindFirstChild("PlayerGui"); if not pg then return false end
-        for _, d in ipairs(pg:GetDescendants()) do
-            if d:IsA("TextLabel") and d.Visible then
-                local t = string.lower(d.Text or "")
-                if t:find("jump to escape") or (t:find("escape") and t:find("jump")) then
-                    -- only if actually rendered (its whole ancestry is enabled)
-                    local ok = true; local a = d.Parent
-                    for _ = 1, 6 do if a and a:IsA("GuiObject") and not a.Visible then ok = false break end a = a and a.Parent end
-                    if ok then return true end
-                end
-            end
-        end
+        -- The "JUMP TO ESCAPE!" prompt is a BILLBOARD over the grabbed character (in the world), NOT PlayerGui.
+        -- Scan BOTH: your character's billboards (workspace.Characters[you]) + PlayerGui.
+        local chs = workspace:FindFirstChild("Characters"); local me = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+        if me then for _, d in ipairs(me:GetDescendants()) do if labelSaysEscape(d) then return true end end end
+        local pg = LP:FindFirstChild("PlayerGui")
+        if pg then for _, d in ipairs(pg:GetDescendants()) do if labelSaysEscape(d) then return true end end end
         return false
     end
     task.spawn(function()
