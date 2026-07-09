@@ -858,7 +858,9 @@ do
 		local UIS_F = game:GetService("UserInputService")
 		local MOVEKEYS = { [Enum.KeyCode.One] = true, [Enum.KeyCode.Two] = true, [Enum.KeyCode.Three] = true, [Enum.KeyCode.Four] = true }
 		UIS_F.InputBegan:Connect(function(input, gpe)
-			if gpe then return end
+			-- DON'T bail on gpe: the game binds M1/1-4 itself, so every combat press arrives gpe=true — bailing
+			-- meant Feint M1 NEVER fired. Only skip while typing in a textbox (same fix the Gojo module needed).
+			if UIS_F:GetFocusedTextBox() then return end
 			-- Mode B "Feint M1": count your LANDED M1 clicks (enemy in front, melee range); at N -> R then your chosen move
 			if feintMode == "M1" and input.UserInputType == Enum.UserInputType.MouseButton1 then
 				local mh = getHRP(myCharResolved()); local tgt = getNearestEnemy(9); local tr = tgt and getHRP(tgt)
@@ -954,7 +956,7 @@ end
 -- BATCH 2 MODULES  (Item ESP + Auto Grab, Auto Skills, Invisibility, Auto Parkour, Teleport)
 -- Each module exposes a small API; the GUI below wires them.
 -- ============================================================
-local ItemsApi, SkillsApi, InvisApi, ParkourApi, TPApi, M1ComboApi, CounterApi, LockOnApi, AutoUltApi, AntiAfkApi, NoclipApi, FarmApi, SpeedApi, FlyApi, PlayerEspApi, DashApi, TrainApi, DrinkApi, AntiStunApi, AntiRagdollApi, SideDashApi, EvasiveApi, AntiDomainApi, ResetApi, InfJumpApi, AntiCounterApi, AutoAdaptApi, JumpHeadApi, AntiBlackHoleApi, CrowUltApi, CrowHitApi, AutoDomainAdaptApi, HeadUltApi, RikaSwordApi, SlamApi, GokuApi, HollowApi, VisualApi, AimAssistApi, RemoveTreesApi, GojoTpApi, ReversalRedApi, ControlDummyApi, DesyncFreezeApi
+local ItemsApi, SkillsApi, InvisApi, ParkourApi, TPApi, M1ComboApi, CounterApi, LockOnApi, AutoUltApi, AntiAfkApi, NoclipApi, FarmApi, SpeedApi, FlyApi, PlayerEspApi, DashApi, TrainApi, DrinkApi, AntiStunApi, AntiRagdollApi, SideDashApi, EvasiveApi, AntiDomainApi, ResetApi, InfJumpApi, AntiCounterApi, AutoAdaptApi, JumpHeadApi, AntiBlackHoleApi, CrowUltApi, CrowHitApi, AutoDomainAdaptApi, HeadUltApi, RikaSwordApi, SlamApi, GokuApi, HollowApi, VisualApi, AimAssistApi, RemoveTreesApi, GojoTpApi, ReversalRedApi, ControlDummyApi, DesyncFreezeApi, TargetApi, AutoQTEApi
 
 -- EVERY character's M1 anim id (user-captured) - set EARLY so Head of Hei / Goku M1 / Side Dash all detect a real M1 regardless of module load order
 do
@@ -1426,6 +1428,213 @@ do
 			return out
 		end,
 	}
+end
+
+-- ============================================================
+-- MODULE: TARGET  (type a username -> TP / bring item / auto-farm / view / kills / throw trash)
+-- ============================================================
+do
+    local Players = game:GetService("Players")
+    local VIM = game:GetService("VirtualInputManager")
+    local RunService = game:GetService("RunService")
+    local LP = Players.LocalPlayer
+    local targetName = ""
+    local farmOn, viewOn = false, false
+    local savedCamSubj = nil
+    local function myChar() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
+    local function myHRP() local c = myChar(); return c and (c:FindFirstChild("HumanoidRootPart") or c:FindFirstChildWhichIsA("BasePart")) end
+    local function partOf(m) return m and (m:FindFirstChild("HumanoidRootPart") or m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart")) end
+    -- resolve the typed name (case-insensitive, partial) to a Player + their live character model
+    local function resolve()
+        if targetName == "" then return nil, nil end
+        local low = string.lower(targetName)
+        local plr
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LP and (string.lower(p.Name) == low or string.lower(p.DisplayName) == low) then plr = p; break end
+        end
+        if not plr then for _, p in ipairs(Players:GetPlayers()) do if p ~= LP and (string.find(string.lower(p.Name), low, 1, true) or string.find(string.lower(p.DisplayName), low, 1, true)) then plr = p; break end end end
+        if not plr then return nil, nil end
+        local chs = workspace:FindFirstChild("Characters")
+        local mdl = (chs and chs:FindFirstChild(plr.Name)) or plr.Character
+        return plr, mdl
+    end
+    local function faceTo(pos) local r = myHRP(); if r and pos then pcall(function() r.CFrame = CFrame.lookAt(r.Position, Vector3.new(pos.X, r.Position.Y, pos.Z)) end) end end
+    -- read the target's move cooldowns from their Moveset (each move often carries a CD attribute or a Debounce)
+    local function readCooldowns(mdl)
+        local out = {}
+        local mv = mdl and mdl:FindFirstChild("Moveset")
+        if mv then for _, m in ipairs(mv:GetChildren()) do
+            local cd = m:GetAttribute("Cooldown") or m:GetAttribute("CD") or (m:GetAttribute("Debounce") and "on CD")
+            out[#out + 1] = m.Name .. (cd and (": " .. tostring(cd)) or ": ready")
+        end end
+        return out
+    end
+    local function usedUlt(mdl, plr)
+        -- awakening shows up as an attribute/tag or an "Awakened"/"Domain" object; best-effort read
+        if mdl then
+            for _, a in ipairs({ "Awakened", "Awakening", "Ult", "Ultimate", "Domain" }) do
+                if mdl:GetAttribute(a) then return true end
+            end
+            if mdl:FindFirstChild("Domain") or mdl:FindFirstChild("Awakened") then return true end
+        end
+        return false
+    end
+    local function grabNearestItem(filter)   -- pick up an item (filter name or "Any"), returns true if grabbed
+        local hrp = myHRP(); if not hrp then return false end
+        local best, bd
+        for _, fn in ipairs({ "Items", "Drops", "Loot", "Destructible" }) do
+            local f = workspace:FindFirstChild(fn)
+            if f then for _, m in ipairs(f:GetDescendants()) do
+                if (m:IsA("Model") or m:IsA("BasePart")) and (filter == "Any" or filter == nil or m.Name == filter) then
+                    local part = m:IsA("BasePart") and m or partOf(m)
+                    if part then local d = (part.Position - hrp.Position).Magnitude; if not bd or d < bd then best, bd = m, d end end
+                end
+            end end
+            if best then break end
+        end
+        if not best then return false end
+        local part = best:IsA("BasePart") and best or partOf(best)
+        vxTeleportHard(part.Position + Vector3.new(0, 2, 0), 1.2); task.wait(0.6)
+        local me = myChar()
+        if me and typeof(firetouchinterest) == "function" then
+            for _, ip in ipairs(best:IsA("Model") and best:GetDescendants() or { best }) do
+                if ip:IsA("BasePart") then
+                    for _, mp in ipairs(me:GetChildren()) do
+                        if mp:IsA("BasePart") then pcall(function() firetouchinterest(mp, ip, 0); firetouchinterest(mp, ip, 1) end) end
+                    end
+                end
+            end
+        end
+        if typeof(fireproximityprompt) == "function" and best:IsA("Model") then
+            for _, dpp in ipairs(best:GetDescendants()) do
+                if dpp:IsA("ProximityPrompt") then pcall(function() fireproximityprompt(dpp) end) end
+            end
+        end
+        pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game) end)
+        return true
+    end
+    -- AUTO FARM the target: TP behind + M1 loop
+    task.spawn(function()
+        while true do
+            if farmOn then
+                local _, mdl = resolve(); local tr = partOf(mdl)
+                if tr and tr.Parent then
+                    vxTeleportHard(tr.Position - (tr.CFrame.LookVector * 4) + Vector3.new(0, 0.5, 0), 0.5)
+                    faceTo(tr.Position)
+                    pcall(function() VIM:SendMouseButtonEvent(0, 0, 0, true, game, 0); task.wait(0.04); VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0) end)
+                    task.wait(0.28)
+                else task.wait(0.4) end
+            else task.wait(0.25) end
+        end
+    end)
+    -- VIEW the target (spectate camera)
+    task.spawn(function()
+        while true do
+            if viewOn then
+                local _, mdl = resolve(); local h = mdl and mdl:FindFirstChildOfClass("Humanoid")
+                local cam = workspace.CurrentCamera
+                if cam and h then if savedCamSubj == nil then savedCamSubj = cam.CameraSubject end pcall(function() cam.CameraSubject = h end) end
+                task.wait(0.3)
+            else task.wait(0.3) end
+        end
+    end)
+    TargetApi = {
+        setName = function(n) targetName = tostring(n or "") end,
+        tpTo = function() local _, mdl = resolve(); local tr = partOf(mdl); if tr then vxTeleportHard(tr.Position - (tr.CFrame.LookVector * 4) + Vector3.new(0, 1, 0), 2) elseif VX_NOTIFY then VX_NOTIFY("Target not found", false) end end,
+        bringItem = function(filter)
+            task.spawn(function()
+                if grabNearestItem(filter) then
+                    task.wait(0.15)
+                    local _, mdl = resolve(); local tr = partOf(mdl)
+                    if tr then vxTeleportHard(tr.Position + Vector3.new(0, 1, 0), 2) end   -- the held item comes with you
+                elseif VX_NOTIFY then VX_NOTIFY("No item to bring", false) end
+            end)
+        end,
+        throwTrash = function()
+            task.spawn(function()
+                if grabNearestItem("Trash") then   -- trash lives in workspace.Destructible.Throwable, named "Trash"
+                    task.wait(0.2)
+                    local _, mdl = resolve(); local tr = partOf(mdl)
+                    if tr then
+                        vxTeleportHard(tr.Position - (tr.CFrame.LookVector * 5) + Vector3.new(0, 1, 0), 1.5); task.wait(0.35)
+                        faceTo(tr.Position)
+                        -- throw = M1 (or R) while holding; do both taps to be safe
+                        pcall(function() VIM:SendMouseButtonEvent(0, 0, 0, true, game, 0); task.wait(0.05); VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0) end)
+                    end
+                elseif VX_NOTIFY then VX_NOTIFY("No trash found", false) end
+            end)
+        end,
+        setFarm = function(v) farmOn = v == true end,
+        setView = function(v)
+            viewOn = v == true
+            if not viewOn then local cam = workspace.CurrentCamera; if cam and savedCamSubj then pcall(function() cam.CameraSubject = savedCamSubj end) end; savedCamSubj = nil end
+        end,
+        kills = function()
+            local plr = resolve()
+            if not plr then return "N/A" end
+            local ls = plr:FindFirstChild("leaderstats")
+            for _, nm in ipairs({ "Kills", "Wins", "KOs", "Kill" }) do local s = ls and ls:FindFirstChild(nm); if s then return tostring(s.Value) end end
+            return "0"
+        end,
+        info = function()
+            local plr, mdl = resolve()
+            if not plr then return { found = false } end
+            local h = mdl and mdl:FindFirstChildOfClass("Humanoid")
+            return {
+                found = true,
+                name = plr.DisplayName .. " (@" .. plr.Name .. ")",
+                userId = plr.UserId,
+                health = h and math.floor(h.Health) or 0,
+                maxHealth = h and math.floor(h.MaxHealth) or 100,
+                ult = usedUlt(mdl, plr),
+                cooldowns = readCooldowns(mdl),
+            }
+        end,
+    }
+end
+
+-- ============================================================
+-- MODULE: AUTO QTE CLICK  (Higuruma "Final Judgment" / Deadly Sentencing)
+-- When you're judged, a QTE appears (buttons Confess / Silence / Denial, 3s timer; no answer = Silence auto-picked
+-- and that's the losing outcome). This auto-clicks your chosen answer the instant the QTE shows, at Click Delay.
+-- Also handles any generic mash-button QTE that pops in PlayerGui.
+-- ============================================================
+do
+    local Players = game:GetService("Players")
+    local VIM = game:GetService("VirtualInputManager")
+    local LP = Players.LocalPlayer
+    local enabled, choice, clickDelay = false, "Silence", 0
+    local WANT = { "confess", "silence", "denial" }   -- the Deadly Sentencing options
+    local function clickGuiButton(btn)
+        local ap, sz = btn.AbsolutePosition, btn.AbsoluteSize
+        local x, y = ap.X + sz.X / 2, ap.Y + sz.Y / 2
+        pcall(function() VIM:SendMouseButtonEvent(x, y, 0, true, game, 0); task.wait(0.03); VIM:SendMouseButtonEvent(x, y, 0, false, game, 0) end)
+    end
+    task.spawn(function()
+        while true do
+            if enabled then
+                local pg = LP:FindFirstChild("PlayerGui")
+                if pg then
+                    local want = string.lower(choice)
+                    local picked, anyQTE
+                    for _, d in ipairs(pg:GetDescendants()) do
+                        if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                            local txt = string.lower((d:IsA("TextButton") and d.Text or "") .. " " .. d.Name)
+                            for _, w in ipairs(WANT) do if string.find(txt, w, 1, true) then anyQTE = d; if w == want then picked = d end end end
+                        end
+                    end
+                    local hit = picked or anyQTE   -- prefer your chosen answer; else click whatever judgment button showed
+                    if hit and hit.Parent then clickGuiButton(hit); task.wait(0.25) end
+                end
+                task.wait(clickDelay > 0 and clickDelay or 0.08)
+            else task.wait(0.2) end
+        end
+    end)
+    AutoQTEApi = {
+        set = function(v) enabled = v == true end,
+        setChoice = function(c) choice = tostring(c or "Silence") end,
+        setDelay = function(v) if type(v) == "number" then clickDelay = v / 100 end end,   -- slider is 0-100 -> 0-1s
+    }
 end
 
 -- MODULE: AUTO SKILLS  (press chosen keys 1/2/3/4 on a nearby enemy)
@@ -3366,7 +3575,7 @@ do
 	WalkDomainApi = { set = function(v) walkDomOn = v == true end }
 	DashNoiseApi  = { set = function(v) dashNoiseOn = v == true end }
 	EmoteSlotApi  = { unlock = unlockEmoteSlot }
-	InstaRespawnApi = { set = function(v) instaOn = v == true end }
+	InstaRespawnApi = { set = function(v) instaOn = v == true end, now = requestRespawn }   -- now() = respawn RIGHT NOW (the button)
 end
 
 -- ============================================================
@@ -8728,11 +8937,42 @@ do
     askSec:Toggle({ Name = "Awakening G", Callback = function(b) if SkillsApi then SkillsApi.setKey(6, b) end end })
     local auSec = autoSub:Section({ Name = "Auto Utility", Side = 2 })
     auSec:Toggle({ Name = "Auto Parkour", Callback = function(b) if ParkourApi then ParkourApi.set(b) end end })
+    auSec:Toggle({ Name = "Auto QTE Click (Higuruma Final Judgment)", Callback = function(b) if AutoQTEApi then AutoQTEApi.set(b) end end })
+    auSec:Dropdown({ Name = "QTE Answer", Items = { "Silence", "Denial", "Confess" }, Default = "Silence", Callback = function(v) if AutoQTEApi then AutoQTEApi.setChoice(v) end end })
+    auSec:Slider({ Name = "Click Delay", Min = 0, Max = 100, Default = 0, Decimals = 1, Callback = function(v) if AutoQTEApi then AutoQTEApi.setDelay(v) end end })
     auSec:Toggle({ Name = "Auto Grab", Callback = function(b) if ItemsApi then ItemsApi.setGrab(b) end end })
     auSec:Dropdown({ Name = "Grab Filter", Items = ((ItemsApi and ItemsApi.names()) or { "Any" }), Default = "Any", Callback = function(v) if ItemsApi then ItemsApi.setFilter(v) end end })
     auSec:Toggle({ Name = "Auto Farm", Callback = function(b) if FarmApi then FarmApi.set(b) end end })
     auSec:Dropdown({ Name = "Farm Target", Items = playerList(), Default = "Nearest", Callback = function(v) if FarmApi then FarmApi.setTarget(v) end end })
     auSec:Toggle({ Name = "Auto Train", Callback = function(b) if TrainApi then TrainApi.setAuto(b) end end })
+
+    -- ===================== TARGET (type a username -> act on that player) =====================
+    local TargetPage = Window:Page({ Name = "Target", Icon = "72732892493295" })
+    local tgSub = TargetPage:SubPage({ Name = "Target", Columns = 2 })
+    local tSec = tgSub:Section({ Name = "Target", Side = 1 })
+    tSec:Textbox({ Name = "Player Name", Default = "", Callback = function(v) if TargetApi then TargetApi.setName(v) end end })
+    local infoLbl = tSec:Label("Type a username, then Check Info")
+    local function refreshInfo()
+        if not TargetApi then return end
+        local i = TargetApi.info()
+        if not i or not i.found then pcall(function() infoLbl:SetText("Target not found") end); if VX_NOTIFY then VX_NOTIFY("Target not found", false) end return end
+        local cds = (i.cooldowns and #i.cooldowns > 0) and table.concat(i.cooldowns, ", ") or "n/a"
+        local txt = i.name .. "\nHP: " .. i.health .. " / " .. i.maxHealth .. "   Ult: " .. (i.ult and "USED" or "no") .. "   Kills: " .. (TargetApi.kills() or "?") .. "\nCooldowns: " .. cds
+        pcall(function() infoLbl:SetText(txt) end)
+        if VX_NOTIFY then VX_NOTIFY(i.name .. "  |  HP " .. i.health .. "/" .. i.maxHealth .. "  |  Ult " .. (i.ult and "USED" or "no"), true) end
+    end
+    tSec:Button({ Name = "Check Info (profile / HP / ult / CDs)", Callback = refreshInfo })
+    tSec:Button({ Name = "Check Kills", Callback = function() if TargetApi and VX_NOTIFY then VX_NOTIFY("Kills: " .. tostring(TargetApi.kills()), true) end end })
+    tSec:Toggle({ Name = "View User (spectate)", Callback = function(b) if TargetApi then TargetApi.setView(b) end end })
+    local tActSec = tgSub:Section({ Name = "Actions", Side = 2 })
+    tActSec:Button({ Name = "Teleport To User", Callback = function() if TargetApi then TargetApi.tpTo() end end })
+    tActSec:Toggle({ Name = "Auto Farm User", Callback = function(b) if TargetApi then TargetApi.setFarm(b) end end })
+    local bringFilter = "Any"
+    tActSec:Dropdown({ Name = "Item To Bring", Items = ((ItemsApi and ItemsApi.names()) or { "Any" }), Default = "Any", Callback = function(v) bringFilter = (type(v) == "table") and v[1] or v end })
+    tActSec:Button({ Name = "Bring Item To User", Callback = function() if TargetApi then TargetApi.bringItem(bringFilter) end end })
+    tActSec:Button({ Name = "Throw Trash At User", Callback = function() if TargetApi then TargetApi.throwTrash() end end })
+    -- keep the readout fresh while the tab's open (best-effort; the Check buttons always work)
+    task.spawn(function() while true do task.wait(1.5); pcall(function() if _G.VX_HUB_READY and TargetApi then local i = TargetApi.info(); if i and i.found then infoLbl:SetText(i.name .. "\nHP: " .. i.health .. " / " .. i.maxHealth .. "   Ult: " .. (i.ult and "USED" or "no")) end end end) end end)
 
     -- ===================== MOVEMENT =====================
     local MovePage = Window:Page({ Name = "Movement", Icon = "94627324690861" })
@@ -8831,7 +9071,7 @@ do
     srvSec:Button({ Name = "Server Hop", Callback = function() pcall(function() game:GetService("TeleportService"):Teleport(game.PlaceId, LocalPlayer) end) end })
     srvSec:Button({ Name = "Copy Discord", Callback = function() if setclipboard then pcall(function() setclipboard("https://discord.gg/fRcGd9bW") end) end if VX_NOTIFY then VX_NOTIFY("Discord copied", true) end end })
     srvSec:Button({ Name = "Force Reset", Callback = function() if ResetApi then ResetApi.reset() end end })
-    srvSec:Toggle({ Name = "Instant Respawn", Callback = function(b) if InstaRespawnApi then InstaRespawnApi.set(b) end end })
+    srvSec:Button({ Name = "Respawn Now", Callback = function() if InstaRespawnApi then InstaRespawnApi.now() end end })   -- button, not a toggle (user: kills+respawns you on demand)
     srvSec:Toggle({ Name = "Show Notifications (off by default)", Default = false, Callback = function(b) _G.VX_SILENT = (b ~= true) end })   -- user asked: NO toasts. Silent unless you opt back in; F9 console prints stay for debugging.
     srvSec:Button({ Name = "Unlock Extra Emote Slot", Callback = function() if EmoteSlotApi then EmoteSlotApi.unlock() end end })
 
