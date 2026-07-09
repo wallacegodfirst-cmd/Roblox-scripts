@@ -1607,7 +1607,9 @@ do
         while true do
             task.wait(0.5)
             pcall(function()
-                if not _G.VX_TARGET_CARD then if card.gui then card.gui.Enabled = false end return end   -- info lives INSIDE the GUI now; _G.VX_TARGET_CARD=true re-enables the floating card
+                -- Card is ON by default (the in-GUI labels can't live-update on this UI lib). Set
+                -- _G.VX_TARGET_CARD=false before the loadstring to hide it.
+                if _G.VX_TARGET_CARD == false then if card.gui then card.gui.Enabled = false end return end
                 if targetName == "" then if card.gui then card.gui.Enabled = false end return end
                 local plr, mdl = resolve()
                 if not plr then if card.gui then card.gui.Enabled = false end return end
@@ -1908,35 +1910,28 @@ do
             local pos = e.Position + (-fwd * 3)
             acPass(); p.CFrame = CFrame.new(pos, pos + fwd)
             aimCameraAt(e.Position + fwd * 50)
+        elseif R.lockKind == "cam" then
+            aimCameraAt(e.Position)   -- soft lock: just keep the camera on them (no teleport, no icon)
         end
     end)
 
-    -- SIDE DASH: tap Q, curve the camera from the side back onto the enemy (no teleport)
+    -- SIDE DASH: orbit LEFT around the enemy (proven anti-fling arc _G.VX_ORBIT), soft-lock the camera on them
+    -- the whole time, then auto-release (no lingering lock icon). Matches "click Q -> side around left, lock, off".
     local function doSideDash(isBF)
         if tick() - R.lastDash < Settings.DashCooldown and not isBF then return false end
         if R.curving then return false end
-        local p = GetRoot(); if not p then return false end
         local t = GetClosestTarget(Settings.DashRange); if not t then return false end
         local e = t:FindFirstChild("HumanoidRootPart"); if not e then return false end
         if not isBF then R.lastDash = tick() end
-        local sign = chooseSide(p, e, Settings.SideChoice)
-        local sideDir = e.CFrame.RightVector * sign
-        ReleaseAll(); task.wait(0.01); R.curving = true
-        aimCameraDir(sideDir); faceRootDir(sideDir)
-        VKeyTap(Settings.DashKey, 0.04)
-        local t0 = tick(); local conn
-        conn = RunService.Heartbeat:Connect(function()
-            local lp = GetRoot(); local le = t and t:FindFirstChild("HumanoidRootPart")
-            if not lp or not le then if conn then conn:Disconnect() end R.curving = false return end
-            local blend = math.clamp((tick() - t0) / Settings.SideCurveTime, 0, 1)
-            aimCameraDir((sideDir * (1 - blend)) + ((le.Position - lp.Position) * blend))
-            if tick() - t0 > Settings.SideCurveTime then
-                conn:Disconnect(); R.curving = false
-                if Settings.SideM1 and not isBF then task.spawn(VMouseClick) end
-                if Settings.SideFaceAfter and not isBF then task.delay(0.05, function() local l2 = GetRoot(); local e2 = t and t:FindFirstChild("HumanoidRootPart"); if l2 and e2 then local to = Vector3.new((e2.Position - l2.Position).X, 0, (e2.Position - l2.Position).Z); if to.Magnitude > 0.01 then faceRootDir(to); aimCameraAt(e2.Position) end end end) end
-            end
+        R.curving = true
+        R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 0.55   -- soft camera lock (no icon), auto-expires
+        task.spawn(function()
+            if _G.VX_ORBIT then _G.VX_ORBIT(e, { dir = -1, endBehind = false, duration = Settings.SideCurveTime + 0.05 })   -- LEFT
+            else VKeyTap(Settings.DashKey, 0.04); local sd = e.CFrame.RightVector * -1; aimCameraDir(sd); faceRootDir(sd) end
         end)
-        if not isBF then status("Side Dash Curve") end
+        if Settings.SideM1 and not isBF then task.delay(0.22, function() aimCameraAt((t:FindFirstChild("HumanoidRootPart") or e).Position); VMouseClick() end) end
+        task.delay(0.55, function() R.curving = false; if R.lockKind == "cam" then R.lockTarget = nil; R.lockKind = nil end end)
+        if not isBF then status("Side Dash L") end
         return true
     end
     -- BACK DASH: W+Q through them, M1 their back (no teleport)
