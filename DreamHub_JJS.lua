@@ -90,6 +90,44 @@ pcall(function()
     end)
 end)
 
+-- ═══ DREAM CIRCLE: floating round button — CLICK IT AND THE GUI GOES AWAY (click again = back). Draggable. ═══
+task.spawn(function()
+    local Players = game:GetService("Players")
+    local VIM = game:GetService("VirtualInputManager")
+    local UIS = game:GetService("UserInputService")
+    local LP = Players.LocalPlayer
+    local g = Instance.new("ScreenGui"); g.Name = "VX_DreamCircle"; g.ResetOnSpawn = false; g.IgnoreGuiInset = true; g.DisplayOrder = 9800
+    pcall(function() g.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
+    if not g.Parent then g.Parent = LP:WaitForChild("PlayerGui") end
+    local b = Instance.new("TextButton"); b.Size = UDim2.fromOffset(46, 46); b.Position = UDim2.new(1, -64, 0, 14)
+    b.BackgroundColor3 = Color3.fromRGB(8, 8, 8); b.Text = "Dream"; b.TextColor3 = Color3.fromRGB(255, 255, 255)
+    b.TextSize = 11; b.Font = Enum.Font.GothamBold; b.AutoButtonColor = true; b.Parent = g
+    Instance.new("UICorner", b).CornerRadius = UDim.new(1, 0)
+    local st = Instance.new("UIStroke"); st.Color = Color3.fromRGB(255, 255, 255); st.Thickness = 1.2; st.Transparency = 0.35; st.Parent = b
+    -- tap = toggle the menu (fires the menu key virtually); drag = reposition
+    local dragging, dragStart, startPos, moved = false, nil, nil, false
+    b.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; moved = false; dragStart = i.Position; startPos = b.Position
+        end
+    end)
+    UIS.InputChanged:Connect(function(i)
+        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+            local d = i.Position - dragStart
+            if (math.abs(d.X) + math.abs(d.Y)) > 6 then moved = true end
+            b.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end)
+    UIS.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            if dragging and not moved then
+                pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.RightShift, false, game); task.wait(); VIM:SendKeyEvent(false, Enum.KeyCode.RightShift, false, game) end)
+            end
+            dragging = false
+        end
+    end)
+end)
+
 -- ===================== SHARED STATE (the GUI flips these; the modules read them) =====================
 local BlockFlags = { Dash = false, M1 = false, Abilities = false, CameraFollow = true }
 local BFApi    -- forward-declared: Auto Black Flash control API (assigned in its module below)
@@ -1126,18 +1164,11 @@ end
 -- HARDENED teleport for FAR spots that a one-frame snap gets set back on: glide there in whitelisted STEPS
 -- (each step is small enough to stay under the anti-cheat's per-tick distance limit) then HOLD + re-whitelist.
 local function vxTeleportHard(dest, holdTime)
-	-- INSTANT snap first (what you asked for), but with a REAL fallback: if the anti-cheat sets the snap back
-	-- ("teleport doesn't work"), the stepped speed-capped glide below takes over automatically — each step stays
-	-- under the per-tick distance limit, so it CANNOT be set back even when the whitelist remote is stale.
+	-- ALWAYS INSTANT (reverted): the stepped-fallback experiment made teleports glide/fight themselves
+	-- ("teleports don't work, it was working early"). One whitelisted snap + hold, exactly like before.
 	if typeof(dest) == "CFrame" then dest = dest.Position end
 	vxGlide(dest, nil, math.max(holdTime or 3, 2))
-	do   -- setback check: only run the stepped fallback when the snap did NOT hold
-		local LPc = game:GetService("Players").LocalPlayer
-		task.wait(0.35)
-		local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LPc.Name)) or LPc.Character
-		local r = c and c:FindFirstChild("HumanoidRootPart")
-		if r and (r.Position - dest).Magnitude <= 15 then return end   -- snap held: done
-	end
+	if true then return end
 	local LP = game:GetService("Players").LocalPlayer
 	if typeof(dest) == "CFrame" then dest = dest.Position end
 	task.spawn(function()
@@ -1540,6 +1571,57 @@ do
             else task.wait(0.3) end
         end
     end)
+    -- FLOATING INFO CARD: the menu's Label element can't live-update on this UI lib ("I don't see their info"),
+    -- so the target's profile shows on its OWN card: avatar, name, HP bar, ult, kills. Appears while a name is
+    -- typed and a match exists; disappears when the box is cleared.
+    local card = {}
+    local function buildCard()
+        if card.gui and card.gui.Parent then return end
+        local g = Instance.new("ScreenGui"); g.Name = "VX_TargetCard"; g.ResetOnSpawn = false; g.IgnoreGuiInset = true; g.DisplayOrder = 9500
+        pcall(function() g.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
+        if not g.Parent then g.Parent = LP:WaitForChild("PlayerGui") end
+        local f = Instance.new("Frame"); f.AnchorPoint = Vector2.new(1, 0); f.Position = UDim2.new(1, -14, 0, 96)
+        f.Size = UDim2.fromOffset(236, 86); f.BackgroundColor3 = Color3.fromRGB(12, 12, 14); f.BackgroundTransparency = 0.06; f.BorderSizePixel = 0; f.Parent = g
+        Instance.new("UICorner", f).CornerRadius = UDim.new(0, 10)
+        local st = Instance.new("UIStroke"); st.Color = Color3.fromRGB(255, 45, 45); st.Thickness = 1.3; st.Transparency = 0.25; st.Parent = f
+        local av = Instance.new("ImageLabel"); av.Position = UDim2.fromOffset(10, 10); av.Size = UDim2.fromOffset(44, 44); av.BackgroundColor3 = Color3.fromRGB(24, 24, 28); av.BorderSizePixel = 0; av.Parent = f
+        Instance.new("UICorner", av).CornerRadius = UDim.new(1, 0)
+        local nm = Instance.new("TextLabel"); nm.BackgroundTransparency = 1; nm.Position = UDim2.fromOffset(62, 10); nm.Size = UDim2.new(1, -70, 0, 16)
+        nm.Font = Enum.Font.GothamBold; nm.TextSize = 12; nm.TextColor3 = Color3.fromRGB(240, 240, 244); nm.TextXAlignment = Enum.TextXAlignment.Left; nm.TextTruncate = Enum.TextTruncate.AtEnd; nm.Parent = f
+        local meta = Instance.new("TextLabel"); meta.BackgroundTransparency = 1; meta.Position = UDim2.fromOffset(62, 27); meta.Size = UDim2.new(1, -70, 0, 14)
+        meta.Font = Enum.Font.Gotham; meta.TextSize = 11; meta.TextColor3 = Color3.fromRGB(175, 175, 182); meta.TextXAlignment = Enum.TextXAlignment.Left; meta.Parent = f
+        local hpBg = Instance.new("Frame"); hpBg.Position = UDim2.fromOffset(62, 45); hpBg.Size = UDim2.new(1, -74, 0, 8); hpBg.BackgroundColor3 = Color3.fromRGB(30, 30, 34); hpBg.BorderSizePixel = 0; hpBg.Parent = f
+        Instance.new("UICorner", hpBg).CornerRadius = UDim.new(1, 0)
+        local hpF = Instance.new("Frame"); hpF.Size = UDim2.fromScale(1, 1); hpF.BackgroundColor3 = Color3.fromRGB(90, 220, 100); hpF.BorderSizePixel = 0; hpF.Parent = hpBg
+        Instance.new("UICorner", hpF).CornerRadius = UDim.new(1, 0)
+        local hpT = Instance.new("TextLabel"); hpT.BackgroundTransparency = 1; hpT.Position = UDim2.fromOffset(10, 60); hpT.Size = UDim2.new(1, -20, 0, 16)
+        hpT.Font = Enum.Font.Gotham; hpT.TextSize = 11; hpT.TextColor3 = Color3.fromRGB(210, 210, 216); hpT.TextXAlignment = Enum.TextXAlignment.Left; hpT.Parent = f
+        card = { gui = g, frame = f, av = av, nm = nm, meta = meta, hpF = hpF, hpT = hpT, avFor = nil }
+    end
+    task.spawn(function()
+        while true do
+            task.wait(0.5)
+            pcall(function()
+                if targetName == "" then if card.gui then card.gui.Enabled = false end return end
+                local plr, mdl = resolve()
+                if not plr then if card.gui then card.gui.Enabled = false end return end
+                buildCard(); card.gui.Enabled = true
+                local h = mdl and mdl:FindFirstChildOfClass("Humanoid")
+                local hp, mx = (h and math.floor(h.Health) or 0), (h and math.floor(h.MaxHealth) or 100)
+                card.nm.Text = plr.DisplayName .. " (@" .. plr.Name .. ")"
+                local ls = plr:FindFirstChild("leaderstats"); local kills = "?"
+                if ls then for _, s in ipairs(ls:GetChildren()) do if s.Name:lower():find("kill") then kills = tostring(s.Value) break end end end
+                card.meta.Text = "Ult: " .. (usedUlt(mdl, plr) and "USED" or "no") .. "   Kills: " .. kills
+                card.hpF.Size = UDim2.fromScale(math.clamp(hp / math.max(mx, 1), 0, 1), 1)
+                card.hpF.BackgroundColor3 = (hp / math.max(mx, 1)) > 0.5 and Color3.fromRGB(90, 220, 100) or ((hp / math.max(mx, 1)) > 0.25 and Color3.fromRGB(235, 200, 70) or Color3.fromRGB(230, 70, 70))
+                card.hpT.Text = "HP " .. hp .. " / " .. mx
+                if card.avFor ~= plr.UserId then
+                    card.avFor = plr.UserId
+                    task.spawn(function() local ok, u = pcall(function() return Players:GetUserThumbnailAsync(plr.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100) end); if ok and u then card.av.Image = u end end)
+                end
+            end)
+        end
+    end)
     TargetApi = {
         setName = function(n) targetName = tostring(n or "") end,
         tpTo = function() local _, mdl = resolve(); local tr = partOf(mdl); if tr then vxTeleportHard(tr.Position - (tr.CFrame.LookVector * 4) + Vector3.new(0, 1, 0), 2) elseif VX_NOTIFY then VX_NOTIFY("Target not found", false) end end,
@@ -1620,34 +1702,91 @@ do
         local kc = KEYMAP[word]; if not kc then return end
         pcall(function() VIM:SendKeyEvent(true, kc, false, game); task.wait(0.06); VIM:SendKeyEvent(false, kc, false, game) end)
     end
+    -- ZERO-LAG detection: NO full PlayerGui sweep (that GetDescendants scan 12x/sec was the "FPS drop when
+    -- Final Judgment is on"). We keep a tiny CANDIDATE cache filled by DescendantAdded (cheap, event-driven)
+    -- plus one initial sweep, and the loop only checks the handful of cached judgment elements.
+    local candidates = setmetatable({}, { __mode = "k" })
+    local function consider(d)
+        if not (d:IsA("TextButton") or d:IsA("ImageButton") or d:IsA("TextLabel")) then return end
+        local txt = string.lower(((d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text or "") .. " " .. d.Name)
+        for _, w in ipairs(WANT) do if string.find(txt, w, 1, true) then candidates[d] = w; return end end
+    end
+    task.spawn(function()
+        local pg = LP:WaitForChild("PlayerGui", 10)
+        if not pg then return end
+        pcall(function() for _, d in ipairs(pg:GetDescendants()) do consider(d) end end)   -- one-time seed
+        pg.DescendantAdded:Connect(function(d) task.defer(function() pcall(consider, d) end) end)
+    end)
+    -- the nil-instance ANSWER remote (user's SimpleSpy capture: a nil-parented RemoteEvent fired with `true`)
+    local function fireJudgmentRemote()
+        if typeof(getnilinstances) ~= "function" then return end
+        pcall(function()
+            for _, v in ipairs(getnilinstances()) do
+                if v.ClassName == "RemoteEvent" then
+                    local n = string.lower(v.Name)
+                    if n:find("judg") or n:find("answer") or n:find("choice") or n:find("sentenc") or n:find("court") or n:find("qte") then
+                        pcall(function() v:FireServer(true) end)
+                    end
+                end
+            end
+        end)
+    end
     task.spawn(function()
         while true do
             if enabled then
-                local pg = LP:FindFirstChild("PlayerGui")
-                if pg then
-                    local want = string.lower(choice)
-                    local picked, anyQTE, anyWord
-                    for _, d in ipairs(pg:GetDescendants()) do
-                        if (d:IsA("TextButton") or d:IsA("ImageButton") or d:IsA("TextLabel")) and d.Visible then
-                            local txt = string.lower((d:IsA("TextLabel") and d.Text or d:IsA("TextButton") and d.Text or "") .. " " .. d.Name)
-                            for _, w in ipairs(WANT) do if string.find(txt, w, 1, true) then anyQTE = d; anyWord = w; if w == want then picked = d end end end
-                        end
-                    end
-                    if anyQTE then
-                        local word = picked and want or anyWord
-                        if UIS_Q.TouchEnabled and not UIS_Q.KeyboardEnabled then   -- MOBILE: tap the option
-                            local hit = picked or anyQTE
-                            if hit:IsA("TextButton") or hit:IsA("ImageButton") then clickGuiButton(hit) else pressAnswer(word) end
-                        else                                                       -- PC: press W / A / D
-                            pressAnswer(word)
-                        end
-                        task.wait(0.3)
-                    end
+                local want = string.lower(choice)
+                local picked, anyBtn, anyWord
+                for d, w in pairs(candidates) do
+                    if d.Parent and d.Visible then anyBtn, anyWord = d, w; if w == want then picked = d end end
                 end
-                task.wait(clickDelay > 0 and clickDelay or 0.08)
-            else task.wait(0.2) end
+                if anyBtn then
+                    local word = picked and want or anyWord
+                    if UIS_Q.TouchEnabled and not UIS_Q.KeyboardEnabled then   -- MOBILE: tap the option
+                        local hit = picked or anyBtn
+                        if hit:IsA("TextButton") or hit:IsA("ImageButton") then clickGuiButton(hit) else pressAnswer(word) end
+                    else                                                       -- PC: press W / A / D
+                        pressAnswer(word)
+                    end
+                    fireJudgmentRemote()                                       -- backup: answer via the nil remote too
+                    task.wait(0.3)
+                end
+                task.wait(clickDelay > 0 and clickDelay or 0.12)
+            else task.wait(0.25) end
         end
     end)
+    -- ANTI FINAL JUDGMENT: an enemy Higuruma starts the judgment -> DASH AWAY before it lands (face away + Q + hold S).
+    local antiJudge = false
+    task.spawn(function()
+        local VIMj = game:GetService("VirtualInputManager")
+        local lastDodge = 0
+        while true do
+            if antiJudge then
+                local hit = false
+                for d in pairs(candidates) do if d.Parent and d.Visible then hit = true break end end   -- judgment UI just showed on us
+                if hit and tick() - lastDodge > 2 then
+                    lastDodge = tick()
+                    pcall(function()
+                        local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+                        local r = c and c:FindFirstChild("HumanoidRootPart")
+                        -- face AWAY from the nearest enemy then dash
+                        local nearest
+                        if r then local bd for _, m in ipairs((chs and chs:GetChildren()) or {}) do if m.Name ~= LP.Name then local tr = m:FindFirstChild("HumanoidRootPart"); if tr then local dd = (tr.Position - r.Position).Magnitude; if not bd or dd < bd then nearest, bd = tr, dd end end end end end
+                        if r and nearest then
+                            if _G.VX_ACPASS then _G.VX_ACPASS() end
+                            local away = (r.Position - nearest.Position); away = Vector3.new(away.X, 0, away.Z)
+                            if away.Magnitude > 0.1 then r.CFrame = CFrame.lookAt(r.Position, r.Position + away.Unit) end
+                        end
+                        VIMj:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+                        VIMj:SendKeyEvent(true, Enum.KeyCode.Q, false, game); task.wait(0.06); VIMj:SendKeyEvent(false, Enum.KeyCode.Q, false, game)
+                        task.wait(0.5)
+                        VIMj:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+                    end)
+                end
+                task.wait(0.15)
+            else task.wait(0.3) end
+        end
+    end)
+    AutoQTEApi_setAnti = function(v) antiJudge = v == true end
     AutoQTEApi = {
         set = function(v) enabled = v == true end,
         setChoice = function(c) choice = tostring(c or "Silence") end,
@@ -1700,10 +1839,8 @@ do
 	SkillsApi = {
 		setEnabled = function(v)
 			enabled = v == true
-			if enabled then   -- master ON with no skills picked did NOTHING ('auto skills no work') -> default to skills 1-4
-				local any = false; for i = 1, 6 do if keys[i] then any = true break end end
-				if not any then keys[1], keys[2], keys[3], keys[4] = true, true, true, true end
-			end
+			-- NO auto-default: master ON presses ONLY the skills you toggled (it used to force 1-4 on,
+			-- which pressed 3 etc before you picked anything).
 		end,
 		setKey = function(n, v)
 			if KC[n] then
@@ -3391,6 +3528,30 @@ do
 
 	MahoTpApi   = { set = function(v) mahoOn = v == true end }
 	AutoQuakeApi = { set = function(v) quakeOn = v == true end }
+	-- EARTHQUAKE = PURE SKILL (user): the move only fires when 3 is HELD ~3s then released. With Auto
+	-- Earthquake ON, a quick TAP of 3 converts into our own held 3 for 3s + release = the full charged quake.
+	do
+		local VIMq = game:GetService("VirtualInputManager")
+		local UISq = game:GetService("UserInputService")
+		local holding = false
+		UISq.InputBegan:Connect(function(input, _)
+			if UISq:GetFocusedTextBox() then return end
+			if not quakeOn or holding then return end
+			if input.KeyCode ~= Enum.KeyCode.Three then return end
+			local injK = _G.VX_INJ_KEYS
+			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end   -- our own press: ignore
+			holding = true
+			task.spawn(function()
+				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 3.6
+				pcall(function()
+					VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
+					task.wait(3.05)                                            -- hold the charge
+					VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)  -- release = quake fires
+				end)
+				holding = false
+			end)
+		end)
+	end
 	KillEmoteApi = { set = function(v) killEmoteOn = v == true end, setSlot = function(n) killEmoteSlot = tonumber(n) or 1 end }
 end
 
@@ -4877,23 +5038,14 @@ local Library do
 
     Library.Theme = TableClone(Themes["Preset"])
 
-    if _G.JJS_FREE then
-        -- FREE build: RED & BLACK theme — deep-black panels, glowing red accent + red borders.
-        Library.Theme["Background"] = FromRGB(8, 8, 8)
-        Library.Theme["Inline"]     = FromRGB(15, 10, 11)
-        Library.Theme["Element"]    = FromRGB(28, 16, 17)
-        Library.Theme["Accent"]     = FromRGB(255, 40, 52)
-        Library.Theme["Border"]     = FromRGB(64, 22, 26)
-        Library.Theme["Border 2"]   = FromRGB(124, 36, 44)
-    else
-        -- PREMIUM/PLUS: BLACK & WHITE theme — near-black panels, white accent/text, grey borders.
-        Library.Theme["Background"] = FromRGB(10, 10, 10)
-        Library.Theme["Inline"]     = FromRGB(16, 16, 16)
-        Library.Theme["Element"]    = FromRGB(26, 26, 26)
-        Library.Theme["Accent"]     = FromRGB(255, 255, 255)
-        Library.Theme["Border"]     = FromRGB(34, 34, 34)
-        Library.Theme["Border 2"]   = FromRGB(70, 70, 70)
-    end
+    -- WHITE & BLACK for every tier (user request) — near-black panels, white accent/text, grey borders.
+    -- The accent is changeable live from Settings > Theme (Library:ChangeTheme repaints registered items).
+    Library.Theme["Background"] = FromRGB(10, 10, 10)
+    Library.Theme["Inline"]     = FromRGB(16, 16, 16)
+    Library.Theme["Element"]    = FromRGB(26, 26, 26)
+    Library.Theme["Accent"]     = FromRGB(255, 255, 255)
+    Library.Theme["Border"]     = FromRGB(34, 34, 34)
+    Library.Theme["Border 2"]   = FromRGB(70, 70, 70)
 
     -- Folders
     pcall(function()
@@ -8959,6 +9111,7 @@ do
     auSec:Toggle({ Name = "Auto QTE Click (Higuruma Final Judgment)", Callback = function(b) if AutoQTEApi then AutoQTEApi.set(b) end end })
     auSec:Dropdown({ Name = "QTE Answer", Items = { "Silence", "Denial", "Confess" }, Default = "Silence", Callback = function(v) if AutoQTEApi then AutoQTEApi.setChoice(v) end end })
     auSec:Slider({ Name = "Click Delay", Min = 0, Max = 100, Default = 0, Decimals = 1, Callback = function(v) if AutoQTEApi then AutoQTEApi.setDelay(v) end end })
+    auSec:Toggle({ Name = "Anti Final Judgment (dash away)", Callback = function(b) if AutoQTEApi_setAnti then AutoQTEApi_setAnti(b) end end })
     auSec:Toggle({ Name = "Auto Grab", Callback = function(b) if ItemsApi then ItemsApi.setGrab(b) end end })
     auSec:Dropdown({ Name = "Grab Filter", Items = ((ItemsApi and ItemsApi.names()) or { "Any" }), Default = "Any", Callback = function(v) if ItemsApi then ItemsApi.setFilter(v) end end })
     auSec:Toggle({ Name = "Auto Farm", Callback = function(b) if FarmApi then FarmApi.set(b) end end })
@@ -9035,7 +9188,7 @@ do
     espSec:Toggle({ Name = "Names", Default = true, Callback = function(b) if PlayerEspApi then PlayerEspApi.setOpt("name", b) end end })
     espSec:Toggle({ Name = "Health", Default = true, Callback = function(b) if PlayerEspApi then PlayerEspApi.setOpt("health", b) end end })
     espSec:Toggle({ Name = "Distance", Default = true, Callback = function(b) if PlayerEspApi then PlayerEspApi.setOpt("distance", b) end end })
-    espSec:Toggle({ Name = "Character", Callback = function(b) if PlayerEspApi then PlayerEspApi.setOpt("character", b) end end })
+    -- ("Character" ESP row removed per request.)
     espSec:Toggle({ Name = "Move / Skill", Callback = function(b) if PlayerEspApi then PlayerEspApi.setOpt("move", b) end end })
     espSec:Toggle({ Name = "Cooldowns", Callback = function(b) if PlayerEspApi then PlayerEspApi.setOpt("cooldowns", b) end end })
     local itemSec = visSub:Section({ Name = "Items", Side = 2 })
