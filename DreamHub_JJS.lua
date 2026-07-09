@@ -988,7 +988,7 @@ end
 -- BATCH 2 MODULES  (Item ESP + Auto Grab, Auto Skills, Invisibility, Auto Parkour, Teleport)
 -- Each module exposes a small API; the GUI below wires them.
 -- ============================================================
-local ItemsApi, SkillsApi, InvisApi, ParkourApi, TPApi, M1ComboApi, CounterApi, LockOnApi, AutoUltApi, AntiAfkApi, NoclipApi, FarmApi, SpeedApi, FlyApi, PlayerEspApi, DashApi, TrainApi, DrinkApi, AntiStunApi, AntiRagdollApi, SideDashApi, EvasiveApi, AntiDomainApi, ResetApi, InfJumpApi, AntiCounterApi, AutoAdaptApi, JumpHeadApi, AntiBlackHoleApi, CrowUltApi, CrowHitApi, AutoDomainAdaptApi, HeadUltApi, RikaSwordApi, SlamApi, GokuApi, HollowApi, VisualApi, AimAssistApi, RemoveTreesApi, GojoTpApi, ReversalRedApi, ControlDummyApi, DesyncFreezeApi, TargetApi, AutoQTEApi
+local ItemsApi, SkillsApi, InvisApi, ParkourApi, TPApi, M1ComboApi, CounterApi, LockOnApi, AutoUltApi, AntiAfkApi, NoclipApi, FarmApi, SpeedApi, FlyApi, PlayerEspApi, DashApi, TrainApi, DrinkApi, AntiStunApi, AntiRagdollApi, SideDashApi, EvasiveApi, AntiDomainApi, ResetApi, InfJumpApi, AntiCounterApi, AutoAdaptApi, JumpHeadApi, AntiBlackHoleApi, CrowUltApi, CrowHitApi, AutoDomainAdaptApi, HeadUltApi, RikaSwordApi, SlamApi, GokuApi, HollowApi, VisualApi, AimAssistApi, RemoveTreesApi, GojoTpApi, ReversalRedApi, ControlDummyApi, DesyncFreezeApi, TargetApi, AutoQTEApi, MahitoGrabApi
 
 -- EVERY character's M1 anim id (user-captured) - set EARLY so Head of Hei / Goku M1 / Side Dash all detect a real M1 regardless of module load order
 do
@@ -2060,6 +2060,61 @@ do
         if input.KeyCode == Enum.KeyCode.Q and Settings.SideAssist and not Settings.Enabled then doSideDash(false) end
         if input.KeyCode == Enum.KeyCode.E and Settings.BackAssist then doBackDash(false) end
     end)
+end
+
+-- ============================================================
+-- MODULE: AUTO MAHITO GRAB ESCAPE  (when Mahito grabs you, spam SPACE to break out)
+-- Detects the Mahito grab animation (rbxassetid://72343192576784) playing on ANY nearby character; while it's
+-- up, spam the spacebar (the grab-escape QTE) so you mash out automatically.
+-- ============================================================
+do
+    local Players = game:GetService("Players")
+    local VIM = game:GetService("VirtualInputManager")
+    local LP = Players.LocalPlayer
+    local enabled = false
+    local GRAB_ID = "72343192576784"
+    local lastEscape = 0
+    local hooked = setmetatable({}, { __mode = "k" })
+    local function myHRP() local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character; return c and c:FindFirstChild("HumanoidRootPart") end
+    local function mashSpace()
+        if tick() - lastEscape < 1.5 then return end   -- one escape burst per grab
+        lastEscape = tick()
+        task.spawn(function()
+            for _ = 1, 24 do   -- ~1.9s of fast Space taps = mash out of the grab
+                if not enabled then break end
+                pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.02); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
+                task.wait(0.06)
+            end
+        end)
+    end
+    local function onAnim(track, ownerHRP)
+        if not enabled then return end
+        local id = track.Animation and tostring(track.Animation.AnimationId)
+        if not id or not string.find(id, GRAB_ID, 1, true) then return end
+        -- only react if the grab is near YOU (you're the one being grabbed)
+        local me = myHRP()
+        if me and ownerHRP and (ownerHRP.Position - me.Position).Magnitude > 30 then return end
+        mashSpace()
+    end
+    local function hookAnimator(char)
+        local h = char and char:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
+        if not a or hooked[a] then return end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        hooked[a] = a.AnimationPlayed:Connect(function(track) pcall(onAnim, track, char:FindFirstChild("HumanoidRootPart") or hrp) end)
+    end
+    task.spawn(function()
+        while true do
+            if enabled then
+                pcall(function()
+                    local chs = workspace:FindFirstChild("Characters")
+                    if chs then for _, m in ipairs(chs:GetChildren()) do if m:IsA("Model") then hookAnimator(m) end end end
+                    if LP.Character then hookAnimator(LP.Character) end
+                end)
+            end
+            task.wait(1)
+        end
+    end)
+    MahitoGrabApi = { set = function(v) enabled = v == true end }
 end
 
 -- MODULE: AUTO SKILLS  (press chosen keys 1/2/3/4 on a nearby enemy)
@@ -9351,6 +9406,7 @@ do
     antiSec:Toggle({ Name = "Anti-Domain", Callback = function(b) if AntiDomainApi then AntiDomainApi.set(b) end end })
     antiSec:Dropdown({ Name = "Domain React", Items = { "Safe Teleport", "To User + Hit" }, Default = "Safe Teleport", Callback = function(v) if AntiDomainApi then AntiDomainApi.setMode(v) end end })
     antiSec:Toggle({ Name = "Anti Black Hole", Callback = function(b) if AntiBlackHoleApi then AntiBlackHoleApi.set(b) end end })
+    antiSec:Toggle({ Name = "Auto Mahito Grab Escape (mash Space)", Callback = function(b) if MahitoGrabApi then MahitoGrabApi.set(b) end end })
     antiSec:Toggle({ Name = "Mahoraga Safe TP", Callback = function(b) if MahoTpApi then MahoTpApi.set(b) end end })
 
     -- ===================== AUTO (all the automation toggles in one tab) =====================
