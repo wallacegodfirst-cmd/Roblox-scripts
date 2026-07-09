@@ -650,16 +650,10 @@ local function hitboxParts(char)
     end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if hrp and hrp:IsA("BasePart") then out[#out+1] = hrp end
-    -- These enemies are standard R6 rigs (Explorer: Head/Torso/Left Arm/Right Arm/Left Leg/Right Leg + Humanoid).
-    -- The Jolt M1 detector's spatial query can read the BODY parts too, not just the "Hitbox" container — so grow
-    -- them as well. Bigger body bounds = your M1 registers on enemies much farther away.
-    for _, nm in ipairs({ "Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg" }) do
-        local bp = char:FindFirstChild(nm)
-        if bp and bp:IsA("BasePart") then out[#out+1] = bp end
-    end
-    if S.HitboxAllParts then
-        for _,d in ipairs(char:GetDescendants()) do if d:IsA("BasePart") then out[#out+1] = d end end
-    end
+    -- ONLY the dedicated hit parts (Hitbox/HRP) — these are invisible parts the game's M1 query reads.
+    -- We used to ALSO grow Head/Torso/arms/legs and hide them, but those ARE the person's visible body:
+    -- growing+hiding them made every enemy an invisible giant ("I can't see people") with a huge dark
+    -- blob on screen. The Hitbox part is what registers hits; the body adds nothing but blindness.
     return out
 end
 -- Every enemy character to grow: players AND non-player models under workspace.Characters (training dummies /
@@ -806,15 +800,16 @@ hook(RunService.Heartbeat, function()
                 -- Compare ALL 3 axes (was X-only): a part whose X already matched sz but was thin on Y/Z used to
                 -- stay flat = no real reach. THIS was the core "hitbox doesn't work" bug (same one PE fixed).
                 if part.Size ~= cube then part.Size = cube end
-                -- VISIBLE again (user: "make it more visualize"): show ONE clean cyan box per enemy (the Hitbox/HRP);
-                -- the extra body parts still grow but stay invisible so you don't get 6 overlapping cubes per enemy.
-                local showThis = (S.HitboxVisible ~= false) and (part.Name=="Hitbox" or part.Name=="HitBox" or part.Name=="HumanoidRootPart")
-                if showThis then
-                    part.Transparency = 0.55
+                -- Visibility: only the invisible hit parts (Hitbox/HRP) are grown now, so the person's real body
+                -- stays 100% normal and visible. "Show Hitbox" paints a FAINT cyan ghost over the grown part;
+                -- off = the part keeps its ORIGINAL look (these parts are invisible by default anyway).
+                if S.HitboxVisible ~= false then
+                    part.Transparency = 0.82
                     part.Color        = Color3.fromRGB(0, 220, 255)
                     part.Material     = Enum.Material.ForceField
                 else
-                    part.Transparency = 1
+                    local o = hbOriginal[part]
+                    if o then part.Transparency = o.transp; part.Color = o.color; part.Material = o.material end
                 end
             end)
         end
@@ -2330,7 +2325,7 @@ CombatTab:CreateToggle({Name="Ability Hitbox Expander (pulses bigger on E)", Cur
     if not v then destroyAbilityHb(); restoreHitboxes() end
 end})
 CombatTab:CreateSlider({Name="Ability Hitbox Size", Range={1,300}, Increment=1, Suffix="studs", CurrentValue=40, Flag="HitboxAbilitySize", Callback=function(v) S.HitboxAbilitySize=v end})
-CombatTab:CreateToggle({Name="Expand Whole Body (max reach, looks huge)", CurrentValue=false, Flag="HitboxAllParts", Callback=function(v) S.HitboxAllParts=v; if not v then restoreHitboxes() end end})
+-- ("Expand Whole Body" removed: growing the visible body parts made every enemy an invisible giant.)
 CombatTab:CreateToggle({Name="Show Hitbox (cyan box - off = invisible)", CurrentValue=true, Flag="HitboxVisible", Callback=function(v) S.HitboxVisible=v end})
 
 CombatTab:CreateSection("Auto")
