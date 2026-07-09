@@ -861,19 +861,15 @@ do
 			-- DON'T bail on gpe: the game binds M1/1-4 itself, so every combat press arrives gpe=true — bailing
 			-- meant Feint M1 NEVER fired. Only skip while typing in a textbox (same fix the Gojo module needed).
 			if UIS_F:GetFocusedTextBox() then return end
-			-- Mode B "Feint M1": count your LANDED M1 clicks (enemy in front, melee range); at N -> R then your chosen move
+			-- Mode B "Feint M1" (user spec): count your M1 CLICKS; at the number you picked (1/2/3) -> press R.
+			-- No landed-hit strictness (that gate ate real clicks = "feint m1 don't work") and NO extra move after,
+			-- just the R feint. Count resets if you pause >1.5s between clicks.
 			if feintMode == "M1" and input.UserInputType == Enum.UserInputType.MouseButton1 then
-				local mh = getHRP(myCharResolved()); local tgt = getNearestEnemy(9); local tr = tgt and getHRP(tgt)
-				if mh and tr then
-					local to = tr.Position - mh.Position
-					if to.Magnitude <= 9 and mh.CFrame.LookVector:Dot(to.Unit) > 0.35 then
-						if tick() - lastM1Feint > 1.5 then m1FeintCount = 0 end
-						lastM1Feint = tick(); m1FeintCount = m1FeintCount + 1
-						if m1FeintCount >= feintM1Count then
-							m1FeintCount = 0
-							task.delay(0.2, function() pressR(); task.wait(0.08); pressMove(feintMove) end)   -- let the M1 land, then R feint, then the move
-						end
-					end
+				if tick() - lastM1Feint > 1.5 then m1FeintCount = 0 end
+				lastM1Feint = tick(); m1FeintCount = m1FeintCount + 1
+				if m1FeintCount >= feintM1Count then
+					m1FeintCount = 0
+					task.delay(0.18, function() pressR() end)   -- let the M1 come out, then R = the feint
 				end
 			end
 			-- Feint Abilities: you cast ANY skill (1/2/3/4) -> R right after = feint the move (own toggle OR the dropdown mode)
@@ -1130,12 +1126,18 @@ end
 -- HARDENED teleport for FAR spots that a one-frame snap gets set back on: glide there in whitelisted STEPS
 -- (each step is small enough to stay under the anti-cheat's per-tick distance limit) then HOLD + re-whitelist.
 local function vxTeleportHard(dest, holdTime)
-	-- ALWAYS INSTANT now (user: "i just want to tp, not glide" — use the early teleport). The stepped Glide path is
-	-- gone; every teleport is one whitelisted snap + a short hold so the anti-cheat can't drag you back. A stale
-	-- saved "Glide" config can no longer bring the gliding back.
+	-- INSTANT snap first (what you asked for), but with a REAL fallback: if the anti-cheat sets the snap back
+	-- ("teleport doesn't work"), the stepped speed-capped glide below takes over automatically — each step stays
+	-- under the per-tick distance limit, so it CANNOT be set back even when the whitelist remote is stale.
 	if typeof(dest) == "CFrame" then dest = dest.Position end
 	vxGlide(dest, nil, math.max(holdTime or 3, 2))
-	if true then return end
+	do   -- setback check: only run the stepped fallback when the snap did NOT hold
+		local LPc = game:GetService("Players").LocalPlayer
+		task.wait(0.35)
+		local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LPc.Name)) or LPc.Character
+		local r = c and c:FindFirstChild("HumanoidRootPart")
+		if r and (r.Position - dest).Magnitude <= 15 then return end   -- snap held: done
+	end
 	local LP = game:GetService("Players").LocalPlayer
 	if typeof(dest) == "CFrame" then dest = dest.Position end
 	task.spawn(function()
@@ -1605,10 +1607,18 @@ do
     local LP = Players.LocalPlayer
     local enabled, choice, clickDelay = false, "Silence", 0
     local WANT = { "confess", "silence", "denial" }   -- the Deadly Sentencing options
+    -- PC answers with KEYS (W / A / D), one per option; clicking the button is the MOBILE path only.
+    -- Default map matches the on-screen layout (left/up/right); remap via the dropdowns if the game differs.
+    local KEYMAP = { confess = Enum.KeyCode.A, silence = Enum.KeyCode.W, denial = Enum.KeyCode.D }
+    local UIS_Q = game:GetService("UserInputService")
     local function clickGuiButton(btn)
         local ap, sz = btn.AbsolutePosition, btn.AbsoluteSize
         local x, y = ap.X + sz.X / 2, ap.Y + sz.Y / 2
         pcall(function() VIM:SendMouseButtonEvent(x, y, 0, true, game, 0); task.wait(0.03); VIM:SendMouseButtonEvent(x, y, 0, false, game, 0) end)
+    end
+    local function pressAnswer(word)
+        local kc = KEYMAP[word]; if not kc then return end
+        pcall(function() VIM:SendKeyEvent(true, kc, false, game); task.wait(0.06); VIM:SendKeyEvent(false, kc, false, game) end)
     end
     task.spawn(function()
         while true do
@@ -1616,15 +1626,23 @@ do
                 local pg = LP:FindFirstChild("PlayerGui")
                 if pg then
                     local want = string.lower(choice)
-                    local picked, anyQTE
+                    local picked, anyQTE, anyWord
                     for _, d in ipairs(pg:GetDescendants()) do
-                        if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
-                            local txt = string.lower((d:IsA("TextButton") and d.Text or "") .. " " .. d.Name)
-                            for _, w in ipairs(WANT) do if string.find(txt, w, 1, true) then anyQTE = d; if w == want then picked = d end end end
+                        if (d:IsA("TextButton") or d:IsA("ImageButton") or d:IsA("TextLabel")) and d.Visible then
+                            local txt = string.lower((d:IsA("TextLabel") and d.Text or d:IsA("TextButton") and d.Text or "") .. " " .. d.Name)
+                            for _, w in ipairs(WANT) do if string.find(txt, w, 1, true) then anyQTE = d; anyWord = w; if w == want then picked = d end end end
                         end
                     end
-                    local hit = picked or anyQTE   -- prefer your chosen answer; else click whatever judgment button showed
-                    if hit and hit.Parent then clickGuiButton(hit); task.wait(0.25) end
+                    if anyQTE then
+                        local word = picked and want or anyWord
+                        if UIS_Q.TouchEnabled and not UIS_Q.KeyboardEnabled then   -- MOBILE: tap the option
+                            local hit = picked or anyQTE
+                            if hit:IsA("TextButton") or hit:IsA("ImageButton") then clickGuiButton(hit) else pressAnswer(word) end
+                        else                                                       -- PC: press W / A / D
+                            pressAnswer(word)
+                        end
+                        task.wait(0.3)
+                    end
                 end
                 task.wait(clickDelay > 0 and clickDelay or 0.08)
             else task.wait(0.2) end
@@ -1665,16 +1683,17 @@ do
 	task.spawn(function()
 		while true do
 			if enabled then
-				local tr = nearestEnemyHRP()
-				if tr then
-					-- ONE skill per cycle (round-robin): pressing 4+ keys back-to-back ate inputs / fired into cooldowns = 'randomly failing'
-					local tried = 0
-					repeat cycleIdx = (cycleIdx % 6) + 1; tried = tried + 1 until keys[cycleIdx] or tried >= 6
-					if keys[cycleIdx] then
-						faceEnemy(tr); task.wait(0.03); press(KC[cycleIdx])   -- face, settle a frame, THEN cast = lands on the right target
-					end
-					task.wait(rate)
-				else task.wait(0.2) end
+				-- PRESS THE KEY NO MATTER WHAT (user: "when I click 1 it clicks 1"). The old enemy-in-30-studs
+				-- gate meant nothing happened unless someone stood next to you = "auto skills don't work".
+				-- If an enemy IS around we still face them first so the cast lands on the right target.
+				local tried = 0
+				repeat cycleIdx = (cycleIdx % 6) + 1; tried = tried + 1 until keys[cycleIdx] or tried >= 6
+				if keys[cycleIdx] then
+					local tr = nearestEnemyHRP()
+					if tr then if _G.VX_ACPASS then _G.VX_ACPASS() end faceEnemy(tr); task.wait(0.03) end   -- whitelist the aim write so the anti-cheat can't revert it
+					press(KC[cycleIdx])
+				end
+				task.wait(rate)
 			else task.wait(0.2) end
 		end
 	end)
@@ -8950,8 +8969,18 @@ do
     local TargetPage = Window:Page({ Name = "Target", Icon = "72732892493295" })
     local tgSub = TargetPage:SubPage({ Name = "Target", Columns = 2 })
     local tSec = tgSub:Section({ Name = "Target", Side = 1 })
-    tSec:Textbox({ Name = "Player Name", Default = "", Callback = function(v) if TargetApi then TargetApi.setName(v) end end })
-    local infoLbl = tSec:Label("Type a username, then Check Info")
+    local infoLbl   -- fwd (textbox callback below refreshes it live)
+    local function liveInfo()   -- INSTANT popup as they type (partial names resolve)
+        if not (TargetApi and infoLbl) then return end
+        local i = TargetApi.info()
+        if i and i.found then
+            pcall(function() infoLbl:SetText(i.name .. "\nHP: " .. i.health .. " / " .. i.maxHealth .. "   Ult: " .. (i.ult and "USED" or "no") .. "   Kills: " .. (TargetApi.kills() or "?")) end)
+        else
+            pcall(function() infoLbl:SetText("No match yet - keep typing") end)
+        end
+    end
+    tSec:Textbox({ Name = "Player Name", Default = "", Callback = function(v) if TargetApi then TargetApi.setName(v); liveInfo() end end })
+    infoLbl = tSec:Label("Type a username - info pops up as you type")
     local function refreshInfo()
         if not TargetApi then return end
         local i = TargetApi.info()
@@ -8971,8 +9000,8 @@ do
     tActSec:Dropdown({ Name = "Item To Bring", Items = ((ItemsApi and ItemsApi.names()) or { "Any" }), Default = "Any", Callback = function(v) bringFilter = (type(v) == "table") and v[1] or v end })
     tActSec:Button({ Name = "Bring Item To User", Callback = function() if TargetApi then TargetApi.bringItem(bringFilter) end end })
     tActSec:Button({ Name = "Throw Trash At User", Callback = function() if TargetApi then TargetApi.throwTrash() end end })
-    -- keep the readout fresh while the tab's open (best-effort; the Check buttons always work)
-    task.spawn(function() while true do task.wait(1.5); pcall(function() if _G.VX_HUB_READY and TargetApi then local i = TargetApi.info(); if i and i.found then infoLbl:SetText(i.name .. "\nHP: " .. i.health .. " / " .. i.maxHealth .. "   Ult: " .. (i.ult and "USED" or "no")) end end end) end end)
+    -- keep the readout fresh while the tab's open (live HP/ult; the Check buttons still force a full refresh)
+    task.spawn(function() while true do task.wait(0.6); pcall(function() if _G.VX_HUB_READY then liveInfo() end end) end end)
 
     -- ===================== MOVEMENT =====================
     local MovePage = Window:Page({ Name = "Movement", Icon = "94627324690861" })
@@ -9052,9 +9081,26 @@ do
     local PlyPage = Window:Page({ Name = "Player", Icon = "72732892493295" })
     local plySub = PlyPage:SubPage({ Name = "Player", Columns = 2 })
     local lockSec = plySub:Section({ Name = "Lock On", Side = 1 })
-    lockSec:Dropdown({ Name = "Lock Mode", Items = { "Off", "Camera", "Character", "Both" }, Default = "Off", Callback = function(m) if LockOnApi then LockOnApi.setMode(m) end end })
+    local lockMode = "Off"
+    lockSec:Dropdown({ Name = "Lock Mode", Items = { "Off", "Camera", "Character", "Both" }, Default = "Off", Callback = function(m) lockMode = (type(m) == "table") and m[1] or m; if LockOnApi then LockOnApi.setMode(lockMode) end end })
     lockSec:Toggle({ Name = "Reticle", Default = true, Callback = function(b) if LockOnApi then LockOnApi.setReticle(b) end end })
     lockSec:Slider({ Name = "Smooth", Min = 0.05, Max = 1, Default = 0.4, Decimals = 0.01, Callback = function(v) if LockOnApi then LockOnApi.setSmooth(v) end end })
+    -- LOCK-ON KEYBIND: tap the key to flip lock-on off/on without opening the menu. Uses your last non-Off mode.
+    local lockKeyName, lockKeyOn, lastLockMode = "T", false, "Camera"
+    lockSec:Dropdown({ Name = "Lock-On Key", Items = { "T", "Y", "X", "Z", "V", "B" }, Default = "T", Callback = function(v) lockKeyName = (type(v) == "table") and v[1] or v end })
+    task.spawn(function()
+        local UIS_L = game:GetService("UserInputService")
+        UIS_L.InputBegan:Connect(function(input, _)
+            if UIS_L:GetFocusedTextBox() then return end
+            if input.KeyCode ~= Enum.KeyCode[lockKeyName] then return end
+            if lockMode ~= "Off" then lastLockMode = lockMode end
+            lockKeyOn = not lockKeyOn
+            local newMode = lockKeyOn and (lastLockMode or "Camera") or "Off"
+            lockMode = newMode
+            if LockOnApi then LockOnApi.setMode(newMode) end
+            if VX_NOTIFY then VX_NOTIFY("Lock-On " .. (lockKeyOn and ("ON (" .. newMode .. ")") or "OFF"), lockKeyOn) end
+        end)
+    end)
     local jhTarget = "Nearest"
     local jhSec = plySub:Section({ Name = "Jump On Head", Side = 1 })
     jhSec:Dropdown({ Name = "Target", Items = playerList(), Default = "Nearest", Callback = function(v) jhTarget = v end })
@@ -9115,8 +9161,9 @@ local Camera = Workspace.CurrentCamera -- The local viewport, manipulated for th
 -- ==========================================
 local Config = {
     -- The grace period (in seconds) to hold the block after a threat passes.
-    -- 0.22: hold the shield THROUGH fast M1 strings (0.12 dropped it between quick hits and the re-raise came back late = you ate the next M1).
-    ComboDelay = 0.26,
+    -- 0.34: hold the shield THROUGH fast M1 strings AND dash-cancel mixups (0.26 still dropped between some
+    -- strings and the re-raise came back a frame late = you ate the next M1).
+    ComboDelay = 0.34,
     
     -- Feature toggles linked to the Vaultix Hub UI checkboxes.
     Blocks = BlockFlags,
@@ -9664,9 +9711,10 @@ local function FaceTarget(targetPosition)
 end
 
 -- Calculates predictive hitbox extensions based on the enemy's velocity.
+local BLOCK_RANGE_MULT = 1.3   -- GLOBAL reaction-range boost: every threat triggers the shield from ~30% farther = faster/stronger blocks
 local function GetDynamicRequiredDist(animData, myHRP, enemyHRP)
     -- Static attacks ignore dynamic physics
-    if animData.ReqDist then return animData.ReqDist end 
+    if animData.ReqDist then return animData.ReqDist * BLOCK_RANGE_MULT end
 
     if animData.Category == "Melee" then
         local vel = enemyHRP.AssemblyLinearVelocity
@@ -10190,17 +10238,17 @@ RunService.RenderStepped:Connect(function()
                         toMeDir = toMeDir.Unit
                         local dot = enemyHRP.CFrame.LookVector:Dot(toMeDir)
 
-                        -- Primary Collision Block
-                        if isDashing and distance <= 15.0 and dot >= 0.50 then
+                        -- Primary Collision Block (widened 15->20 studs, looser angle: react to less-direct dashes too)
+                        if isDashing and distance <= 20.0 and dot >= 0.40 then
                             isThreatCurrentlyActive = true
                             currentThreatInstance = enemyChar
                             facePosition = enemyHRP.Position
-                            lastBlockedThreatName = "Collision Dash (Physical 15 Studs)"
+                            lastBlockedThreatName = "Collision Dash (Physical 20 Studs)"
                             comboDropTime = tick() + Config.ComboDelay
                             break
-                        -- Secondary Aggressive Approach Block
+                        -- Secondary Aggressive Approach Block (widened 25->34 studs)
                         elseif (isDashing or enemyInfo:FindFirstChild("Chase")) then
-                            if dot >= 0.55 and distance <= 25 and enemyHRP.Velocity.Unit:Dot(toMeDir) >= 0.6 then
+                            if dot >= 0.45 and distance <= 34 and enemyHRP.Velocity.Unit:Dot(toMeDir) >= 0.55 then
                                 isThreatCurrentlyActive = true
                                 currentThreatInstance = enemyChar
                                 facePosition = enemyHRP.Position
