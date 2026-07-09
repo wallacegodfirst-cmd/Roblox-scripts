@@ -977,7 +977,7 @@ do
 		setLockRange = function(v) if type(v) == "number" then Settings.LockRange = v end end,
 		setKey = function(kc) if typeof(kc) == "EnumItem" then Settings.AbilityKey = kc end end,
 		setMode = function(m) if type(m) == "string" then Settings.Mode = m; _G.VX_M1BF_ON = (m == "M1 Black Flash"); backDashStage = 0; chainTarget = nil; if mobileBtn then mobileBtn.Text = mobileLabel() end end end,   -- Teleport / Jump / Side Dash / Back Dash (2-stage E) / M1 Black Flash (M1 fires the chain)
-		setFeintMode = function(m) feintMode = (m == "BF" or m == "M1" or m == "Moves") and m or "Off"; bfCount = 0; m1FeintCount = 0; bfSuppressUntil = 0 end,  -- Off / BF / M1 / Moves
+		setFeintMode = function(m) feintMode = (m == "BF" or m == "M1" or m == "Moves") and m or "Off"; bfCount = 0; m1FeintCount = 0; bfSuppressUntil = 0; if VX_NOTIFY then VX_NOTIFY("Feint mode: " .. feintMode, feintMode ~= "Off") end end,  -- Off / BF / M1 / Moves (toast confirms the dropdown fired)
 		setFeintBFStop = function(n) feintBFStop = tonumber(n) or 2 end,                  -- Mode A: press R after this many black flashes
 		setFeintM1Count = function(n) feintM1Count = tonumber(n) or 2 end,                -- Mode B: press R after this many of your M1s
 		setFeintMove = function(n) feintMove = tonumber(n) or 1 end,                      -- Mode B: which move (1-4) to press after the feint
@@ -1126,7 +1126,7 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 			if vxTeleGen ~= gen then return end                 -- a newer teleport superseded this one -> stop fighting over the CFrame
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
 			acPass()
-			pcall(function() hrp.CFrame = cf end)
+			pcall(function() hrp.CFrame = cf; if cc then cc:PivotTo(cf) end end)   -- PivotTo moves the WHOLE rig (some JJS models don't follow a bare HRP write = "teleport doesn't move me")
 			task.wait(0.016)
 		end
 		local h0 = tick()  -- HOLD: keep re-asserting position + re-whitelisting so the anti-cheat can't revert after the move
@@ -1134,7 +1134,7 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 			if vxTeleGen ~= gen then return end                 -- superseded -> let the newer teleport own the body
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
 			acPass()
-			pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero end)
+			pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero; if cc then cc:PivotTo(cf) end end)
 			task.wait(0.03)
 		end
 		if vxTeleGen == gen then  -- only the LATEST teleport cleans up, so overlapping calls can't leave PlatformStand stuck (no more "frozen after jump")
@@ -1707,17 +1707,24 @@ do
         local x, y = ap.X + sz.X / 2, ap.Y + sz.Y / 2
         pcall(function() VIM:SendMouseButtonEvent(x, y, 0, true, game, 0); task.wait(0.03); VIM:SendMouseButtonEvent(x, y, 0, false, game, 0) end)
     end
-    -- THE REAL ANSWER REMOTE (user capture): workspace.Domains.Domain.UnreliableRemoteEvent:FireServer(n)
-    -- Confess = 3, Silence = 2, Denial = 1. Keys/clicks are only the backup now.
+    -- THE REAL ANSWER REMOTES (user captures):
+    --   1) workspace.Domains.Domain.UnreliableRemoteEvent:FireServer(n)  where Confess=3 / Silence=2 / Denial=1
+    --   2) <YourCharacter>.RemoteEvent:FireServer(true)  (friend's capture — the per-character confirm)
+    -- We fire BOTH so it lands regardless of which the current game build uses.
     local ANSWER_NUM = { confess = 3, silence = 2, denial = 1 }
+    local function myCharQ() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
     local function fireAnswer(word)
-        local n = ANSWER_NUM[word]; if not n then return false end
+        local n = ANSWER_NUM[word]
         local ok = false
         pcall(function()
             local doms = workspace:FindFirstChild("Domains")
             local dom = doms and doms:FindFirstChild("Domain")
-            local re = dom and dom:FindFirstChild("UnreliableRemoteEvent")
-            if re then re:FireServer(n); ok = true end
+            local re = dom and dom:FindFirstChild("UnreliableRemoteEvent") or (dom and dom:FindFirstChildWhichIsA("UnreliableRemoteEvent")) or (dom and dom:FindFirstChildWhichIsA("RemoteEvent"))
+            if re and n then re:FireServer(n); ok = true end
+        end)
+        pcall(function()   -- per-character confirm remote
+            local c = myCharQ(); local cre = c and c:FindFirstChild("RemoteEvent")
+            if cre then cre:FireServer(true); ok = true end
         end)
         return ok
     end
@@ -1755,7 +1762,16 @@ do
             end
         end)
     end
+    -- Is a Deadly Sentencing judgment ACTIVE on us? (the domain remote exists = we're in someone's judgment)
+    local function judgmentActive()
+        local doms = workspace:FindFirstChild("Domains"); local dom = doms and doms:FindFirstChild("Domain")
+        if dom and (dom:FindFirstChild("UnreliableRemoteEvent") or dom:FindFirstChildWhichIsA("UnreliableRemoteEvent")) then return true end
+        local c = myChar(); if c and c:FindFirstChild("RemoteEvent") then return true end   -- per-char confirm remote present
+        for d in pairs(candidates) do if d.Parent and d.Visible then return true end end
+        return false
+    end
     task.spawn(function()
+        local lastFire = 0
         while true do
             if enabled then
                 local want = string.lower(choice)
@@ -1763,15 +1779,18 @@ do
                 for d, w in pairs(candidates) do
                     if d.Parent and d.Visible then anyBtn, anyWord = d, w; if w == want then picked = d end end
                 end
-                if anyBtn then
-                    local word = picked and want or anyWord
-                    if UIS_Q.TouchEnabled and not UIS_Q.KeyboardEnabled then   -- MOBILE: tap the option
+                -- Fire when we SEE the option buttons OR when a judgment is simply active (the game may not
+                -- expose the option words in PlayerGui) — throttled so we don't spam the remote.
+                if (anyBtn or judgmentActive()) and tick() - lastFire > 0.5 then
+                    lastFire = tick()
+                    local word = picked and want or (anyWord or want)
+                    if anyBtn and UIS_Q.TouchEnabled and not UIS_Q.KeyboardEnabled then   -- MOBILE: tap the option
                         local hit = picked or anyBtn
-                        if hit:IsA("TextButton") or hit:IsA("ImageButton") then clickGuiButton(hit) else pressAnswer(word) end
-                    else                                                       -- PC: press W / A / D
-                        pressAnswer(word)
+                        if hit:IsA("TextButton") or hit:IsA("ImageButton") then clickGuiButton(hit) end
                     end
-                    fireJudgmentRemote()                                       -- backup: answer via the nil remote too
+                    fireAnswer(word)          -- the real remotes (domain n + per-char true)
+                    pressAnswer(word)         -- + W/A/D keys as backup
+                    fireJudgmentRemote()      -- + the nil-instance remote as backup
                     task.wait(0.3)
                 end
                 task.wait(clickDelay > 0 and clickDelay or 0.12)
@@ -9181,7 +9200,26 @@ do
             pcall(function() killL:SetText("Kills:  N/A") end)
         end
     end
-    tSec:Textbox({ Name = "Player Name", Placeholder = "Type a username...", Default = "", Callback = function(v) if TargetApi then TargetApi.setName(v); liveInfo() end end })
+    tSec:Textbox({ Name = "Player Name", Placeholder = "Type a username here", Default = "", Flag = "VX_TargetName", Callback = function(v) if TargetApi then TargetApi.setName(v); liveInfo() end end })
+    -- THE TEXTBOX CALLBACK DOESN'T FIRE on this UI lib (it only fires on Enter/focus-lost, not as you type),
+    -- so we POLL the live TextBox by its placeholder and push the value every 0.35s = info updates as you type.
+    task.spawn(function()
+        local host = (gethui and gethui()) or game:GetService("CoreGui")
+        local last = nil
+        while true do
+            task.wait(0.35)
+            pcall(function()
+                local box
+                for _, g in ipairs(host:GetDescendants()) do
+                    if g:IsA("TextBox") and string.find(string.lower(g.PlaceholderText or ""), "type a username", 1, true) then box = g; break end
+                end
+                if box then
+                    local v = box.Text
+                    if v ~= last then last = v; if TargetApi then TargetApi.setName(v); liveInfo() end end
+                end
+            end)
+        end
+    end)
     nameL = tSec:Label("Player:  type a name above")
     hpL   = tSec:Label("Health:  N/A")
     ultL  = tSec:Label("Ult:  N/A")
