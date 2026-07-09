@@ -3,6 +3,93 @@
       Sources: friend's Auto Block engine, Autoblackflash.lua, ULTIMATE BACK-LOCK BF CHAIN.
       No emojis. Toggle the menu with RightShift. Press E to trigger the BF chain manually.   ]]
 
+-- ═══════════════════ LOADING SCREEN ═══════════════════ (staged: loading -> user+profile -> status -> game -> in)
+_G.VX_HUB_READY = false
+pcall(function()
+    local Players = game:GetService("Players")
+    local TweenService = game:GetService("TweenService")
+    local LP = Players.LocalPlayer
+    local isFree = _G.JJS_FREE and true or false
+    local ACCENT = isFree and Color3.fromRGB(255, 40, 52) or Color3.fromRGB(255, 255, 255)
+    local tierLabel = isFree and "FREE" or "VIP"
+    local LOGO = "rbxassetid://100962226150441"   -- Dream Hub hero image (swap the id here anytime)
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "VX_Loading"; gui.IgnoreGuiInset = true; gui.ResetOnSpawn = false; gui.DisplayOrder = 2147483000
+    pcall(function() gui.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
+    if not gui.Parent then gui.Parent = LP:WaitForChild("PlayerGui") end
+
+    local bg = Instance.new("Frame"); bg.Size = UDim2.fromScale(1,1); bg.BackgroundColor3 = Color3.fromRGB(6,6,7); bg.BorderSizePixel = 0; bg.Parent = gui
+    local grad = Instance.new("UIGradient"); grad.Rotation = 90
+    grad.Color = ColorSequence.new(Color3.fromRGB(12, isFree and 4 or 12, isFree and 6 or 12), Color3.fromRGB(3,3,4)); grad.Parent = bg
+
+    local card = Instance.new("Frame"); card.AnchorPoint = Vector2.new(0.5,0.5); card.Position = UDim2.fromScale(0.5,0.5)
+    card.Size = UDim2.fromOffset(360, 300); card.BackgroundColor3 = Color3.fromRGB(13,13,15); card.BorderSizePixel = 0; card.Parent = bg
+    Instance.new("UICorner", card).CornerRadius = UDim.new(0,16)
+    local cs = Instance.new("UIStroke"); cs.Color = ACCENT; cs.Thickness = 1.6; cs.Transparency = 0.25; cs.Parent = card
+
+    -- avatar (circular), fetched async
+    local av = Instance.new("ImageLabel"); av.AnchorPoint = Vector2.new(0.5,0); av.Position = UDim2.new(0.5,0,0,26)
+    av.Size = UDim2.fromOffset(84,84); av.BackgroundColor3 = Color3.fromRGB(22,22,26); av.BorderSizePixel = 0; av.Image = ""; av.Parent = card
+    Instance.new("UICorner", av).CornerRadius = UDim.new(1,0)
+    local avs = Instance.new("UIStroke"); avs.Color = ACCENT; avs.Thickness = 2; avs.Parent = av
+    task.spawn(function() local ok,u = pcall(function() return Players:GetUserThumbnailAsync(LP.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size150x150) end); if ok and u then av.Image = u end end)
+
+    local title = Instance.new("TextLabel"); title.BackgroundTransparency = 1; title.Position = UDim2.new(0,0,0,118); title.Size = UDim2.new(1,0,0,26)
+    title.Font = Enum.Font.GothamBlack; title.TextSize = 22; title.TextColor3 = ACCENT; title.Text = "DREAM HUB"; title.Parent = card
+    local sub = Instance.new("TextLabel"); sub.BackgroundTransparency = 1; sub.Position = UDim2.new(0,0,0,144); sub.Size = UDim2.new(1,0,0,16)
+    sub.Font = Enum.Font.GothamMedium; sub.TextSize = 12; sub.TextColor3 = Color3.fromRGB(170,170,178); sub.Text = "Jujutsu Shenanigans  ·  "..tierLabel; sub.Parent = card
+
+    -- game icon (bottom, "the game you play"), fetched async
+    local gi = Instance.new("ImageLabel"); gi.AnchorPoint = Vector2.new(0.5,0); gi.Position = UDim2.new(0.5,0,0,170)
+    gi.Size = UDim2.fromOffset(40,40); gi.BackgroundColor3 = Color3.fromRGB(22,22,26); gi.BorderSizePixel = 0; gi.Image = ""; gi.Visible = false; gi.Parent = card
+    Instance.new("UICorner", gi).CornerRadius = UDim.new(0,8)
+    task.spawn(function()
+        local ok,info = pcall(function() return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId) end)
+        if ok and info and info.IconImageAssetId and info.IconImageAssetId ~= 0 then gi.Image = "rbxassetid://"..info.IconImageAssetId; gi.Visible = true end
+    end)
+
+    -- progress bar
+    local barBg = Instance.new("Frame"); barBg.AnchorPoint = Vector2.new(0.5,1); barBg.Position = UDim2.new(0.5,0,1,-44)
+    barBg.Size = UDim2.new(1,-48,0,6); barBg.BackgroundColor3 = Color3.fromRGB(30,30,34); barBg.BorderSizePixel = 0; barBg.Parent = card
+    Instance.new("UICorner", barBg).CornerRadius = UDim.new(1,0)
+    local bar = Instance.new("Frame"); bar.Size = UDim2.fromScale(0,1); bar.BackgroundColor3 = ACCENT; bar.BorderSizePixel = 0; bar.Parent = barBg
+    Instance.new("UICorner", bar).CornerRadius = UDim.new(1,0)
+    local status = Instance.new("TextLabel"); status.AnchorPoint = Vector2.new(0.5,1); status.Position = UDim2.new(0.5,0,1,-20); status.Size = UDim2.new(1,-40,0,16)
+    status.BackgroundTransparency = 1; status.Font = Enum.Font.Gotham; status.TextSize = 12; status.TextColor3 = Color3.fromRGB(200,200,206); status.Text = "Loading..."; status.Parent = card
+
+    bg.BackgroundTransparency = 1
+    TweenService:Create(bg, TweenInfo.new(0.35), {BackgroundTransparency = 0}):Play()
+
+    task.spawn(function()
+        local stages = {
+            {t = "Loading...", p = 0.12},
+            {t = "Getting user + profile...", p = 0.38},
+            {t = "Checking status:  "..tierLabel, p = 0.6},
+            {t = "Loading game data...", p = 0.82},
+            {t = "Loading you in...", p = 1.0},
+        }
+        for _, s in ipairs(stages) do
+            status.Text = s.t
+            TweenService:Create(bar, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {Size = UDim2.fromScale(s.p, 1)}):Play()
+            task.wait(0.7)
+        end
+        local t0 = tick()   -- hold on the last frame until the hub is actually built (or 8s max)
+        while not _G.VX_HUB_READY and tick() - t0 < 8 do task.wait(0.1) end
+        status.Text = "Welcome, "..(LP.DisplayName or LP.Name).."!"
+        task.wait(0.3)
+        TweenService:Create(bg, TweenInfo.new(0.5), {BackgroundTransparency = 1}):Play()
+        TweenService:Create(cs, TweenInfo.new(0.5), {Transparency = 1}):Play()
+        for _, o in ipairs(card:GetDescendants()) do
+            pcall(function() if o:IsA("TextLabel") then TweenService:Create(o, TweenInfo.new(0.5), {TextTransparency = 1}):Play()
+            elseif o:IsA("ImageLabel") then TweenService:Create(o, TweenInfo.new(0.5), {ImageTransparency = 1, BackgroundTransparency = 1}):Play()
+            elseif o:IsA("Frame") then TweenService:Create(o, TweenInfo.new(0.5), {BackgroundTransparency = 1}):Play() end end)
+        end
+        TweenService:Create(card, TweenInfo.new(0.5), {BackgroundTransparency = 1}):Play()
+        task.wait(0.6); pcall(function() gui:Destroy() end)
+    end)
+end)
+
 -- ===================== SHARED STATE (the GUI flips these; the modules read them) =====================
 local BlockFlags = { Dash = false, M1 = false, Abilities = false, CameraFollow = true }
 local BFApi    -- forward-declared: Auto Black Flash control API (assigned in its module below)
@@ -4373,7 +4460,7 @@ end
 -- GUI  (VAULTIX v3.1 - samet / joestar._3 "esdeeeeee" library, EXACT; per-tier accent)
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
-local VX_TIER = "premium"
+local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
 local VX_VERSION = "3.1"
 
 if getgenv and getgenv().Library then
@@ -4562,14 +4649,23 @@ local Library do
 
     Library.Theme = TableClone(Themes["Preset"])
 
-    -- BLACK & WHITE theme (user request): pure grayscale for every tier — near-black panels, white accent/text,
-    -- grey borders. No coloured accents.
-    Library.Theme["Background"] = FromRGB(10, 10, 10)
-    Library.Theme["Inline"]     = FromRGB(16, 16, 16)
-    Library.Theme["Element"]    = FromRGB(26, 26, 26)
-    Library.Theme["Accent"]     = FromRGB(255, 255, 255)
-    Library.Theme["Border"]     = FromRGB(34, 34, 34)
-    Library.Theme["Border 2"]   = FromRGB(70, 70, 70)
+    if _G.JJS_FREE then
+        -- FREE build: RED & BLACK theme — deep-black panels, glowing red accent + red borders.
+        Library.Theme["Background"] = FromRGB(8, 8, 8)
+        Library.Theme["Inline"]     = FromRGB(15, 10, 11)
+        Library.Theme["Element"]    = FromRGB(28, 16, 17)
+        Library.Theme["Accent"]     = FromRGB(255, 40, 52)
+        Library.Theme["Border"]     = FromRGB(64, 22, 26)
+        Library.Theme["Border 2"]   = FromRGB(124, 36, 44)
+    else
+        -- PREMIUM/PLUS: BLACK & WHITE theme — near-black panels, white accent/text, grey borders.
+        Library.Theme["Background"] = FromRGB(10, 10, 10)
+        Library.Theme["Inline"]     = FromRGB(16, 16, 16)
+        Library.Theme["Element"]    = FromRGB(26, 26, 26)
+        Library.Theme["Accent"]     = FromRGB(255, 255, 255)
+        Library.Theme["Border"]     = FromRGB(34, 34, 34)
+        Library.Theme["Border 2"]   = FromRGB(70, 70, 70)
+    end
 
     -- Folders
     pcall(function()
@@ -8522,13 +8618,16 @@ do
         elseif m == "Auto Chain" then BFApi.SetEnabled(false); ChainApi.setEnabled(true)
         else BFApi.SetEnabled(false); ChainApi.setEnabled(false) end
     end })
-    bfSec:Dropdown({ Name = "Approach (Auto Chain)", Items = { "Teleport", "Jump", "Side Dash", "Back Dash" }, Default = "Teleport", Callback = function(m) if ChainApi then ChainApi.setMode(m) end end })
-    bfSec:Dropdown({ Name = "Auto Feint", Items = { "Off", "Feint Black Flash", "Feint M1", "Feint Moves" }, Default = "Off", Callback = function(v)
+    if tier("premium") then   -- FREE: no auto-chain approaches (side/back dash live here) — premium only
+        bfSec:Dropdown({ Name = "Approach (Auto Chain)", Items = { "Teleport", "Jump", "Side Dash", "Back Dash" }, Default = "Teleport", Callback = function(m) if ChainApi then ChainApi.setMode(m) end end })
+    end
+    -- FREE feint keeps only M1 + Moves(skills); premium adds Feint Black Flash
+    bfSec:Dropdown({ Name = "Auto Feint", Items = (tier("premium") and { "Off", "Feint Black Flash", "Feint M1", "Feint Moves" } or { "Off", "Feint M1", "Feint Moves" }), Default = "Off", Callback = function(v)
         if ChainApi then ChainApi.setFeintMode(v == "Feint Black Flash" and "BF" or (v == "Feint M1" and "M1" or (v == "Feint Moves" and "Moves" or "Off"))) end
     end })
-    bfSec:Dropdown({ Name = "Stop After", Items = { "1", "2", "3", "4" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintBFStop(v) end end })
+    if tier("premium") then bfSec:Dropdown({ Name = "Stop After", Items = { "1", "2", "3", "4" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintBFStop(v) end end }) end
     bfSec:Dropdown({ Name = "Feint After", Items = { "1", "2", "3" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintM1Count(v) end end })
-    bfSec:Dropdown({ Name = "Move After Feint", Items = { "1", "2", "3", "4" }, Default = "1", Callback = function(v) if ChainApi then ChainApi.setFeintMove(v) end end })
+    if tier("premium") then bfSec:Dropdown({ Name = "Move After Feint", Items = { "1", "2", "3", "4" }, Default = "1", Callback = function(v) if ChainApi then ChainApi.setFeintMove(v) end end }) end
     bfSec:Toggle({ Name = "Feint Abilities", Default = false, Callback = function(b) if ChainApi and ChainApi.setFeintMoves then ChainApi.setFeintMoves(b) end end })
     bfSec:Toggle({ Name = "Aim Assist", Default = false, Callback = function(b) if AimAssistApi then AimAssistApi.set(b) end end })
     bfSec:Toggle({ Name = "Yuta Black Flash", Default = false, Callback = function(b) if YutaBFApi then YutaBFApi.setManual(b) end end })
@@ -8556,21 +8655,25 @@ do
         if slam then fireKnit("RikaSlamService", "Activated", slam) elseif VX_NOTIFY then VX_NOTIFY("No 'Rika Slam' in your Moveset", false) end
     end })
     local ultSec = skSub:Section({ Name = "Ults", Side = 2 })
-    ultSec:Toggle({ Name = "Crow Ult", Callback = function(b) if CrowUltApi then CrowUltApi.set(b) end end })
-    ultSec:Toggle({ Name = "Crow Lock On", Callback = function(b) if CrowHitApi then CrowHitApi.set(b) end end })
+    if tier("premium") then   -- FREE: no Crow Ult / Crow Lock On
+        ultSec:Toggle({ Name = "Crow Ult", Callback = function(b) if CrowUltApi then CrowUltApi.set(b) end end })
+        ultSec:Toggle({ Name = "Crow Lock On", Callback = function(b) if CrowHitApi then CrowHitApi.set(b) end end })
+    end
     ultSec:Toggle({ Name = "Head of Hei Ult", Callback = function(b) if HeadUltApi then HeadUltApi.set(b) end end })
     ultSec:Slider({ Name = "Hei Ult Timing", Min = 0.05, Max = 0.6, Default = 0.26, Decimals = 0.01, Suffix = "s", Callback = function(v) if HeadUltApi and HeadUltApi.setLead then HeadUltApi.setLead(v) end end })
-    ultSec:Toggle({ Name = "Rika Love Sword", Callback = function(b) if RikaSwordApi then RikaSwordApi.set(b) end end })
+    if tier("premium") then ultSec:Toggle({ Name = "Rika Love Sword", Callback = function(b) if RikaSwordApi then RikaSwordApi.set(b) end end }) end   -- FREE: no auto Rika sword
     ultSec:Toggle({ Name = "Rika Down Slam", Callback = function(b) if SlamApi then SlamApi.set(b) end end })
     ultSec:Toggle({ Name = "Goku M1", Callback = function(b) if GokuApi then GokuApi.set(b) end end })
     ultSec:Toggle({ Name = "Hollow Nuke", Callback = function(b) if HollowApi then HollowApi.set(b) end end })
 
     local defSub = CombatPage:SubPage({ Name = "Defense", Columns = 2 })
     local counterSec = defSub:Section({ Name = "Counter", Side = 1 })
-    counterSec:Toggle({ Name = "Side Dash Assist", Callback = function(b) if SideDashApi then SideDashApi.set(b) end end })   -- always visible now
+    if tier("premium") then counterSec:Toggle({ Name = "Side Dash Assist", Callback = function(b) if SideDashApi then SideDashApi.set(b) end end }) end   -- FREE: no side dash
     counterSec:Toggle({ Name = "Anti Counter", Callback = function(b) if AntiCounterApi then AntiCounterApi.set(b) end end })
-    counterSec:Dropdown({ Name = "On Counter", Items = { "Jump On Head", "Emote" }, Default = "Jump On Head", Callback = function(v) if AntiCounterApi then AntiCounterApi.setMode(v) end end })
-    counterSec:Dropdown({ Name = "Emote #", Items = { "1", "2", "3", "4", "5", "6", "7", "8" }, Default = "1", Callback = function(v) if AntiCounterApi then AntiCounterApi.setEmote(v) end end })
+    if tier("premium") then   -- FREE: no Emote / Jump-On-Head counter reactions (Anti Counter keeps its default)
+        counterSec:Dropdown({ Name = "On Counter", Items = { "Jump On Head", "Emote" }, Default = "Jump On Head", Callback = function(v) if AntiCounterApi then AntiCounterApi.setMode(v) end end })
+        counterSec:Dropdown({ Name = "Emote #", Items = { "1", "2", "3", "4", "5", "6", "7", "8" }, Default = "1", Callback = function(v) if AntiCounterApi then AntiCounterApi.setEmote(v) end end })
+    end
     local antiSec = defSub:Section({ Name = "Anti / Adapt", Side = 2 })
     antiSec:Toggle({ Name = "Anti-Stun", Callback = function(b) if AntiStunApi then AntiStunApi.set(b) end end })
     antiSec:Toggle({ Name = "Anti-Ragdoll", Callback = function(b) if AntiRagdollApi then AntiRagdollApi.set(b) end end })
@@ -8585,8 +8688,10 @@ do
     local acSec = autoSub:Section({ Name = "Auto Combat", Side = 1 })
     acSec:Toggle({ Name = "Auto Counter", Callback = function(b) if CounterApi then CounterApi.set(b) end end })
     acSec:Toggle({ Name = "Locked Only", Callback = function(b) if CounterApi then CounterApi.setLockedOnly(b) end end })
-    acSec:Toggle({ Name = "Auto Evasive", Callback = function(b) if EvasiveApi then EvasiveApi.set(b) end end })
-    acSec:Dropdown({ Name = "Evasive Dir", Items = { "Cycle", "Back", "Left", "Right", "Toward Target" }, Default = "Cycle", Callback = function(v) if EvasiveApi then EvasiveApi.setDir(v) end end })
+    if tier("premium") then   -- FREE: no Auto Evasive
+        acSec:Toggle({ Name = "Auto Evasive", Callback = function(b) if EvasiveApi then EvasiveApi.set(b) end end })
+        acSec:Dropdown({ Name = "Evasive Dir", Items = { "Cycle", "Back", "Left", "Right", "Toward Target" }, Default = "Cycle", Callback = function(v) if EvasiveApi then EvasiveApi.setDir(v) end end })
+    end
     acSec:Toggle({ Name = "Auto Yuta Black Flash", Default = false, Callback = function(b) if YutaBFApi then YutaBFApi.setAuto(b) end end })
     acSec:Toggle({ Name = "Auto Ult", Callback = function(b) if AutoUltApi then AutoUltApi.set(b) end end })
     acSec:Toggle({ Name = "Auto Air", Callback = function(b) if AutoAirApi_set then AutoAirApi_set(b) end end })
@@ -8594,7 +8699,7 @@ do
     -- (Removed the "Launcher after N hits" slider — the mechanic is now the FIXED real game rule per the wiki:
     -- Uppercut = 4 M1s with Space held, Down Slam = 3 M1s then jump+M1. No slider needed or accurate anymore.)
     pcall(function() acSec:Label("Uppercut soon: Crow, Mangaka, Black Death, Disaster Plants") end)
-    acSec:Toggle({ Name = "Auto Adapt", Callback = function(b) if AutoAdaptApi then AutoAdaptApi.set(b) end end })
+    if tier("premium") then acSec:Toggle({ Name = "Auto Adapt", Callback = function(b) if AutoAdaptApi then AutoAdaptApi.set(b) end end }) end   -- FREE: no Auto Adapt (Auto Domain Adapt below is kept)
     acSec:Toggle({ Name = "Auto Domain Adapt", Callback = function(b) if AutoDomainAdaptApi then AutoDomainAdaptApi.set(b) end end })
     acSec:Toggle({ Name = "Auto Earthquake", Callback = function(b) if AutoQuakeApi then AutoQuakeApi.set(b) end end })
     acSec:Toggle({ Name = "Auto Kill Emote", Callback = function(b) if KillEmoteApi then KillEmoteApi.set(b) end end })
@@ -8737,6 +8842,7 @@ do
     if _G.VX_SILENT == nil then _G.VX_SILENT = true end   -- SILENT BY DEFAULT (user: "remove notifications") — every toast in the hub goes through VX_NOTIFY, so this one flag kills them all; F9 prints are untouched
     VX_NOTIFY = function(t) if _G.VX_SILENT then return end pcall(function() Library:Notification(tostring(t), 4) end) end   -- 'Show Notifications' re-enables; this is the single choke point
     if getgenv then getgenv().Library = Library end
+    _G.VX_HUB_READY = true   -- tells the loading screen the GUI is built -> it fades out and reveals the hub
     pcall(function() Library:Notification("Dream Hub " .. string.upper(VX_TIER) .. " loaded", 4) end)
     print("[Vaultix v" .. VX_VERSION .. " | samet UI] loaded (" .. VX_TIER .. ") - RightShift toggle")
 end
