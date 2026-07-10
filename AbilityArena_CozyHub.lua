@@ -1997,29 +1997,48 @@ if UserInputService.TouchEnabled then
         mg.Name = "DreamAA_Mobile"; mg.ResetOnSpawn = false; mg.IgnoreGuiInset = true; mg.DisplayOrder = 99998
         mg.Parent = (gethui and gethui()) or game:GetService("CoreGui")
         if not mg.Parent then mg.Parent = LP:WaitForChild("PlayerGui") end
-        local function mkBtn(txt, offY)
+        -- LAYOUT FIX ("can't move when they click on the gui"): the old buttons sat at the LEFT-MIDDLE of the
+        -- screen — exactly where the dynamic movement thumbstick spawns on phones, so touches meant for
+        -- WALKING landed on our buttons and the thumbstick never engaged. Everything now lives at the TOP
+        -- edge (out of every control zone), the M1 button sits just above the jump button, and the fly
+        -- arrows only exist while Fly is actually on.
+        local function mkBtn(txt, pos)
             local b = Instance.new("TextButton")
-            b.Size = UDim2.fromOffset(50,50); b.Position = UDim2.new(0, 12, 0.5, offY)
-            b.BackgroundColor3 = Color3.fromRGB(16,16,16); b.Text = txt; b.TextColor3 = Color3.fromRGB(255,60,60)
-            b.TextSize = 22; b.Font = Enum.Font.GothamBold; b.AutoButtonColor = true; b.Parent = mg
+            b.Size = UDim2.fromOffset(44,44); b.Position = pos
+            b.BackgroundColor3 = Color3.fromRGB(16,16,16); b.BackgroundTransparency = 0.25
+            b.Text = txt; b.TextColor3 = Color3.fromRGB(255,60,60)
+            b.TextSize = 20; b.Font = Enum.Font.GothamBold; b.AutoButtonColor = true; b.Parent = mg
             Instance.new("UICorner", b).CornerRadius = UDim.new(0,10)
             local st = Instance.new("UIStroke"); st.Color = Color3.fromRGB(255,45,45); st.Thickness = 1.2; st.Parent = b
             return b
         end
-        local menuB = mkBtn("≡", -92)
+        local menuB = mkBtn("≡", UDim2.new(0.5, -110, 0, 8))          -- top-center strip: never a movement zone
         menuB.MouseButton1Click:Connect(function()
             pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.RightShift, false, game); task.wait(); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.RightShift, false, game) end)
         end)
-        local upB = mkBtn("▲", -26)
-        upB.MouseButton1Down:Connect(function() flyKeys.Up=true end);   upB.MouseButton1Up:Connect(function() flyKeys.Up=false end)
-        local dnB = mkBtn("▼", 40)
-        dnB.MouseButton1Down:Connect(function() flyKeys.Down=true end); dnB.MouseButton1Up:Connect(function() flyKeys.Down=false end)
-        -- MOBILE M1: phone players have no left-click, so this button runs the SAME swing dispatcher the desktop
-        -- click does (M1 Warp / Dash / Fling / One Punch / God-mode M1 + a base swing). Bigger + on the right.
+        local upB = mkBtn("▲", UDim2.new(0.5, -58, 0, 8))
+        local dnB = mkBtn("▼", UDim2.new(0.5, -6, 0, 8))
+        -- press-and-slide-off leaves MouseButton1Up unfired -> the key stuck held = "stuck flying up".
+        -- InputEnded on the button catches BOTH clean release and slide-off, for touch and mouse alike.
+        upB.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then flyKeys.Up = true end end)
+        upB.InputEnded:Connect(function() flyKeys.Up = false end)
+        dnB.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then flyKeys.Down = true end end)
+        dnB.InputEnded:Connect(function() flyKeys.Down = false end)
+        task.spawn(function()   -- fly arrows exist ONLY while Fly is on: off = zero dead zones on screen
+            while mg.Parent do
+                local on = S.Fly and true or false
+                if upB.Visible ~= on then upB.Visible = on; dnB.Visible = on; if not on then flyKeys.Up = false; flyKeys.Down = false end end
+                task.wait(0.25)
+            end
+        end)
+        upB.Visible = false; dnB.Visible = false
+        -- MOBILE M1: runs the SAME swing dispatcher the desktop click does (M1 Warp / Dash / Fling /
+        -- One Punch / God-mode M1 + a base swing). Sits just ABOVE the jump button, clear of it.
         local m1B = Instance.new("TextButton")
-        m1B.Size = UDim2.fromOffset(76,76); m1B.Position = UDim2.new(1, -92, 0.5, 20); m1B.AnchorPoint = Vector2.new(0,0)
-        m1B.BackgroundColor3 = Color3.fromRGB(200,40,40); m1B.Text = "M1"; m1B.TextColor3 = Color3.fromRGB(255,255,255)
-        m1B.TextSize = 26; m1B.Font = Enum.Font.GothamBold; m1B.AutoButtonColor = true; m1B.Parent = mg
+        m1B.Size = UDim2.fromOffset(72,72); m1B.AnchorPoint = Vector2.new(1,1); m1B.Position = UDim2.new(1, -24, 1, -200)
+        m1B.BackgroundColor3 = Color3.fromRGB(200,40,40); m1B.BackgroundTransparency = 0.2
+        m1B.Text = "M1"; m1B.TextColor3 = Color3.fromRGB(255,255,255)
+        m1B.TextSize = 24; m1B.Font = Enum.Font.GothamBold; m1B.AutoButtonColor = true; m1B.Parent = mg
         Instance.new("UICorner", m1B).CornerRadius = UDim.new(1,0)
         m1B.MouseButton1Click:Connect(function() if _G.AA_SWING then pcall(function() _G.AA_SWING(true) end) end end)
     end)
