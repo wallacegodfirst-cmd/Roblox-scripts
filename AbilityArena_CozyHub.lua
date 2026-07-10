@@ -309,7 +309,7 @@ local S = {
     RemoveWaterBorder=false, AntiKillBricks=false,
     M1Hitbox=false, M1HitboxSize=80,   -- 80 default: long spear-arm reach (arms = slider*1.5 forward, thin sides)
     HitboxAbility=false, HitboxAbilitySize=40, HitboxAllParts=false, HitboxVisible=true,
-    OnePunch=false, OnePunchPower=650, OnePunchRange=60,   -- One Punch: each M1 launches the nearest enemy up + off the map
+    OnePunch=false, OnePunchHits=8, OnePunchGuid="",   -- One Punch: each M1 click sends a burst of extra M1 packets
     AutoM1=false,
     AutoAbility=false, AutoAbilityRange=25,
     CastE=true, CastQ=false, CastR=false, CastT=false,
@@ -769,56 +769,58 @@ hook(UserInputService.InputBegan, function(i, gpe)
 end)
 
 -- ============================================================
--- ONE PUNCH — each M1 swing LAUNCHES the nearest enemy up and out of the map.
--- The server-side hit-validation makes a real damaging hitbox impossible here, so instead of dealing
--- damage we fling the target physically: unanchor them, pin a huge world-space LinearVelocity to their
--- root for a short burst, and hammer AssemblyLinearVelocity so they tumble away. Rides the same
--- anti-fling-disabled physics (the _Client_AntiFling initializers are already killed on load).
+-- ONE PUNCH — M1 PACKET BURST. (The physics fling could not stick: enemy bodies are server-owned
+-- in this game, so velocity writes were visual-only and got snapped back.)
+-- This instead rides the REAL M1 wire format (user's SimpleSpy capture of a live swing):
+--   \005 UseM1A \003 .  <8-byte GetServerTimeNow>  \000\000  <32-hex session id>  \001\000\000\000
+-- Each click sends a burst of these with a FRESH timestamp each, so one punch lands like many.
+-- The 32-hex id is per-session: we scan YOUR character for it; if not found we fall back to the
+-- textbox/_G override, then to a random id. (No __namecall hook here — this game 267-kicks a hooked
+-- namecall, see the M1 Spy note above — so the packet is crafted byte-exact, not intercepted.)
 -- ============================================================
-local onePunchCD = 0
-local function onePunchRoot(char)
-    return char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Hitbox") or charPart(char))
+local OP_PRE  = string.char(5).."UseM1A"..string.char(3).."."
+local OP_MID  = string.char(0,0)
+local OP_TAIL = string.char(1,0,0,0)
+local function opRandomId()
+    local hex, t = "0123456789abcdef", {}
+    for i = 1, 32 do local n = math.random(1, 16); t[i] = hex:sub(n, n) end
+    return table.concat(t)
 end
-local function onePunchFling(char)
-    local part = onePunchRoot(char); local root = getRoot()
-    if not (part and root) then return end
-    local away = part.Position - root.Position; away = Vector3.new(away.X, 0, away.Z)
-    local dir  = (away.Magnitude > 0.1 and away.Unit) or root.CFrame.LookVector
-    local power = S.OnePunchPower or 650
-    local vel   = dir * power + Vector3.new(0, power * 0.9, 0)   -- away from you + strongly UP = launched off the map
-    task.spawn(function()
-        local att, mover
-        pcall(function()
-            if part.Anchored then part.Anchored = false end
-            att = Instance.new("Attachment"); att.Parent = part
-            mover = Instance.new("LinearVelocity")
-            mover.Attachment0 = att; mover.MaxForce = 1e9
-            mover.RelativeTo = Enum.ActuatorRelativeTo.World
-            mover.VectorVelocity = vel
-            mover.Parent = part
-        end)
-        local t0 = tick()
-        while tick() - t0 < 0.4 do
-            pcall(function()
-                part.AssemblyLinearVelocity  = vel
-                part.AssemblyAngularVelocity = Vector3.new(120, 260, 120)   -- tumble so they don't just slide flat
-            end)
-            RunService.Heartbeat:Wait()
+local function opIs32Hex(v) return type(v) == "string" and #v == 32 and v:match("^%x+$") ~= nil end
+local opFoundId = nil
+local function opSessionId()
+    if opIs32Hex(_G.AA_M1_GUID) then return _G.AA_M1_GUID end          -- manual override (paste from a capture)
+    if opIs32Hex(S.OnePunchGuid) then return S.OnePunchGuid end        -- textbox override
+    if opFoundId then return opFoundId end
+    pcall(function()                                                   -- scan your character for the live session id
+        local char = getChar()
+        if not char then return end
+        for _, v in pairs(char:GetAttributes()) do if opIs32Hex(v) then opFoundId = v; return end end
+        for _, d in ipairs(char:GetDescendants()) do
+            if d:IsA("StringValue") and opIs32Hex(d.Value) then opFoundId = d.Value; return end
+            for _, v in pairs(d:GetAttributes()) do if opIs32Hex(v) then opFoundId = v; return end end
         end
-        pcall(function() if mover then mover:Destroy() end end)
-        pcall(function() if att then att:Destroy() end end)
     end)
+    return opFoundId or opRandomId()
 end
+hook(LP.CharacterAdded, function() opFoundId = nil end)   -- session id may change on respawn: re-scan
+local function buildM1A() return OP_PRE .. nowStamp() .. OP_MID .. opSessionId() .. OP_TAIL end
+local onePunchCD = 0
 hook(UserInputService.InputBegan, function(i, gpe)
     if gpe then return end
     if not S.OnePunch then return end
     if typingNow() then return end
     if i.UserInputType ~= Enum.UserInputType.MouseButton1 and i.UserInputType ~= Enum.UserInputType.Touch then return end
     if mouseOverGui() then return end
-    if tick() - onePunchCD < 0.15 then return end
+    if tick() - onePunchCD < 0.25 then return end
     onePunchCD = tick()
-    local p = nearestPlayer(S.OnePunchRange or 60)
-    if p and p.Character then onePunchFling(p.Character) end
+    task.spawn(function()
+        local n = math.clamp(tonumber(S.OnePunchHits) or 8, 1, 25)
+        for _ = 1, n do
+            fireRaw(buildM1A())   -- your real click already fired the game's own M1; these stack on top of it
+            task.wait(0.03)
+        end
+    end)
 end)
 
 local armSpawnT = tick()   -- Bug 4: init to NOW so the 3s grace works even when the script loads mid-game
@@ -2419,9 +2421,9 @@ CombatTab:CreateSlider({Name="Ability Hitbox Size", Range={1,300}, Increment=1, 
 CombatTab:CreateToggle({Name="Show Hitbox (cyan box - off = invisible)", CurrentValue=true, Flag="HitboxVisible", Callback=function(v) S.HitboxVisible=v end})
 
 CombatTab:CreateSection("One Punch")
-CombatTab:CreateToggle({Name="One Punch (M1 flings nearest enemy off the map)", CurrentValue=false, Flag="OnePunch", Callback=function(v) S.OnePunch=v end})
-CombatTab:CreateSlider({Name="One Punch Power (higher = flung farther)", Range={100,3000}, Increment=50, Suffix="", CurrentValue=650, Flag="OnePunchPower", Callback=function(v) S.OnePunchPower=v end})
-CombatTab:CreateSlider({Name="One Punch Range", Range={10,150}, Increment=5, Suffix="studs", CurrentValue=60, Flag="OnePunchRange", Callback=function(v) S.OnePunchRange=v end})
+CombatTab:CreateToggle({Name="One Punch (each M1 hits like a burst)", CurrentValue=false, Flag="OnePunch", Callback=function(v) S.OnePunch=v end})
+CombatTab:CreateSlider({Name="Punches per Click", Range={1,25}, Increment=1, Suffix="hits", CurrentValue=8, Flag="OnePunchHits", Callback=function(v) S.OnePunchHits=v end})
+CombatTab:CreateInput({Name="One Punch ID (paste the 32-hex id from an M1 capture if it misses)", PlaceholderText="auto", Callback=function(v) v=tostring(v or ""):gsub("%s+",""); S.OnePunchGuid=v end})
 
 CombatTab:CreateSection("Auto")
 CombatTab:CreateToggle({Name="Auto M1 (click spam)", CurrentValue=false, Flag="AutoM1", Callback=function(v) S.AutoM1=v end})
