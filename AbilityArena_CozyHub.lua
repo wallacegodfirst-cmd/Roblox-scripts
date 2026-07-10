@@ -488,8 +488,10 @@ local function safeClickPoint()
     return nil -- every candidate is under the menu: skip rather than click the menu
 end
 
+local vimClickUntil = 0   -- injection marker: OUR OWN VIM clicks must not re-trigger the click-combat hooks (warp->click->warp = infinite loop)
 local function doClick(pt)
     if not pt then return end
+    vimClickUntil = tick() + 0.15
     pcall(function()
         VirtualInputManager:SendMouseButtonEvent(pt.X, pt.Y, 0, true,  game, 0)
         task.wait(0.03)
@@ -769,8 +771,56 @@ end
 -- typingNow() + mouseOverGui() instead, which is the correct guard pair.
 hook(UserInputService.InputBegan, function(i, _)
     if typingNow() then return end
-    if i.UserInputType == Enum.UserInputType.MouseButton1 and (S.M1Hitbox or S.AutoFarm or S.AutoPlay) then
-        clearMyHitLog()   -- swing start
+    if tick() < vimClickUntil then return end   -- skip our own injected clicks (stops warp->click->warp recursion)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 then
+        if S.M1Hitbox or S.AutoFarm or S.AutoPlay then
+            clearMyHitLog()
+        end
+
+        -- M1 WARP: snap behind nearest enemy, click M1, snap back
+        if S.M1Warp then
+            task.spawn(function()
+                local root = getRoot()
+                if not root then return end
+                local target = nearestPlayer(S.M1WarpRange or 60)
+                if not target or not target.Character then return end
+                local tr = charPart(target.Character)
+                if not tr then return end
+                local savedCF = root.CFrame
+                local behindCF = tr.CFrame * CFrame.new(0, 0, 3)
+                pcall(function() root.CFrame = behindCF end)
+                task.wait(0.03)
+                clearMyHitLog()
+                clickM1(true)
+                task.wait(0.06)
+                if S.M1WarpReturn then
+                    pcall(function() root.CFrame = savedCF end)
+                end
+            end)
+        end
+
+        -- M1 Q DASH (Dash Behind): snap behind enemy, click M1, then fire Dash
+        if S.DashBehind and not S.M1Warp then
+            task.spawn(function()
+                local root = getRoot()
+                if not root then return end
+                local target = nearestPlayer(S.DashRange or 45)
+                if not target or not target.Character then return end
+                local tr = charPart(target.Character)
+                if not tr then return end
+                local savedCF = root.CFrame
+                local behindCF = tr.CFrame * CFrame.new(0, 0, 3)
+                pcall(function() root.CFrame = behindCF end)
+                task.wait(0.03)
+                clearMyHitLog()
+                clickM1(true)
+                task.wait(0.06)
+                fireDash("Forward")
+                tapKey(Enum.KeyCode.Q)
+                task.wait(0.15)
+                pcall(function() root.CFrame = savedCF end)
+            end)
+        end
     end
 end)
 
@@ -804,26 +854,63 @@ local function resolvePunchRemote()
     return punchRemote
 end
 local function firePunchOnce()
-    fireSkill(punchAbilityName())                         -- 1) the StartSkill packet on Jolt_Reliable (the game's own path)
-    local re = resolvePunchRemote()                       -- 2) the ability's own remote, if it exists, as a direct trigger
+    local name = punchAbilityName()
+    -- 1) StartSkill new format
+    fireRaw(buildSkillNew(name))
+    -- 2) StartSkill old format with direction
+    fireRaw(buildSkillOld(name, "Forward"))
+    -- 3) StartSkill new format with direction
+    fireRaw(buildSkillNewDir(name, "Forward"))
+    -- 4) Direct ability remote (exact name match)
+    local re = resolvePunchRemote()
     if re then
         pcall(function()
             if re:IsA("RemoteEvent") then re:FireServer() else re:InvokeServer() end
         end)
     end
+    -- 5) Fire EVERY RemoteEvent/Function under the ability folder
+    pcall(function()
+        local ab = RS:FindFirstChild("Files")
+        ab = ab and ab:FindFirstChild("Shared")
+        ab = ab and ab:FindFirstChild("Core")
+        ab = ab and ab:FindFirstChild("Abilities")
+        local op = ab and ab:FindFirstChild(name)
+        if op then
+            for _, d in ipairs(op:GetDescendants()) do
+                if d:IsA("RemoteEvent") then
+                    pcall(function() d:FireServer() end)
+                elseif d:IsA("RemoteFunction") then
+                    pcall(function() d:InvokeServer() end)
+                end
+            end
+        end
+    end)
+    -- 6) Try pressing ability keys in case One Punch is bound to one
+    task.spawn(function()
+        tapKey(Enum.KeyCode.E)
+        task.wait(0.04)
+        tapKey(Enum.KeyCode.R)
+        task.wait(0.04)
+        tapKey(Enum.KeyCode.T)
+    end)
 end
 local onePunchCD = 0
-hook(UserInputService.InputBegan, function(i, _)   -- no gpe bail: the game sinks M1 clicks (gpe=true always)
+hook(UserInputService.InputBegan, function(i, _)
     if not S.OnePunch then return end
     if typingNow() then return end
+    if tick() < vimClickUntil then return end   -- skip our own injected clicks
     if i.UserInputType ~= Enum.UserInputType.MouseButton1 and i.UserInputType ~= Enum.UserInputType.Touch then return end
     if mouseOverGui() then return end
     if tick() - onePunchCD < 0.25 then return end
     onePunchCD = tick()
     task.spawn(function()
+        -- Fire a real M1 click first (One Punch may augment your normal punch)
+        clearMyHitLog()
+        clickM1(true)
+        task.wait(0.05)
         local n = math.clamp(tonumber(S.OnePunchHits) or 8, 1, 50)
         for _ = 1, n do
-            firePunchOnce()   -- cast the game's real One Punch ability (server does the fling)
+            firePunchOnce()
             task.wait(0.05)
         end
     end)
@@ -880,51 +967,15 @@ end
 hook(UserInputService.InputBegan, function(i, _)   -- no gpe bail: the game sinks M1 clicks (gpe=true always)
     if not S.FlingPunch then return end
     if typingNow() then return end
+    if tick() < vimClickUntil then return end   -- skip our own injected clicks
     if i.UserInputType ~= Enum.UserInputType.MouseButton1 and i.UserInputType ~= Enum.UserInputType.Touch then return end
     if mouseOverGui() then return end
     local p = nearestPlayer(S.FlingRange or 40)
     if p and p.Character then contactFling(p.Character) end
 end)
 
--- ============================================================
--- M1 WARP — the M1 EXPANDER REPLACEMENT. Instead of stretching your reach out to the enemy (giant arms the
--- server can reject), it brings YOU to the enemy: on every M1 click, snap point-blank behind the nearest
--- enemy so the game's OWN hit detection lands the swing at zero distance, then snap back to where you stood.
--- No hitbox edits at all = nothing for the server to validate away.
--- ============================================================
-local warpBusy = false
-hook(UserInputService.InputBegan, function(i, _)   -- no gpe bail: the game sinks M1 clicks (gpe=true always)
-    if not S.M1Warp or warpBusy then return end
-    if typingNow() then return end
-    if i.UserInputType ~= Enum.UserInputType.MouseButton1 and i.UserInputType ~= Enum.UserInputType.Touch then return end
-    if mouseOverGui() then return end
-    local p = nearestPlayer(S.M1WarpRange or 60)
-    local tr = p and p.Character and charPart(p.Character)
-    local root = getRoot()
-    if not (tr and root) then return end
-    warpBusy = true
-    local savedCF = root.CFrame
-    task.spawn(function()
-        -- HOLD behind them every frame through the swing window: a single CFrame write gets reverted by the
-        -- game before the M1 detection runs (that's why it "did nothing"). Re-asserting keeps you on their
-        -- back the whole time your arm sweeps, so the game's own hit query lands the swing.
-        local t0 = tick()
-        while tick() - t0 < 0.3 do
-            local r = getRoot()
-            local t2 = p and p.Character and charPart(p.Character)
-            if not (r and t2) then break end
-            pcall(function()
-                local behind = t2.Position - t2.CFrame.LookVector * 2.2   -- dead-center on their back, tracking if they move
-                r.CFrame = CFrame.new(behind, t2.Position)                -- facing them = the swing connects
-                r.AssemblyLinearVelocity = Vector3.zero
-            end)
-            RunService.Heartbeat:Wait()
-        end
-        local r = getRoot()
-        if S.M1WarpReturn and r then pcall(function() r.CFrame = savedCF; r.AssemblyLinearVelocity = Vector3.zero end) end
-        warpBusy = false
-    end)
-end)
+-- (Old standalone M1 Warp hook REMOVED — M1 Warp now lives in the swing-start hook above with the
+--  warp -> forced M1 click -> return sequence, so two hooks can't fight over your CFrame on one click.)
 
 local armSpawnT = tick()   -- Bug 4: init to NOW so the 3s grace works even when the script loads mid-game
 hook(LP.CharacterAdded, function() armSpawnT = tick() end)
@@ -2172,10 +2223,14 @@ end)
 -- (Kill Aura removed in v2.9.3 per request - use the hitbox expanders + your own M1.)
 
 task.spawn(function()
-    while task.wait(0.22) do          -- ~4.5/s: matches a real M1 chain, not a suspicious spam rate
+    while task.wait(0.1) do
         if S.AutoM1 then
             pcall(function()
-                clickM1()             -- legit game M1 (VirtualInputManager click); no raw packet -> no kick
+                -- AURA M1: only swing when someone is actually within M1 range - no enemy near = no click
+                if nearestPlayer(S.M1HitboxSize or 80) then
+                    clearMyHitLog()
+                    clickM1()         -- legit game M1 (VirtualInputManager click); no raw packet -> no kick
+                end
             end)
         end
     end
@@ -2199,28 +2254,8 @@ task.spawn(function()
     end
 end)
 
--- DASH BEHIND ON HIT: when you M1 (left click) with an enemy near, snap just
--- behind them (this also lands your M1 point-blank) and dash (Q). No more
--- LeftShift / shift-lock messing with your camera.
-local lastDashHit = 0
-hook(UserInputService.InputBegan, function(i, _)   -- no gpe bail: the game sinks M1 clicks (gpe=true always)
-    if not S.DashBehind then return end
-    if i.UserInputType ~= Enum.UserInputType.MouseButton1 and i.UserInputType ~= Enum.UserInputType.Touch then return end   -- accept touch = mobile M1
-    if typingNow() or mouseOverGui() then return end
-    local now = tick()
-    if now - lastDashHit < 0.25 then return end
-    lastDashHit = now
-    task.spawn(function()
-        local p = nearestPlayer(S.DashRange); local root = getRoot()
-        if not (p and p.Character and root) then return end
-        local tr = charPart(p.Character)
-        if not tr then return end
-        local behind = tr.Position - (tr.CFrame.LookVector * 3)
-        pcall(function() root.CFrame = CFrame.new(behind, tr.Position) end)  -- behind, facing them = M1 lands
-        fireDash("Forward")
-        tapKey(Enum.KeyCode.Q)
-    end)
-end)
+-- (Old Dash Behind hook REMOVED — the M1 Q Dash sequence now lives in the swing-start hook near the top
+--  of the combat section: snap behind -> forced M1 -> dash Q -> return. One hook per click, no fighting.)
 
 -- AUTO DASH: spam-dashes on a loop. Fires the dash remote AND taps the dash key
 -- you pick below (default Q). NO LeftShift, so it never touches your camera.
@@ -2507,6 +2542,33 @@ end})
 CombatTab:CreateToggle({Name="Save Health (low HP -> fly to sky, heal, drop back)", CurrentValue=false, Flag="SaveHealth", Callback=function(v) S.SaveHealth=v end})
 CombatTab:CreateSlider({Name="Save Health: trigger at HP %", Range={5,90}, Increment=5, Suffix="%", CurrentValue=35, Flag="SaveHealthPct", Callback=function(v) S.SaveHealthPct=v end})
 CombatTab:CreateSlider({Name="Save Health: sky height", Range={100,2000}, Increment=50, Suffix="studs", CurrentValue=700, Flag="SaveHealthHeight", Callback=function(v) S.SaveHealthHeight=v end})
+-- GOD MODE (the lobby trick, user-discovered): a LOBBY spawn keeps you at full/infinite health because you
+-- never entered the arena properly - and that state SURVIVES a teleport onto the map. So: stand in the
+-- LOBBY, flip this ON, and it teleports you straight to the fight. You cannot be hurt. The known trade-off
+-- of the trick itself: you also cannot M1 in that state (the game never armed your combat), so pair it with
+-- One Punch / abilities, or flip it while spectating to troll safely.
+CombatTab:CreateToggle({Name="God Mode (turn ON while in the LOBBY - TPs you to the fight, no M1)", CurrentValue=false, Flag="GodModeLobby", Callback=function(v)
+    S.GodMode=v
+    if not v then return end
+    task.spawn(function()
+        local root = getRoot(); if not root then return end
+        local dest
+        local p = nearestPlayer(math.huge)                      -- straight to the action: land next to a player
+        local tr = p and p.Character and charPart(p.Character)
+        if tr then dest = tr.Position + Vector3.new(4, 3, 0) end
+        if not dest then                                        -- empty server: land on a map spawn instead
+            pcall(function()
+                local gm = Workspace:FindFirstChild("GameMap")
+                local sp = gm and gm:FindFirstChild("Spawns")
+                local part = sp and sp:FindFirstChildWhichIsA("BasePart", true)
+                if part then dest = part.Position + Vector3.new(0, 4, 0) end
+            end)
+        end
+        if dest then
+            pcall(function() root.CFrame = CFrame.new(dest); root.AssemblyLinearVelocity = Vector3.zero end)
+        end
+    end)
+end})
 
 CombatTab:CreateSection("Hitboxes")
 -- (M1 Expand Hitbox REMOVED from the menu per request — M1 Warp below is its replacement. The arm/hitbox
@@ -2532,7 +2594,7 @@ CombatTab:CreateSlider({Name="M1 Warp Range", Range={10,200}, Increment=5, Suffi
 CombatTab:CreateToggle({Name="Warp Back After Swing", CurrentValue=true, Flag="M1WarpReturn", Callback=function(v) S.M1WarpReturn=v end})
 
 CombatTab:CreateSection("Auto")
-CombatTab:CreateToggle({Name="Auto M1 (click spam)", CurrentValue=false, Flag="AutoM1", Callback=function(v) S.AutoM1=v end})
+CombatTab:CreateToggle({Name="Aura M1 (auto M1 when someone is near)", CurrentValue=false, Flag="AutoM1", Callback=function(v) S.AutoM1=v end})
 CombatTab:CreateToggle({Name="Auto Ability", CurrentValue=false, Flag="AutoAbility", Callback=function(v) S.AutoAbility=v end})
 CombatTab:CreateSlider({Name="Auto Ability Range", Range={5,80}, Increment=1, Suffix="studs", CurrentValue=25, Flag="AutoAbilityRange", Callback=function(v) S.AutoAbilityRange=v end})
 CombatTab:CreateToggle({Name="Cast E", CurrentValue=true,  Flag="CastE", Callback=function(v) S.CastE=v end})
