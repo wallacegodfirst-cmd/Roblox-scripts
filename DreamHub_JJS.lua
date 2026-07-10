@@ -3501,9 +3501,17 @@ do
 			VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, true, game, 0); task.wait(0.04); VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, false, game, 0)
 		end)
 	end
-	-- These moves need a CLICK as they land, ON TOP of the 4-adapt: Hollow Purple + the fire move.
+	-- These moves ADAPT BY CLICKING (M1) as soon as they come, NOT by pressing 4: Hollow Purple + the fire move.
 	local CLICK_ADAPT_IDS = { ["132748613906344"] = true, ["137611726964398"] = true }
-	local function playAdapt(id) task.delay(ADAPT_LEAD, pressFour); if id and CLICK_ADAPT_IDS[id] then task.delay(ADAPT_LEAD, clickM1) end end  -- timed: short lead so 4 (and the click, for the 2 special moves) lands right as the attack hits
+	local function playAdapt(id)
+		if id and CLICK_ADAPT_IDS[id] then                         -- Hollow Purple / fire: adapt by CLICKING, not 4
+			-- it "comes very slow", so a single early click can whiff — fire a short burst across the windup so one
+			-- lands in the parry window (starts the instant it's detected).
+			task.spawn(function() for _ = 1, 4 do clickM1(); task.wait(0.12) end end)
+			return
+		end
+		task.delay(ADAPT_LEAD, pressFour)                          -- everything else: press 4 on the short lead
+	end
 	local function dist(er) local mr = myHRP(); return (mr and er) and (er.Position - mr.Position).Magnitude or 9999 end
 	local function randomEnemyHRP()
 		local list = {}
