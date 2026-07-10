@@ -241,6 +241,47 @@ do
                     if ch and ch.Name == "NotifyGui" then task.defer(watchGui, ch) end
                 end)
             end)
+            -- MOBILE FIX: stop invisible full-screen frames from eating touch input (blocks joystick/movement)
+            task.defer(function()
+                task.wait(1)
+                local function unblockMobile(gui)
+                    if not gui then return end
+                    for _, d in ipairs(gui:GetDescendants()) do
+                        pcall(function()
+                            if d:IsA("Frame") and d.Active then
+                                local sz = d.AbsoluteSize
+                                if sz.X > 400 and sz.Y > 300 and d.BackgroundTransparency > 0.8 then
+                                    local hasButtons = false
+                                    for _, c in ipairs(d:GetChildren()) do
+                                        if c:IsA("TextButton") or c:IsA("ImageButton") then
+                                            hasButtons = true; break
+                                        end
+                                    end
+                                    if not hasButtons then d.Active = false end
+                                end
+                            end
+                        end)
+                    end
+                end
+                pcall(function() unblockMobile(CoreGuiSvc:FindFirstChild("HirimiGui")) end)
+                -- Re-apply if Fluriore adds new frames later
+                pcall(function()
+                    local hg = CoreGuiSvc:FindFirstChild("HirimiGui")
+                    if hg then hg.DescendantAdded:Connect(function(d)
+                        task.defer(function()
+                            pcall(function()
+                                if d:IsA("Frame") and d.Active and d.AbsoluteSize.X > 400 and d.AbsoluteSize.Y > 300 and d.BackgroundTransparency > 0.8 then
+                                    local hasButtons = false
+                                    for _, c in ipairs(d:GetChildren()) do
+                                        if c:IsA("TextButton") or c:IsA("ImageButton") then hasButtons = true; break end
+                                    end
+                                    if not hasButtons then d.Active = false end
+                                end
+                            end)
+                        end)
+                    end) end
+                end)
+            end)
             local W = {}
             function W:CreateTab(name, icon)
                 local flTab = _FluWindow:CreateTab({ Name = name, Icon = ICONS[icon] or TAB_ICON })
@@ -323,7 +364,7 @@ local S = {
     Noclip=false,
     SpeedHack=false, Speed=16,
     InfiniteJump=false,
-    SpinBot=false, AntiFling=false,
+    SpinBot=false, AntiFling=false, GodMode=false,
     ESP=false, ESPColor=true, Tracers=false, ESPBox=false, ESPAbility=true, ESPMaxDist=0,
     Viewing=nil, ViewTarget=nil,
     EnemyHighlight=false, HighlightColor="Bright blue",
@@ -782,15 +823,12 @@ local function doGodModeM1()
         if not (tr and root) then return end
         local savedCF = root.CFrame
         pcall(function() root.CFrame = tr.CFrame * CFrame.new(0, 0, 3) end)
-        task.wait(0.02)
-        clearMyHitLog()
-        clickM1(true)
         task.wait(0.05)
         if S.CastE then tapKey(Enum.KeyCode.E) end
         if S.CastQ then tapKey(Enum.KeyCode.Q) end
         if S.CastR then tapKey(Enum.KeyCode.R) end
         if S.CastT then tapKey(Enum.KeyCode.T) end
-        task.wait(0.08)
+        task.wait(0.2)
         pcall(function() root.CFrame = savedCF; root.AssemblyLinearVelocity = Vector3.zero end)
     end)
 end
@@ -832,13 +870,20 @@ local function doDashBehind()
 end
 local function runSwingFeatures(mobileBaseClick)
     if S.M1Hitbox or S.AutoFarm or S.AutoPlay then clearMyHitLog() end
+    -- ALWAYS fire a normal M1 click immediately (so the swing animation always plays)
+    local warpOrGod = S.M1Warp or S.DashBehind or S.GodMode
+    if not warpOrGod then
+        clearMyHitLog()
+        clickM1()
+    end
+    -- Then layer on the teleport / ability features
     if S.GodMode then doGodModeM1() end
     if S.M1Warp then doM1Warp()
     elseif S.DashBehind then doDashBehind() end
     if S.FlingPunch and doFlingPunch then doFlingPunch() end
     if S.OnePunch and doOnePunch then doOnePunch() end
-    -- mobile tap isn't a real game M1, so land the base swing when no warp/dash already did
-    if mobileBaseClick and not (S.M1Warp or S.DashBehind) then clearMyHitLog(); clickM1(true) end
+    -- mobile tap: land base swing when no warp/god already did
+    if mobileBaseClick and not warpOrGod then clearMyHitLog(); clickM1(true) end
 end
 _G.AA_SWING = runSwingFeatures   -- exposed so the mobile M1 button can call it
 hook(UserInputService.InputBegan, function(i, _)
@@ -902,7 +947,8 @@ local function firePunchOnce()
             end
         end
     end)
-    -- Snap to target, M1 point-blank, and FORCE their health to 0
+    -- Deal REAL damage: warp behind target, massively expand their hitbox, M1 repeatedly
+    -- (the game's own client-side hit detection sends real damage to the server)
     task.spawn(function()
         local target = nearestPlayer(100)
         if not (target and target.Character) then return end
@@ -910,28 +956,33 @@ local function firePunchOnce()
         local root = getRoot()
         if not (tr and root) then return end
         local savedCF = root.CFrame
-        pcall(function() root.CFrame = tr.CFrame * CFrame.new(0, 0, 2) end)
-        task.wait(0.02)
-        clearMyHitLog()
-        clickM1(true)
-        task.wait(0.03)
-        -- Zero custom Health attribute
-        pcall(function()
-            local hp = target.Character:GetAttribute("Health")
-            if type(hp) == "number" then target.Character:SetAttribute("Health", 0) end
-        end)
-        -- Zero standard Humanoid
-        local hum = target.Character:FindFirstChildOfClass("Humanoid")
-        if hum then pcall(function() hum.Health = 0 end) end
-        -- Zero any ValueBase inside a "Health" script/object
-        local hs = target.Character:FindFirstChild("Health")
-        if hs then
+        -- Temporarily grow the target's hitbox huge so every M1 registers
+        local parts = hitboxParts(target.Character)
+        local origSizes = {}
+        for _, p in ipairs(parts) do
             pcall(function()
-                if hs:IsA("ValueBase") then hs.Value = 0
-                else for _, v in ipairs(hs:GetDescendants()) do if v:IsA("ValueBase") then pcall(function() v.Value = 0 end) end end end
+                origSizes[p] = p.Size
+                p.Size = Vector3.new(50, 50, 50)
+                p.Transparency = 1
             end)
         end
-        task.wait(0.05)
+        -- Warp behind them and swing rapidly
+        pcall(function() root.CFrame = tr.CFrame * CFrame.new(0, 0, 2) end)
+        task.wait(0.02)
+        for _ = 1, 5 do
+            clearMyHitLog()
+            clickM1(true)
+            task.wait(0.06)
+        end
+        -- Restore their hitbox
+        for p, sz in pairs(origSizes) do
+            pcall(function()
+                if p and p.Parent then
+                    p.Size = sz
+                    p.Transparency = 0
+                end
+            end)
+        end
         pcall(function() root.CFrame = savedCF; root.AssemblyLinearVelocity = Vector3.zero end)
     end)
 end
@@ -960,20 +1011,14 @@ local function contactFling(targetChar)
     if not (root and tr) then return end
     flingBusy = true
     local savedCF = root.CFrame
+    local savedAnchored = root.Anchored
     task.spawn(function()
-        -- Make YOUR root invulnerable to physics during the fling (0.55s collidable inside an enemy = you
-        -- ate their hits and died - "when I swing on a player I die")
-        local savedCollide = root.CanCollide
-        local savedMassless = root.Massless
-        local savedGroup = root.CollisionGroup
-        pcall(function()
-            root.CanCollide = false
-            root.Massless = true
-            root.CollisionGroup = HITBOX_GROUP
-        end)
+        -- ANCHOR yourself: physics engine cannot apply ANY force to an anchored part (= it can't kill you
+        -- from sitting inside the enemy - "the fling kills me when I swing on a person")
+        pcall(function() root.Anchored = true end)
         local t0 = tick()
         local frames = 0
-        while tick() - t0 < 0.12 and frames < 8 do   -- 120ms max, 8 frames only (was 600ms / ~36 frames)
+        while tick() - t0 < 0.15 and frames < 9 do
             local r = getRoot()
             local t2 = targetChar and targetChar.Parent and charPart(targetChar)
             if not (r and t2) then break end
@@ -992,9 +1037,7 @@ local function contactFling(targetChar)
                 r.AssemblyAngularVelocity = Vector3.zero
                 r.AssemblyLinearVelocity  = Vector3.zero
                 r.CFrame = savedCF
-                r.CanCollide = savedCollide
-                r.Massless = savedMassless
-                pcall(function() r.CollisionGroup = savedGroup end)
+                r.Anchored = savedAnchored
             end
         end)
         flingBusy = false
