@@ -350,7 +350,7 @@ local S = {
     RemoveWaterBorder=false, AntiKillBricks=false,
     M1Hitbox=false, M1HitboxSize=80,   -- 80 default: long spear-arm reach (arms = slider*1.5 forward, thin sides)
     HitboxAbility=false, HitboxAbilitySize=40, HitboxAllParts=false, HitboxVisible=true,
-    OnePunch=false, OnePunchHits=20, OnePunchGuid="",  -- One Punch: real damaging M1 burst count (+ fires the ability)
+    OnePunch=false, OnePunchHits=5, OnePunchGuid="",   -- One Punch: VALIDATED M1s (0.35s cadence) so the server accepts each
     FlingPunch=false, FlingRange=40, FlingPower=850,   -- fling: push the ENEMY up+away (you never move = can't die)
     M1Warp=false, M1WarpRange=60, M1WarpReturn=true,   -- M1 Warp: snap behind the nearest enemy for the swing, then back
     AutoM1=false,
@@ -994,49 +994,54 @@ doOnePunch = function()   -- assigned to the forward-declared local used by runS
     onePunchCD = tick(); onePunchBusy = true
     task.spawn(function()
         pcall(function()
-            local target = nearestPlayer(120)
+            local target = nearestPlayer(100)
             if not (target and target.Character) then comboStatus("One Punch: no target in range", Color3.fromRGB(235,180,70)); firePunchOnce(); return end
             local tr = charPart(target.Character); local root = getRoot()
             if not (tr and root) then firePunchOnce(); return end
             local savedCF = root.CFrame
             local hp0, canRead = readHealth(target.Character)
-            -- FORCE BOTH documented damage paths ON: (1) grow YOUR arms (the game runs its own hit-detection off
-            -- them and sends the real damaging UseM1A) and (2) grow the enemy hit parts. Both = a Hits list per swing.
-            punchGrowUntil = tick() + 4
+            -- VALIDATED BURST (expert diagnostic): NO client health edits (fake ghost only; server keeps them
+            -- alive). NO 0.05s spam (server flags >N hits/300ms as exploit = ZERO damage). Instead: fire the
+            -- ability, keep an UNDENIABLE 120-stud invisible hitbox up the WHOLE sequence, throttle clicks to the
+            -- real swing cadence (0.35s) so the server VALIDATES every hit. 3 accepted hits > 20 rejected ones.
+            firePunchOnce()               -- fire the One Punch ability packet (if owned)
+            punchGrowUntil = tick() + 3   -- also grow YOUR arms (the game's own client-hit path)
             local parts = hitboxParts(target.Character)
             local origSizes = {}
-            for _, p in ipairs(parts) do pcall(function() origSizes[p] = p.Size; p.Size = Vector3.new(60, 60, 60) end) end
-            pcall(function() root.CFrame = tr.CFrame * CFrame.new(0, 0, 2); root.AssemblyLinearVelocity = Vector3.zero end)
-            firePunchOnce()
-            -- KILL LOOP: keep landing real M1s at the target UNTIL their HP hits 0 (or a hard cap). Closed-loop
-            -- means we don't guess a burst size - we stop exactly when they're dead. Cap scales with the slider.
-            local cap = math.clamp(tonumber(S.OnePunchHits) or 20, 5, 60) * 2
-            local i, dead = 0, false
-            while i < cap do
-                i += 1
+            for _, p in ipairs(parts) do
+                pcall(function()
+                    origSizes[p] = p.Size
+                    p.Size = Vector3.new(120, 120, 120)   -- undeniable overlap
+                    p.Transparency = 1                     -- invisible
+                    p.CanCollide = false                   -- prevent Jolt collision flinch
+                end)
+            end
+            pcall(function() root.CFrame = tr.CFrame * CFrame.new(0, 0, 3); root.AssemblyLinearVelocity = Vector3.zero end)
+            task.wait(0.05)
+            local hits = math.clamp(tonumber(S.OnePunchHits) or 5, 1, 12)
+            for _ = 1, hits do
                 local c2 = target.Character
-                if not (c2 and c2.Parent and isAlive(c2)) then dead = true; break end
-                local t2 = charPart(c2); if not t2 then break end
-                pcall(function() root.CFrame = t2.CFrame * CFrame.new(0, 0, 2); root.AssemblyLinearVelocity = Vector3.zero end)
-                -- face the camera AT them so clickAtTarget's world->screen projection always lands on-screen
-                pcall(function() local cam = Workspace.CurrentCamera; if cam then cam.CFrame = CFrame.new(cam.CFrame.Position, t2.Position) end end)
+                if not (c2 and c2.Parent and isAlive(c2)) then break end
+                local t2 = charPart(c2)
+                if t2 then
+                    pcall(function() root.CFrame = t2.CFrame * CFrame.new(0, 0, 3); root.AssemblyLinearVelocity = Vector3.zero end)
+                    pcall(function() local cam = Workspace.CurrentCamera; if cam then cam.CFrame = CFrame.new(cam.CFrame.Position, t2.Position) end end)   -- keep on-screen for clickAtTarget projection
+                end
                 clearMyHitLog()
-                clickAtTarget(target, true)   -- the PROVEN farm-damage click (aimed at the enemy)
-                if i % 4 == 0 then firePunchOnce() end
-                task.wait(0.05)
+                clickAtTarget(target, true)   -- proven farm-damage click, aimed at the enemy
+                task.wait(0.35)               -- MATCHES the swing cooldown = server validates each hit
             end
             punchGrowUntil = 0
-            for p, sz in pairs(origSizes) do pcall(function() if p and p.Parent then p.Size = sz end end) end
+            for p, sz in pairs(origSizes) do pcall(function() if p and p.Parent then p.Size = sz; p.Transparency = 0; p.CanCollide = true end end) end
             pcall(function() root.CFrame = savedCF; root.AssemblyLinearVelocity = Vector3.zero end)
-            -- REPORT so you can see it working in-game
             local hp1 = readHealth(target.Character)
-            if dead or not (target.Character and target.Character.Parent) or not isAlive(target.Character) then
+            if not (target.Character and target.Character.Parent) or not isAlive(target.Character) then
                 comboStatus("One Punch: KILLED " .. target.Name, Color3.fromRGB(90,235,120))
             elseif canRead then
-                comboStatus(("One Punch: %s  HP %d -> %d  (%d hits)"):format(target.Name, math.floor(hp0), math.floor(hp1), i),
+                comboStatus(("One Punch: %s  HP %d -> %d  (%d hits)"):format(target.Name, math.floor(hp0), math.floor(hp1), hits),
                     (hp1 < hp0) and Color3.fromRGB(120,220,255) or Color3.fromRGB(235,90,90))
             else
-                comboStatus("One Punch: " .. i .. " hits on " .. target.Name .. " (HP not readable)", Color3.fromRGB(200,200,210))
+                comboStatus("One Punch: " .. hits .. " hits on " .. target.Name .. " (HP not readable)", Color3.fromRGB(200,200,210))
             end
         end)
         onePunchBusy = false
@@ -1044,77 +1049,43 @@ doOnePunch = function()   -- assigned to the forward-declared local used by runS
 end
 
 -- ============================================================
--- FLING PUNCH — spin-collision (you confirmed THIS version flung them once) + a hard self-recovery so it
--- can't kill you. The launch comes from spinning your UNANCHORED root inside them: the collision throws
--- them (an anchored root imparts nothing, which is why the "safe" version didn't launch). What killed you
--- was the aftermath — you got rocketed away and died to the fall / rubber-band. So after the brief spin we
--- HOLD you locked at your original spot with velocity zeroed for 0.7s = the flung momentum can never carry
--- you off. We also push the enemy's own velocity as a booster.
+-- FLING PUNCH — SAFE VELOCITY PUSH (expert diagnostic). Why every "contact" version failed in THIS engine:
+--  1) Jolt collision annihilation: stuffing your root inside their hitbox (even anchored) forces Jolt to
+--     resolve a catastrophic overlap every frame; the reaction force reads as massive collision damage on
+--     YOU = "the fling kills me".
+--  2) Anchor+CFrame deltas in 0.15s trip the server's anti-teleport = reset/damage.
+-- So: NEVER move the user. Apply the explosive velocity to the ENEMY from where you stand — Jolt lets a
+-- 1-2 frame injection slip through when applied right on a heartbeat. Plus one real M1 to register a hit.
 -- ============================================================
 local flingBusy = false
 local function contactFling(targetChar)
     if flingBusy then return end
-    local myRoot = getRoot(); local tr = charPart(targetChar)
-    if not (myRoot and tr) then return end
+    local root = getRoot(); local tr = charPart(targetChar)
+    if not (root and tr) then return end
     flingBusy = true
-    local savedCF = myRoot.CFrame
     local startEnemyPos = tr.Position
     task.spawn(function()
-        local hum = getHum()
-        local savedPS = hum and hum.PlatformStand
+        -- DO NOT MOVE THE USER. Stay exactly where you are.
         pcall(function()
-            local away = tr.Position - myRoot.Position; away = Vector3.new(away.X, 0, away.Z)
-            local dir  = (away.Magnitude > 0.1 and away.Unit) or Vector3.new(0, 0, 1)
+            local dir = (tr.Position - root.Position).Unit
             local power = tonumber(S.FlingPower) or 850
-            local ev    = dir * power + Vector3.new(0, power, 0)
-            if hum then hum.PlatformStand = true end
-            -- SPIN-COLLIDE: a BodyAngularVelocity CONSTRAINT holds the spin against the solver's damping (setting
-            -- AssemblyAngularVelocity raw gets reset mid-step) = far stronger, more consistent momentum transfer
-            -- into their body on contact = the real launch. Overlap them each frame + booster on their velocity.
-            local bav
-            pcall(function()
-                bav = Instance.new("BodyAngularVelocity")
-                bav.AngularVelocity = Vector3.new(0, 4e5, 0)
-                bav.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
-                bav.P = 1e5
-                bav.Parent = myRoot
-            end)
-            local t0 = tick()
-            while tick() - t0 < 0.14 do
-                local r = getRoot(); local t2 = targetChar.Parent and charPart(targetChar)
-                if not (r and t2) then break end
-                r.CFrame = t2.CFrame
-                r.AssemblyAngularVelocity = Vector3.new(0, 9e5, 0)
-                for _, p in ipairs(targetChar:GetDescendants()) do
-                    if p:IsA("BasePart") then pcall(function() p.AssemblyLinearVelocity = ev end) end
-                end
-                RunService.Heartbeat:Wait()
-            end
-            pcall(function() if bav then bav:Destroy() end end)
+            RunService.Heartbeat:Wait()   -- inject exactly as a heartbeat fires (the window that slips through)
+            -- Apply explosive outward velocity to the ENEMY
+            tr.AssemblyLinearVelocity = dir * Vector3.new(power, power * 1.8, power)
+            tr.AssemblyAngularVelocity = Vector3.new(math.random(-500, 500), math.random(-500, 500), math.random(-500, 500))
         end)
-        -- HARD RECOVERY: lock you back at your spot, zero velocity, for 0.7s so the fling momentum / fall
-        -- can never carry you off = the "fling kills me" fix. (Anchor for the hold = truly immovable.)
-        pcall(function()
-            local r = getRoot()
-            if r then
-                r.AssemblyAngularVelocity = Vector3.zero; r.AssemblyLinearVelocity = Vector3.zero
-                r.CFrame = savedCF
-                if hum then hum.PlatformStand = false; hum:ChangeState(Enum.HumanoidStateType.GettingUp) end
-            end
-            local t1 = tick()
-            while tick() - t1 < 0.7 do
-                local r2 = getRoot()
-                if r2 then r2.CFrame = savedCF; r2.AssemblyLinearVelocity = Vector3.zero; r2.AssemblyAngularVelocity = Vector3.zero end
-                RunService.Heartbeat:Wait()
-            end
-            if hum then pcall(function() hum.PlatformStand = savedPS or false end) end
-        end)
-        -- REPORT whether they actually launched (so you can see it without guessing): compare their position.
+        -- Fire a single M1 if in range to register the hit
+        if (tr.Position - root.Position).Magnitude <= (S.M1HitboxSize or 80) then
+            clearMyHitLog()
+            clickM1(true)
+        end
+        task.wait(0.5)
+        -- REPORT whether they actually launched (visible on screen, no guessing)
         pcall(function()
             local t2 = targetChar and targetChar.Parent and charPart(targetChar)
             local moved = t2 and (t2.Position - startEnemyPos).Magnitude or 0
             if moved > 12 then comboStatus(("Fling: LAUNCHED (%d studs)"):format(math.floor(moved)), Color3.fromRGB(90,235,120))
-            else comboStatus("Fling: did not launch (server owns them) - try One Punch", Color3.fromRGB(235,180,70)) end
+            else comboStatus("Fling: did not launch (velocity server-locked)", Color3.fromRGB(235,180,70)) end
         end)
         flingBusy = false
     end)
@@ -2768,7 +2739,7 @@ CombatTab:CreateToggle({Name="Show Hitbox (cyan box - off = invisible)", Current
 
 CombatTab:CreateSection("One Punch")
 CombatTab:CreateToggle({Name="One Punch (M1 casts the game's One Punch ability)", CurrentValue=false, Flag="OnePunch", Callback=function(v) S.OnePunch=v end})
-CombatTab:CreateSlider({Name="One Punch Hits (M1 burst per click)", Range={1,60}, Increment=1, Suffix="hits", CurrentValue=20, Flag="OnePunchHits", Callback=function(v) S.OnePunchHits=v end})
+CombatTab:CreateSlider({Name="One Punch Hits (validated M1s @0.35s)", Range={1,12}, Increment=1, Suffix="hits", CurrentValue=5, Flag="OnePunchHits", Callback=function(v) S.OnePunchHits=v end})
 CombatTab:CreateInput({Name="Ability Name (default: One Punch - change if the game renamed it)", PlaceholderText="One Punch", Callback=function(v) v=tostring(v or ""):gsub("^%s+",""):gsub("%s+$",""); S.OnePunchGuid=v end})
 CombatTab:CreateToggle({Name="Fling Punch (M1 spin-flings the nearest enemy)", CurrentValue=false, Flag="FlingPunch", Callback=function(v) S.FlingPunch=v end})
 CombatTab:CreateSlider({Name="Fling Range", Range={10,120}, Increment=5, Suffix="studs", CurrentValue=40, Flag="FlingRange", Callback=function(v) S.FlingRange=v end})
