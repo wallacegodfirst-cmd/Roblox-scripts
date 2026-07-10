@@ -2510,66 +2510,60 @@ do
 	--   UPPERCUT  = the instant you left-click (enemy near), HOLD Space. Keep holding as you click; on your 4th
 	--               click the game throws the 4th M1 with Space held + upward motion = uptilt, then Space releases.
 	--   DOWN SLAM = count your clicks; on the 3rd, the script jumps HIGH and M1s for you on the way down = slam.
-	local clickCount, lastClick, holding = 0, 0, false
+	-- ═══ v5 TRIGGER (user-supplied logic, integrated) ═══
+	--   DOWN SLAM = fire "Down" instantly with EVERY M1 (the proven working path, untouched).
+	--   UPPERCUT  = Space held from the 3rd M1; on the 4th, wait for the game's OWN M1 to register
+	--               (0.15s), THEN fire "Up" (+ an insurance re-fire at 0.30s) — no race, no t=0 fire.
+	-- Ported fixes vs the standalone: no gpe bail (this game marks every M1 click game-processed, so the
+	-- standalone's `if gp then return end` would NEVER fire), injected-click guard kept, and the held
+	-- Space is marked in VX_INJ_KEYS so Auto Air / the feints can't react to our own key.
+	local COOLDOWN, UP_DELAY, UP_DELAY2, RESET_WIN, SPACE_HOLD = 0.30, 0.15, 0.30, 1.20, 0.45
+	local clickCount, lastClick, lastFire, holding, spaceToken = 0, 0, 0, false, nil
 	local function releaseSpace()
 		if holding then holding = false; pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end
 	end
-	local function faceEnemy()
-		pcall(function()
-			local me = myModel(); local mr = me and me:FindFirstChild("HumanoidRootPart"); if not mr then return end
-			local best, bd
-			for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local rr = plr.Character:FindFirstChild("HumanoidRootPart"); if rr then local d = (rr.Position - mr.Position).Magnitude; if not bd or d < bd then best, bd = rr, d end end end end
-			local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local rr = m:FindFirstChild("HumanoidRootPart"); if rr then local d = (rr.Position - mr.Position).Magnitude; if not bd or d < bd then best, bd = rr, d end end end end end
-			if best then mr.CFrame = CFrame.lookAt(mr.Position, Vector3.new(best.Position.X, mr.Position.Y, best.Position.Z)) end
-		end)
+	local function holdSpace()
+		if holding then return end
+		holding = true
+		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 3
+		if _G.VX_CLAIMOWN then pcall(_G.VX_CLAIMOWN) end
+		pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)
 	end
-	UIS.InputBegan:Connect(function(input, gpe)
+	UIS.InputBegan:Connect(function(input, _)
 		if mode == "Off" then return end
 		if UIS:GetFocusedTextBox() then return end
 		if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 		if tick() < (_G.VX_INJECT_UNTIL or 0) then return end   -- ignore our OWN injected clicks
-		if busy then return end
-		if not nearEnemy() then return end
-		if tick() - lastClick > 1.6 then clickCount = 0 end       -- combo window reset (you stopped swinging)
-		lastClick = tick(); clickCount = clickCount + 1
-		if _G.VX_BF_DEBUG then print("[DreamHub M1Combo] click #"..clickCount.." mode="..mode) end
-		if mode == "Uppercut" then
-			if not holding then
-				holding = true
-				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 3
-				if _G.VX_CLAIMOWN then pcall(_G.VX_CLAIMOWN) end
-				pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)   -- HOLD starts on the 1st click
-			end
-			if clickCount >= 4 then
-				clickCount = 0
-				local h = myModel() and myModel():FindFirstChildOfClass("Humanoid")
-				if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end   -- ensure the 4th is thrown moving UP
-				task.delay(0.28, releaseSpace)
-			end
-		elseif mode == "Down Slam" and clickCount >= 3 and not busy then
-			clickCount = 0; busy = true
-			task.spawn(function()
-				pcall(function()   -- crash-proof: busy is ALWAYS released
-					_G.VX_LAUNCHING = tick(); _G.VX_INJECT_UNTIL = tick() + 1.4
-					_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 1.4
-					if _G.VX_CLAIMOWN then pcall(_G.VX_CLAIMOWN) end
-					local c = myModel(); local h = c and c:FindFirstChildOfClass("Humanoid"); local hrp = c and c:FindFirstChild("HumanoidRootPart")
-					pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.03); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
-					if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end
-					if hrp then pcall(function() local v = hrp.AssemblyLinearVelocity; hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 42), v.Z) end) end
-					local t0 = tick()
-					repeat task.wait(0.03) until (not hrp) or (hrp.AssemblyLinearVelocity.Y < -2) or tick() - t0 > 0.9   -- wait for the DESCENT
-					faceEnemy(); realM1(); act("Down")   -- airborne + falling = DOWNSLAM
+		local now = tick()
+		if now - lastFire < COOLDOWN then return end
+		if _G.VX_BF_DEBUG then print("[DreamHub M1Combo] click mode="..mode.." count="..clickCount) end
+		if mode == "Down Slam" then
+			lastFire = now
+			act("Down")                                          -- instant Down with every M1
+		elseif mode == "Uppercut" then
+			if now - lastClick > RESET_WIN then clickCount = 0 end   -- paused too long = combo reset
+			lastClick = now; clickCount = clickCount + 1
+			if clickCount == 3 then
+				holdSpace()                                       -- wind the launcher like a real player
+				local token = {}; spaceToken = token
+				task.delay(2.0, function()                        -- safety: 4th M1 never came -> drop Space
+					if spaceToken == token then releaseSpace(); spaceToken = nil; clickCount = 0 end
 				end)
-				busy = false
-			end)
+			elseif clickCount >= 4 then
+				clickCount = 0; lastFire = now; spaceToken = nil
+				holdSpace()                                       -- ensure held even if the 3rd was missed
+				-- CRITICAL: let the game's own 4th-M1 message reach the server FIRST, then send the launcher.
+				task.delay(UP_DELAY,  function() if mode == "Uppercut" then act("Up") end end)
+				task.delay(UP_DELAY2, function() if mode == "Uppercut" then act("Up") end end)   -- insurance re-fire
+				task.delay(SPACE_HOLD, releaseSpace)
+			end
 		end
 	end)
 	-- SAFETY: if you stop clicking mid-uppercut, never leave Space stuck held.
 	task.spawn(function() while true do task.wait(0.2); if holding and tick() - lastClick > 1.6 then releaseSpace() end end end)
 
 	M1ComboApi = {
-		setMode = function(m) mode = m or "Off"; count = 0; busy = false; clickCount = 0; releaseSpace() end,
+		setMode = function(m) mode = m or "Off"; count = 0; busy = false; clickCount = 0; spaceToken = nil; releaseSpace() end,
 		setDelay = function() end,
 		setCount = function() end,
 	}

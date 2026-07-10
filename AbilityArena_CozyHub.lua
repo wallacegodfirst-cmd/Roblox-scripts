@@ -774,7 +774,25 @@ end
 -- helpers exist further down.
 local doFlingPunch, doOnePunch   -- assigned after contactFling / firePunchOnce are defined
 local function doGodModeM1()
-    task.spawn(function() clearMyHitLog(); for _ = 1, 2 do fireRaw(buildM1()); task.wait(0.03) end end)
+    task.spawn(function()
+        local target = nearestPlayer(S.M1HitboxSize or 80)
+        if not (target and target.Character) then return end
+        local tr = charPart(target.Character)
+        local root = getRoot()
+        if not (tr and root) then return end
+        local savedCF = root.CFrame
+        pcall(function() root.CFrame = tr.CFrame * CFrame.new(0, 0, 3) end)
+        task.wait(0.02)
+        clearMyHitLog()
+        clickM1(true)
+        task.wait(0.05)
+        if S.CastE then tapKey(Enum.KeyCode.E) end
+        if S.CastQ then tapKey(Enum.KeyCode.Q) end
+        if S.CastR then tapKey(Enum.KeyCode.R) end
+        if S.CastT then tapKey(Enum.KeyCode.T) end
+        task.wait(0.08)
+        pcall(function() root.CFrame = savedCF; root.AssemblyLinearVelocity = Vector3.zero end)
+    end)
 end
 local function doM1Warp()
     task.spawn(function()
@@ -862,20 +880,15 @@ local function resolvePunchRemote()
 end
 local function firePunchOnce()
     local name = punchAbilityName()
-    -- 1) StartSkill new format
     fireRaw(buildSkillNew(name))
-    -- 2) StartSkill old format with direction
     fireRaw(buildSkillOld(name, "Forward"))
-    -- 3) StartSkill new format with direction
     fireRaw(buildSkillNewDir(name, "Forward"))
-    -- 4) Direct ability remote (exact name match)
     local re = resolvePunchRemote()
     if re then
         pcall(function()
             if re:IsA("RemoteEvent") then re:FireServer() else re:InvokeServer() end
         end)
     end
-    -- 5) Fire EVERY RemoteEvent/Function under the ability folder
     pcall(function()
         local ab = RS:FindFirstChild("Files")
         ab = ab and ab:FindFirstChild("Shared")
@@ -884,21 +897,42 @@ local function firePunchOnce()
         local op = ab and ab:FindFirstChild(name)
         if op then
             for _, d in ipairs(op:GetDescendants()) do
-                if d:IsA("RemoteEvent") then
-                    pcall(function() d:FireServer() end)
-                elseif d:IsA("RemoteFunction") then
-                    pcall(function() d:InvokeServer() end)
-                end
+                if d:IsA("RemoteEvent") then pcall(function() d:FireServer() end)
+                elseif d:IsA("RemoteFunction") then pcall(function() d:InvokeServer() end) end
             end
         end
     end)
-    -- 6) Try pressing ability keys in case One Punch is bound to one
+    -- Snap to target, M1 point-blank, and FORCE their health to 0
     task.spawn(function()
-        tapKey(Enum.KeyCode.E)
-        task.wait(0.04)
-        tapKey(Enum.KeyCode.R)
-        task.wait(0.04)
-        tapKey(Enum.KeyCode.T)
+        local target = nearestPlayer(100)
+        if not (target and target.Character) then return end
+        local tr = charPart(target.Character)
+        local root = getRoot()
+        if not (tr and root) then return end
+        local savedCF = root.CFrame
+        pcall(function() root.CFrame = tr.CFrame * CFrame.new(0, 0, 2) end)
+        task.wait(0.02)
+        clearMyHitLog()
+        clickM1(true)
+        task.wait(0.03)
+        -- Zero custom Health attribute
+        pcall(function()
+            local hp = target.Character:GetAttribute("Health")
+            if type(hp) == "number" then target.Character:SetAttribute("Health", 0) end
+        end)
+        -- Zero standard Humanoid
+        local hum = target.Character:FindFirstChildOfClass("Humanoid")
+        if hum then pcall(function() hum.Health = 0 end) end
+        -- Zero any ValueBase inside a "Health" script/object
+        local hs = target.Character:FindFirstChild("Health")
+        if hs then
+            pcall(function()
+                if hs:IsA("ValueBase") then hs.Value = 0
+                else for _, v in ipairs(hs:GetDescendants()) do if v:IsA("ValueBase") then pcall(function() v.Value = 0 end) end end end
+            end)
+        end
+        task.wait(0.05)
+        pcall(function() root.CFrame = savedCF; root.AssemblyLinearVelocity = Vector3.zero end)
     end)
 end
 local onePunchCD = 0
@@ -927,38 +961,43 @@ local function contactFling(targetChar)
     flingBusy = true
     local savedCF = root.CFrame
     task.spawn(function()
-        -- WHY IT "WORKED ONCE": if anything in here threw, flingBusy stayed true forever and every later
-        -- click bailed at the top. The whole body is now pcall-wrapped and flingBusy is reset in a finally
-        -- block no matter what, so it fires every time.
-        local hum = getHum()
-        local savedPS = hum and hum.PlatformStand
-        pcall(function() if hum then hum.PlatformStand = true end end)
+        -- Make YOUR root invulnerable to physics during the fling (0.55s collidable inside an enemy = you
+        -- ate their hits and died - "when I swing on a player I die")
+        local savedCollide = root.CanCollide
+        local savedMassless = root.Massless
+        local savedGroup = root.CollisionGroup
         pcall(function()
-            local t0 = tick()
-            while tick() - t0 < 0.55 do
-                local r = getRoot()
-                local t2 = targetChar and targetChar.Parent and charPart(targetChar)
-                if not (r and t2) then break end
-                -- bob up/down through them while spinning HARD: every frame is a fresh collision contact, so the
-                -- momentum keeps transferring instead of settling inside one overlap.
-                r.CFrame = t2.CFrame * CFrame.new(0, math.sin((tick() - t0) * 55) * 2, 0)
-                r.AssemblyAngularVelocity = Vector3.new(5e5, 9e6, 5e5)   -- stronger spin
+            root.CanCollide = false
+            root.Massless = true
+            root.CollisionGroup = HITBOX_GROUP
+        end)
+        local t0 = tick()
+        local frames = 0
+        while tick() - t0 < 0.12 and frames < 8 do   -- 120ms max, 8 frames only (was 600ms / ~36 frames)
+            local r = getRoot()
+            local t2 = targetChar and targetChar.Parent and charPart(targetChar)
+            if not (r and t2) then break end
+            pcall(function()
+                r.CFrame = t2.CFrame * CFrame.new(0, math.sin((tick() - t0) * 40) * 1.5, 0)
+                r.AssemblyAngularVelocity = Vector3.new(9e4, 9e5, 9e4)
                 r.AssemblyLinearVelocity  = Vector3.zero
-                RunService.Heartbeat:Wait()
+            end)
+            RunService.Heartbeat:Wait()
+            frames = frames + 1
+        end
+        -- Restore IMMEDIATELY
+        local r = getRoot()
+        pcall(function()
+            if r then
+                r.AssemblyAngularVelocity = Vector3.zero
+                r.AssemblyLinearVelocity  = Vector3.zero
+                r.CFrame = savedCF
+                r.CanCollide = savedCollide
+                r.Massless = savedMassless
+                pcall(function() r.CollisionGroup = savedGroup end)
             end
         end)
-        -- FINALLY: restore + release, ALWAYS, so the next click can fling again
-        pcall(function()
-            local r = getRoot()
-            if r then r.AssemblyAngularVelocity = Vector3.zero; r.AssemblyLinearVelocity = Vector3.zero; r.CFrame = savedCF end
-            if hum then hum.PlatformStand = savedPS or false; hum:ChangeState(Enum.HumanoidStateType.GettingUp) end
-        end)
-        task.wait(0.12)
-        pcall(function()   -- one extra settle write: the spin's last replication tick can eat the snap-back
-            local r2 = getRoot()
-            if r2 then r2.CFrame = savedCF; r2.AssemblyLinearVelocity = Vector3.zero; r2.AssemblyAngularVelocity = Vector3.zero end
-        end)
-        flingBusy = false   -- guaranteed reset
+        flingBusy = false
     end)
 end
 doFlingPunch = function()   -- assigned to the forward-declared local used by runSwingFeatures
