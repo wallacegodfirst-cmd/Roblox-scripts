@@ -2491,81 +2491,166 @@ do
 	for _, id in ipairs(UPPERCUT_M1) do COMBO_IDS[id] = true end
 	if _G.VX_M1_IDS then for id in pairs(_G.VX_M1_IDS) do COMBO_IDS[id] = true end end   -- merge with the master DB (never clobber)
 	for id in pairs(COMBO_IDS) do if _G.VX_M1_IDS then _G.VX_M1_IDS[id] = true end end   -- and feed the new ids BACK so every module sees them
-	-- TRIGGER: WHEN YOU M1 (the user wants it to work off their own M1s, not run on a loop).
-	--   UPPERCUT  = while you're M1ing, HOLD the space bar (your M1s become the uptilt). Space is pressed on your
-	--               first M1 and released ~1s after your last one, so the whole 4-hit string is done with space held.
-	--   DOWN SLAM = count your M1s; on the 3rd, the script does jump + M1 (the airborne slam).
-	local function nearEnemy()
-		local me = myModel(); local mr = me and me:FindFirstChild("HumanoidRootPart"); if not mr then return false end
-		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local rr = plr.Character:FindFirstChild("HumanoidRootPart"); if rr and (rr.Position - mr.Position).Magnitude <= 16 then return true end end end
-		local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local rr = m:FindFirstChild("HumanoidRootPart"); local hh = m:FindFirstChildOfClass("Humanoid"); if rr and hh and hh.Health > 0 and (rr.Position - mr.Position).Magnitude <= 16 then return true end end end end
-		return false
-	end
-	-- GAME MECHANICS (per the JJS wiki, user-confirmed):
-	--   UPPERCUT  = the 4th M1 thrown while HOLDING Space and MOVING UPWARD (jumping).
-	--   DOWNSLAM  = the 4th M1 thrown IN THE AIR while DESCENDING above the opponent.
-	-- So: count YOUR first 3 real M1 clicks; the script then throws the 4th M1 itself with the right physics.
-	-- ═══ TRIGGER (CLICK-DRIVEN — works on EVERY character, incl. King of Curses/Sukuna whose M1 anim ids aren't
-	-- in the database, which is exactly why the anim-only version did nothing) ═══
-	--   UPPERCUT  = the instant you left-click (enemy near), HOLD Space. Keep holding as you click; on your 4th
-	--               click the game throws the 4th M1 with Space held + upward motion = uptilt, then Space releases.
-	--   DOWN SLAM = count your clicks; on the 3rd, the script jumps HIGH and M1s for you on the way down = slam.
-	-- ═══ v5 TRIGGER (user-supplied logic, integrated) ═══
-	--   DOWN SLAM = fire "Down" instantly with EVERY M1 (the proven working path, untouched).
-	--   UPPERCUT  = Space held from the 3rd M1; on the 4th, wait for the game's OWN M1 to register
-	--               (0.15s), THEN fire "Up" (+ an insurance re-fire at 0.30s) — no race, no t=0 fire.
-	-- Ported fixes vs the standalone: no gpe bail (this game marks every M1 click game-processed, so the
-	-- standalone's `if gp then return end` would NEVER fire), injected-click guard kept, and the held
-	-- Space is marked in VX_INJ_KEYS so Auto Air / the feints can't react to our own key.
-	local COOLDOWN, UP_DELAY, UP_DELAY2, RESET_WIN, SPACE_HOLD = 0.30, 0.15, 0.30, 1.20, 0.45
-	local clickCount, lastClick, lastFire, holding, spaceToken = 0, 0, 0, false, nil
-	local function releaseSpace()
-		if holding then holding = false; pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end
-	end
-	local function holdSpace()
-		if holding then return end
-		holding = true
-		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 3
-		if _G.VX_CLAIMOWN then pcall(_G.VX_CLAIMOWN) end
-		pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)
-	end
-	UIS.InputBegan:Connect(function(input, _)
-		if mode == "Off" then return end
-		if UIS:GetFocusedTextBox() then return end
-		if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-		if tick() < (_G.VX_INJECT_UNTIL or 0) then return end   -- ignore our OWN injected clicks
-		local now = tick()
-		if now - lastFire < COOLDOWN then return end
-		if _G.VX_BF_DEBUG then print("[DreamHub M1Combo] click mode="..mode.." count="..clickCount) end
-		if mode == "Down Slam" then
-			lastFire = now
-			act("Down")                                          -- instant Down with every M1
-		elseif mode == "Uppercut" then
-			if now - lastClick > RESET_WIN then clickCount = 0 end   -- paused too long = combo reset
-			lastClick = now; clickCount = clickCount + 1
-			if clickCount == 3 then
-				holdSpace()                                       -- wind the launcher like a real player
-				local token = {}; spaceToken = token
-				task.delay(2.0, function()                        -- safety: 4th M1 never came -> drop Space
-					if spaceToken == token then releaseSpace(); spaceToken = nil; clickCount = 0 end
-				end)
-			elseif clickCount >= 4 then
-				clickCount = 0; lastFire = now; spaceToken = nil
-				holdSpace()                                       -- ensure held even if the 3rd was missed
-				-- CRITICAL: let the game's own 4th-M1 message reach the server FIRST, then send the launcher.
-				task.delay(UP_DELAY,  function() if mode == "Uppercut" then act("Up") end end)
-				task.delay(UP_DELAY2, function() if mode == "Uppercut" then act("Up") end end)   -- insurance re-fire
-				task.delay(SPACE_HOLD, releaseSpace)
+	-- ═══════════ v5 (user's script, ported FAITHFULLY - this is the version that works) ═══════════
+	--   Down: fire "Down" instantly with every M1 (the working path, untouched)
+	--   Up  : Space held from the 3rd M1; on the 4th, wait for the game's own M1 to register (0.15s),
+	--         THEN fire "Up" — no race, no t=0 fire.
+	-- Exactly ONE change from the standalone: no `if gp then return end` (this game marks every M1 click
+	-- game-processed, so the standalone's gpe bail would stop it from EVER firing inside the hub).
+	-- The old VX_INJECT_UNTIL click gate is GONE - the feints/BF modules stamp that constantly, so it was
+	-- eating your REAL clicks = "uppercut/downslam not working".
+	local Config = {
+		Cooldown = 0.30,
+		Manual   = nil,
+		UpArg          = "Up",
+		UpFireDelay    = 0.15,  -- wait for the game's own 4th M1 to register, then fire
+		UpFireDelay2   = 0.30,  -- insurance second fire
+		M1ResetWindow  = 1.20,  -- clicks farther apart than this reset the combo count
+		SpaceHold      = 0.45,  -- Space released this long after the 4th M1
+	}
+	local V5CharNames = {
+		"Itadori", "Gojo", "Hakari", "Megumi", "Mahito", "Choso", "Todo",
+		"Hiromi", "Yuta", "Mechamaru", "Naoya", "Nanami", "Hanami", "Ryu",
+		"Locust", "Yuki", "Charles", "Haruta", "MeiMei", "Kurourushi", "Sukuna",
+	}
+	local State = { char = nil, remote = nil, lastFire = 0, m1Count = 0, lastM1 = 0, spaceHeld = false, spaceToken = nil }
+	local function scanFor(container, lowerName)
+		if not container then return false end
+		for aName, aVal in pairs(container:GetAttributes()) do
+			if string.find(string.lower(aName), lowerName, 1, true)
+				or string.find(string.lower(tostring(aVal)), lowerName, 1, true) then
+				return true
 			end
 		end
+		return false
+	end
+	local function detectCharacter()
+		if Config.Manual and Config.Manual ~= "" then return Config.Manual end
+		local char = LP.Character
+		if not char then return nil end
+		for _, name in ipairs(V5CharNames) do
+			local ln = string.lower(name)
+			if scanFor(LP, ln) or scanFor(char, ln) then return name end
+			local hum = char:FindFirstChildOfClass("Humanoid")
+			if hum and scanFor(hum, ln) then return name end
+			for _, v in ipairs(char:GetDescendants()) do
+				if string.find(string.lower(v.Name), ln, 1, true) then return name end
+				if (v:IsA("StringValue") or v:IsA("ObjectValue"))
+					and v.Value and string.find(string.lower(tostring(v.Value)), ln, 1, true) then
+					return name
+				end
+			end
+		end
+		return nil
+	end
+	local function resolveV5Remote()
+		State.remote = nil
+		if not State.char then return end
+		local knit = game:GetService("ReplicatedStorage"):FindFirstChild("Knit")
+		knit = knit and knit:FindFirstChild("Knit")
+		local services = knit and knit:FindFirstChild("Services")
+		local svc = services and services:FindFirstChild(State.char .. "Service")
+		local re  = svc and svc:FindFirstChild("RE")
+		State.remote = re and re:FindFirstChild("Activated")
+	end
+	local function refreshDetection()
+		local d = detectCharacter()
+		if d and d ~= State.char then
+			State.char = d
+			resolveV5Remote()
+		elseif State.char and not State.remote then
+			resolveV5Remote()
+		end
+	end
+	local function fireDir(dir)
+		if State.remote then
+			pcall(function() State.remote:FireServer(dir, nil) end)
+		else
+			act(dir)   -- hub fallback: char not detected -> fire every <Char>Service (only YOURS exists server-side)
+		end
+	end
+	local function spaceDown()
+		if State.spaceHeld then return end
+		State.spaceHeld = true
+		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 3   -- our own key: Auto Air/feints must ignore it
+		VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+	end
+	local function spaceUp()
+		if not State.spaceHeld then return end
+		State.spaceHeld = false
+		VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+	end
+	local function onM1()
+		if mode == "Off" then return end
+		local now = tick()
+		if now - State.lastFire < Config.Cooldown then return end
+		if not State.remote then resolveV5Remote() end
+		if mode == "Down Slam" then
+			-- THE WORKING v1 PATH — untouched
+			State.lastFire = now
+			fireDir("Down")
+		elseif mode == "Uppercut" then
+			-- Uppercut: count M1s (1-3 stay normal punches)
+			if now - State.lastM1 > Config.M1ResetWindow then State.m1Count = 0 end
+			State.lastM1 = now
+			State.m1Count = State.m1Count + 1
+			local n = State.m1Count
+			if n == 3 then
+				-- hold Space like a real player winding the launcher into the 4th
+				spaceDown()
+				local token = {}
+				State.spaceToken = token
+				-- safety: if the 4th M1 never comes, drop Space
+				task.delay(2.0, function()
+					if State.spaceToken == token then
+						spaceUp(); State.spaceToken = nil
+						State.m1Count = 0
+					end
+				end)
+			elseif n >= 4 then
+				State.m1Count = 0
+				State.lastFire = now
+				State.spaceToken = nil
+				spaceDown()   -- ensure held even if the 3rd was missed
+				-- CRITICAL: let the game's own 4th-M1 message reach the server FIRST, then send the launcher.
+				-- Firing "Up" at t=0 races it.
+				task.delay(Config.UpFireDelay, function()
+					if mode == "Uppercut" then fireDir(Config.UpArg) end
+				end)
+				task.delay(Config.UpFireDelay2, function()
+					if mode == "Uppercut" then fireDir(Config.UpArg) end
+				end)
+				task.delay(Config.SpaceHold, spaceUp)
+			end
+		end
+	end
+	UIS.InputBegan:Connect(function(input, _)   -- (no gp bail - see note above; textbox check keeps typing safe)
+		if UIS:GetFocusedTextBox() then return end
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			onM1()
+		end
 	end)
-	-- SAFETY: if you stop clicking mid-uppercut, never leave Space stuck held.
-	task.spawn(function() while true do task.wait(0.2); if holding and tick() - lastClick > 1.6 then releaseSpace() end end end)
+	LP.CharacterAdded:Connect(function()
+		task.wait(0.4)
+		spaceUp()
+		State.spaceToken = nil
+		State.m1Count = 0
+		State.char = nil
+		State.remote = nil
+		refreshDetection()
+	end)
+	task.spawn(function()
+		while true do
+			if mode ~= "Off" then refreshDetection() end
+			task.wait(1)
+		end
+	end)
 
 	M1ComboApi = {
-		setMode = function(m) mode = m or "Off"; count = 0; busy = false; clickCount = 0; spaceToken = nil; releaseSpace() end,
+		setMode = function(m) mode = m or "Off"; count = 0; busy = false; State.m1Count = 0; State.spaceToken = nil; spaceUp(); if mode ~= "Off" then refreshDetection() end end,
 		setDelay = function() end,
 		setCount = function() end,
+		setChar = function(c) Config.Manual = (c and c ~= "" and c ~= "Auto") and c or nil; State.char = nil; State.remote = nil; refreshDetection() end,
 	}
 end
 
