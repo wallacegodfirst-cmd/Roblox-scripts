@@ -667,11 +667,12 @@ local function restoreHitboxes()
     hbOriginal = {}
 end
 
+local punchGrowUntil = 0   -- One Punch sets this while bursting: forces BOTH grow paths on for guaranteed hit-reg
 local function wantedHitboxSize()
     local sz = 0
     -- M1 Expand Hitbox grows the ENEMY hitbox (this is what actually lands the M1 — the game reads the overlap
     -- client-side) AND your arms. The enemy grow is now INVISIBLE (no red boxes on everyone — the old complaint).
-    if S.M1Hitbox then sz = math.max(sz, S.M1HitboxSize) end   -- Auto Farm/Play no longer grow the hitbox: they TP onto the target instead (user: "auto farm makes me use hitbox")
+    if S.M1Hitbox or tick() < punchGrowUntil then sz = math.max(sz, S.M1HitboxSize) end   -- Auto Farm/Play TP onto the target instead; One Punch forces this on during its burst
     if S.HitboxAbility then
         local a = S.HitboxAbilitySize
         if tick() < abilityBurstUntil then a = a * 1.5 end
@@ -962,7 +963,10 @@ doOnePunch = function()   -- assigned to the forward-declared local used by runS
             local tr = charPart(target.Character); local root = getRoot()
             if not (tr and root) then firePunchOnce(); return end
             local savedCF = root.CFrame
-            -- Grow their real hit parts HUGE once, so the game's own client-side M1 detection registers every swing.
+            -- FORCE BOTH documented damage paths ON for the burst: (1) grow YOUR arms (the game runs its own
+            -- hit-detection off them and sends the real damaging UseM1A) and (2) grow the enemy hit parts. Either
+            -- alone lands hits; both = the game builds a Hits list for every swing = real server damage = the kill.
+            punchGrowUntil = tick() + 3
             local parts = hitboxParts(target.Character)
             local origSizes = {}
             for _, p in ipairs(parts) do pcall(function() origSizes[p] = p.Size; p.Size = Vector3.new(60, 60, 60) end) end
@@ -980,6 +984,7 @@ doOnePunch = function()   -- assigned to the forward-declared local used by runS
                 if i % 5 == 0 then firePunchOnce() end   -- re-cast the ability periodically through the burst
                 task.wait(0.05)
             end
+            punchGrowUntil = 0
             for p, sz in pairs(origSizes) do pcall(function() if p and p.Parent then p.Size = sz end end) end
             pcall(function() root.CFrame = savedCF; root.AssemblyLinearVelocity = Vector3.zero end)
         end)
@@ -1048,7 +1053,7 @@ if LP.Character then armSpawnT = tick() end
 hook(RunService.Heartbeat, function()
     -- grow YOUR arms whenever M1 reach is wanted (this is the primary Ability-Arena mechanism now)
     local armSz = 0
-    if S.M1Hitbox then armSz = math.max(armSz, S.M1HitboxSize) end   -- Auto Farm/Play don't force the arm grow anymore
+    if S.M1Hitbox or tick() < punchGrowUntil then armSz = math.max(armSz, S.M1HitboxSize) end   -- One Punch forces the arm grow (the documented working damage path) during its burst
     if tick() - armSpawnT < 3 then armSz = 0 end   -- 3s spawn grace: normal arms while the game places you
     if armSz > 0 then
         -- prune entries whose arm despawned (respawn) so we don't leak / restore onto a dead part
