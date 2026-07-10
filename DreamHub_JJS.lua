@@ -3426,7 +3426,15 @@ do
 	local function pressFour()  -- Auto Adapt presses the 4 KEY (the Adapt skill) - it never plays an animation itself
 		pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Four, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.Four, false, game) end)
 	end
-	local function playAdapt() task.delay(ADAPT_LEAD, pressFour) end  -- timed: short lead so 4 is pressed right as the attack hits, not the instant the wind-up starts
+	local function clickM1()  -- an M1 click at screen-center (used by the moves that need a CLICK to adapt, not just 4)
+		pcall(function()
+			local cam = workspace.CurrentCamera; local vp = (cam and cam.ViewportSize) or Vector2.new(1280, 720)
+			VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, true, game, 0); task.wait(0.04); VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, false, game, 0)
+		end)
+	end
+	-- These moves need a CLICK as they land, ON TOP of the 4-adapt: Hollow Purple + the fire move.
+	local CLICK_ADAPT_IDS = { ["132748613906344"] = true, ["137611726964398"] = true }
+	local function playAdapt(id) task.delay(ADAPT_LEAD, pressFour); if id and CLICK_ADAPT_IDS[id] then task.delay(ADAPT_LEAD, clickM1) end end  -- timed: short lead so 4 (and the click, for the 2 special moves) lands right as the attack hits
 	local function dist(er) local mr = myHRP(); return (mr and er) and (er.Position - mr.Position).Magnitude or 9999 end
 	local function randomEnemyHRP()
 		local list = {}
@@ -3536,7 +3544,7 @@ do
 		if domainOn and DOMAINS[id] and tick() - domainCd > 3 then domainCd = tick(); domainReact(DOMAINS[id], enemyChar) end   -- caster passed -> 'To User + Hit' hits the RIGHT person
 		if counterOn and COUNTERS[id] and er and dist(er) <= 26 and tick() - counterCd > 0.8 then counterCd = tick(); counterReact(enemyChar) end
 		-- AUTO ADAPT: on the AnimationPlayed event (so it is TIMED to the attack, not polled), if a nearby enemy starts ANY of the full captured attack-id list OR a block-dict attack -> press 4 (after ADAPT_LEAD). 0.35s de-dupe = one adapt per swing.
-		if adaptOn and er and dist(er) <= 20 and tick() - adaptCd > 0.35 then local dict = _G.VX_ANIMDICT; if ADAPT_IDS[id] or (dict and dict[id]) then adaptCd = tick(); playAdapt() end end
+		if adaptOn and er and dist(er) <= 20 and tick() - adaptCd > 0.35 then local dict = _G.VX_ANIMDICT; if ADAPT_IDS[id] or (dict and dict[id]) then adaptCd = tick(); playAdapt(id) end end
 		-- AUTO EVASIVE rides the SAME proven event: nearby enemy starts any attack -> the i-frame dash fires
 		if _G.VX_EVADE and er and dist(er) <= 30 then local dict = _G.VX_ANIMDICT; if ADAPT_IDS[id] or (dict and dict[id]) or COUNTERS[id] then _G.VX_EVADE() end end
 		if _G.VX_AUTOCOUNTER_ON and _G.VX_AUTOCOUNTER then _G.VX_AUTOCOUNTER(enemyChar, id) end  -- AUTO COUNTER reacts on the SAME event = counters before the hit lands, on every attack id
