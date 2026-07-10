@@ -328,7 +328,7 @@ local S = {
     Viewing=nil, ViewTarget=nil,
     EnemyHighlight=false, HighlightColor="Bright blue",
     FullBright=false,
-    AutoFarm=false, FarmTarget=nil,
+    AutoFarm=false, FarmTarget=nil, AuraRange=60,
     AutoPlay=false, AutoPlayRange=100,
     AntiAFK=false, InstantRespawn=false, ClickTP=false,
     GrabDelay=3, GrabReturn=true, M1Spy=false,
@@ -630,7 +630,7 @@ local function wantedHitboxSize()
     local sz = 0
     -- M1 Expand Hitbox grows the ENEMY hitbox (this is what actually lands the M1 — the game reads the overlap
     -- client-side) AND your arms. The enemy grow is now INVISIBLE (no red boxes on everyone — the old complaint).
-    if S.M1Hitbox or S.AutoFarm or S.AutoPlay then sz = math.max(sz, S.M1HitboxSize) end
+    if S.M1Hitbox then sz = math.max(sz, S.M1HitboxSize) end   -- Auto Farm/Play no longer grow the hitbox: they TP onto the target instead (user: "auto farm makes me use hitbox")
     if S.HitboxAbility then
         local a = S.HitboxAbilitySize
         if tick() < abilityBurstUntil then a = a * 1.5 end
@@ -769,58 +769,65 @@ end
 -- click arrives with gameProcessedEvent=true. Bailing on gpe killed EVERY click-triggered feature
 -- (Dash Behind / M1 Warp / Fling / One Punch). None of these bail on gpe anymore — they use
 -- typingNow() + mouseOverGui() instead, which is the correct guard pair.
+-- ONE swing dispatcher, shared by the desktop click hook AND the mobile M1 button (so every click-combat
+-- feature works on phone too). Forward-declared here; the fling/one-punch bodies are filled in once their
+-- helpers exist further down.
+local doFlingPunch, doOnePunch   -- assigned after contactFling / firePunchOnce are defined
+local function doGodModeM1()
+    task.spawn(function() clearMyHitLog(); for _ = 1, 2 do fireRaw(buildM1()); task.wait(0.03) end end)
+end
+local function doM1Warp()
+    task.spawn(function()
+        local root = getRoot(); if not root then return end
+        local target = nearestPlayer(S.M1WarpRange or 60)
+        if not target or not target.Character then return end
+        local savedCF = root.CFrame
+        clearMyHitLog()
+        local t0 = tick(); local clicked = false
+        while tick() - t0 < 0.18 do
+            local r = getRoot()
+            local tr = target.Character and target.Character.Parent and charPart(target.Character)
+            if not (r and tr) then break end
+            pcall(function()
+                local behind = tr.Position - tr.CFrame.LookVector * 2   -- dead on their back, point-blank
+                r.CFrame = CFrame.new(behind, tr.Position)              -- facing them = the swing lands
+                r.AssemblyLinearVelocity = Vector3.zero
+            end)
+            if not clicked then clicked = true; clickM1(true) end       -- swing the instant you arrive
+            RunService.Heartbeat:Wait()
+        end
+        if S.M1WarpReturn then local r = getRoot(); if r then pcall(function() r.CFrame = savedCF; r.AssemblyLinearVelocity = Vector3.zero end) end end
+    end)
+end
+local function doDashBehind()
+    task.spawn(function()
+        local root = getRoot(); if not root then return end
+        local target = nearestPlayer(S.DashRange or 45)
+        if not target or not target.Character then return end
+        local tr = charPart(target.Character); if not tr then return end
+        local savedCF = root.CFrame
+        pcall(function() root.CFrame = tr.CFrame * CFrame.new(0, 0, 3) end)
+        task.wait(0.03); clearMyHitLog(); clickM1(true); task.wait(0.06)
+        fireDash("Forward"); tapKey(Enum.KeyCode.Q); task.wait(0.15)
+        pcall(function() root.CFrame = savedCF end)
+    end)
+end
+local function runSwingFeatures(mobileBaseClick)
+    if S.M1Hitbox or S.AutoFarm or S.AutoPlay then clearMyHitLog() end
+    if S.GodMode then doGodModeM1() end
+    if S.M1Warp then doM1Warp()
+    elseif S.DashBehind then doDashBehind() end
+    if S.FlingPunch and doFlingPunch then doFlingPunch() end
+    if S.OnePunch and doOnePunch then doOnePunch() end
+    -- mobile tap isn't a real game M1, so land the base swing when no warp/dash already did
+    if mobileBaseClick and not (S.M1Warp or S.DashBehind) then clearMyHitLog(); clickM1(true) end
+end
+_G.AA_SWING = runSwingFeatures   -- exposed so the mobile M1 button can call it
 hook(UserInputService.InputBegan, function(i, _)
     if typingNow() then return end
     if tick() < vimClickUntil then return end   -- skip our own injected clicks (stops warp->click->warp recursion)
     if i.UserInputType == Enum.UserInputType.MouseButton1 then
-        if S.M1Hitbox or S.AutoFarm or S.AutoPlay then
-            clearMyHitLog()
-        end
-
-        -- M1 WARP: snap behind nearest enemy, click M1, snap back
-        if S.M1Warp then
-            task.spawn(function()
-                local root = getRoot()
-                if not root then return end
-                local target = nearestPlayer(S.M1WarpRange or 60)
-                if not target or not target.Character then return end
-                local tr = charPart(target.Character)
-                if not tr then return end
-                local savedCF = root.CFrame
-                local behindCF = tr.CFrame * CFrame.new(0, 0, 3)
-                pcall(function() root.CFrame = behindCF end)
-                task.wait(0.03)
-                clearMyHitLog()
-                clickM1(true)
-                task.wait(0.06)
-                if S.M1WarpReturn then
-                    pcall(function() root.CFrame = savedCF end)
-                end
-            end)
-        end
-
-        -- M1 Q DASH (Dash Behind): snap behind enemy, click M1, then fire Dash
-        if S.DashBehind and not S.M1Warp then
-            task.spawn(function()
-                local root = getRoot()
-                if not root then return end
-                local target = nearestPlayer(S.DashRange or 45)
-                if not target or not target.Character then return end
-                local tr = charPart(target.Character)
-                if not tr then return end
-                local savedCF = root.CFrame
-                local behindCF = tr.CFrame * CFrame.new(0, 0, 3)
-                pcall(function() root.CFrame = behindCF end)
-                task.wait(0.03)
-                clearMyHitLog()
-                clickM1(true)
-                task.wait(0.06)
-                fireDash("Forward")
-                tapKey(Enum.KeyCode.Q)
-                task.wait(0.15)
-                pcall(function() root.CFrame = savedCF end)
-            end)
-        end
+        runSwingFeatures(false)
     end
 end)
 
@@ -895,26 +902,15 @@ local function firePunchOnce()
     end)
 end
 local onePunchCD = 0
-hook(UserInputService.InputBegan, function(i, _)
-    if not S.OnePunch then return end
-    if typingNow() then return end
-    if tick() < vimClickUntil then return end   -- skip our own injected clicks
-    if i.UserInputType ~= Enum.UserInputType.MouseButton1 and i.UserInputType ~= Enum.UserInputType.Touch then return end
-    if mouseOverGui() then return end
+doOnePunch = function()   -- assigned to the forward-declared local used by runSwingFeatures
     if tick() - onePunchCD < 0.25 then return end
     onePunchCD = tick()
     task.spawn(function()
-        -- Fire a real M1 click first (One Punch may augment your normal punch)
-        clearMyHitLog()
-        clickM1(true)
-        task.wait(0.05)
+        clearMyHitLog(); clickM1(true); task.wait(0.05)   -- a real M1 first (One Punch may augment your normal punch)
         local n = math.clamp(tonumber(S.OnePunchHits) or 8, 1, 50)
-        for _ = 1, n do
-            firePunchOnce()
-            task.wait(0.05)
-        end
+        for _ = 1, n do firePunchOnce(); task.wait(0.05) end
     end)
-end)
+end
 
 -- ============================================================
 -- FLING PUNCH — CONTACT fling (the version that CAN work). Writing velocity onto the ENEMY is cosmetic
@@ -931,48 +927,44 @@ local function contactFling(targetChar)
     flingBusy = true
     local savedCF = root.CFrame
     task.spawn(function()
+        -- WHY IT "WORKED ONCE": if anything in here threw, flingBusy stayed true forever and every later
+        -- click bailed at the top. The whole body is now pcall-wrapped and flingBusy is reset in a finally
+        -- block no matter what, so it fires every time.
         local hum = getHum()
         local savedPS = hum and hum.PlatformStand
-        pcall(function() if hum then hum.PlatformStand = true end end)   -- don't let your own humanoid fight the spin
-        local t0 = tick()
-        while tick() - t0 < 0.6 do
-            local r = getRoot()
-            local t2 = targetChar and targetChar.Parent and charPart(targetChar)
-            if not (r and t2) then break end
-            pcall(function()
-                -- bob up/down through them while spinning: every frame makes a FRESH collision contact,
-                -- so the momentum keeps transferring instead of resting inside one overlap
-                r.CFrame = t2.CFrame * CFrame.new(0, math.sin((tick() - t0) * 40) * 1.5, 0)
-                r.AssemblyAngularVelocity = Vector3.new(9e4, 9e5, 9e4)    -- the spin that carries the momentum
-                r.AssemblyLinearVelocity  = Vector3.zero
-            end)
-            RunService.Heartbeat:Wait()
-        end
-        local r = getRoot()
+        pcall(function() if hum then hum.PlatformStand = true end end)
         pcall(function()
-            if r then
-                r.AssemblyAngularVelocity = Vector3.zero
+            local t0 = tick()
+            while tick() - t0 < 0.55 do
+                local r = getRoot()
+                local t2 = targetChar and targetChar.Parent and charPart(targetChar)
+                if not (r and t2) then break end
+                -- bob up/down through them while spinning HARD: every frame is a fresh collision contact, so the
+                -- momentum keeps transferring instead of settling inside one overlap.
+                r.CFrame = t2.CFrame * CFrame.new(0, math.sin((tick() - t0) * 55) * 2, 0)
+                r.AssemblyAngularVelocity = Vector3.new(5e5, 9e6, 5e5)   -- stronger spin
                 r.AssemblyLinearVelocity  = Vector3.zero
-                r.CFrame = savedCF                                        -- back to your spot like nothing happened
+                RunService.Heartbeat:Wait()
             end
-            if hum then hum.PlatformStand = savedPS or false end
         end)
-        task.delay(0.1, function()   -- one extra settle write: the snap-back can get eaten by the spin's last replication tick
+        -- FINALLY: restore + release, ALWAYS, so the next click can fling again
+        pcall(function()
+            local r = getRoot()
+            if r then r.AssemblyAngularVelocity = Vector3.zero; r.AssemblyLinearVelocity = Vector3.zero; r.CFrame = savedCF end
+            if hum then hum.PlatformStand = savedPS or false; hum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+        end)
+        task.wait(0.12)
+        pcall(function()   -- one extra settle write: the spin's last replication tick can eat the snap-back
             local r2 = getRoot()
-            if r2 then pcall(function() r2.CFrame = savedCF; r2.AssemblyLinearVelocity = Vector3.zero; r2.AssemblyAngularVelocity = Vector3.zero end) end
-            flingBusy = false
+            if r2 then r2.CFrame = savedCF; r2.AssemblyLinearVelocity = Vector3.zero; r2.AssemblyAngularVelocity = Vector3.zero end
         end)
+        flingBusy = false   -- guaranteed reset
     end)
 end
-hook(UserInputService.InputBegan, function(i, _)   -- no gpe bail: the game sinks M1 clicks (gpe=true always)
-    if not S.FlingPunch then return end
-    if typingNow() then return end
-    if tick() < vimClickUntil then return end   -- skip our own injected clicks
-    if i.UserInputType ~= Enum.UserInputType.MouseButton1 and i.UserInputType ~= Enum.UserInputType.Touch then return end
-    if mouseOverGui() then return end
+doFlingPunch = function()   -- assigned to the forward-declared local used by runSwingFeatures
     local p = nearestPlayer(S.FlingRange or 40)
     if p and p.Character then contactFling(p.Character) end
-end)
+end
 
 -- (Old standalone M1 Warp hook REMOVED — M1 Warp now lives in the swing-start hook above with the
 --  warp -> forced M1 click -> return sequence, so two hooks can't fight over your CFrame on one click.)
@@ -983,7 +975,7 @@ if LP.Character then armSpawnT = tick() end
 hook(RunService.Heartbeat, function()
     -- grow YOUR arms whenever M1 reach is wanted (this is the primary Ability-Arena mechanism now)
     local armSz = 0
-    if S.M1Hitbox or S.AutoFarm or S.AutoPlay then armSz = math.max(armSz, S.M1HitboxSize) end
+    if S.M1Hitbox then armSz = math.max(armSz, S.M1HitboxSize) end   -- Auto Farm/Play don't force the arm grow anymore
     if tick() - armSpawnT < 3 then armSz = 0 end   -- 3s spawn grace: normal arms while the game places you
     if armSz > 0 then
         -- prune entries whose arm despawned (respawn) so we don't leak / restore onto a dead part
@@ -1983,6 +1975,14 @@ if UserInputService.TouchEnabled then
         upB.MouseButton1Down:Connect(function() flyKeys.Up=true end);   upB.MouseButton1Up:Connect(function() flyKeys.Up=false end)
         local dnB = mkBtn("▼", 40)
         dnB.MouseButton1Down:Connect(function() flyKeys.Down=true end); dnB.MouseButton1Up:Connect(function() flyKeys.Down=false end)
+        -- MOBILE M1: phone players have no left-click, so this button runs the SAME swing dispatcher the desktop
+        -- click does (M1 Warp / Dash / Fling / One Punch / God-mode M1 + a base swing). Bigger + on the right.
+        local m1B = Instance.new("TextButton")
+        m1B.Size = UDim2.fromOffset(76,76); m1B.Position = UDim2.new(1, -92, 0.5, 20); m1B.AnchorPoint = Vector2.new(0,0)
+        m1B.BackgroundColor3 = Color3.fromRGB(200,40,40); m1B.Text = "M1"; m1B.TextColor3 = Color3.fromRGB(255,255,255)
+        m1B.TextSize = 26; m1B.Font = Enum.Font.GothamBold; m1B.AutoButtonColor = true; m1B.Parent = mg
+        Instance.new("UICorner", m1B).CornerRadius = UDim.new(1,0)
+        m1B.MouseButton1Click:Connect(function() if _G.AA_SWING then pcall(function() _G.AA_SWING(true) end) end end)
     end)
 end
 task.spawn(function()
@@ -2226,10 +2226,13 @@ task.spawn(function()
     while task.wait(0.1) do
         if S.AutoM1 then
             pcall(function()
-                -- AURA M1: only swing when someone is actually within M1 range - no enemy near = no click
-                if nearestPlayer(S.M1HitboxSize or 80) then
+                -- AURA M1: only swing when someone is actually within range - no enemy near = no click.
+                local near = nearestPlayer(S.AuraRange or 60)
+                if near and near.Character then
                     clearMyHitLog()
-                    clickM1()         -- legit game M1 (VirtualInputManager click); no raw packet -> no kick
+                    local tr = charPart(near.Character); local root = getRoot()
+                    if tr and root then pcall(function() root.CFrame = CFrame.new(root.Position, Vector3.new(tr.Position.X, root.Position.Y, tr.Position.Z)) end) end   -- face them so the swing connects
+                    clickM1(true)     -- FORCED: a non-forced click skips whenever the cursor sits on the menu (= "aura m1 dont work")
                 end
             end)
         end
@@ -2312,7 +2315,8 @@ end)
 -- their hitbox (point-blank) so the M1 overlap lands; then spam click + M1 +
 -- abilities. (Distance-gating + cadence broke this by standing you outside.)
 task.spawn(function()
-    while task.wait(0.1) do
+    local abilT = 0
+    while task.wait(0.05) do   -- FAST: ~20 swings/sec (user asked to hit them much faster)
         if S.AutoFarm and S.FarmTarget then
             pcall(function()
                 local t    = Players:FindFirstChild(S.FarmTarget)
@@ -2320,14 +2324,17 @@ task.spawn(function()
                 if t and t.Character and root then
                     local tr = charPart(t.Character)
                     if tr then
-                        local pos = tr.Position - Vector3.new(0, 4, 0)
-                        pcall(function() root.CFrame = CFrame.new(pos) end)
-                        clickAtTarget(t, true)
-                        fireM1(); fireM1(); fireM1()
-                        tapKey(Enum.KeyCode.E)
-                        tapKey(Enum.KeyCode.R)
-                        if S.CastQ then tapKey(Enum.KeyCode.Q) end
-                        if S.CastT then tapKey(Enum.KeyCode.T) end
+                        local pos = tr.Position - tr.CFrame.LookVector * 2   -- point-blank behind them (no hitbox needed)
+                        pcall(function() root.CFrame = CFrame.new(pos, tr.Position) end)   -- face them so the M1 connects
+                        clearMyHitLog()
+                        clickAtTarget(t, true)   -- real M1, forced
+                        if tick() - abilT > 0.6 then   -- cycle abilities on a steadier beat so they actually cast
+                            abilT = tick()
+                            tapKey(Enum.KeyCode.E)
+                            tapKey(Enum.KeyCode.R)
+                            if S.CastQ then tapKey(Enum.KeyCode.Q) end
+                            if S.CastT then tapKey(Enum.KeyCode.T) end
+                        end
                     end
                 end
             end)
@@ -2595,6 +2602,7 @@ CombatTab:CreateToggle({Name="Warp Back After Swing", CurrentValue=true, Flag="M
 
 CombatTab:CreateSection("Auto")
 CombatTab:CreateToggle({Name="Aura M1 (auto M1 when someone is near)", CurrentValue=false, Flag="AutoM1", Callback=function(v) S.AutoM1=v end})
+CombatTab:CreateSlider({Name="Aura M1 Range", Range={5,120}, Increment=5, Suffix="studs", CurrentValue=60, Flag="AuraRange", Callback=function(v) S.AuraRange=v end})
 CombatTab:CreateToggle({Name="Auto Ability", CurrentValue=false, Flag="AutoAbility", Callback=function(v) S.AutoAbility=v end})
 CombatTab:CreateSlider({Name="Auto Ability Range", Range={5,80}, Increment=1, Suffix="studs", CurrentValue=25, Flag="AutoAbilityRange", Callback=function(v) S.AutoAbilityRange=v end})
 CombatTab:CreateToggle({Name="Cast E", CurrentValue=true,  Flag="CastE", Callback=function(v) S.CastE=v end})
