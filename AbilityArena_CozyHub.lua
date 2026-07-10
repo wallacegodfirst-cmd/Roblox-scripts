@@ -350,8 +350,8 @@ local S = {
     RemoveWaterBorder=false, AntiKillBricks=false,
     M1Hitbox=false, M1HitboxSize=80,   -- 80 default: long spear-arm reach (arms = slider*1.5 forward, thin sides)
     HitboxAbility=false, HitboxAbilitySize=40, HitboxAllParts=false, HitboxVisible=true,
-    OnePunch=false, OnePunchHits=8, OnePunchGuid="",   -- One Punch: each M1 click sends a burst of extra M1 packets
-    FlingPunch=false, FlingRange=40,                   -- contact fling: warp into the target spinning = collision throws them
+    OnePunch=false, OnePunchHits=20, OnePunchGuid="",  -- One Punch: real damaging M1 burst count (+ fires the ability)
+    FlingPunch=false, FlingRange=40, FlingPower=850,   -- fling: push the ENEMY up+away (you never move = can't die)
     M1Warp=false, M1WarpRange=60, M1WarpReturn=true,   -- M1 Warp: snap behind the nearest enemy for the swing, then back
     AutoM1=false,
     AutoAbility=false, AutoAbilityRange=25,
@@ -923,6 +923,8 @@ local function resolvePunchRemote()
     end)
     return punchRemote
 end
+-- Fire the game's One Punch ABILITY through every known path. NO movement here (movement is done once,
+-- cleanly, in doOnePunch) so repeated calls can't fight over your CFrame.
 local function firePunchOnce()
     local name = punchAbilityName()
     fireRaw(buildSkillNew(name))
@@ -947,100 +949,89 @@ local function firePunchOnce()
             end
         end
     end)
-    -- Deal REAL damage: warp behind target, massively expand their hitbox, M1 repeatedly
-    -- (the game's own client-side hit detection sends real damage to the server)
-    task.spawn(function()
-        local target = nearestPlayer(100)
-        if not (target and target.Character) then return end
-        local tr = charPart(target.Character)
-        local root = getRoot()
-        if not (tr and root) then return end
-        local savedCF = root.CFrame
-        -- Temporarily grow the target's hitbox huge so every M1 registers
-        local parts = hitboxParts(target.Character)
-        local origSizes = {}
-        for _, p in ipairs(parts) do
-            pcall(function()
-                origSizes[p] = p.Size
-                p.Size = Vector3.new(50, 50, 50)
-                p.Transparency = 1
-            end)
-        end
-        -- Warp behind them and swing rapidly
-        pcall(function() root.CFrame = tr.CFrame * CFrame.new(0, 0, 2) end)
-        task.wait(0.02)
-        for _ = 1, 5 do
-            clearMyHitLog()
-            clickM1(true)
-            task.wait(0.06)
-        end
-        -- Restore their hitbox
-        for p, sz in pairs(origSizes) do
-            pcall(function()
-                if p and p.Parent then
-                    p.Size = sz
-                    p.Transparency = 0
-                end
-            end)
-        end
-        pcall(function() root.CFrame = savedCF; root.AssemblyLinearVelocity = Vector3.zero end)
-    end)
 end
 local onePunchCD = 0
+local onePunchBusy = false
 doOnePunch = function()   -- assigned to the forward-declared local used by runSwingFeatures
-    if tick() - onePunchCD < 0.25 then return end
-    onePunchCD = tick()
+    if tick() - onePunchCD < 0.35 or onePunchBusy then return end
+    onePunchCD = tick(); onePunchBusy = true
     task.spawn(function()
-        clearMyHitLog(); clickM1(true); task.wait(0.05)   -- a real M1 first (One Punch may augment your normal punch)
-        local n = math.clamp(tonumber(S.OnePunchHits) or 8, 1, 50)
-        for _ = 1, n do firePunchOnce(); task.wait(0.05) end
+        pcall(function()
+            local target = nearestPlayer(120)
+            if not (target and target.Character) then firePunchOnce(); return end
+            local tr = charPart(target.Character); local root = getRoot()
+            if not (tr and root) then firePunchOnce(); return end
+            local savedCF = root.CFrame
+            -- Grow their real hit parts HUGE once, so the game's own client-side M1 detection registers every swing.
+            local parts = hitboxParts(target.Character)
+            local origSizes = {}
+            for _, p in ipairs(parts) do pcall(function() origSizes[p] = p.Size; p.Size = Vector3.new(60, 60, 60) end) end
+            -- Warp point-blank on their back ONCE, then hammer a SUSTAINED damaging M1 burst (real hits) while
+            -- firing the One Punch ability alongside. This is the "kill on punch": ~N real M1s at a giant hitbox.
+            pcall(function() root.CFrame = tr.CFrame * CFrame.new(0, 0, 2); root.AssemblyLinearVelocity = Vector3.zero end)
+            firePunchOnce()
+            local n = math.clamp(tonumber(S.OnePunchHits) or 20, 1, 60)
+            for i = 1, n do
+                local t2 = target.Character and target.Character.Parent and charPart(target.Character)
+                if not t2 then break end
+                pcall(function() root.CFrame = t2.CFrame * CFrame.new(0, 0, 2); root.AssemblyLinearVelocity = Vector3.zero end)   -- stay on them if they move
+                clearMyHitLog()
+                clickM1(true)
+                if i % 5 == 0 then firePunchOnce() end   -- re-cast the ability periodically through the burst
+                task.wait(0.05)
+            end
+            for p, sz in pairs(origSizes) do pcall(function() if p and p.Parent then p.Size = sz end end) end
+            pcall(function() root.CFrame = savedCF; root.AssemblyLinearVelocity = Vector3.zero end)
+        end)
+        onePunchBusy = false
     end)
 end
 
 -- ============================================================
--- FLING PUNCH — CONTACT fling (the version that CAN work). Writing velocity onto the ENEMY is cosmetic
--- (their body is simulated by their client / the server, so it snaps back — that's why the old fling did
--- nothing). YOUR character, though, is client-owned and everything it does replicates. So: warp INSIDE the
--- target while spinning your root at extreme angular velocity for a few frames — the physical COLLISION
--- transfers the momentum on their side and throws them — then snap back to where you were.
+-- FLING PUNCH — push the ENEMY, never move yourself. The old contact-fling teleported YOU inside them and
+-- spun; even anchored, sitting inside their hitbox got you killed ("the fling kills me when I swing on a
+-- person"). This version NEVER moves your character, so it physically cannot kill you. It launches the
+-- enemy by hammering a big up+away velocity onto every one of their parts + pinning a LinearVelocity mover
+-- to their root, for ~0.45s. (Anti-fling client scripts are already disabled on load, so nothing on their
+-- side cancels it; whether it fully launches depends on this game's physics ownership.)
 -- ============================================================
 local flingBusy = false
 local function contactFling(targetChar)
     if flingBusy then return end
-    local root = getRoot(); local tr = charPart(targetChar)
-    if not (root and tr) then return end
+    local myRoot = getRoot(); local tr = charPart(targetChar)
+    if not (myRoot and tr) then return end
     flingBusy = true
-    local savedCF = root.CFrame
-    local savedAnchored = root.Anchored
     task.spawn(function()
-        -- ANCHOR yourself: physics engine cannot apply ANY force to an anchored part (= it can't kill you
-        -- from sitting inside the enemy - "the fling kills me when I swing on a person")
-        pcall(function() root.Anchored = true end)
-        local t0 = tick()
-        local frames = 0
-        while tick() - t0 < 0.15 and frames < 9 do
-            local r = getRoot()
-            local t2 = targetChar and targetChar.Parent and charPart(targetChar)
-            if not (r and t2) then break end
-            pcall(function()
-                r.CFrame = t2.CFrame * CFrame.new(0, math.sin((tick() - t0) * 40) * 1.5, 0)
-                r.AssemblyAngularVelocity = Vector3.new(9e4, 9e5, 9e4)
-                r.AssemblyLinearVelocity  = Vector3.zero
-            end)
-            RunService.Heartbeat:Wait()
-            frames = frames + 1
-        end
-        -- Restore IMMEDIATELY
-        local r = getRoot()
         pcall(function()
-            if r then
-                r.AssemblyAngularVelocity = Vector3.zero
-                r.AssemblyLinearVelocity  = Vector3.zero
-                r.CFrame = savedCF
-                r.Anchored = savedAnchored
+            local away = tr.Position - myRoot.Position; away = Vector3.new(away.X, 0, away.Z)
+            local dir  = (away.Magnitude > 0.1 and away.Unit) or Vector3.new(0, 0, 1)   -- away from me
+            local power = tonumber(S.FlingPower) or 850
+            local vel   = dir * power + Vector3.new(0, power, 0)                          -- away + strongly UP = off the map
+            local parts = {}
+            for _, p in ipairs(targetChar:GetDescendants()) do if p:IsA("BasePart") then parts[#parts + 1] = p end end
+            local att, mover
+            pcall(function()
+                if tr.Anchored then tr.Anchored = false end
+                att = Instance.new("Attachment"); att.Parent = tr
+                mover = Instance.new("LinearVelocity")
+                mover.Attachment0 = att; mover.MaxForce = 1e9
+                mover.RelativeTo = Enum.ActuatorRelativeTo.World
+                mover.VectorVelocity = vel; mover.Parent = tr
+            end)
+            local t0 = tick()
+            while tick() - t0 < 0.45 do
+                for _, p in ipairs(parts) do
+                    pcall(function()
+                        p.AssemblyLinearVelocity  = vel
+                        p.AssemblyAngularVelocity = Vector3.new(60, 200, 60)   -- tumble so they don't just slide
+                    end)
+                end
+                RunService.Heartbeat:Wait()
             end
+            pcall(function() if mover then mover:Destroy() end end)
+            pcall(function() if att then att:Destroy() end end)
         end)
-        flingBusy = false
+        flingBusy = false   -- guaranteed reset; you never moved so you can never be stuck/killed
     end)
 end
 doFlingPunch = function()   -- assigned to the forward-declared local used by runSwingFeatures
@@ -2691,10 +2682,11 @@ CombatTab:CreateToggle({Name="Show Hitbox (cyan box - off = invisible)", Current
 
 CombatTab:CreateSection("One Punch")
 CombatTab:CreateToggle({Name="One Punch (M1 casts the game's One Punch ability)", CurrentValue=false, Flag="OnePunch", Callback=function(v) S.OnePunch=v end})
-CombatTab:CreateSlider({Name="Casts per Click", Range={1,50}, Increment=1, Suffix="casts", CurrentValue=8, Flag="OnePunchHits", Callback=function(v) S.OnePunchHits=v end})
+CombatTab:CreateSlider({Name="One Punch Hits (M1 burst per click)", Range={1,60}, Increment=1, Suffix="hits", CurrentValue=20, Flag="OnePunchHits", Callback=function(v) S.OnePunchHits=v end})
 CombatTab:CreateInput({Name="Ability Name (default: One Punch - change if the game renamed it)", PlaceholderText="One Punch", Callback=function(v) v=tostring(v or ""):gsub("^%s+",""):gsub("%s+$",""); S.OnePunchGuid=v end})
 CombatTab:CreateToggle({Name="Fling Punch (M1 spin-flings the nearest enemy)", CurrentValue=false, Flag="FlingPunch", Callback=function(v) S.FlingPunch=v end})
 CombatTab:CreateSlider({Name="Fling Range", Range={10,120}, Increment=5, Suffix="studs", CurrentValue=40, Flag="FlingRange", Callback=function(v) S.FlingRange=v end})
+CombatTab:CreateSlider({Name="Fling Power (higher = flung farther)", Range={200,3000}, Increment=50, Suffix="", CurrentValue=850, Flag="FlingPower", Callback=function(v) S.FlingPower=v end})
 
 CombatTab:CreateSection("M1 Warp")
 CombatTab:CreateToggle({Name="M1 Warp (M1 snaps you behind the nearest enemy)", CurrentValue=false, Flag="M1Warp", Callback=function(v) S.M1Warp=v end})
