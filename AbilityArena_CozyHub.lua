@@ -763,8 +763,12 @@ local function clearMyHitLog()
         if log then for _,c in ipairs(log:GetChildren()) do c:Destroy() end end
     end)
 end
-hook(UserInputService.InputBegan, function(i, gpe)
-    if gpe then return end
+-- NOTE (the "nothing fires on click" bug): this game binds M1 through its own input system, so every
+-- click arrives with gameProcessedEvent=true. Bailing on gpe killed EVERY click-triggered feature
+-- (Dash Behind / M1 Warp / Fling / One Punch). None of these bail on gpe anymore — they use
+-- typingNow() + mouseOverGui() instead, which is the correct guard pair.
+hook(UserInputService.InputBegan, function(i, _)
+    if typingNow() then return end
     if i.UserInputType == Enum.UserInputType.MouseButton1 and (S.M1Hitbox or S.AutoFarm or S.AutoPlay) then
         clearMyHitLog()   -- swing start
     end
@@ -809,8 +813,7 @@ local function firePunchOnce()
     end
 end
 local onePunchCD = 0
-hook(UserInputService.InputBegan, function(i, gpe)
-    if gpe then return end
+hook(UserInputService.InputBegan, function(i, _)   -- no gpe bail: the game sinks M1 clicks (gpe=true always)
     if not S.OnePunch then return end
     if typingNow() then return end
     if i.UserInputType ~= Enum.UserInputType.MouseButton1 and i.UserInputType ~= Enum.UserInputType.Touch then return end
@@ -845,13 +848,15 @@ local function contactFling(targetChar)
         local savedPS = hum and hum.PlatformStand
         pcall(function() if hum then hum.PlatformStand = true end end)   -- don't let your own humanoid fight the spin
         local t0 = tick()
-        while tick() - t0 < 0.45 do
+        while tick() - t0 < 0.6 do
             local r = getRoot()
             local t2 = targetChar and targetChar.Parent and charPart(targetChar)
             if not (r and t2) then break end
             pcall(function()
-                r.CFrame = t2.CFrame                                      -- stay INSIDE them so the bodies collide
-                r.AssemblyAngularVelocity = Vector3.new(0, 9e5, 0)        -- the spin that carries the momentum
+                -- bob up/down through them while spinning: every frame makes a FRESH collision contact,
+                -- so the momentum keeps transferring instead of resting inside one overlap
+                r.CFrame = t2.CFrame * CFrame.new(0, math.sin((tick() - t0) * 40) * 1.5, 0)
+                r.AssemblyAngularVelocity = Vector3.new(9e4, 9e5, 9e4)    -- the spin that carries the momentum
                 r.AssemblyLinearVelocity  = Vector3.zero
             end)
             RunService.Heartbeat:Wait()
@@ -872,8 +877,7 @@ local function contactFling(targetChar)
         end)
     end)
 end
-hook(UserInputService.InputBegan, function(i, gpe)
-    if gpe then return end
+hook(UserInputService.InputBegan, function(i, _)   -- no gpe bail: the game sinks M1 clicks (gpe=true always)
     if not S.FlingPunch then return end
     if typingNow() then return end
     if i.UserInputType ~= Enum.UserInputType.MouseButton1 and i.UserInputType ~= Enum.UserInputType.Touch then return end
@@ -889,8 +893,7 @@ end)
 -- No hitbox edits at all = nothing for the server to validate away.
 -- ============================================================
 local warpBusy = false
-hook(UserInputService.InputBegan, function(i, gpe)
-    if gpe then return end
+hook(UserInputService.InputBegan, function(i, _)   -- no gpe bail: the game sinks M1 clicks (gpe=true always)
     if not S.M1Warp or warpBusy then return end
     if typingNow() then return end
     if i.UserInputType ~= Enum.UserInputType.MouseButton1 and i.UserInputType ~= Enum.UserInputType.Touch then return end
@@ -1009,8 +1012,8 @@ hook(RunService.Heartbeat, function()
 end)
 
 -- pressing E pulses the Ability expand bigger for a moment
-hook(UserInputService.InputBegan, function(i, gpe)
-    if gpe then return end
+hook(UserInputService.InputBegan, function(i, _)   -- no gpe bail: E is the game's cast key, so it's always game-processed
+    if typingNow() then return end
     if i.KeyCode == Enum.KeyCode.E and S.HitboxAbility then
         abilityBurstUntil = tick() + 0.6
     end
@@ -2200,8 +2203,7 @@ end)
 -- behind them (this also lands your M1 point-blank) and dash (Q). No more
 -- LeftShift / shift-lock messing with your camera.
 local lastDashHit = 0
-hook(UserInputService.InputBegan, function(i, gpe)
-    if gpe then return end
+hook(UserInputService.InputBegan, function(i, _)   -- no gpe bail: the game sinks M1 clicks (gpe=true always)
     if not S.DashBehind then return end
     if i.UserInputType ~= Enum.UserInputType.MouseButton1 and i.UserInputType ~= Enum.UserInputType.Touch then return end   -- accept touch = mobile M1
     if typingNow() or mouseOverGui() then return end
@@ -2249,7 +2251,7 @@ local AIM_KEYS = {
     [Enum.KeyCode.T]=true, [Enum.KeyCode.F]=true,
 }
 hook(UserInputService.InputBegan, function(i, gpe)
-    if gpe or not S.AimAssist or typingNow() then return end
+    if not S.AimAssist or typingNow() then return end   -- no gpe bail: combat keys/clicks are always game-processed here
     local isSkill = AIM_KEYS[i.KeyCode]
     local isM1 = (i.UserInputType == Enum.UserInputType.MouseButton1) and S.AimOnM1   -- also snap on your M1 so basic attacks land
     if not (isSkill or isM1) then return end
@@ -2476,7 +2478,7 @@ local UtilityTab   = Window:CreateTab("Misc",      "wrench")
 HomeTab:CreateSection("Welcome")
 HomeTab:CreateParagraph({Title="Dream Hub", Content="Ability Arena  -  v2.15.0\nPick a tab on the left to get started."})
 HomeTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
-HomeTab:CreateParagraph({Title="Best combo", Content="Dash Behind On Hit (lands your M1 + puts you behind them) + M1 Hitbox. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
+HomeTab:CreateParagraph({Title="Best combo", Content="M1 Warp (every click snaps you behind them for the swing) or Dash Behind On Hit. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
 HomeTab:CreateSection("Credits")
 HomeTab:CreateParagraph({Title="Credits", Content="Dream Hub v2.15.0 - by Dream Hub Owner"})
 
@@ -2507,11 +2509,8 @@ CombatTab:CreateSlider({Name="Save Health: trigger at HP %", Range={5,90}, Incre
 CombatTab:CreateSlider({Name="Save Health: sky height", Range={100,2000}, Increment=50, Suffix="studs", CurrentValue=700, Flag="SaveHealthHeight", Callback=function(v) S.SaveHealthHeight=v end})
 
 CombatTab:CreateSection("Hitboxes")
-CombatTab:CreateToggle({Name="M1 Expand Hitbox (invisible reach - lands M1)", CurrentValue=false, Flag="M1Hitbox", Callback=function(v)
-    S.M1Hitbox=v
-    if not v then restoreHitboxes(); restoreArms() end
-end})
-CombatTab:CreateSlider({Name="M1 Expand Size (arm reach)", Range={1,300}, Increment=1, Suffix="studs", CurrentValue=80, Flag="M1HitboxSize", Callback=function(v) S.M1HitboxSize=v end})
+-- (M1 Expand Hitbox REMOVED from the menu per request — M1 Warp below is its replacement. The arm/hitbox
+-- grow engine itself stays: Auto Farm / Auto Play still rely on it to land their hits.)
 CombatTab:CreateToggle({Name="Ability Hitbox Expander (pulses bigger on E)", CurrentValue=false, Flag="HitboxAbility", Callback=function(v)
     S.HitboxAbility=v
     if not v then destroyAbilityHb(); restoreHitboxes() end
