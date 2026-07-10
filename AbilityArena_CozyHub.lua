@@ -980,7 +980,7 @@ doOnePunch = function()   -- assigned to the forward-declared local used by runS
                 if not t2 then break end
                 pcall(function() root.CFrame = t2.CFrame * CFrame.new(0, 0, 2); root.AssemblyLinearVelocity = Vector3.zero end)   -- stay on them if they move
                 clearMyHitLog()
-                clickM1(true)
+                clickAtTarget(target, true)   -- the PROVEN farm-damage click (aimed at the enemy, not screen-center which the menu can eat)
                 if i % 5 == 0 then firePunchOnce() end   -- re-cast the ability periodically through the burst
                 task.wait(0.05)
             end
@@ -993,12 +993,12 @@ doOnePunch = function()   -- assigned to the forward-declared local used by runS
 end
 
 -- ============================================================
--- FLING PUNCH — push the ENEMY, never move yourself. The old contact-fling teleported YOU inside them and
--- spun; even anchored, sitting inside their hitbox got you killed ("the fling kills me when I swing on a
--- person"). This version NEVER moves your character, so it physically cannot kill you. It launches the
--- enemy by hammering a big up+away velocity onto every one of their parts + pinning a LinearVelocity mover
--- to their root, for ~0.45s. (Anti-fling client scripts are already disabled on load, so nothing on their
--- side cancels it; whether it fully launches depends on this game's physics ownership.)
+-- FLING PUNCH — spin-collision (you confirmed THIS version flung them once) + a hard self-recovery so it
+-- can't kill you. The launch comes from spinning your UNANCHORED root inside them: the collision throws
+-- them (an anchored root imparts nothing, which is why the "safe" version didn't launch). What killed you
+-- was the aftermath — you got rocketed away and died to the fall / rubber-band. So after the brief spin we
+-- HOLD you locked at your original spot with velocity zeroed for 0.7s = the flung momentum can never carry
+-- you off. We also push the enemy's own velocity as a booster.
 -- ============================================================
 local flingBusy = false
 local function contactFling(targetChar)
@@ -1006,37 +1006,48 @@ local function contactFling(targetChar)
     local myRoot = getRoot(); local tr = charPart(targetChar)
     if not (myRoot and tr) then return end
     flingBusy = true
+    local savedCF = myRoot.CFrame
     task.spawn(function()
+        local hum = getHum()
+        local savedPS = hum and hum.PlatformStand
         pcall(function()
             local away = tr.Position - myRoot.Position; away = Vector3.new(away.X, 0, away.Z)
-            local dir  = (away.Magnitude > 0.1 and away.Unit) or Vector3.new(0, 0, 1)   -- away from me
+            local dir  = (away.Magnitude > 0.1 and away.Unit) or Vector3.new(0, 0, 1)
             local power = tonumber(S.FlingPower) or 850
-            local vel   = dir * power + Vector3.new(0, power, 0)                          -- away + strongly UP = off the map
-            local parts = {}
-            for _, p in ipairs(targetChar:GetDescendants()) do if p:IsA("BasePart") then parts[#parts + 1] = p end end
-            local att, mover
-            pcall(function()
-                if tr.Anchored then tr.Anchored = false end
-                att = Instance.new("Attachment"); att.Parent = tr
-                mover = Instance.new("LinearVelocity")
-                mover.Attachment0 = att; mover.MaxForce = 1e9
-                mover.RelativeTo = Enum.ActuatorRelativeTo.World
-                mover.VectorVelocity = vel; mover.Parent = tr
-            end)
+            local ev    = dir * power + Vector3.new(0, power, 0)
+            if hum then hum.PlatformStand = true end
+            -- SPIN-COLLIDE: unanchored root spun inside them = the collision that launches them (the version
+            -- you saw work). Also shove their own velocity every frame as a booster.
             local t0 = tick()
-            while tick() - t0 < 0.45 do
-                for _, p in ipairs(parts) do
-                    pcall(function()
-                        p.AssemblyLinearVelocity  = vel
-                        p.AssemblyAngularVelocity = Vector3.new(60, 200, 60)   -- tumble so they don't just slide
-                    end)
+            while tick() - t0 < 0.14 do
+                local r = getRoot(); local t2 = targetChar.Parent and charPart(targetChar)
+                if not (r and t2) then break end
+                r.CFrame = t2.CFrame
+                r.AssemblyAngularVelocity = Vector3.new(0, 9e5, 0)
+                for _, p in ipairs(targetChar:GetDescendants()) do
+                    if p:IsA("BasePart") then pcall(function() p.AssemblyLinearVelocity = ev end) end
                 end
                 RunService.Heartbeat:Wait()
             end
-            pcall(function() if mover then mover:Destroy() end end)
-            pcall(function() if att then att:Destroy() end end)
         end)
-        flingBusy = false   -- guaranteed reset; you never moved so you can never be stuck/killed
+        -- HARD RECOVERY: lock you back at your spot, zero velocity, for 0.7s so the fling momentum / fall
+        -- can never carry you off = the "fling kills me" fix. (Anchor for the hold = truly immovable.)
+        pcall(function()
+            local r = getRoot()
+            if r then
+                r.AssemblyAngularVelocity = Vector3.zero; r.AssemblyLinearVelocity = Vector3.zero
+                r.CFrame = savedCF
+                if hum then hum.PlatformStand = false; hum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+            end
+            local t1 = tick()
+            while tick() - t1 < 0.7 do
+                local r2 = getRoot()
+                if r2 then r2.CFrame = savedCF; r2.AssemblyLinearVelocity = Vector3.zero; r2.AssemblyAngularVelocity = Vector3.zero end
+                RunService.Heartbeat:Wait()
+            end
+            if hum then pcall(function() hum.PlatformStand = savedPS or false end) end
+        end)
+        flingBusy = false
     end)
 end
 doFlingPunch = function()   -- assigned to the forward-declared local used by runSwingFeatures
