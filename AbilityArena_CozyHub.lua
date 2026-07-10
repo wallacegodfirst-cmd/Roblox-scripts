@@ -1018,6 +1018,8 @@ doOnePunch = function()   -- assigned to the forward-declared local used by runS
                 if not (c2 and c2.Parent and isAlive(c2)) then dead = true; break end
                 local t2 = charPart(c2); if not t2 then break end
                 pcall(function() root.CFrame = t2.CFrame * CFrame.new(0, 0, 2); root.AssemblyLinearVelocity = Vector3.zero end)
+                -- face the camera AT them so clickAtTarget's world->screen projection always lands on-screen
+                pcall(function() local cam = Workspace.CurrentCamera; if cam then cam.CFrame = CFrame.new(cam.CFrame.Position, t2.Position) end end)
                 clearMyHitLog()
                 clickAtTarget(target, true)   -- the PROVEN farm-damage click (aimed at the enemy)
                 if i % 4 == 0 then firePunchOnce() end
