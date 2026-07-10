@@ -1671,6 +1671,7 @@ do
     local VIM = game:GetService("VirtualInputManager")
     local LP = Players.LocalPlayer
     local enabled, choice, clickDelay = false, "Silence", 0
+    local qteCPS, qteTapGap = 45, 0.02   -- Final Judgment key-sequence solver: presses/sec + down->up gap (both slider-set)
     local WANT = { "confess", "silence", "denial" }   -- the Deadly Sentencing options
     -- PC answers with KEYS (W / A / D), one per option; clicking the button is the MOBILE path only.
     -- Default map matches the on-screen layout (left/up/right); remap via the dropdowns if the game differs.
@@ -1803,11 +1804,79 @@ do
             else task.wait(0.3) end
         end
     end)
+    -- ── FINAL JUDGMENT KEY-SEQUENCE SOLVER ─────────────────────────────────────────────────────────────
+    -- Some Final Judgment builds don't use Confess/Silence/Denial buttons — they FLASH A SEQUENCE OF KEYS
+    -- (digits/letters) you must press fast. This rides the same Auto QTE toggle: it finds the "QTE" GUI, reads
+    -- the currently-shown key, and taps it at qteCPS presses/sec. Speed + tap gap are slider-adjustable.
+    local QDIGITS = {
+        ["0"] = Enum.KeyCode.Zero, ["1"] = Enum.KeyCode.One, ["2"] = Enum.KeyCode.Two, ["3"] = Enum.KeyCode.Three,
+        ["4"] = Enum.KeyCode.Four, ["5"] = Enum.KeyCode.Five, ["6"] = Enum.KeyCode.Six, ["7"] = Enum.KeyCode.Seven,
+        ["8"] = Enum.KeyCode.Eight, ["9"] = Enum.KeyCode.Nine,
+    }
+    local function qUpper(s) return type(s) == "string" and string.upper(s) or "" end
+    local function qKeyFrom(str)
+        str = qUpper(str):gsub("%s+", "")
+        if #str ~= 1 then return nil end
+        if str:match("%a") then return Enum.KeyCode[str] end
+        return QDIGITS[str]
+    end
+    local cachedQTE
+    local function findQTE()
+        if cachedQTE and cachedQTE.Parent then return cachedQTE end
+        cachedQTE = nil
+        local pGui = LP:FindFirstChild("PlayerGui"); if not pGui then return nil end
+        for _, g in ipairs(pGui:GetChildren()) do
+            if string.find(qUpper(g.Name), "QTE") then
+                if not g:IsA("ScreenGui") or g.Enabled then cachedQTE = g; return g end
+            end
+        end
+        for _, d in ipairs(pGui:GetDescendants()) do
+            if d:IsA("GuiObject") and string.find(qUpper(d.Name), "QTE") then cachedQTE = d; return d end
+        end
+        return nil
+    end
+    local function qShown(o)
+        local node = o
+        while node and node:IsA("GuiObject") do if node.Visible == false then return false end; node = node.Parent end
+        return true
+    end
+    local function qCurrentKey(qte)
+        local best, bestScore
+        for _, o in ipairs(qte:GetDescendants()) do
+            if (o:IsA("TextLabel") or o:IsA("TextButton")) and o.Visible then
+                local key = qKeyFrom(o.Text) or qKeyFrom(o.Name)
+                if key and qShown(o) then
+                    local opaque = 1 - math.clamp(o.TextTransparency or 0, 0, 1)
+                    local score = opaque * 10 + (o.ZIndex or 0)
+                    if not bestScore or score > bestScore then bestScore, best = score, key end
+                end
+            end
+        end
+        return best
+    end
+    local function qTap(key)
+        pcall(function() VIM:SendKeyEvent(true, key, false, game); task.wait(qteTapGap > 0 and qteTapGap or 0.02); VIM:SendKeyEvent(false, key, false, game) end)
+    end
+    task.spawn(function()
+        local last = 0
+        while true do
+            if enabled then
+                local gap = 1 / math.max(qteCPS, 1)
+                if os.clock() - last >= gap then
+                    local qte = findQTE()
+                    if qte then local key = qCurrentKey(qte); if key then qTap(key); last = os.clock() end end
+                end
+                task.wait()
+            else task.wait(0.25) end
+        end
+    end)
     AutoQTEApi_setAnti = function(v) antiJudge = v == true end
     AutoQTEApi = {
         set = function(v) enabled = v == true end,
         setChoice = function(c) choice = tostring(c or "Silence") end,
         setDelay = function(v) if type(v) == "number" then clickDelay = v / 100 end end,   -- slider is 0-100 -> 0-1s
+        setSpeed = function(v) if type(v) == "number" then qteCPS = math.clamp(v, 1, 120) end end,           -- Final Judgment: presses per second
+        setTapGap = function(v) if type(v) == "number" then qteTapGap = math.clamp(v / 1000, 0, 0.2) end end, -- Final Judgment: ms slider -> seconds between down/up
     }
 end
 
@@ -3543,8 +3612,10 @@ do
 		local er = enemyChar:FindFirstChild("HumanoidRootPart")
 		if domainOn and DOMAINS[id] and tick() - domainCd > 3 then domainCd = tick(); domainReact(DOMAINS[id], enemyChar) end   -- caster passed -> 'To User + Hit' hits the RIGHT person
 		if counterOn and COUNTERS[id] and er and dist(er) <= 26 and tick() - counterCd > 0.8 then counterCd = tick(); counterReact(enemyChar) end
-		-- AUTO ADAPT: on the AnimationPlayed event (so it is TIMED to the attack, not polled), if a nearby enemy starts ANY of the full captured attack-id list OR a block-dict attack -> press 4 (after ADAPT_LEAD). 0.35s de-dupe = one adapt per swing.
-		if adaptOn and er and dist(er) <= 20 and tick() - adaptCd > 0.35 then local dict = _G.VX_ANIMDICT; if ADAPT_IDS[id] or (dict and dict[id]) then adaptCd = tick(); playAdapt(id) end end
+		-- AUTO ADAPT: on the AnimationPlayed event (so it is TIMED to the attack, not polled), if an enemy starts ANY
+		-- of the full captured attack-id list OR a block-dict attack -> press 4 (after ADAPT_LEAD). 0.35s de-dupe.
+		-- Range is 60 (was 20 = melee only) so Gojo's ULT / ranged casts (Purple, Red, Unlimited Void) trigger it too.
+		if adaptOn and er and dist(er) <= 60 and tick() - adaptCd > 0.35 then local dict = _G.VX_ANIMDICT; if ADAPT_IDS[id] or (dict and dict[id]) then adaptCd = tick(); playAdapt(id) end end
 		-- AUTO EVASIVE rides the SAME proven event: nearby enemy starts any attack -> the i-frame dash fires
 		if _G.VX_EVADE and er and dist(er) <= 30 then local dict = _G.VX_ANIMDICT; if ADAPT_IDS[id] or (dict and dict[id]) or COUNTERS[id] then _G.VX_EVADE() end end
 		if _G.VX_AUTOCOUNTER_ON and _G.VX_AUTOCOUNTER then _G.VX_AUTOCOUNTER(enemyChar, id) end  -- AUTO COUNTER reacts on the SAME event = counters before the hit lands, on every attack id
@@ -9455,6 +9526,8 @@ do
     auSec:Toggle({ Name = "Auto QTE Click (Higuruma Final Judgment)", Callback = function(b) if AutoQTEApi then AutoQTEApi.set(b) end end })
     auSec:Dropdown({ Name = "QTE Answer", Items = { "Silence", "Denial", "Confess" }, Default = "Silence", Callback = function(v) if AutoQTEApi then AutoQTEApi.setChoice(v) end end })
     auSec:Slider({ Name = "Click Delay", Min = 0, Max = 100, Default = 0, Decimals = 1, Callback = function(v) if AutoQTEApi then AutoQTEApi.setDelay(v) end end })
+    auSec:Slider({ Name = "QTE Speed (presses/sec)", Min = 5, Max = 120, Default = 45, Decimals = 1, Callback = function(v) if AutoQTEApi then AutoQTEApi.setSpeed(v) end end })
+    auSec:Slider({ Name = "QTE Click Gap (ms)", Min = 0, Max = 100, Default = 20, Decimals = 1, Callback = function(v) if AutoQTEApi then AutoQTEApi.setTapGap(v) end end })
     auSec:Toggle({ Name = "Anti Final Judgment (dash away)", Callback = function(b) if AutoQTEApi_setAnti then AutoQTEApi_setAnti(b) end end })
     auSec:Toggle({ Name = "Auto Grab", Callback = function(b) if ItemsApi then ItemsApi.setGrab(b) end end })
     auSec:Dropdown({ Name = "Grab Filter", Items = ((ItemsApi and ItemsApi.names()) or { "Any" }), Default = "Any", Callback = function(v) if ItemsApi then ItemsApi.setFilter(v) end end })
