@@ -3125,7 +3125,17 @@ end end)
 -- scan can be a little broader because it also inspects the prompt itself.
 FARM_CKW = { fossil = {"fossil"}, gem = {"gem","mineral","gemstone","crystal"} }
 FARM_PKW = { fossil = {"fossil","excavat","dig","unearth"}, gem = {"gem","mineral","gemstone","crystal","topaz","quartz","ruby","emerald","amethyst","sapphire","diamond","harvest","mine"} }
+-- EXCLUSION keywords: a node matching the OTHER kind must be skipped. Gem prompts also say "Dig"/"Excavate",
+-- so fossil mode's keyword fallback was classifying every gemstone as a fossil ("collecting gems, not fossils").
+FARM_XKW = { fossil = {"gem","mineral","gemstone","crystal","topaz","quartz","ruby","emerald","amethyst","sapphire","diamond"}, gem = {"fossil"} }
 local function kwHit(name, list) if not name then return false end name=name:lower(); for _,k in ipairs(list) do if name:find(k,1,true) then return true end end return false end
+local function kindMismatch(kind, prompt)   -- does this prompt/its part chain belong to the OTHER resource?
+	local x = FARM_XKW[kind]; if not x then return false end
+	if kwHit(prompt.ActionText, x) or kwHit(prompt.Name, x) then return true end
+	local p = prompt.Parent
+	for _ = 1, 4 do if p then if kwHit(p.Name, x) then return true end; p = p.Parent end end
+	return false
+end
 local function farmContainers(kind)
 	local cs={}
 	local function add(inst) if inst and not table.find(cs,inst) then cs[#cs+1]=inst end end
@@ -3159,9 +3169,9 @@ local function gatherNodes(kind, range)
 			scanned+=1; if scanned>10000 or #out>=250 then break end
 			if d:IsA("ProximityPrompt") then
 				local part=d.Parent
-				if part and part:IsA("BasePart") then addNode(part.Parent, part) end
-			elseif d:IsA("BasePart") and (d.Name=="MineralBase" or d.Name=="FossilS" or kwHit(d.Name, FARM_CKW[kind])) then
-				addNode(d.Parent, d)
+				if part and part:IsA("BasePart") and not kindMismatch(kind, d) then addNode(part.Parent, part) end   -- skip the OTHER resource's prompts (mixed containers)
+			elseif d:IsA("BasePart") and ((kind=="gem" and d.Name=="MineralBase") or (kind=="fossil" and d.Name=="FossilS") or kwHit(d.Name, FARM_CKW[kind])) then
+				addNode(d.Parent, d)   -- kind-SPECIFIC part names: MineralBase is a GEM part - counting it for fossils collected gems
 			end
 		end
 		if scanned>10000 or #out>=250 then break end
@@ -3174,6 +3184,7 @@ local function gatherNodes(kind, range)
 			if d:IsA("ProximityPrompt") then
 				local hit = kwHit(d.ActionText, FARM_PKW[kind]) or kwHit(d.Name, FARM_PKW[kind])
 				if not hit then local p=d.Parent; for _=1,4 do if p then if kwHit(p.Name, FARM_PKW[kind]) then hit=true; break end; p=p.Parent end end end
+				if hit and kindMismatch(kind, d) then hit=false end   -- "Dig"/"Excavate" also matches GEM prompts - the other kind's nodes never count
 				if hit then local part=d.Parent; if part and part:IsA("BasePart") then addNode(part.Parent, part) end end
 			end
 		end
