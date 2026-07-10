@@ -411,6 +411,42 @@ local function isAlive(char)
     if type(hp) == "number" then return hp > 0 end
     return true -- custom health we cannot read -> assume alive so they stay targetable
 end
+-- Read a target's CURRENT health from whatever source this game uses (Humanoid, a Health attribute, or a
+-- ValueBase named Health). Returns (hp, readable): readable=false means we genuinely can't see their HP.
+local function readHealth(char)
+    if not char then return 0, false end
+    local h = char:FindFirstChildOfClass("Humanoid")
+    if h and h.MaxHealth > 0 then return h.Health, true end
+    local hp = char:GetAttribute("Health")
+    if type(hp) == "number" then return hp, true end
+    local hv = char:FindFirstChild("Health")
+    if hv and hv:IsA("ValueBase") and type(hv.Value) == "number" then return hv.Value, true end
+    if hv then for _, v in ipairs(hv:GetDescendants()) do if v:IsA("ValueBase") and type(v.Value) == "number" then return v.Value, true end end end
+    return 0, false
+end
+-- Tiny on-screen readout so One Punch / Fling SHOW what happened (no F9 needed): target found, hits landed,
+-- their HP before -> after, whether they died / were launched. This is how you verify it in-game.
+local _cbStatus
+local function comboStatus(txt, color)
+    pcall(function()
+        if not _cbStatus then
+            local g = Instance.new("ScreenGui")
+            g.Name = "\0"; g.ResetOnSpawn = false; g.IgnoreGuiInset = true; g.DisplayOrder = 99997
+            g.Parent = (gethui and gethui()) or game:GetService("CoreGui")
+            if not g.Parent then g.Parent = LP:WaitForChild("PlayerGui") end
+            local l = Instance.new("TextLabel")
+            l.AnchorPoint = Vector2.new(0.5, 0); l.Position = UDim2.new(0.5, 0, 0, 96); l.Size = UDim2.fromOffset(460, 30)
+            l.BackgroundColor3 = Color3.fromRGB(10, 10, 12); l.BackgroundTransparency = 0.15; l.BorderSizePixel = 0
+            l.Font = Enum.Font.GothamBold; l.TextSize = 14; l.TextColor3 = Color3.fromRGB(255, 255, 255); l.Text = ""
+            Instance.new("UICorner", l).CornerRadius = UDim.new(0, 8); l.Parent = g
+            _cbStatus = l
+        end
+        _cbStatus.Text = tostring(txt); _cbStatus.TextColor3 = color or Color3.fromRGB(255, 255, 255)
+        _cbStatus.Visible = true
+        local mine = txt
+        task.delay(3, function() if _cbStatus and _cbStatus.Text == mine then _cbStatus.Visible = false end end)
+    end)
+end
 
 -- A safe MAP SPAWN to land on (workspace.GameMap.Spawns = invisible neon Parts).
 -- Used to return you to the map after grabbing an ability so you don't get
@@ -959,34 +995,47 @@ doOnePunch = function()   -- assigned to the forward-declared local used by runS
     task.spawn(function()
         pcall(function()
             local target = nearestPlayer(120)
-            if not (target and target.Character) then firePunchOnce(); return end
+            if not (target and target.Character) then comboStatus("One Punch: no target in range", Color3.fromRGB(235,180,70)); firePunchOnce(); return end
             local tr = charPart(target.Character); local root = getRoot()
             if not (tr and root) then firePunchOnce(); return end
             local savedCF = root.CFrame
-            -- FORCE BOTH documented damage paths ON for the burst: (1) grow YOUR arms (the game runs its own
-            -- hit-detection off them and sends the real damaging UseM1A) and (2) grow the enemy hit parts. Either
-            -- alone lands hits; both = the game builds a Hits list for every swing = real server damage = the kill.
-            punchGrowUntil = tick() + 3
+            local hp0, canRead = readHealth(target.Character)
+            -- FORCE BOTH documented damage paths ON: (1) grow YOUR arms (the game runs its own hit-detection off
+            -- them and sends the real damaging UseM1A) and (2) grow the enemy hit parts. Both = a Hits list per swing.
+            punchGrowUntil = tick() + 4
             local parts = hitboxParts(target.Character)
             local origSizes = {}
             for _, p in ipairs(parts) do pcall(function() origSizes[p] = p.Size; p.Size = Vector3.new(60, 60, 60) end) end
-            -- Warp point-blank on their back ONCE, then hammer a SUSTAINED damaging M1 burst (real hits) while
-            -- firing the One Punch ability alongside. This is the "kill on punch": ~N real M1s at a giant hitbox.
             pcall(function() root.CFrame = tr.CFrame * CFrame.new(0, 0, 2); root.AssemblyLinearVelocity = Vector3.zero end)
             firePunchOnce()
-            local n = math.clamp(tonumber(S.OnePunchHits) or 20, 1, 60)
-            for i = 1, n do
-                local t2 = target.Character and target.Character.Parent and charPart(target.Character)
-                if not t2 then break end
-                pcall(function() root.CFrame = t2.CFrame * CFrame.new(0, 0, 2); root.AssemblyLinearVelocity = Vector3.zero end)   -- stay on them if they move
+            -- KILL LOOP: keep landing real M1s at the target UNTIL their HP hits 0 (or a hard cap). Closed-loop
+            -- means we don't guess a burst size - we stop exactly when they're dead. Cap scales with the slider.
+            local cap = math.clamp(tonumber(S.OnePunchHits) or 20, 5, 60) * 2
+            local i, dead = 0, false
+            while i < cap do
+                i += 1
+                local c2 = target.Character
+                if not (c2 and c2.Parent and isAlive(c2)) then dead = true; break end
+                local t2 = charPart(c2); if not t2 then break end
+                pcall(function() root.CFrame = t2.CFrame * CFrame.new(0, 0, 2); root.AssemblyLinearVelocity = Vector3.zero end)
                 clearMyHitLog()
-                clickAtTarget(target, true)   -- the PROVEN farm-damage click (aimed at the enemy, not screen-center which the menu can eat)
-                if i % 5 == 0 then firePunchOnce() end   -- re-cast the ability periodically through the burst
+                clickAtTarget(target, true)   -- the PROVEN farm-damage click (aimed at the enemy)
+                if i % 4 == 0 then firePunchOnce() end
                 task.wait(0.05)
             end
             punchGrowUntil = 0
             for p, sz in pairs(origSizes) do pcall(function() if p and p.Parent then p.Size = sz end end) end
             pcall(function() root.CFrame = savedCF; root.AssemblyLinearVelocity = Vector3.zero end)
+            -- REPORT so you can see it working in-game
+            local hp1 = readHealth(target.Character)
+            if dead or not (target.Character and target.Character.Parent) or not isAlive(target.Character) then
+                comboStatus("One Punch: KILLED " .. target.Name, Color3.fromRGB(90,235,120))
+            elseif canRead then
+                comboStatus(("One Punch: %s  HP %d -> %d  (%d hits)"):format(target.Name, math.floor(hp0), math.floor(hp1), i),
+                    (hp1 < hp0) and Color3.fromRGB(120,220,255) or Color3.fromRGB(235,90,90))
+            else
+                comboStatus("One Punch: " .. i .. " hits on " .. target.Name .. " (HP not readable)", Color3.fromRGB(200,200,210))
+            end
         end)
         onePunchBusy = false
     end)
@@ -1007,6 +1056,7 @@ local function contactFling(targetChar)
     if not (myRoot and tr) then return end
     flingBusy = true
     local savedCF = myRoot.CFrame
+    local startEnemyPos = tr.Position
     task.spawn(function()
         local hum = getHum()
         local savedPS = hum and hum.PlatformStand
@@ -1047,12 +1097,20 @@ local function contactFling(targetChar)
             end
             if hum then pcall(function() hum.PlatformStand = savedPS or false end) end
         end)
+        -- REPORT whether they actually launched (so you can see it without guessing): compare their position.
+        pcall(function()
+            local t2 = targetChar and targetChar.Parent and charPart(targetChar)
+            local moved = t2 and (t2.Position - startEnemyPos).Magnitude or 0
+            if moved > 12 then comboStatus(("Fling: LAUNCHED (%d studs)"):format(math.floor(moved)), Color3.fromRGB(90,235,120))
+            else comboStatus("Fling: did not launch (server owns them) - try One Punch", Color3.fromRGB(235,180,70)) end
+        end)
         flingBusy = false
     end)
 end
 doFlingPunch = function()   -- assigned to the forward-declared local used by runSwingFeatures
     local p = nearestPlayer(S.FlingRange or 40)
-    if p and p.Character then contactFling(p.Character) end
+    if p and p.Character then contactFling(p.Character)
+    else comboStatus("Fling: no target in range", Color3.fromRGB(235,180,70)) end
 end
 
 -- (Old standalone M1 Warp hook REMOVED — M1 Warp now lives in the swing-start hook above with the
