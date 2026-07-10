@@ -771,77 +771,43 @@ hook(UserInputService.InputBegan, function(i, gpe)
 end)
 
 -- ============================================================
--- ONE PUNCH — M1 PACKET BURST. (The physics fling could not stick: enemy bodies are server-owned
--- in this game, so velocity writes were visual-only and got snapped back.)
--- This instead rides the REAL M1 wire format (user's SimpleSpy capture of a live swing):
---   \005 UseM1A \003 .  <8-byte GetServerTimeNow>  \000\000  <32-hex session id>  \001\000\000\000
--- Each click sends a burst of these with a FRESH timestamp each, so one punch lands like many.
--- The 32-hex id is per-session: we scan YOUR character for it; if not found we fall back to the
--- textbox/_G override, then to a random id. (No __namecall hook here — this game 267-kicks a hooked
--- namecall, see the M1 Spy note above — so the packet is crafted byte-exact, not intercepted.)
+-- ONE PUNCH — CAST THE GAME'S OWN ABILITY. Screenshot: "One Punch" is a real ability at
+-- ReplicatedStorage.Files.Shared.Core.Abilities["One Punch"]. The GAME already flings people with it
+-- server-side, so forging M1/velocity packets was the wrong path entirely — we just fire ITS StartSkill
+-- packet on each click. That's the exact wire the game itself sends, so the server runs the real fling.
+-- You must OWN / have One Punch equipped (use the Skills tab "Get Ability" on "One Punch" first). The
+-- ability name is overridable via the textbox in case the game renames it.
 -- ============================================================
-local OP_PRE  = string.char(5).."UseM1A"..string.char(3).."."
-local OP_MID  = string.char(0,0)
-local OP_TAIL = string.char(1,0,0,0)
-local function opRandomId()
-    local hex, t = "0123456789abcdef", {}
-    for i = 1, 32 do local n = math.random(1, 16); t[i] = hex:sub(n, n) end
-    return table.concat(t)
+local function punchAbilityName()
+    local n = tostring(S.OnePunchGuid or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    return (n ~= "") and n or "One Punch"
 end
-local function opIs32Hex(v) return type(v) == "string" and #v == 32 and v:match("^%x+$") ~= nil end
--- The 32-hex id is PER-SESSION (two captures, two different ids), and the plain character scan wasn't
--- finding it = random-id packets = the server drops every one ("One Punch doesn't work"). The client has
--- to hold the live id in memory to build its own packets, so we now DEEP-HUNT it: instance scan + a
--- capped getgc memory sweep, collect EVERY 32-hex candidate, and rotate through them across the burst —
--- whichever candidate is the real id, those packets land.
-local opCands, opCandsT = nil, 0
-local function opGather()
-    local found, seen = {}, {}
-    local function add(v, src) if opIs32Hex(v) and not seen[v] then seen[v] = true; found[#found + 1] = { v, src } end end
-    add(_G.AA_M1_GUID, "manual"); add(S.OnePunchGuid, "textbox")
+-- Direct remote path too (belt-and-suspenders): the ability's own "One Punch" RemoteEvent, fired with no
+-- args, exactly as the game's ability module would. Cached; resolves lazily.
+local punchRemote
+local function resolvePunchRemote()
+    if punchRemote and punchRemote.Parent then return punchRemote end
+    punchRemote = nil
     pcall(function()
-        for _, v in pairs(LP:GetAttributes()) do add(v, "player-attr") end
-        local char = getChar()
-        if char then
-            for _, v in pairs(char:GetAttributes()) do add(v, "char-attr") end
-            for _, d in ipairs(char:GetDescendants()) do
-                if d:IsA("StringValue") then add(d.Value, "char." .. d.Name) end
-                for _, v in pairs(d:GetAttributes()) do add(v, "char-attr." .. d.Name) end
-            end
-        end
-        local mine = Workspace:FindFirstChild(LP.Name)   -- the workspace body can differ from LP.Character here
-        if mine and mine ~= getChar() then
-            for _, v in pairs(mine:GetAttributes()) do add(v, "ws-attr") end
-            for _, d in ipairs(mine:GetDescendants()) do
-                if d:IsA("StringValue") then add(d.Value, "ws." .. d.Name) end
-                for _, v in pairs(d:GetAttributes()) do add(v, "ws-attr." .. d.Name) end
-            end
+        local ab = RS:FindFirstChild("Files"); ab = ab and ab:FindFirstChild("Shared")
+        ab = ab and ab:FindFirstChild("Core"); ab = ab and ab:FindFirstChild("Abilities")
+        local op = ab and ab:FindFirstChild(punchAbilityName())
+        if op then
+            local re = op:FindFirstChild(punchAbilityName()) or op:FindFirstChildWhichIsA("RemoteEvent") or op:FindFirstChildWhichIsA("RemoteFunction")
+            if re and (re:IsA("RemoteEvent") or re:IsA("RemoteFunction")) then punchRemote = re end
         end
     end)
-    pcall(function()   -- MEMORY sweep: the Jolt client code holds the id in a table somewhere
-        if typeof(getgc) ~= "function" then return end
-        local scanned = 0
-        for _, o in ipairs(getgc(true)) do
-            if type(o) == "table" then
-                scanned += 1; if scanned > 60000 or #found >= 12 then break end
-                pcall(function()
-                    for k, v in pairs(o) do
-                        if type(v) == "string" then add(v, "memory") end
-                        if type(k) == "string" then add(k, "memory-key") end
-                    end
-                end)
-            end
-        end
-    end)
-    return found
+    return punchRemote
 end
-local function opCandidates()
-    if opCands and tick() - opCandsT < 60 then return opCands end   -- the gc sweep is heavy: cache 60s
-    opCands = opGather(); opCandsT = tick()
-    return opCands
+local function firePunchOnce()
+    fireSkill(punchAbilityName())                         -- 1) the StartSkill packet on Jolt_Reliable (the game's own path)
+    local re = resolvePunchRemote()                       -- 2) the ability's own remote, if it exists, as a direct trigger
+    if re then
+        pcall(function()
+            if re:IsA("RemoteEvent") then re:FireServer() else re:InvokeServer() end
+        end)
+    end
 end
-hook(LP.CharacterAdded, function() opCands = nil end)   -- session id may change on respawn: re-hunt
-local function buildM1A(id) return OP_PRE .. nowStamp() .. OP_MID .. (id or opRandomId()) .. OP_TAIL end
 local onePunchCD = 0
 hook(UserInputService.InputBegan, function(i, gpe)
     if gpe then return end
@@ -852,27 +818,13 @@ hook(UserInputService.InputBegan, function(i, gpe)
     if tick() - onePunchCD < 0.25 then return end
     onePunchCD = tick()
     task.spawn(function()
-        local cands = opCandidates()
         local n = math.clamp(tonumber(S.OnePunchHits) or 8, 1, 50)
-        for j = 1, n do
-            local id = (#cands > 0) and cands[(j - 1) % #cands + 1][1] or nil
-            fireRaw(buildM1A(id))   -- rotate every candidate id: the real one's packets land
-            task.wait(0.03)
+        for _ = 1, n do
+            firePunchOnce()   -- cast the game's real One Punch ability (server does the fling)
+            task.wait(0.05)
         end
     end)
 end)
--- Debug: list every candidate id found (F9 console + a toast) so we can pin down where the real one lives.
-local function opPrintIds()
-    opCands = nil   -- force a fresh hunt
-    local cands = opCandidates()
-    print("[OnePunch] candidate ids found: " .. #cands)
-    for _, c in ipairs(cands) do print("[OnePunch]  " .. c[1] .. "   <- " .. c[2]) end
-    pcall(function()
-        game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title = "One Punch", Text = #cands .. " candidate id(s) found - open F9 console", Duration = 6,
-        })
-    end)
-end
 
 -- ============================================================
 -- FLING PUNCH — CONTACT fling (the version that CAN work). Writing velocity onto the ENEMY is cosmetic
@@ -949,12 +901,22 @@ hook(UserInputService.InputBegan, function(i, gpe)
     if not (tr and root) then return end
     warpBusy = true
     local savedCF = root.CFrame
-    pcall(function()
-        local behind = tr.Position - tr.CFrame.LookVector * 2.2           -- dead-center on their back
-        root.CFrame = CFrame.new(behind, tr.Position)                     -- facing them = the swing connects
-        root.AssemblyLinearVelocity = Vector3.zero
-    end)
-    task.delay(0.28, function()                                           -- long enough for the swing to register
+    task.spawn(function()
+        -- HOLD behind them every frame through the swing window: a single CFrame write gets reverted by the
+        -- game before the M1 detection runs (that's why it "did nothing"). Re-asserting keeps you on their
+        -- back the whole time your arm sweeps, so the game's own hit query lands the swing.
+        local t0 = tick()
+        while tick() - t0 < 0.3 do
+            local r = getRoot()
+            local t2 = p and p.Character and charPart(p.Character)
+            if not (r and t2) then break end
+            pcall(function()
+                local behind = t2.Position - t2.CFrame.LookVector * 2.2   -- dead-center on their back, tracking if they move
+                r.CFrame = CFrame.new(behind, t2.Position)                -- facing them = the swing connects
+                r.AssemblyLinearVelocity = Vector3.zero
+            end)
+            RunService.Heartbeat:Wait()
+        end
         local r = getRoot()
         if S.M1WarpReturn and r then pcall(function() r.CFrame = savedCF; r.AssemblyLinearVelocity = Vector3.zero end) end
         warpBusy = false
@@ -2559,10 +2521,9 @@ CombatTab:CreateSlider({Name="Ability Hitbox Size", Range={1,300}, Increment=1, 
 CombatTab:CreateToggle({Name="Show Hitbox (cyan box - off = invisible)", CurrentValue=true, Flag="HitboxVisible", Callback=function(v) S.HitboxVisible=v end})
 
 CombatTab:CreateSection("One Punch")
-CombatTab:CreateToggle({Name="One Punch (each M1 hits like a burst)", CurrentValue=false, Flag="OnePunch", Callback=function(v) S.OnePunch=v end})
-CombatTab:CreateSlider({Name="Punches per Click", Range={1,50}, Increment=1, Suffix="hits", CurrentValue=8, Flag="OnePunchHits", Callback=function(v) S.OnePunchHits=v end})
-CombatTab:CreateInput({Name="One Punch ID (paste the 32-hex id from an M1 capture if it misses)", PlaceholderText="auto", Callback=function(v) v=tostring(v or ""):gsub("%s+",""); S.OnePunchGuid=v; opCands=nil end})
-CombatTab:CreateButton({Name="Find Punch IDs (prints candidates to F9)", Callback=function() opPrintIds() end})
+CombatTab:CreateToggle({Name="One Punch (M1 casts the game's One Punch ability)", CurrentValue=false, Flag="OnePunch", Callback=function(v) S.OnePunch=v end})
+CombatTab:CreateSlider({Name="Casts per Click", Range={1,50}, Increment=1, Suffix="casts", CurrentValue=8, Flag="OnePunchHits", Callback=function(v) S.OnePunchHits=v end})
+CombatTab:CreateInput({Name="Ability Name (default: One Punch - change if the game renamed it)", PlaceholderText="One Punch", Callback=function(v) v=tostring(v or ""):gsub("^%s+",""):gsub("%s+$",""); S.OnePunchGuid=v end})
 CombatTab:CreateToggle({Name="Fling Punch (M1 spin-flings the nearest enemy)", CurrentValue=false, Flag="FlingPunch", Callback=function(v) S.FlingPunch=v end})
 CombatTab:CreateSlider({Name="Fling Range", Range={10,120}, Increment=5, Suffix="studs", CurrentValue=40, Flag="FlingRange", Callback=function(v) S.FlingRange=v end})
 
