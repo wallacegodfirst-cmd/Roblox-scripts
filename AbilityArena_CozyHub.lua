@@ -1068,8 +1068,17 @@ local function contactFling(targetChar)
             local power = tonumber(S.FlingPower) or 850
             local ev    = dir * power + Vector3.new(0, power, 0)
             if hum then hum.PlatformStand = true end
-            -- SPIN-COLLIDE: unanchored root spun inside them = the collision that launches them (the version
-            -- you saw work). Also shove their own velocity every frame as a booster.
+            -- SPIN-COLLIDE: a BodyAngularVelocity CONSTRAINT holds the spin against the solver's damping (setting
+            -- AssemblyAngularVelocity raw gets reset mid-step) = far stronger, more consistent momentum transfer
+            -- into their body on contact = the real launch. Overlap them each frame + booster on their velocity.
+            local bav
+            pcall(function()
+                bav = Instance.new("BodyAngularVelocity")
+                bav.AngularVelocity = Vector3.new(0, 4e5, 0)
+                bav.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
+                bav.P = 1e5
+                bav.Parent = myRoot
+            end)
             local t0 = tick()
             while tick() - t0 < 0.14 do
                 local r = getRoot(); local t2 = targetChar.Parent and charPart(targetChar)
@@ -1081,6 +1090,7 @@ local function contactFling(targetChar)
                 end
                 RunService.Heartbeat:Wait()
             end
+            pcall(function() if bav then bav:Destroy() end end)
         end)
         -- HARD RECOVERY: lock you back at your spot, zero velocity, for 0.7s so the fling momentum / fall
         -- can never carry you off = the "fling kills me" fix. (Anchor for the hold = truly immovable.)
