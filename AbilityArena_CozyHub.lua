@@ -310,6 +310,8 @@ local S = {
     M1Hitbox=false, M1HitboxSize=80,   -- 80 default: long spear-arm reach (arms = slider*1.5 forward, thin sides)
     HitboxAbility=false, HitboxAbilitySize=40, HitboxAllParts=false, HitboxVisible=true,
     OnePunch=false, OnePunchHits=8, OnePunchGuid="",   -- One Punch: each M1 click sends a burst of extra M1 packets
+    FlingPunch=false, FlingRange=40,                   -- contact fling: warp into the target spinning = collision throws them
+    M1Warp=false, M1WarpRange=60, M1WarpReturn=true,   -- M1 Warp: snap behind the nearest enemy for the swing, then back
     AutoM1=false,
     AutoAbility=false, AutoAbilityRange=25,
     CastE=true, CastQ=false, CastR=false, CastT=false,
@@ -820,6 +822,93 @@ hook(UserInputService.InputBegan, function(i, gpe)
             fireRaw(buildM1A())   -- your real click already fired the game's own M1; these stack on top of it
             task.wait(0.03)
         end
+    end)
+end)
+
+-- ============================================================
+-- FLING PUNCH — CONTACT fling (the version that CAN work). Writing velocity onto the ENEMY is cosmetic
+-- (their body is simulated by their client / the server, so it snaps back — that's why the old fling did
+-- nothing). YOUR character, though, is client-owned and everything it does replicates. So: warp INSIDE the
+-- target while spinning your root at extreme angular velocity for a few frames — the physical COLLISION
+-- transfers the momentum on their side and throws them — then snap back to where you were.
+-- ============================================================
+local flingBusy = false
+local function contactFling(targetChar)
+    if flingBusy then return end
+    local root = getRoot(); local tr = charPart(targetChar)
+    if not (root and tr) then return end
+    flingBusy = true
+    local savedCF = root.CFrame
+    task.spawn(function()
+        local hum = getHum()
+        local savedPS = hum and hum.PlatformStand
+        pcall(function() if hum then hum.PlatformStand = true end end)   -- don't let your own humanoid fight the spin
+        local t0 = tick()
+        while tick() - t0 < 0.45 do
+            local r = getRoot()
+            local t2 = targetChar and targetChar.Parent and charPart(targetChar)
+            if not (r and t2) then break end
+            pcall(function()
+                r.CFrame = t2.CFrame                                      -- stay INSIDE them so the bodies collide
+                r.AssemblyAngularVelocity = Vector3.new(0, 9e5, 0)        -- the spin that carries the momentum
+                r.AssemblyLinearVelocity  = Vector3.zero
+            end)
+            RunService.Heartbeat:Wait()
+        end
+        local r = getRoot()
+        pcall(function()
+            if r then
+                r.AssemblyAngularVelocity = Vector3.zero
+                r.AssemblyLinearVelocity  = Vector3.zero
+                r.CFrame = savedCF                                        -- back to your spot like nothing happened
+            end
+            if hum then hum.PlatformStand = savedPS or false end
+        end)
+        task.delay(0.1, function()   -- one extra settle write: the snap-back can get eaten by the spin's last replication tick
+            local r2 = getRoot()
+            if r2 then pcall(function() r2.CFrame = savedCF; r2.AssemblyLinearVelocity = Vector3.zero; r2.AssemblyAngularVelocity = Vector3.zero end) end
+            flingBusy = false
+        end)
+    end)
+end
+hook(UserInputService.InputBegan, function(i, gpe)
+    if gpe then return end
+    if not S.FlingPunch then return end
+    if typingNow() then return end
+    if i.UserInputType ~= Enum.UserInputType.MouseButton1 and i.UserInputType ~= Enum.UserInputType.Touch then return end
+    if mouseOverGui() then return end
+    local p = nearestPlayer(S.FlingRange or 40)
+    if p and p.Character then contactFling(p.Character) end
+end)
+
+-- ============================================================
+-- M1 WARP — the M1 EXPANDER REPLACEMENT. Instead of stretching your reach out to the enemy (giant arms the
+-- server can reject), it brings YOU to the enemy: on every M1 click, snap point-blank behind the nearest
+-- enemy so the game's OWN hit detection lands the swing at zero distance, then snap back to where you stood.
+-- No hitbox edits at all = nothing for the server to validate away.
+-- ============================================================
+local warpBusy = false
+hook(UserInputService.InputBegan, function(i, gpe)
+    if gpe then return end
+    if not S.M1Warp or warpBusy then return end
+    if typingNow() then return end
+    if i.UserInputType ~= Enum.UserInputType.MouseButton1 and i.UserInputType ~= Enum.UserInputType.Touch then return end
+    if mouseOverGui() then return end
+    local p = nearestPlayer(S.M1WarpRange or 60)
+    local tr = p and p.Character and charPart(p.Character)
+    local root = getRoot()
+    if not (tr and root) then return end
+    warpBusy = true
+    local savedCF = root.CFrame
+    pcall(function()
+        local behind = tr.Position - tr.CFrame.LookVector * 2.2           -- dead-center on their back
+        root.CFrame = CFrame.new(behind, tr.Position)                     -- facing them = the swing connects
+        root.AssemblyLinearVelocity = Vector3.zero
+    end)
+    task.delay(0.28, function()                                           -- long enough for the swing to register
+        local r = getRoot()
+        if S.M1WarpReturn and r then pcall(function() r.CFrame = savedCF; r.AssemblyLinearVelocity = Vector3.zero end) end
+        warpBusy = false
     end)
 end)
 
@@ -2424,6 +2513,13 @@ CombatTab:CreateSection("One Punch")
 CombatTab:CreateToggle({Name="One Punch (each M1 hits like a burst)", CurrentValue=false, Flag="OnePunch", Callback=function(v) S.OnePunch=v end})
 CombatTab:CreateSlider({Name="Punches per Click", Range={1,25}, Increment=1, Suffix="hits", CurrentValue=8, Flag="OnePunchHits", Callback=function(v) S.OnePunchHits=v end})
 CombatTab:CreateInput({Name="One Punch ID (paste the 32-hex id from an M1 capture if it misses)", PlaceholderText="auto", Callback=function(v) v=tostring(v or ""):gsub("%s+",""); S.OnePunchGuid=v end})
+CombatTab:CreateToggle({Name="Fling Punch (M1 spin-flings the nearest enemy)", CurrentValue=false, Flag="FlingPunch", Callback=function(v) S.FlingPunch=v end})
+CombatTab:CreateSlider({Name="Fling Range", Range={10,120}, Increment=5, Suffix="studs", CurrentValue=40, Flag="FlingRange", Callback=function(v) S.FlingRange=v end})
+
+CombatTab:CreateSection("M1 Warp")
+CombatTab:CreateToggle({Name="M1 Warp (M1 snaps you behind the nearest enemy)", CurrentValue=false, Flag="M1Warp", Callback=function(v) S.M1Warp=v end})
+CombatTab:CreateSlider({Name="M1 Warp Range", Range={10,200}, Increment=5, Suffix="studs", CurrentValue=60, Flag="M1WarpRange", Callback=function(v) S.M1WarpRange=v end})
+CombatTab:CreateToggle({Name="Warp Back After Swing", CurrentValue=true, Flag="M1WarpReturn", Callback=function(v) S.M1WarpReturn=v end})
 
 CombatTab:CreateSection("Auto")
 CombatTab:CreateToggle({Name="Auto M1 (click spam)", CurrentValue=false, Flag="AutoM1", Callback=function(v) S.AutoM1=v end})
