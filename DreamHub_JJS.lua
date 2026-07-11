@@ -32,6 +32,7 @@ do
 		["rbxassetid://74145636023952"] = 0.19,
 		["rbxassetid://72475960800126"] = 0.20,
 		["rbxassetid://123171106092050"] = 0.19,
+		["rbxassetid://120133391090244"] = 0.19,   -- your character's M1 (from your recording) = BF now fires for you
 	}
 	local CFG = { Enabled = false, Aim = false, DebugUnknownAnimations = false, TriggerKey = Enum.KeyCode.Three, Cooldown = 0.3, TimingOffset = 0, AnimatorWait = 8 }
 	-- AIM (the user's explicit ask: "add the aim thing inside the BF"): when on, face the nearest enemy's back +
@@ -3935,7 +3936,7 @@ do
 			if not quakeOn or holding then return end
 			holding = true
 			task.spawn(function()
-				local hold = tonumber(_G.VX_QUAKE_HOLD) or 2.0
+				local hold = tonumber(_G.VX_QUAKE_HOLD) or 0.83   -- your recording: 3 held 0.32s->1.15s = 0.83s charge, not 2s
 				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + hold + 0.6
 				-- ONE clean hold: press 3 DOWN once, keep it down 2s, release once = charged shockwave. (Re-sending
 				-- down every frame made the game read it as tapping 3 repeatedly instead of a single hold.)
