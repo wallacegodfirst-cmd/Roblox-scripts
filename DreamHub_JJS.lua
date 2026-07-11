@@ -966,11 +966,8 @@ local function vxResolveAC()
 	local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
 	local svc = k and k:FindFirstChild("AntiCheatService"); local re = svc and svc:FindFirstChild("RE"); re = re and re:FindFirstChild("Teleport")
 	if re and re:IsA("RemoteEvent") then vxACRemote = re; return re end
-	for _, d in ipairs(RS:GetDescendants()) do   -- fallback: prefer an AntiCheat-parented "Teleport" (game update renamed the known path)
+	for _, d in ipairs(RS:GetDescendants()) do   -- fallback: an AntiCheat-parented "Teleport" only (firing a non-anticheat "Teleport" remote breaks it)
 		if d:IsA("RemoteEvent") and string.lower(d.Name) == "teleport" and string.find(string.lower(d:GetFullName()), "anticheat") then vxACRemote = d; return d end
-	end
-	for _, d in ipairs(RS:GetDescendants()) do   -- broader: ANY RemoteEvent named exactly "Teleport" (whole AntiCheat folder renamed)
-		if d:IsA("RemoteEvent") and string.lower(d.Name) == "teleport" then vxACRemote = d; return d end
 	end
 	return nil
 end
@@ -1998,15 +1995,18 @@ do
         if animator:GetAttribute("VXBFM1Hooked") then return end
         animator:SetAttribute("VXBFM1Hooked", true)
         animator.AnimationPlayed:Connect(function(track)
-            if not Settings.BFM1 then return end
+            if not (Settings.BFM1 or Settings.AutoBF) then return end
             local id = track.Animation and track.Animation.AnimationId
-            local dly = id and AnimationTriggers[id]     -- ONLY the 5 known BF windup ids (no random fire)
+            local dly = id and AnimationTriggers[id]     -- known BF windup ids
+            -- Otherwise ANY real M1 swing of THIS character rides the standard window. VX_IS_M1 requires a real
+            -- click within 0.4s, so it fires only on genuine M1s, never randomly, and works on every character.
+            if not dly and _G.VX_IS_M1 and _G.VX_IS_M1(track) then dly = 0.19 end
             if not dly then return end
             if bfPending or tick() - R.bfCD < Settings.BFCooldown then return end
             bfPending = true
             task.delay(dly, function()
                 bfPending = false
-                if Settings.BFM1 and tick() - R.bfCD >= Settings.BFCooldown then R.bfCD = tick(); pressBF() end
+                if (Settings.BFM1 or Settings.AutoBF) and tick() - R.bfCD >= Settings.BFCooldown then R.bfCD = tick(); pressBF() end
             end)
         end)
     end
@@ -2029,14 +2029,6 @@ do
         end
         if input.UserInputType == Enum.UserInputType.MouseButton1 and Settings.Enabled and Settings.Mode == "M1" then
             task.spawn(doBFM1Chain); return
-        end
-        -- AUTO BLACK FLASH: every M1 click auto-presses 3 a beat later so the swing becomes a Black Flash.
-        -- Click-based = works on EVERY character (the anim-id path only catches 5 specific windups). Own 0.25s debounce.
-        if input.UserInputType == Enum.UserInputType.MouseButton1 and Settings.AutoBF then
-            if tick() - (R.autoBFClick or 0) >= 0.25 then
-                R.autoBFClick = tick()
-                task.delay(0.12, function() if Settings.AutoBF then pressBF() end end)
-            end
         end
     end)
     LocalPlayer.CharacterAdded:Connect(ReleaseAll)
@@ -3887,13 +3879,9 @@ do
 		if re then pcall(function() re:FireServer(eq) end); return true end
 		return false
 	end
-	task.spawn(function()
-		while true do
-			if quakeOn then
-				if fireQuake() then task.wait(6) else task.wait(0.4) end   -- fired -> wait the cooldown; couldn't fire (airborne/no move) -> retry soon
-			else task.wait(0.3) end
-		end
-	end)
+	-- No auto-fire loop: it must NOT press 3 on its own. It only turns YOUR 3-press into a 2s charged hold
+	-- via the InputBegan hook below. fireQuake stays defined but unused.
+	if false then fireQuake() end
 
 	-- ---------- AUTO KILL-EMOTE ----------
 	-- When a nearby enemy DIES, play your emote (taunt on the kill) via the EmoteService remote. No teleport
@@ -3949,11 +3937,13 @@ do
 			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end   -- our own injected 3: ignore
 			holding = true
 			task.spawn(function()
-				local hold = tonumber(_G.VX_QUAKE_HOLD) or 2.0   -- HOLD 3 for 2s (user spec) so the earthquake fully charges before release
+				local hold = tonumber(_G.VX_QUAKE_HOLD) or 2.0   -- hold 3 for 2s so it fully charges before release
+				local t0 = tick()
+				repeat task.wait() until (not UISq:IsKeyDown(Enum.KeyCode.Three)) or tick() - t0 > 0.4   -- let YOUR tap lift first, else your key-up cuts our hold short
 				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + hold + 0.5
 				pcall(function()
 					VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)   -- start the charge
-					task.wait(hold)                                            -- hold it
+					task.wait(hold)                                            -- hold it 2s
 					VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)  -- release = shockwave
 				end)
 				task.wait(0.2); holding = false
@@ -9454,12 +9444,12 @@ do
         elseif m == "M1 Chain" then _G.VXBF2.setBFM1(false); _G.VXBF2.setMode("M1"); _G.VXBF2.setEnabled(true)
         else _G.VXBF2.setBFM1(false); _G.VXBF2.setMode(m); _G.VXBF2.setEnabled(true) end
     end })
-    bfSec:Toggle({ Name = "Auto Black Flash (M1 = press 3)", Default = false, Callback = function(b) if _G.VXBF2 then _G.VXBF2.setAutoBF(b) end end })   -- free: every M1 auto-presses 3 = black flash, works on all characters
+    bfSec:Toggle({ Name = "Auto Black Flash", Default = false, Callback = function(b) if _G.VXBF2 then _G.VXBF2.setAutoBF(b) end end })   -- free: every M1 auto-presses 3 = black flash, works on all characters
     bfSec:Slider({ Name = "BF Cooldown", Min = 0.1, Max = 2, Default = 0.5, Decimals = 0.05, Suffix = "s", Callback = function(v) if _G.VXBF2 then _G.VXBF2.setCooldown(v) end end })
     if tier("premium") then bfSec:Slider({ Name = "Teleport/Jump Dist", Min = 2, Max = 8, Default = 3, Decimals = 0.5, Callback = function(v) if _G.VXBF2 then _G.VXBF2.setTeleportDist(v) end end }) end
     -- FREE feint keeps only M1 + Moves(skills); premium adds Feint Black Flash
     -- Feint M1 as a direct TOGGLE (dropdown Callbacks are unreliable on this UI lib; toggles always fire).
-    bfSec:Toggle({ Name = "Feint M1 (R after N M1s)", Default = false, Callback = function(b) if ChainApi then ChainApi.setFeintMode(b and "M1" or "Off") end end })
+    bfSec:Toggle({ Name = "Feint M1", Default = false, Callback = function(b) if ChainApi then ChainApi.setFeintMode(b and "M1" or "Off") end end })
     bfSec:Dropdown({ Name = "Feint After (M1 count)", Items = { "1", "2", "3" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintM1Count(v) end end })
     if tier("premium") then bfSec:Dropdown({ Name = "Stop After", Items = { "1", "2", "3", "4" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintBFStop(v) end end }) end
     if tier("premium") then bfSec:Dropdown({ Name = "Move After Feint", Items = { "1", "2", "3", "4" }, Default = "1", Callback = function(v) if ChainApi then ChainApi.setFeintMove(v) end end }) end
