@@ -1180,7 +1180,7 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 end
 
 -- TP METHOD: "Glide" (DEFAULT - the PROVEN stepped glide that works in-game) steps there at the speed cap,
-local VX_TP_METHOD = "Instant"
+local VX_TP_METHOD = "Auto"   -- Auto = instant, then stepped glide, then slow glide - whichever lands first
 
 local function vxTpToast(msg)  -- visible red warning when a teleport FAILS (VX_NOTIFY isn't built yet at this point in the file)
 	pcall(function()
@@ -1194,62 +1194,79 @@ local function vxTpToast(msg)  -- visible red warning when a teleport FAILS (VX_
 	end)
 end
 
-local function vxTeleportHard(dest, holdTime)
-	-- ALWAYS INSTANT (reverted): the stepped-fallback experiment made teleports glide/fight themselves
-	if typeof(dest) == "CFrame" then dest = dest.Position end
-	vxGlide(dest, nil, math.max(holdTime or 3, 2))
-	if true then return end
+-- ALL-OUT teleport: three escalating strategies, auto-advancing whenever the anti-cheat pushes you back.
+--   A) instant whitelisted snap (fastest, works most of the time)
+--   B) the ORIGINAL speed-capped stepped glide (the engine from the era teleports worked every time):
+--      per-frame steps under the anti-cheat's speed limit, whitelist + PivotTo every frame
+--   C) the same glide at half speed with a longer hold (for the strictest checks)
+-- Reports which strategy landed; only complains if ALL THREE were pushed back.
+local function vxSteppedGlide(dest, speed, holdTime)   -- SYNCHRONOUS stepped glide; returns true if it ended near dest
 	local LP = game:GetService("Players").LocalPlayer
+	local function myChar() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
+	vxTeleGen = vxTeleGen + 1; local gen = vxTeleGen
+	local acPass = vxACPass
+	local char = myChar(); local hrp = char and char:FindFirstChild("HumanoidRootPart"); if not hrp then return false end
+	local hum = char:FindFirstChildOfClass("Humanoid"); local rot = hrp.CFrame.Rotation
+	for _, v in ipairs(hrp:GetChildren()) do
+		if v:IsA("AlignPosition") or v:IsA("AlignOrientation") or v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("BodyGyro") or v:IsA("LinearVelocity") or v:IsA("VectorForce") then pcall(function() v:Destroy() end) end
+	end
+	if hum then pcall(function() hum.PlatformStand = true end) end
+	local dt = 1/60
+	local startT = tick()
+	while tick() - startT < 25 do
+		if vxTeleGen ~= gen then return false end
+		local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
+		acPass()
+		local to = dest - hrp.Position; local d = to.Magnitude
+		if d < 3 then break end
+		local step = math.max(speed, 12) * dt   -- studs THIS frame = speed * real frame time; stays under the per-tick distance limit
+		local stepCF = CFrame.new(hrp.Position + to.Unit * math.min(d, step)) * rot
+		pcall(function() hrp.CFrame = stepCF; hrp.AssemblyLinearVelocity = Vector3.zero end)
+		pcall(function() cc:PivotTo(stepCF) end)   -- also PivotTo: moves the WHOLE model (some rigs don't follow a bare HRP.CFrame write)
+		dt = task.wait()                            -- next step uses the ACTUAL frame delta
+	end
+	local h0 = tick()
+	while tick() - h0 < (holdTime or 3) do
+		if vxTeleGen ~= gen then return false end
+		local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
+		acPass()
+		local destCF = CFrame.new(dest) * rot
+		pcall(function() hrp.CFrame = destCF; hrp.AssemblyLinearVelocity = Vector3.zero end)
+		pcall(function() cc:PivotTo(destCF) end)
+		task.wait(0.03)
+	end
+	if vxTeleGen == gen and hum then pcall(function() hum.PlatformStand = false end) end
+	local cEnd = myChar(); local hEnd = cEnd and cEnd:FindFirstChild("HumanoidRootPart")
+	return hEnd ~= nil and (hEnd.Position - dest).Magnitude < 12
+end
+local function vxTeleportHard(dest, holdTime)
 	if typeof(dest) == "CFrame" then dest = dest.Position end
 	task.spawn(function()
-		vxTeleGen = vxTeleGen + 1; local gen = vxTeleGen
-		local function myChar() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
-		local acPass = vxACPass
-		local char = myChar(); local hrp = char and char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
-		local hum = char:FindFirstChildOfClass("Humanoid"); local rot = hrp.CFrame.Rotation
-		for _, v in ipairs(hrp:GetChildren()) do
-			if v:IsA("AlignPosition") or v:IsA("AlignOrientation") or v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("BodyGyro") or v:IsA("LinearVelocity") or v:IsA("VectorForce") then pcall(function() v:Destroy() end) end
+		local LP = game:GetService("Players").LocalPlayer
+		local function near()
+			local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+			local h = c and c:FindFirstChild("HumanoidRootPart")
+			return h ~= nil and (h.Position - dest).Magnitude < 12
 		end
-		if hum then pcall(function() hum.PlatformStand = true end) end
-		local dt = 1/60
-		local startT = tick()
-		while tick() - startT < 25 do
-			if vxTeleGen ~= gen then return end
-			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
-			acPass()
-			local to = dest - hrp.Position; local d = to.Magnitude
-			if d < 3 then break end
-			local step = math.max(VX_TP_SPEED, 12) * dt   -- studs THIS frame = speed * real frame time; stays under the per-tick distance limit -> no snap-back
-			local stepCF = CFrame.new(hrp.Position + to.Unit * math.min(d, step)) * rot
-			pcall(function() hrp.CFrame = stepCF; hrp.AssemblyLinearVelocity = Vector3.zero end)
-			pcall(function() cc:PivotTo(stepCF) end)   -- also PivotTo: moves the WHOLE model (some rigs don't follow a bare HRP.CFrame write)
-			dt = task.wait()                            -- next step uses the ACTUAL frame delta
+		local function toast(m) pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "Dream Hub", Text = m, Duration = 4 }) end) end
+		-- A) instant snap (skipped when the dropdown forces Glide)
+		if VX_TP_METHOD ~= "Glide" then
+			vxGlide(dest, nil, math.max(holdTime or 2, 1.2))
+			task.wait(math.max(holdTime or 2, 1.2) + 0.25)
+			if near() then return end
+			if VX_TP_METHOD == "Instant" then vxTpToast("TP pushed back - switch TP Method to Glide (or Auto)"); return end
 		end
-		local h0 = tick()
-		while tick() - h0 < (holdTime or 3) do
-			if vxTeleGen ~= gen then return end
-			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
-			acPass()
-			local destCF = CFrame.new(dest) * rot
-			pcall(function() hrp.CFrame = destCF; hrp.AssemblyLinearVelocity = Vector3.zero end)
-			pcall(function() cc:PivotTo(destCF) end)
-			task.wait(0.03)
+		-- B) the original stepped glide at the set speed
+		if not near() then
+			if vxSteppedGlide(dest, VX_TP_SPEED, holdTime or 3) or near() then toast("TP landed (glide)"); return end
 		end
-		if vxTeleGen == gen and hum then pcall(function() hum.PlatformStand = false end) end
-		task.wait(0.15)
-		if vxTeleGen ~= gen then return end
-		local cEnd = myChar(); local hEnd = cEnd and cEnd:FindFirstChild("HumanoidRootPart")
-		if hEnd and (hEnd.Position - dest).Magnitude > 15 then
-			vxGlide(dest, nil, 2)   -- retry: one instant snap + 2s hold
-			task.delay(2.4, function()
-				local c3 = myChar(); local h3 = c3 and c3:FindFirstChild("HumanoidRootPart")
-				if h3 and (h3.Position - dest).Magnitude > 15 then
-					local re = vxResolveAC()
-					vxTpToast(re and "TP set back by anti-cheat - lower TP Speed & retry" or "TP whitelist remote GONE - game updated, send F9 print")
-					print("[DreamHub TP] FAILED to hold destination. whitelist remote:", re and re:GetFullName() or "NOT FOUND (game update - run Print TP Remote)")
-				end
-			end)
+		-- C) half speed, longer hold - the strictest fallback
+		if vxSteppedGlide(dest, math.max(math.floor(VX_TP_SPEED / 2), 30), (holdTime or 3) + 1.5) or near() then
+			toast("TP landed (slow glide)")
+			return
 		end
+		vxTpToast("TP blocked on all 3 methods - tell me and send an F9 screenshot")
+		print("[DreamHub TP] all strategies pushed back. whitelist remote:", (vxResolveAC() and vxResolveAC():GetFullName()) or "NOT FOUND (game updated)")
 	end)
 end
 
@@ -2470,7 +2487,7 @@ do
 	end
 	TPApi = {
 		setSpeed = function(v) if type(v) == "number" then VX_TP_SPEED = v end end,
-		setMethod = function(m) VX_TP_METHOD = (m == "Instant") and "Instant" or "Glide" end,   -- Glide (default, proven) / Instant (one snap)
+		setMethod = function(m) if type(m) == "table" then m = m[1] end VX_TP_METHOD = (m == "Instant" or m == "Glide") and m or "Auto" end,
 		up = function() local r = hrp(); if r then vxTeleportHard(r.Position + Vector3.new(0, 120, 0), 3) end end,
 		spawn = function() local sp = workspace:FindFirstChildOfClass("SpawnLocation"); if sp then vxTeleportHard(sp.Position + Vector3.new(0, 4, 0), 3) end end,
 		nearest = function()
@@ -4089,7 +4106,7 @@ do
 			if not quakeOn or holding then return end
 			holding = true
 			task.spawn(function()
-				local hold = tonumber(_G.VX_QUAKE_HOLD) or 0.83
+				local hold = tonumber(_G.VX_QUAKE_HOLD) or 2.5
 				local began = tick()
 				-- your recording: the game only listens to a REAL full press cycle. While your finger is on 3
 				-- a second injected down is swallowed and your early release kills the charge. So we act on your
@@ -4123,7 +4140,7 @@ do
 			local injK = _G.VX_INJ_KEYS
 			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end   -- our own injected release
 			local held = tick() - threeDownAt
-			startHold(held >= (tonumber(_G.VX_QUAKE_HOLD) or 0.83))   -- you held it long enough yourself -> the quake already fired
+			startHold(held >= (tonumber(_G.VX_QUAKE_HOLD) or 2.5))   -- you held it long enough yourself -> the quake already fired
 		end)
 	end
 	KillEmoteApi = { set = function(v) killEmoteOn = v == true end, setSlot = function(n) killEmoteSlot = tonumber(n) or 1 end }
@@ -5426,8 +5443,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "3.3"
-local VX_BUILD = "B33"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "3.4"
+local VX_BUILD = "B34"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
@@ -9616,12 +9633,14 @@ do
     local bfSub = CombatPage:SubPage({ Name = "Black Flash", Columns = 2 })
     local bfSec = bfSub:Section({ Name = "Black Flash", Side = 1 })
     -- Free gets Off + M1 BF. The chain modes (Side/Back Dash, Jump, Teleport, M1 Chain) are premium.
-    -- The user's exact spec: "when u click, it clicks 3 for you, then the BF script handles it after".
-    --   M1 BF  = your CLICK -> the script presses 3 for you -> the engine converts it (anim-timed press).
-    --   Auto Black Flash = the engine alone (it converts your own manual 3-presses).
+    --   M1 BF = your CLICK -> ONE press of 3 at the flash timing (0.19s after the click, adjustable with
+    --   BF Timing). This is the same press timing as the build that actually flashed - one press, nothing
+    --   else touches the key, so nothing can cancel it.
+    --   Auto Black Flash = the engine alone (converts on the known windup anims).
     local bfM1On, bfAutoOn = false, false
+    local bfClickOffset = 0
     local function bfSync()
-        if BFApi then BFApi.SetEnabled(bfM1On or bfAutoOn) end
+        if BFApi then BFApi.SetEnabled(bfAutoOn) end   -- the engine runs ONLY for Auto BF; M1 BF is the single click-press below
     end
     do
         local UISm = game:GetService("UserInputService")
@@ -9633,10 +9652,8 @@ do
             if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
             if tick() - lastM1BF < 0.6 then return end
             lastM1BF = tick()
-            task.delay(0.14, function()   -- let the M1 land first (same feel as the mobile BF button)
-                -- short mark: just enough that same-frame key-3 triggers skip it, but NOT so long that the
-                -- engine's own timed conversion press (~0.25s later) gets blocked by its key-busy guard
-                _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.1
+            task.delay(math.max(0, 0.19 + bfClickOffset), function()
+                _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.25
                 pcall(function()
                     VIMm:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
                     VIMm:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
@@ -9658,7 +9675,7 @@ do
     end })
     bfSec:Slider({ Name = "BF Cooldown", Min = 0.1, Max = 2, Default = 0.5, Decimals = 0.05, Suffix = "s", Callback = function(v) if _G.VXBF2 then _G.VXBF2.setCooldown(v) end end })
     -- BF Timing: nudge the flash press earlier(-)/later(+) so you can dial in the exact frame for YOUR character (fixes "it just comes out as a move"). 0 = default.
-    bfSec:Slider({ Name = "BF Timing", Min = -0.19, Max = 0.3, Default = 0, Decimals = 0.01, Suffix = "s", Callback = function(v) if BFApi then BFApi.SetTimingOffset(v) end end })
+    bfSec:Slider({ Name = "BF Timing", Min = -0.19, Max = 0.3, Default = 0, Decimals = 0.01, Suffix = "s", Callback = function(v) v = tonumber(v) or 0; bfClickOffset = v; if BFApi then BFApi.SetTimingOffset(v) end end })
     if tier("premium") then bfSec:Slider({ Name = "Teleport/Jump Dist", Min = 2, Max = 8, Default = 3, Decimals = 0.5, Callback = function(v) if _G.VXBF2 then _G.VXBF2.setTeleportDist(v) end end }) end
     -- FREE feint keeps only M1 + Moves(skills); premium adds Feint Black Flash
     -- Feint M1 as a direct TOGGLE (dropdown Callbacks are unreliable on this UI lib; toggles always fire).
@@ -9746,7 +9763,7 @@ do
     if tier("premium") then acSec:Toggle({ Name = "Auto Adapt", Callback = function(b) if AutoAdaptApi then AutoAdaptApi.set(b) end end }) end   -- FREE: no Auto Adapt (Auto Domain Adapt below is kept)
     acSec:Toggle({ Name = "Auto Domain Adapt", Callback = function(b) if AutoDomainAdaptApi then AutoDomainAdaptApi.set(b) end end })
     acSec:Toggle({ Name = "Auto Earthquake", Callback = function(b) if AutoQuakeApi then AutoQuakeApi.set(b) end end })
-    acSec:Slider({ Name = "Quake Hold", Min = 0.3, Max = 2, Default = 0.83, Decimals = 0.01, Suffix = "s", Callback = function(v) _G.VX_QUAKE_HOLD = tonumber(v) or 0.83 end })
+    acSec:Slider({ Name = "Quake Hold", Min = 0.3, Max = 3, Default = 2.5, Decimals = 0.01, Suffix = "s", Callback = function(v) _G.VX_QUAKE_HOLD = tonumber(v) or 2.5 end })
     acSec:Toggle({ Name = "Auto Kill Emote", Callback = function(b) if KillEmoteApi then KillEmoteApi.set(b) end end })
     local keItems = {}   -- slot list with REAL emote names read from PlayerGui.Emotes.Emote.Page1/Page2 (the 'nan' slider is gone)
     for i = 1, 16 do
@@ -9917,7 +9934,7 @@ do
     local locSec = tpSub:Section({ Name = "Locations", Side = 1 })
     if TPApi and TPApi.spotNames then for _, n in ipairs(TPApi.spotNames()) do locSec:Button({ Name = n, Callback = function() if TPApi then TPApi.spot(n) end end }) end end
     local quickSec = tpSub:Section({ Name = "Quick", Side = 2 })
-    quickSec:Dropdown({ Name = "TP Method", Items = { "Instant", "Glide" }, Default = "Instant", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
+    quickSec:Dropdown({ Name = "TP Method", Items = { "Auto", "Instant", "Glide" }, Default = "Auto", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
     quickSec:Slider({ Name = "TP Speed", Min = 16, Max = 400, Default = 130, Decimals = 0, Callback = function(v) if TPApi then TPApi.setSpeed(v) end end })
     quickSec:Button({ Name = "Print TP Remote", Callback = function()
         local RS = game:GetService("ReplicatedStorage"); local found = 0
