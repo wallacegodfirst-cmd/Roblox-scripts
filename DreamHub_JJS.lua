@@ -107,34 +107,17 @@ do
 				pressKey(CFG.TriggerKey)
 			end)
 		end
+		-- EXACTLY your AutoBlackFlash script: match ONLY the known BF windup ids, press 3 at that id's delay.
 		local function matchDelay(id)
-			local d = AnimationTriggers[id]
-			if not d then local num = tostring(id):match("%d+"); if num and _G.VX_M1_IDS and _G.VX_M1_IDS[num] then d = 0.19 end end
-			return d
+			return AnimationTriggers[id]
 		end
-		-- ANIM trigger — REQUIRES a fresh real click within 0.4s, so it presses 3 exactly ONCE per click
-		-- (without this the anim can replay/re-fire = "it does 3 inf"). The click-only trigger below covers the rest.
 		local function onAnim(track)
 			if not CFG.Enabled then return end
-			if tick() - (_G.VX_LAST_CLICK or 0) > 0.4 then return end
 			local id = getAnimationId(track)
 			local delayTime = matchDelay(id)
 			if delayTime then doFlash(delayTime) end
 		end
-		-- CLICK trigger (THE fix for characters NOT in the id database, e.g. King of Curses/Sukuna): a left-click with
-		-- an enemy in melee range fires the flash. The anim-id path never matched for those characters = "M1 BF doesn't
-		-- work on mine"; the click path works on EVERY character.
-		do
-			local UISbf = game:GetService("UserInputService")
-			UISbf.InputBegan:Connect(function(input)
-				if not CFG.Enabled then return end
-				if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-				if UISbf:GetFocusedTextBox() then return end
-				if tick() < (_G.VX_INJECT_UNTIL or 0) then return end   -- ignore our OWN injected clicks
-				local best, bd = bfNearestEnemyHRP()
-				if best and bd and bd <= 16 then doFlash(0.19) end
-			end)
-		end
+		-- (Click trigger removed — your script is anim-only: it flashes on the known BF windup ids, nothing else.)
 	-- BULLETPROOF hook: connect to EVERY animator your body can have — LP.Character AND workspace.Characters[name]
 	-- (JJS can play combat anims on either rig; hooking only one is exactly why M1 BF "randomly" never fired). A
 	-- weak-keyed poller re-hooks after respawn / character swap. One clean listener path, no LP.Character-only guess.
