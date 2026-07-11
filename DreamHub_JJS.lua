@@ -1251,9 +1251,10 @@ local function vxTeleportHard(dest, holdTime)
 			return h ~= nil and (h.Position - dest).Magnitude < 12
 		end
 		local function toast(m) pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "Dream Hub", Text = m, Duration = 4 }) end) end
-		-- INSTANT (default): a TRUE one-frame snap - you are AT the destination on the very first frame (no glide,
-		-- no stepping). Then it aggressively HOLDS: every frame it re-whitelists and, if the server tried to drag
-		-- you off, it re-snaps you straight back. So it looks like a real teleport and refuses to be set back.
+		-- INSTANT (default) - NEW METHOD (the old CFrame+whitelist path was patched by a JJS update): snap to the
+		-- destination in one frame, then ANCHOR the root there. An anchored part can't be shoved by server physics,
+		-- so the anti-cheat's set-back has nothing to push. Held anchored briefly, re-asserted each frame, then
+		-- unanchored so you move normally again. Instant, no glide.
 		if VX_TP_METHOD ~= "Glide" then
 			local function myChar() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
 			vxTeleGen = vxTeleGen + 1; local gen = vxTeleGen
@@ -1261,28 +1262,29 @@ local function vxTeleportHard(dest, holdTime)
 			if hrp then
 				local hum = char:FindFirstChildOfClass("Humanoid"); local rot = hrp.CFrame.Rotation
 				local destCF = CFrame.new(dest) * rot
+				local wasAnchored = hrp.Anchored
 				for _, v in ipairs(hrp:GetChildren()) do
 					if v:IsA("AlignPosition") or v:IsA("AlignOrientation") or v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("BodyGyro") or v:IsA("LinearVelocity") or v:IsA("VectorForce") then pcall(function() v:Destroy() end) end
 				end
-				if hum then pcall(function() hum.PlatformStand = true end) end
-				vxACPass()
-				pcall(function() hrp.CFrame = destCF; hrp.AssemblyLinearVelocity = Vector3.zero end)   -- SNAP (frame 1 = arrived)
+				pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero; hrp.AssemblyAngularVelocity = Vector3.zero end)
 				pcall(function() char:PivotTo(destCF) end)
+				pcall(function() hrp.CFrame = destCF end)          -- SNAP (frame 1 = arrived)
+				pcall(function() hrp.Anchored = true end)           -- LOCK in place so the set-back can't move you
+				vxACPass()
 				local h0 = tick()
-				while tick() - h0 < math.max(holdTime or 1.5, 1.2) do   -- HOLD: re-whitelist + re-snap if dragged off
-					if vxTeleGen ~= gen then return end
-					local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
+				while tick() - h0 < math.max(holdTime or 1.2, 1) do
+					if vxTeleGen ~= gen then break end
+					local cc = myChar(); local hh = cc and cc:FindFirstChild("HumanoidRootPart"); if not hh then break end
+					if hh ~= hrp then hrp = hh; pcall(function() hrp.Anchored = true end) end   -- rig swapped -> re-anchor the new one
+					pcall(function() hrp.CFrame = destCF end)       -- keep asserting the anchored position
 					vxACPass()
-					if (hrp.Position - dest).Magnitude > 4 then
-						pcall(function() hrp.CFrame = destCF; hrp.AssemblyLinearVelocity = Vector3.zero end)
-						pcall(function() cc:PivotTo(destCF) end)
-					end
 					task.wait()
 				end
-				if vxTeleGen == gen and hum then pcall(function() hum.PlatformStand = false end) end
+				pcall(function() if hrp and hrp.Parent then hrp.Anchored = wasAnchored end end)   -- ALWAYS unanchor so you can move
+				task.delay(0.4, function() local cc = myChar(); local hh = cc and cc:FindFirstChild("HumanoidRootPart"); if hh and hh.Anchored and not wasAnchored then pcall(function() hh.Anchored = false end) end end)   -- safety: never leave you frozen
 			end
 			if near() then return end
-			if VX_TP_METHOD == "Instant" then vxTpToast("TP set back by anti-cheat - try Glide method"); return end
+			if VX_TP_METHOD == "Instant" then vxTpToast("TP still blocked - try Glide method"); return end
 		end
 		-- Glide / Auto fallbacks: the original speed-capped glide, then half speed
 		if not near() then
@@ -5510,8 +5512,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "3.8"
-local VX_BUILD = "B38"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "3.9"
+local VX_BUILD = "B39"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
@@ -9699,26 +9701,18 @@ do
 
     local bfSub = CombatPage:SubPage({ Name = "Black Flash", Columns = 2 })
     local bfSec = bfSub:Section({ Name = "Black Flash", Side = 1 })
-    -- M1 BF = its OWN anim watcher (NOT the key-3 engine). When one of your M1 anims plays, it fires the
-    -- chosen BF input after a short delay. Default input = re-click M1 (key 3 was hitting Diver Fist on your
-    -- character - that is a skill slot, not the flash). BF Key lets you map it to whatever your char uses.
+    -- M1 BF: its OWN anim watcher. When one of your M1 anims plays, it presses 3 ONCE right after = the flash,
+    -- then stops. Nothing else touches the key. (Simple + exactly what you asked: detect M1 anim -> click 3.)
     local bfM1On, bfAutoOn = false, false
     local bfClickOffset = 0
-    local bfKey = "M1"   -- M1 / 1 / 2 / 3 / 4 / R
     local M1_ANIMS = {
         ["95295463826732"] = true, ["105077924973072"] = true, ["124862357369335"] = true, ["120133391090244"] = true,
     }
     do
         local VIMbf = game:GetService("VirtualInputManager")
-        local KEYMAP = { ["1"] = Enum.KeyCode.One, ["2"] = Enum.KeyCode.Two, ["3"] = Enum.KeyCode.Three, ["4"] = Enum.KeyCode.Four, ["R"] = Enum.KeyCode.R, ["F"] = Enum.KeyCode.F, ["T"] = Enum.KeyCode.T, ["G"] = Enum.KeyCode.G }
-        local function fireBF()
-            if bfKey == "M1" then
-                pcall(function() VIMbf:SendMouseButtonEvent(0, 0, 0, true, game, 0); VIMbf:SendMouseButtonEvent(0, 0, 0, false, game, 0) end)
-            else
-                local kc = KEYMAP[bfKey]; if not kc then return end
-                _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[kc] = tick() + 0.25
-                pcall(function() VIMbf:SendKeyEvent(true, kc, false, game); VIMbf:SendKeyEvent(false, kc, false, game) end)
-            end
+        local function press3()
+            _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.25
+            pcall(function() VIMbf:SendKeyEvent(true, Enum.KeyCode.Three, false, game); VIMbf:SendKeyEvent(false, Enum.KeyCode.Three, false, game) end)
         end
         local lastBF = 0
         local hooked = setmetatable({}, { __mode = "k" })
@@ -9732,9 +9726,9 @@ do
                     if not bfM1On then return end
                     local id = tr.Animation and tostring(tr.Animation.AnimationId):match("%d+"); if not id then return end
                     if not M1_ANIMS[id] then return end
-                    if tick() - lastBF < 0.35 then return end
+                    if tick() - lastBF < 0.35 then return end   -- one press per M1, then stop
                     lastBF = tick()
-                    task.delay(math.max(0, 0.12 + bfClickOffset), fireBF)
+                    task.delay(math.max(0, 0.12 + bfClickOffset), press3)
                 end)
             end
         end
@@ -9749,7 +9743,6 @@ do
         elseif m == "M1 Chain" then _G.VXBF2.setBFM1(false); _G.VXBF2.setMode("M1"); _G.VXBF2.setEnabled(true)
         else _G.VXBF2.setBFM1(false); _G.VXBF2.setMode(m); _G.VXBF2.setEnabled(true) end
     end })
-    bfSec:Dropdown({ Name = "BF Key", Items = { "M1", "F", "R", "T", "G", "1", "2", "3", "4" }, Default = "M1", Callback = function(v) bfKey = (type(v) == "table") and v[1] or v end })
     bfSec:Toggle({ Name = "Auto Black Flash", Default = false, Callback = function(b)
         bfAutoOn = (b == true); bfSync()
         if _G.VXBF2 then _G.VXBF2.setAutoBF(false) end   -- avoid the weaker VXBF2 path double-pressing
