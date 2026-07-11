@@ -118,8 +118,7 @@ do
 
 		pcall(function()
 			VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
-			task.wait(0.025)
-			VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+			VirtualInputManager:SendKeyEvent(false, keyCode, false, game)   -- instant: the only variant confirmed converting in-game (the 0.025 gap landed as the plain move)
 		end)
 		return true
 	end
@@ -4014,8 +4013,7 @@ do
 		if re then pcall(function() re:FireServer(eq) end); return true end
 		return false
 	end
-	-- via the InputBegan hook below. fireQuake stays defined but unused.
-	if false then fireQuake() end
+	-- fireQuake is the fallback used by the key trigger below when the key hold didn't actually start the move.
 
 	-- ---------- AUTO KILL-EMOTE ----------
 	-- When a nearby enemy DIES, play your emote (taunt on the kill) via the EmoteService remote. No teleport
@@ -4054,24 +4052,48 @@ do
 
 	MahoTpApi   = { set = function(v) mahoOn = v == true end }
 	AutoQuakeApi = { set = function(v) quakeOn = v == true end }
-	-- Earthquake: you tap 3, the script does the charged hold for you. This is the exact version you confirmed
-	-- working (your recording's timing); the hold length is now a slider because the hard-coded 2s broke it.
+	-- Earthquake: you tap 3, the script does the charged hold for you (Quake Hold slider = the length).
+	-- TWO paths so it ALWAYS lands: (1) the key hold; (2) if your body never actually played the quake
+	-- windup anim, the move clearly didn't start — fire it directly through its own service as a fallback.
 	do
 		local VIMq = game:GetService("VirtualInputManager")
 		local UISq = game:GetService("UserInputService")
+		local QUAKE_ANIM = "rbxassetid://85024950165903"
 		local holding = false
+		local quakeAnimSeen = 0
+		task.spawn(function()   -- watch your live rig for the quake windup anim (proof the move started)
+			local hooked = setmetatable({}, { __mode = "k" })
+			while true do
+				task.wait(0.6)
+				pcall(function()
+					local chs = workspace:FindFirstChild("Characters")
+					local body = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+					local hum = body and body:FindFirstChildOfClass("Humanoid")
+					local a = hum and hum:FindFirstChildOfClass("Animator")
+					if a and not hooked[a] then
+						hooked[a] = a.AnimationPlayed:Connect(function(tr)
+							local ok, id = pcall(function() return tr.Animation.AnimationId end)
+							if ok and tostring(id):find("85024950165903") then quakeAnimSeen = tick() end
+						end)
+					end
+				end)
+			end
+		end)
 		local function startHold()
 			if not quakeOn or holding then return end
 			holding = true
 			task.spawn(function()
 				local hold = tonumber(_G.VX_QUAKE_HOLD) or 0.83
+				local began = tick()
 				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + hold + 0.1
 				pcall(function()
 					VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
 					task.wait(hold)
 					VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
 				end)
-				task.wait(0.05); holding = false   -- reset FAST so every 3-press fires again
+				task.wait(0.3)
+				if quakeAnimSeen < began then pcall(fireQuake) end   -- the hold never started the move -> fire it directly
+				holding = false
 			end)
 		end
 		UISq.InputBegan:Connect(function(input, _)
@@ -5383,7 +5405,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "3.1"
+local VX_VERSION = "3.2"
+local VX_BUILD = "B32"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
@@ -9498,7 +9521,7 @@ do
         end
     end
 
-    local Window = Library:Window({ Name = "Dream Hub  |  " .. tierNice, SubTitle = "", ExpiresIn = "lifetime" })   -- tier in the title, empty subtitle = no red badge overlapping the name
+    local Window = Library:Window({ Name = "Dream Hub  |  " .. tierNice .. "  " .. (VX_BUILD or ""), SubTitle = "", ExpiresIn = "lifetime" })   -- tier + build in the title, empty subtitle = no red badge overlapping the name
 
     -- MINIMIZE button (PC + mobile): a small floating, draggable tap button that hides/shows the whole menu.
     pcall(function()
@@ -9596,7 +9619,7 @@ do
     end })
     bfSec:Slider({ Name = "BF Cooldown", Min = 0.1, Max = 2, Default = 0.5, Decimals = 0.05, Suffix = "s", Callback = function(v) if _G.VXBF2 then _G.VXBF2.setCooldown(v) end end })
     -- BF Timing: nudge the flash press earlier(-)/later(+) so you can dial in the exact frame for YOUR character (fixes "it just comes out as a move"). 0 = default.
-    bfSec:Slider({ Name = "BF Timing", Min = -0.15, Max = 0.15, Default = 0, Decimals = 0.01, Suffix = "s", Callback = function(v) if BFApi then BFApi.SetTimingOffset(v) end end })
+    bfSec:Slider({ Name = "BF Timing", Min = -0.19, Max = 0.3, Default = 0, Decimals = 0.01, Suffix = "s", Callback = function(v) if BFApi then BFApi.SetTimingOffset(v) end end })
     if tier("premium") then bfSec:Slider({ Name = "Teleport/Jump Dist", Min = 2, Max = 8, Default = 3, Decimals = 0.5, Callback = function(v) if _G.VXBF2 then _G.VXBF2.setTeleportDist(v) end end }) end
     -- FREE feint keeps only M1 + Moves(skills); premium adds Feint Black Flash
     -- Feint M1 as a direct TOGGLE (dropdown Callbacks are unreliable on this UI lib; toggles always fire).
@@ -10067,33 +10090,51 @@ do
         -- SOUND: a click/sfx whenever you press anything in the menu. Pick the sound, or paste any Roblox sound id.
         do
             local SS = game:GetService("SoundService")
-            local SOUNDS = {   -- name -> { id, volume, speed, maxSeconds (nil = play out) }
-                ["Keyboard (Basic)"] = { "rbxassetid://7147420522", 0.6, 1 },
-                ["Goku Scream"]      = { "rbxassetid://6157432689", 0.5, 1, 1.6 },
-                ["Jesus Rising"]     = { "rbxassetid://104307285983733", 0.5, 1, 1.6 },
-                ["67"]               = { "rbxassetid://117816189937562", 0.5, 1, 1.6 },
-                ["Money"]            = { "rbxassetid://7112275565", 0.6, 1, 1.6 },
+            -- Each sound = a LIST of candidate ids. On pick we test them in order and keep the first that
+            -- actually loads (audio gets deleted/region-blocked all the time; one dead id must not mean silence).
+            local SOUNDS = {   -- name -> { ids = {...}, vol, speed, maxSeconds (nil = play out) }
+                ["Keyboard (Basic)"] = { ids = { "rbxassetid://7147420522", "rbxassetid://6895079853" }, vol = 0.6, speed = 1 },
+                ["Goku Scream"]      = { ids = { "rbxassetid://6157432689", "rbxassetid://4972273967", "rbxassetid://130976109" }, vol = 0.5, speed = 1, cut = 1.6 },
+                ["Jesus Rising"]     = { ids = { "rbxassetid://104307285983733", "rbxassetid://271069318" }, vol = 0.5, speed = 1, cut = 1.6 },
+                ["67"]               = { ids = { "rbxassetid://117816189937562", "rbxassetid://82773030886915" }, vol = 0.5, speed = 1, cut = 1.6 },
+                ["Money"]            = { ids = { "rbxassetid://7112275565", "rbxassetid://131886985" }, vol = 0.6, speed = 1, cut = 1.6 },
             }
-            local cur = SOUNDS["Keyboard (Basic)"]
+            local cur, curName = SOUNDS["Keyboard (Basic)"], "Keyboard (Basic)"
             local snd, playGen = nil, 0
             local function ensureSnd()
                 if snd and snd.Parent then return snd end
                 snd = Instance.new("Sound"); snd.Name = "\0"; snd.Parent = SS
                 return snd
             end
-            local function playClick()
+            local function resolveId(entry, name)   -- test the candidates; cache the winner in entry.good
+                if entry.good then return entry.good end
                 local s = ensureSnd()
-                playGen = playGen + 1; local gen = playGen
-                pcall(function()
-                    if s.SoundId ~= cur[1] then s.SoundId = cur[1] end
-                    s.Volume = cur[2]; s.PlaybackSpeed = cur[3]; s.TimePosition = 0; s:Play()
-                end)
-                if cur[4] then   -- SHORT clip: cut the long memes off after ~1.6s (a newer click restarts them)
-                    task.delay(cur[4], function() pcall(function() if playGen == gen and s.IsPlaying then s:Stop() end end) end)
+                for _, id in ipairs(entry.ids) do
+                    local ok = pcall(function() s.SoundId = id end)
+                    if ok then
+                        local t0 = tick()
+                        while tick() - t0 < 1.2 and not s.IsLoaded do task.wait(0.1) end
+                        if s.IsLoaded and s.TimeLength > 0 then entry.good = id; return id end
+                    end
                 end
-                task.delay(1.5, function() pcall(function() if s.SoundId == cur[1] and not s.IsLoaded then   -- id blocked/moderated -> built-in ping so you always hear something
-                    s.SoundId = "rbxasset://sounds/electronicpingshort.wav"; s.PlaybackSpeed = 1.7; s.Volume = 0.25; s:Play()
-                end end) end)
+                if VX_NOTIFY then VX_NOTIFY(name .. " audio ids are all dead - paste one in Custom Sound ID") end
+                entry.good = "rbxasset://sounds/electronicpingshort.wav"   -- always make SOME noise
+                return entry.good
+            end
+            local function playClick()
+                playGen = playGen + 1; local gen = playGen
+                task.spawn(function()
+                    local id = resolveId(cur, curName)
+                    if gen ~= playGen then return end   -- a newer click superseded this one while we resolved
+                    local s = ensureSnd()
+                    pcall(function()
+                        if s.SoundId ~= id then s.SoundId = id end
+                        s.Volume = cur.vol; s.PlaybackSpeed = cur.speed; s.TimePosition = 0; s:Play()
+                    end)
+                    if cur.cut then   -- SHORT clip: cut the long memes off (a newer click restarts them)
+                        task.delay(cur.cut, function() pcall(function() if playGen == gen and s.IsPlaying then s:Stop() end end) end)
+                    end
+                end)
             end
             local hookedBtn = setmetatable({}, { __mode = "k" })
             local function hookButtons()
@@ -10112,13 +10153,12 @@ do
             end })
             miscSec:Dropdown({ Name = "Click Sound", Items = { "Keyboard (Basic)", "Goku Scream", "Jesus Rising", "67", "Money" }, Default = "Keyboard (Basic)", Callback = function(v)
                 v = (type(v) == "table") and v[1] or v
-                cur = SOUNDS[v] or SOUNDS["Keyboard (Basic)"]
-                if snd then pcall(function() snd.SoundId = cur[1] end) end
-                if _G.VX_UISOUND then playClick() end   -- instant preview
+                cur = SOUNDS[v] or SOUNDS["Keyboard (Basic)"]; curName = v
+                playClick()   -- instant preview (also resolves + reports a dead id right away)
             end })
             miscSec:Textbox({ Name = "Custom Sound ID", Default = "", Callback = function(txt)
                 local id = tostring(txt or ""):match("%d+")
-                if id then cur = { "rbxassetid://" .. id, 0.6, 1 }; if _G.VX_UISOUND then playClick() end end
+                if id then cur = { ids = { "rbxassetid://" .. id }, vol = 0.6, speed = 1, cut = 2 }; curName = "Custom"; playClick() end
             end })
         end
     end
