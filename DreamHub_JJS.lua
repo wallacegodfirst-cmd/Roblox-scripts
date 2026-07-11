@@ -3951,7 +3951,7 @@ do
 			if not quakeOn or holding then return end
 			holding = true
 			task.spawn(function()
-				local hold = tonumber(_G.VX_QUAKE_HOLD) or 0.83   -- your recording: 3 held 0.32s->1.15s = 0.83s charge
+				local hold = tonumber(_G.VX_QUAKE_HOLD) or 2   -- full 2s charge on your press (you wanted the max hold, not the short 0.83s tap)
 				-- clean hold: 3 DOWN, hold 0.83s, UP = shockwave. Short inject-guard window so your NEXT press works.
 				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + hold + 0.1
 				pcall(function()
@@ -3963,7 +3963,7 @@ do
 			end)
 		end
 		local _ = QUAKE_ANIM
-		-- KEY TRIGGER (user: "when I click 3, it does the earthquake"): your tap of 3 -> clean 0.83s hold + release.
+		-- your tap of 3 -> the script holds 3 down for the full 2s charge then releases = the shockwave. It never taps 3 itself.
 		UISq.InputBegan:Connect(function(input, _)
 			if not quakeOn then return end
 			if UISq:GetFocusedTextBox() then return end
@@ -9454,23 +9454,16 @@ do
 
     local bfSub = CombatPage:SubPage({ Name = "Black Flash", Columns = 2 })
     local bfSec = bfSub:Section({ Name = "Black Flash", Side = 1 })
-    -- Mode: "M1 Black Flash" = the standalone snippet (M1 -> press 3, full DB, both rigs) = BFApi. "Auto Chain" =
-    -- the teleport-behind chain + E lock-on-back. E always locks behind regardless (it self-bursts).
-    -- Auto Single = the raw snippet (M1 -> press 3, no movement at all). M1 Black Flash = the same system PLUS
-    -- aim: faces the enemy's back + locks the camera onto them before pressing 3. Auto Chain = the teleport-
-    -- behind approaches below. Only one of these three drives the flash key at a time.
-    -- BF ENGINE = VXBF2 (reworked v13). Keybind is 3. "M1 BF (simple)" = press 3 on the BF anim.
-    -- The chain modes fire when you press 3 (M1 Chain fires on your M1). Free gets M1 BF + Side/Back/Jump; premium adds Teleport + M1 Chain.
-    -- FREE gets ONLY Off + M1 BF (simple). All chain modes (Side/Back Dash, Jump, Teleport, M1 Chain) are premium.
-    bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 BF (simple)", "Side Dash", "Back Dash", "Jump", "Teleport", "M1 Chain" } or { "Off", "M1 BF (simple)" }), Default = "Off", Callback = function(m)
+    -- Free gets Off + M1 BF. The chain modes (Side/Back Dash, Jump, Teleport, M1 Chain) are premium.
+    bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 BF", "Side Dash", "Back Dash", "Jump", "Teleport", "M1 Chain" } or { "Off", "M1 BF" }), Default = "Off", Callback = function(m)
         m = (type(m) == "table") and m[1] or m
         if not _G.VXBF2 then return end
         if m == "Off" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false); if BFApi then BFApi.SetEnabled(false) end
-        elseif m == "M1 BF (simple)" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false); if BFApi then BFApi.SetEnabled(true) end   -- use the PROVEN BFApi module, not the weaker VXBF2 path
+        elseif m == "M1 BF" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false); if BFApi then BFApi.SetEnabled(true) end
         elseif m == "M1 Chain" then _G.VXBF2.setBFM1(false); _G.VXBF2.setMode("M1"); _G.VXBF2.setEnabled(true)
         else _G.VXBF2.setBFM1(false); _G.VXBF2.setMode(m); _G.VXBF2.setEnabled(true) end
     end })
-    bfSec:Toggle({ Name = "Auto Black Flash", Default = false, Callback = function(b)   -- routes through the PROVEN BFApi (anim + click triggers, works on every character); was wired to nothing before
+    bfSec:Toggle({ Name = "Auto Black Flash", Default = false, Callback = function(b)
         if BFApi then BFApi.SetEnabled(b) end
         if _G.VXBF2 then _G.VXBF2.setAutoBF(false) end   -- avoid the weaker VXBF2 path double-pressing
     end })
@@ -9539,7 +9532,7 @@ do
     antiSec:Toggle({ Name = "Anti-Domain", Callback = function(b) if AntiDomainApi then AntiDomainApi.set(b) end end })
     antiSec:Dropdown({ Name = "Domain React", Items = { "Safe Teleport", "To User + Hit" }, Default = "Safe Teleport", Callback = function(v) if AntiDomainApi then AntiDomainApi.setMode(v) end end })
     antiSec:Toggle({ Name = "Anti Black Hole", Callback = function(b) if AntiBlackHoleApi then AntiBlackHoleApi.set(b) end end })
-    antiSec:Toggle({ Name = "Auto Mahito Grab Escape (mash Space)", Callback = function(b) if MahitoGrabApi then MahitoGrabApi.set(b) end end })
+    antiSec:Toggle({ Name = "Auto Mahito Grab Escape", Callback = function(b) if MahitoGrabApi then MahitoGrabApi.set(b) end end })
     antiSec:Toggle({ Name = "Mahoraga Safe TP", Callback = function(b) if MahoTpApi then MahoTpApi.set(b) end end })
 
     -- ===================== AUTO (all the automation toggles in one tab) =====================
