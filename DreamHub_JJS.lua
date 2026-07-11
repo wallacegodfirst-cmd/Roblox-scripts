@@ -9576,7 +9576,7 @@ do
     end
     acSec:Toggle({ Name = "Auto Yuta Black Flash", Default = false, Callback = function(b) if YutaBFApi then YutaBFApi.setAuto(b) end end })
     acSec:Toggle({ Name = "Auto Ult", Callback = function(b) if AutoUltApi then AutoUltApi.set(b) end end })
-    acSec:Toggle({ Name = "Auto Air", Callback = function(b) if AutoAirApi_set then AutoAirApi_set(b) end end })
+    if tier("premium") then acSec:Toggle({ Name = "Auto Air", Callback = function(b) if AutoAirApi_set then AutoAirApi_set(b) end end }) end   -- FREE: Auto Air removed (premium only)
     acSec:Dropdown({ Name = "Auto Slam / Uppercut", Items = { "Off", "Down Slam", "Uppercut" }, Default = "Off", Callback = function(m) if M1ComboApi then M1ComboApi.setMode(m) end end })
     -- (Removed the "Launcher after N hits" slider — the mechanic is now the FIXED real game rule per the wiki:
     -- Uppercut = 4 M1s with Space held, Down Slam = 3 M1s then jump+M1. No slider needed or accurate anymore.)
