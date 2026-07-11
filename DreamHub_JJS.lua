@@ -2030,6 +2030,14 @@ do
         if input.UserInputType == Enum.UserInputType.MouseButton1 and Settings.Enabled and Settings.Mode == "M1" then
             task.spawn(doBFM1Chain); return
         end
+        -- AUTO BLACK FLASH: every M1 click auto-presses 3 a beat later so the swing becomes a Black Flash.
+        -- Click-based = works on EVERY character (the anim-id path only catches 5 specific windups). Own 0.25s debounce.
+        if input.UserInputType == Enum.UserInputType.MouseButton1 and Settings.AutoBF then
+            if tick() - (R.autoBFClick or 0) >= 0.25 then
+                R.autoBFClick = tick()
+                task.delay(0.12, function() if Settings.AutoBF then pressBF() end end)
+            end
+        end
     end)
     LocalPlayer.CharacterAdded:Connect(ReleaseAll)
 
@@ -2037,6 +2045,7 @@ do
         setEnabled = function(v) Settings.Enabled = v == true end,
         setMode = function(m) if type(m) == "string" then Settings.Mode = m end end,   -- Side Dash / Back Dash / Jump / Teleport / M1
         setBFM1 = function(v) Settings.BFM1 = v == true end,
+        setAutoBF = function(v) Settings.AutoBF = v == true end,   -- Auto Black Flash: M1 -> auto press 3
         setSideAssist = function(v) Settings.SideAssist = v == true end,
         setBackAssist = function(v) Settings.BackAssist = v == true end,
         setCooldown = function(v) if type(v) == "number" then Settings.BFCooldown = v end end,
@@ -3940,7 +3949,7 @@ do
 			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end   -- our own injected 3: ignore
 			holding = true
 			task.spawn(function()
-				local hold = tonumber(_G.VX_QUAKE_HOLD) or 0.9
+				local hold = tonumber(_G.VX_QUAKE_HOLD) or 2.0   -- HOLD 3 for 2s (user spec) so the earthquake fully charges before release
 				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + hold + 0.5
 				pcall(function()
 					VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)   -- start the charge
@@ -4522,17 +4531,16 @@ do
 	local Players = game:GetService("Players")
 	local LP = Players.LocalPlayer
 	ResetApi = { reset = function()
-		-- "works once then never": after the first respawn LP.Character goes stale in this game (bodies live in
-		-- workspace.Characters). Resolve BOTH each call and kill whichever has a live humanoid.
+		-- User spec: KILL me but DON'T respawn, and no camera shake. So: set Health=0 only (a clean death) —
+		-- NO BreakJoints (its ragdoll flings your parts = the camera-shake) and NO LoadCharacter (that respawns you).
 		local chs = workspace:FindFirstChild("Characters")
 		for _, c in ipairs({ chs and chs:FindFirstChild(LP.Name), LP.Character }) do
 			if c then
 				local h = c:FindFirstChildOfClass("Humanoid")
 				if h then pcall(function() h.Health = 0 end) end
-				pcall(function() c:BreakJoints() end)
+				pcall(function() c:SetAttribute("Health", 0) end)   -- custom-health games also read this
 			end
 		end
-		pcall(function() LP:LoadCharacter() end)   -- elevated executors: instant fresh character as backup
 	end }
 end
 
@@ -9249,7 +9257,7 @@ do
         return t
     end
 
-    local tierNice = (VX_TIER == "free" and "Free") or (VX_TIER == "plus" and "Plus") or "Premium"
+    local tierNice = (VX_TIER == "free" and "FREE") or (VX_TIER == "plus" and "PLUS") or "VIP"
 
     -- ════════ ABILITY-ARENA GUI PORT (Fluriore) ════════
     -- The hub uses the "Ability Arena" GUI library (Fluriore) instead of the embedded Vaultix UI, per request.
@@ -9357,7 +9365,7 @@ do
         end
     end
 
-    local Window = Library:Window({ Name = "Dream Hub", SubTitle = "  JJS " .. tierNice, ExpiresIn = "lifetime" })   -- clean title (spaced version collided with the JJS badge)
+    local Window = Library:Window({ Name = "Dream Hub  |  " .. tierNice, SubTitle = "", ExpiresIn = "lifetime" })   -- tier in the title, empty subtitle = no red badge overlapping the name
 
     -- MINIMIZE button (PC + mobile): a small floating, draggable tap button that hides/shows the whole menu.
     pcall(function()
@@ -9446,6 +9454,7 @@ do
         elseif m == "M1 Chain" then _G.VXBF2.setBFM1(false); _G.VXBF2.setMode("M1"); _G.VXBF2.setEnabled(true)
         else _G.VXBF2.setBFM1(false); _G.VXBF2.setMode(m); _G.VXBF2.setEnabled(true) end
     end })
+    bfSec:Toggle({ Name = "Auto Black Flash (M1 = press 3)", Default = false, Callback = function(b) if _G.VXBF2 then _G.VXBF2.setAutoBF(b) end end })   -- free: every M1 auto-presses 3 = black flash, works on all characters
     bfSec:Slider({ Name = "BF Cooldown", Min = 0.1, Max = 2, Default = 0.5, Decimals = 0.05, Suffix = "s", Callback = function(v) if _G.VXBF2 then _G.VXBF2.setCooldown(v) end end })
     if tier("premium") then bfSec:Slider({ Name = "Teleport/Jump Dist", Min = 2, Max = 8, Default = 3, Decimals = 0.5, Callback = function(v) if _G.VXBF2 then _G.VXBF2.setTeleportDist(v) end end }) end
     -- FREE feint keeps only M1 + Moves(skills); premium adds Feint Black Flash
