@@ -16,7 +16,6 @@ local ChainApi -- forward-declared: BF Chain control API (assigned in its module
 
 -- ============================================================
 -- MODULE: AUTO BLACK FLASH  (from Autoblackflash.lua)
--- Listens to YOUR animator; on a Black Flash trigger anim it re-presses the
 -- ability key inside the window to convert the hit into a Black Flash.
 -- ============================================================
 do
@@ -36,7 +35,6 @@ do
 	}
 	local CFG = { Enabled = false, Aim = false, DebugUnknownAnimations = false, TriggerKey = Enum.KeyCode.Three, Cooldown = 0.3, TimingOffset = 0, AnimatorWait = 8 }
 	-- AIM (the user's explicit ask: "add the aim thing inside the BF"): when on, face the nearest enemy's back +
-	-- lock the camera onto them for a moment BEFORE pressing the flash key, same as the old lock-on-back system.
 	-- "Auto Single" = CFG.Aim off (the raw snippet, zero movement). "M1 Black Flash" = CFG.Aim on.
 	local function bfNearestEnemyHRP()
 		local LP = player
@@ -117,7 +115,6 @@ do
 			local delayTime = matchDelay(id)
 			if delayTime then doFlash(delayTime) end
 		end
-		-- (Click trigger removed — your script is anim-only: it flashes on the known BF windup ids, nothing else.)
 	-- BULLETPROOF hook: connect to EVERY animator your body can have — LP.Character AND workspace.Characters[name]
 	-- (JJS can play combat anims on either rig; hooking only one is exactly why M1 BF "randomly" never fired). A
 	-- weak-keyed poller re-hooks after respawn / character swap. One clean listener path, no LP.Character-only guess.
@@ -144,9 +141,7 @@ do
 	local function reconnect() hookedAnims = setmetatable({}, { __mode = "k" }); pcall(hookBoth); return true end
 
 	-- KEY-3 TRIGGER (user: "auto bf / m1 bf should work when I click 3"): the anim path above only auto-presses on
-	-- a windup and mistimes ("just a delay after M1"). So ALSO fire off YOUR real 3-press: the instant you tap 3,
 	-- snap-aim to the nearest enemy's back + camera-lock so your flash lands on-target. No extra key press, so your
-	-- 3 is never wasted. Skips our own injected 3 (earthquake hold / auto presses) so they don't cross-fire.
 	do
 		local UISbf = game:GetService("UserInputService")
 		UISbf.InputBegan:Connect(function(input, gpe)
@@ -155,7 +150,7 @@ do
 			if input.KeyCode ~= Enum.KeyCode.Three then return end
 			if UISbf:GetFocusedTextBox() then return end
 			local injK = _G.VX_INJ_KEYS
-			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end   -- ignore our own injected 3
+			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end
 			pcall(bfAim)   -- aim on YOUR press regardless of the Aim toggle (that's the whole point of this trigger)
 		end)
 	end
@@ -173,7 +168,6 @@ end
 
 -- ============================================================
 -- MODULE: AUTO BF CHAIN  (ULTIMATE BACK-LOCK BF CHAIN; standalone GUI stripped)
--- Press E (or a chain trigger anim) -> snap behind -> Black Flash -> back-lock chain.
 -- ============================================================
 do
 	local ContextActionService = game:GetService("ContextActionService")
@@ -203,13 +197,11 @@ do
 	local lastM1 = 0      -- M1 Black Flash: debounce so a fast M1 burst only starts the chain once per click
 	local burstUntil = 0  -- self-driving modes (M1 Black Flash / Back Dash / Auto Counter) run the PROVEN teleport chain even if the master "Auto Chain" toggle is off, for a short burst after each trigger
 	local runChain        -- forward-declared: fires the proven teleport black-flash chain (doBackstab), optionally snapping to a specific attacker first (Auto Counter)
-	local fireFlashInPlace  -- forward-declared: the NO-teleport flash press (M1 Black Flash mode) - the wind-up conversion below needs it
-	local m1bfArmed = 0     -- M1 BF: the click ARMS exactly ONE wind-up conversion press (this is what makes the timing right and stops the 4x chain)
-	local function vxMarkKey(kc) _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[kc] = tick() + 0.5 end  -- per-key injection marker (Auto Air ignores a key only if THAT key was injected)
+	local fireFlashInPlace
+	local m1bfArmed = 0
+	local function vxMarkKey(kc) _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[kc] = tick() + 0.5 end
 	local function pressR() _G.VX_INJECT_UNTIL = tick() + 0.35; vxMarkKey(Enum.KeyCode.R); pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.05); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.R, false, game) end) end
 	local FEINT_MOVE_KEYS = { [1] = Enum.KeyCode.One, [2] = Enum.KeyCode.Two, [3] = Enum.KeyCode.Three, [4] = Enum.KeyCode.Four }
-	-- GLOBAL injection guard: EVERY module that injects keys stamps this; every key-triggered feature ignores
-	-- injected keys. (Feint's move-press was triggering Auto Air; Auto Air's taps were triggering the feints.)
 	local function pressKeyTap(kc) _G.VX_INJECT_UNTIL = tick() + 0.35; vxMarkKey(kc); pcall(function() VirtualInputManager:SendKeyEvent(true, kc, false, game); task.wait(0.045); VirtualInputManager:SendKeyEvent(false, kc, false, game) end) end
 	local function pressMove(n) local kc = FEINT_MOVE_KEYS[tonumber(n) or 0]; if kc then pressKeyTap(kc) end end
 	local savedWS, savedJP, savedAR, bfCollideSaved
@@ -221,7 +213,7 @@ do
 		BackDistance    = 1.5,    -- dead-center on the back
 		LockRange       = 34,
 		LockDuration    = 0.32,   -- firmer back-lock (was 0.22 = 'loses lock halfway'). getBehind smoothing + collision-off make a longer hold safe now.
-		PreAttackDelay  = 0.05,   -- settle a beat after the snap so the flash KEY actually registers (0.018 = sometimes eaten -> no flash)
+		PreAttackDelay  = 0.05,
 		KeyHoldDuration = 0.09,
 		PosLead         = 0.14,   -- lead a MOVING target harder so a runner/dasher's back stays under you
 		AbilityKey      = Enum.KeyCode.Three,
@@ -341,7 +333,6 @@ do
 	end
 	-- ═══ USER-CAPTURED combo animation sequences (SimpleSpy movement recordings) ═══ Each mode now plays the REAL
 	-- anims from the recordings the user sent: Side Dash BF, Jump BF, and the base M1→Black-Flash. These are the exact
-	-- ids that fire in-game (M1=95295463826732, BLACK FLASH windup=100962226150441, stance=120133391090244, etc.).
 	local COMBO_ANIMS = {
 		["Side Dash"]      = { "rbxassetid://95295463826732", "rbxassetid://96489184596023", "rbxassetid://100962226150441", "rbxassetid://120133391090244" },
 		["Jump"]           = { "rbxassetid://126572575938378", "rbxassetid://97446412066176", "rbxassetid://100962226150441", "rbxassetid://120133391090244" },
@@ -411,7 +402,7 @@ do
 			local maxStep = 150 * (1 / 60)                                     -- hard cap ~150 studs/s: NOTHING can whip you across the map in one frame
 			if step.Magnitude > maxStep then pos = lastPos + step.Unit * maxStep end
 			lastPos = pos
-			if _G.VX_ACPASS then _G.VX_ACPASS() end                           -- whitelist so the anti-cheat can't drag the arc back
+			if _G.VX_ACPASS then _G.VX_ACPASS() end
 			pcall(function()
 				h.CFrame = CFrame.lookAt(pos, Vector3.new(tp.X, pos.Y, tp.Z)) -- always FACE the target
 				h.AssemblyLinearVelocity = Vector3.zero                        -- no residual physics = no launch
@@ -432,12 +423,12 @@ do
 	local function doApproach(targetHRP, myHRP)  -- PRE-flash movement per mode; the flash + back-lock happens right after (in doBackstab)
 		local m = Settings.Mode
 		if m == "Side Dash" then                                                                   -- CURVE around them to their back (anime run-around), then flash
-			playCombo("Side Dash")   -- user-captured Side Dash BF anim sequence (M1 + walk + black-flash windup + stance)
+			playCombo("Side Dash")
 			fireDash("Right")
 			task.wait(0.1)   -- let the REAL dash impulse actually move you before the orbit takes over — the orbit's first frame zeroes velocity, which was instantly cancelling the dash (= "side dash does nothing")
 			orbitAround(targetHRP, { duration = 0.24, endRadius = math.max(Settings.BackDistance, 3), extraSweep = math.pi * 0.4, endBehind = true })   -- wider, weightier wrap = reads like a real player circling them
 		elseif m == "Jump" then                                                                    -- SPRINT to them (real movement, NO teleport) -> JUMP over -> flash lands on the back
-			playCombo("Jump")   -- user-captured Jump BF anim sequence (fall + land + black-flash windup + stance)
+			playCombo("Jump")
 			local t0 = tick()
 			while tick() - t0 < 1.4 do                                                             -- run-up: drive toward them at sprint speed, facing them
 				local h = getHRP(myCharResolved()); if not (h and targetHRP.Parent) then break end
@@ -497,7 +488,7 @@ do
 			if p:IsA("BasePart") and p.CanCollide then bfCollideSaved[p] = true; pcall(function() p.CanCollide = false end) end
 		end end
 		local behindPos, targetPos = getBehind(targetHRP)
-		if _G.VX_ACPASS then _G.VX_ACPASS() end   -- whitelist the snap so the anti-cheat doesn't revert it (= you actually land on their back)
+		if _G.VX_ACPASS then _G.VX_ACPASS() end
 		local snapCF = CFrame.lookAt(behindPos, targetPos)
 		myHRP.CFrame = snapCF
 		pcall(function() myChar:PivotTo(snapCF) end)   -- move the WHOLE model too (some rigs don't follow a bare HRP write) = reliably AT their back
@@ -508,7 +499,7 @@ do
 		hum.WalkSpeed = 0
 		hum.JumpPower = 0
 		task.wait(Settings.PreAttackDelay)
-		do  -- WAIT to be grounded before the flash key (airborne = the game eats the ability). PASSIVE wait only:
+		do
 			-- the old downward slam, combined with collision-off, tunneled you into the floor = the fling on every mode.
 			local t0 = tick()
 			while hum.FloorMaterial == Enum.Material.Air and tick() - t0 < 0.3 do
@@ -566,7 +557,7 @@ do
 				return
 			end
 			behindPos, targetPos = getBehind(targetHRP)
-			if _G.VX_ACPASS then _G.VX_ACPASS() end   -- whitelist every re-snap so the anti-cheat can't drag you off their back
+			if _G.VX_ACPASS then _G.VX_ACPASS() end
 			local snapCF = CFrame.lookAt(behindPos, targetPos)
 			myHRP.CFrame = snapCF
 			pcall(function() myChar:PivotTo(snapCF) end)   -- keep the WHOLE model pinned to their back
@@ -655,10 +646,8 @@ do
 			-- This is what stops the conflict with Auto Single (which sets ScriptEnabled=false).
 			if not (ScriptEnabled or tick() < burstUntil) or tick() < bfSuppressUntil then return end
 			local mode = Settings.Mode
-			-- ═══ NO E — YOU CLICK, WE PRESS 3 ═══ The M1 swing itself drives the FULL mode combo for EVERY mode
 			-- (Side Dash / Back Dash / Jump / Teleport). On the FIRST swing of a burst we play the visible mode approach
 			-- (the jump / back-dash / side-dash movement), then press the black flash; chained swings just snap+flash so
-			-- the chain stays fast. M1 Black Flash mode is still the standalone BFApi (M1 -> press 3).
 			if mode == "Side Dash" then
 				dashLeft()
 				task.delay(delayTime, function() if Settings.Mode == "Side Dash" then faceBack(); playCombo("Side Dash"); pressFlash() end end)
@@ -712,7 +701,7 @@ do
 			chainTarget = tgt; chainTargetT = tick()
 			local tr = getHRP(tgt)
 			if tr and tr.Parent then                                            -- 1) normal side-dash black flash
-				playCombo("Side Dash")   -- user-captured Side Dash BF anim sequence
+				playCombo("Side Dash")
 				fireDash("Right")
 				local mh0 = getHRP(myCharResolved()); if mh0 then pcall(function() mh0.AssemblyLinearVelocity = Vector3.zero end) end   -- kill the dash-remote velocity BEFORE the orbit (that burst was the back-dash fling)
 				orbitAround(tr, { duration = 0.16, endRadius = math.max(Settings.BackDistance, 3), extraSweep = math.pi * 0.25, endBehind = true })
@@ -783,11 +772,10 @@ do
 				end
 			end
 			-- Feint Abilities: you cast ANY skill (1/2/3/4) -> R right after = feint the move (own toggle OR the dropdown mode)
-			-- (skips OUR OWN injected keys - they were re-triggering this and breaking Feint M1 / Feint BF)
 			local injKeys = _G.VX_INJ_KEYS
 			local keyInjected = injKeys and injKeys[input.KeyCode] and tick() < injKeys[input.KeyCode]
 			if feintMode ~= "M1" and (feintMovesOn or feintMode == "Moves") and MOVEKEYS[input.KeyCode] and tick() >= (_G.VX_INJECT_UNTIL or 0) and not keyInjected then
-				task.delay(0.14, function() pressR() end)   -- (the BF chain's own flash-key press is marked injected now, so this can NO LONGER feint your black flash)
+				task.delay(0.14, function() pressR() end)
 			end
 		end)
 	end
@@ -819,7 +807,6 @@ do
 		mobileBtn.Active = true; mobileBtn.Draggable = false; mobileBtn.Visible = false; mobileBtn.ZIndex = 20; mobileBtn.Parent = mobileGui
 		local uc = Instance.new("UICorner"); uc.CornerRadius = UDim.new(0, 9); uc.Parent = mobileBtn
 		local us = Instance.new("UIStroke"); us.Color = Color3.fromRGB(255, 255, 255); us.Thickness = 1.2; us.Transparency = 0.55; us.Parent = mobileBtn
-		-- DRAGGABLE: tap = fire BF (free: press 3 / premium: old chain), drag = reposition so it never overlaps you.
 		local UISm = game:GetService("UserInputService"); local VIMm = game:GetService("VirtualInputManager")
 		local dragging, moved, ds, sp = false, false, nil, nil
 		mobileBtn.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = true; moved = false; ds = i.Position; sp = mobileBtn.Position end end)
@@ -844,7 +831,7 @@ do
 		if mobileBtn then mobileBtn.Text = mobileLabel(); mobileBtn.Visible = (v == true) end
 	end
 
-	runChain = function(tgt)  -- (forward-declared) fire the PROVEN teleport black-flash chain (doBackstab + the wind-up conversion). Self-driving: works even if the master "Auto Chain" toggle is off, via a short burst. tgt (Auto Counter) = snap to WHO swung first.
+	runChain = function(tgt)
 		burstUntil = tick() + 1.0
 		if tgt and tgt.Parent then
 			chainTarget = tgt; chainTargetT = tick()   -- Auto Counter: lock onto WHO swung and stay on them
@@ -853,7 +840,7 @@ do
 				dashGen = dashGen + 1
 				local bp = getBehind(tHRP)
 				local faceAt = Vector3.new(tHRP.Position.X, bp.Y, tHRP.Position.Z)   -- face the attacker, dead flat
-				if _G.VX_ACPASS then _G.VX_ACPASS() end   -- whitelist so the anti-cheat doesn't revert the snap
+				if _G.VX_ACPASS then _G.VX_ACPASS() end
 				pcall(function() myHRP.CFrame = CFrame.lookAt(bp, faceAt); myHRP.AssemblyLinearVelocity = Vector3.zero end)
 			end
 		end
@@ -930,8 +917,6 @@ end
 -- jumping" / uppercut&downslam never registering) ═══ Every CFrame/AssemblyLinearVelocity write in this whole
 -- file (doBackstab's snap, the teleport glide, the uppercut jump-velocity, downslam's fall-velocity check) is
 -- COSMETIC unless the CLIENT owns network ownership of the HumanoidRootPart's assembly. If the SERVER owns it
--- (very common in anti-cheat-heavy games — this game visibly has one, see the AntiCheatService.Teleport
--- whitelist below), every one of those writes is a LOCAL-ONLY visual override that the server's own physics
 -- simulation silently reverts on its next replication tick — which is EXACTLY "sets me back" and "the server
 -- never sees me as airborne so uppercut/downslam won't trigger". This was never claimed anywhere in the file.
 -- Claiming it is a standard, well-established exploit technique (SetNetworkOwner) and, when the executor's
@@ -948,7 +933,7 @@ local function vxClaimOwnership()
 	end)
 end
 _G.VX_CLAIMOWN = vxClaimOwnership
-task.spawn(function()   -- claim on every spawn + keep re-claiming (some anti-cheats re-assert server ownership periodically)
+task.spawn(function()
 	local Players = game:GetService("Players"); local LP = Players.LocalPlayer
 	LP.CharacterAdded:Connect(function() task.wait(0.3); vxClaimOwnership() end)
 	if LP.Character then task.defer(vxClaimOwnership) end
@@ -958,10 +943,8 @@ end)
 -- maxSpeed*dt, so instead of one big jump we glide to the target in capped per-frame steps that stay
 -- under that limit. Lower VX_TP_SPEED (TP Speed slider) if you still get set back.
 local VX_TP_SPEED = 130   -- studs/sec for the glide (80 was so slow a far spot took 6+s = felt like 'nothing happened'; drop the slider if you get set back)
--- Resolve the anti-cheat TELEPORT whitelist remote ROBUSTLY (the hardcoded Knit path goes stale when the
 -- game updates -> teleports set back). Try the known path first, else search for any RemoteEvent named
--- "Teleport" (preferring an AntiCheat-ish parent). Cached; re-resolves if the cached one is destroyed.
-local vxACRemote = nil   -- the ONE AntiCheat whitelist remote. Firing extra 'Teleport' remotes broke it - exact path only, single fallback.
+local vxACRemote = nil
 local vxACStamp = 0
 task.spawn(function() while true do task.wait(20); vxACRemote = nil; vxACStamp = 0 end end)   -- "TP works ~1min then stops": the game swaps the remote instance; drop the cache every 20s so we re-find the live one
 local function vxResolveAC()
@@ -970,19 +953,19 @@ local function vxResolveAC()
 	local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
 	local svc = k and k:FindFirstChild("AntiCheatService"); local re = svc and svc:FindFirstChild("RE"); re = re and re:FindFirstChild("Teleport")
 	if re and re:IsA("RemoteEvent") then vxACRemote = re; return re end
-	for _, d in ipairs(RS:GetDescendants()) do   -- fallback: an AntiCheat-parented "Teleport" only (firing a non-anticheat "Teleport" remote breaks it)
+	for _, d in ipairs(RS:GetDescendants()) do
 		if d:IsA("RemoteEvent") and string.lower(d.Name) == "teleport" and string.find(string.lower(d:GetFullName()), "anticheat") then vxACRemote = d; return d end
 	end
 	return nil
 end
 local vxTeleLastActive = 0  -- last time a teleport actually moved you; the safety loop uses it to know when NO teleport is running
-local function vxACPass()   -- fire the whitelist EVERY call (the teleport glide needs it per-step or the step gets set back). No throttle.
+local function vxACPass()
 	vxTeleLastActive = tick()
 	vxClaimOwnership()   -- re-claim network ownership on every snap/teleport step (the actual fix for "sets me back")
 	local re = vxResolveAC()
 	if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end
 end
-_G.VX_ACPASS = vxACPass   -- expose so the black-flash snap-behind can whitelist its CFrame writes (else the anti-cheat reverts them = never lands on the back)
+_G.VX_ACPASS = vxACPass
 local vxTeleGen = 0  -- overlap guard: each teleport takes the next number; a newer one supersedes older holds so rapid teleports (Rika sword) do not fight over your CFrame or leave PlatformStand stuck on (frozen)
 -- SAFETY: never leave you stuck in PlatformStand (the "frozen after teleport" pose in the screenshot).
 -- Once no teleport has touched you for ~0.4s, force PlatformStand OFF so you can ALWAYS move again.
@@ -1001,7 +984,7 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 	local LP = game:GetService("Players").LocalPlayer
 	task.spawn(function()
 		local function myChar() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
-		local acPass = vxACPass   -- robust resolver (survives a stale/changed anti-cheat remote path)
+		local acPass = vxACPass
 		local char = myChar(); if not char then return end  -- JJS parents your character under workspace.Characters; LP.Character can lag/differ
 		local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
 		vxTeleGen = vxTeleGen + 1; local gen = vxTeleGen  -- claim the generation ONLY after we have a body: an early-abort call must NOT supersede an in-flight teleport (that orphaned PlatformStand = froze you)
@@ -1013,18 +996,16 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 		end
 		pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero; hrp.AssemblyAngularVelocity = Vector3.zero end)
 		if humanoid then pcall(function() humanoid.PlatformStand = true end) end
-		acPass()  -- whitelist BEFORE moving (one call, exactly like the game's own teleport in your capture)
-		for _ = 1, 15 do   -- proven snap count; whitelist once per frame
+		acPass()
+		for _ = 1, 15 do
 			if vxTeleGen ~= gen then return end                 -- a newer teleport superseded this one -> stop fighting over the CFrame
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
 			acPass()
 			pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero end)
 			task.wait(0.016)
 		end
-		-- NO BodyPosition pin: your capture proves the whitelist is exactly AntiCheatService.RE.Teleport:FireServer
 		-- (serverTimeNow) — same as we fire. So teleport wasn't broken by the remote; the BodyPosition I'd added
-		-- was an illegal physics mover the anti-cheat flags = the setback. Pure CFrame write + whitelist per frame.
-		local h0 = tick()  -- HOLD: keep re-asserting position + re-whitelisting so the anti-cheat can't revert after the move
+		local h0 = tick()
 		while tick() - h0 < (holdTime or 0.7) do
 			if vxTeleGen ~= gen then return end                 -- superseded -> let the newer teleport own the body
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
@@ -1042,8 +1023,7 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 end
 
 -- TP METHOD: "Glide" (DEFAULT - the PROVEN stepped glide that works in-game) steps there at the speed cap,
--- whitelisting every frame. "Instant" snaps straight there in one whitelisted jump (optional).
-local VX_TP_METHOD = "Instant"   -- user: "i just want to tp" (no glide). Instant = one whitelisted snap. Dropdown can switch back to Glide.
+local VX_TP_METHOD = "Instant"
 
 local function vxTpToast(msg)  -- visible red warning when a teleport FAILS (VX_NOTIFY isn't built yet at this point in the file)
 	pcall(function()
@@ -1057,11 +1037,8 @@ local function vxTpToast(msg)  -- visible red warning when a teleport FAILS (VX_
 	end)
 end
 
--- HARDENED teleport for FAR spots that a one-frame snap gets set back on: glide there in whitelisted STEPS
--- (each step is small enough to stay under the anti-cheat's per-tick distance limit) then HOLD + re-whitelist.
 local function vxTeleportHard(dest, holdTime)
 	-- ALWAYS INSTANT (reverted): the stepped-fallback experiment made teleports glide/fight themselves
-	-- ("teleports don't work, it was working early"). One whitelisted snap + hold, exactly like before.
 	if typeof(dest) == "CFrame" then dest = dest.Position end
 	vxGlide(dest, nil, math.max(holdTime or 3, 2))
 	if true then return end
@@ -1070,7 +1047,7 @@ local function vxTeleportHard(dest, holdTime)
 	task.spawn(function()
 		vxTeleGen = vxTeleGen + 1; local gen = vxTeleGen
 		local function myChar() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
-		local acPass = vxACPass   -- robust resolver (survives a stale/changed anti-cheat remote path)
+		local acPass = vxACPass
 		local char = myChar(); local hrp = char and char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
 		local hum = char:FindFirstChildOfClass("Humanoid"); local rot = hrp.CFrame.Rotation
 		for _, v in ipairs(hrp:GetChildren()) do
@@ -1079,10 +1056,10 @@ local function vxTeleportHard(dest, holdTime)
 		if hum then pcall(function() hum.PlatformStand = true end) end
 		local dt = 1/60
 		local startT = tick()
-		while tick() - startT < 25 do   -- STEP toward the spot at a SPEED CAP (studs/sec), whitelisting each frame, so the anti-cheat never flags a too-fast move -> no set-back
+		while tick() - startT < 25 do
 			if vxTeleGen ~= gen then return end
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
-			acPass()   -- EXACTLY one whitelist per step - this is the version that works in-game; extra calls made it flag
+			acPass()
 			local to = dest - hrp.Position; local d = to.Magnitude
 			if d < 3 then break end
 			local step = math.max(VX_TP_SPEED, 12) * dt   -- studs THIS frame = speed * real frame time; stays under the per-tick distance limit -> no snap-back
@@ -1091,7 +1068,7 @@ local function vxTeleportHard(dest, holdTime)
 			pcall(function() cc:PivotTo(stepCF) end)   -- also PivotTo: moves the WHOLE model (some rigs don't follow a bare HRP.CFrame write)
 			dt = task.wait()                            -- next step uses the ACTUAL frame delta
 		end
-		local h0 = tick()  -- HOLD at the spot + re-whitelist so it can't revert
+		local h0 = tick()
 		while tick() - h0 < (holdTime or 3) do
 			if vxTeleGen ~= gen then return end
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
@@ -1102,8 +1079,6 @@ local function vxTeleportHard(dest, holdTime)
 			task.wait(0.03)
 		end
 		if vxTeleGen == gen and hum then pcall(function() hum.PlatformStand = false end) end
-		-- SETBACK DETECTOR: if we did NOT end up at the spot, retry once with an instant whitelisted snap,
-		-- and if that ALSO fails, show WHY on screen (whitelist remote gone = the game updated its anti-cheat).
 		task.wait(0.15)
 		if vxTeleGen ~= gen then return end
 		local cEnd = myChar(); local hEnd = cEnd and cEnd:FindFirstChild("HumanoidRootPart")
@@ -1622,8 +1597,6 @@ do
         pcall(function() VIM:SendMouseButtonEvent(x, y, 0, true, game, 0); task.wait(0.03); VIM:SendMouseButtonEvent(x, y, 0, false, game, 0) end)
     end
     -- THE REAL ANSWER REMOTES (user captures):
-    --   1) workspace.Domains.Domain.UnreliableRemoteEvent:FireServer(n)  where Confess=3 / Silence=2 / Denial=1
-    --   2) <YourCharacter>.RemoteEvent:FireServer(true)  (friend's capture — the per-character confirm)
     -- We fire BOTH so it lands regardless of which the current game build uses.
     local ANSWER_NUM = { confess = 3, silence = 2, denial = 1 }
     local function myCharQ() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
@@ -1822,7 +1795,6 @@ end
 -- ============================================================
 -- MODULE: VXBF2  — reworked Black Flash chain engine (keybind 3, not E). No GUI; driven by _G.VXBF2 setters.
 -- Ported from the user's v13.0 logic, adapted for JJS: bodies live under workspace.Characters, teleports use
--- the anti-cheat whitelist (_G.VX_ACPASS) so they don't get set back.
 -- ============================================================
 do
     local Players = game:GetService("Players")
@@ -1995,7 +1967,6 @@ do
     end
 
     -- ═══ M1 BLACK FLASH — user's AutoBlackFlash logic ═══ Fires key 3 ONLY when one of the KNOWN Black-Flash
-    -- windup animation ids plays (the AnimationTriggers table = the 5 real BF anims), each at its own timed
     -- offset, guarded by a single cooldown + pending flag so one anim can't double-fire. Narrow id list = it
     -- NEVER flashes randomly, and it flashes at the correct frame when you actually swing into a BF.
     local bfPending = false
@@ -2008,7 +1979,7 @@ do
         animator.AnimationPlayed:Connect(function(track)
             if not (Settings.BFM1 or Settings.AutoBF) then return end
             local id = track.Animation and track.Animation.AnimationId
-            local dly = id and AnimationTriggers[id]     -- known BF windup ids
+            local dly = id and AnimationTriggers[id]
             -- Otherwise ANY real M1 swing of THIS character rides the standard window. VX_IS_M1 requires a real
             -- click within 0.4s, so it fires only on genuine M1s, never randomly, and works on every character.
             if not dly and _G.VX_IS_M1 and _G.VX_IS_M1(track) then dly = 0.19 end
@@ -2031,10 +2002,9 @@ do
         end
     end)
 
-    -- INPUT: press 3 -> run the current chain (does NOT sink 3, so the real move still fires). M1 -> M1 chain.
     UserInputService.InputBegan:Connect(function(input, _)
         if UserInputService:GetFocusedTextBox() then return end
-        local st = R.stamp[input.KeyCode]; if st and tick() - st < WIN then return end   -- ignore our own injected 3
+        local st = R.stamp[input.KeyCode]; if st and tick() - st < WIN then return end
         if input.KeyCode == Settings.BFKey and Settings.Enabled and Settings.Mode ~= "M1" then
             doBlackFlash(); return
         end
@@ -2042,7 +2012,6 @@ do
             task.spawn(doBFM1Chain); return
         end
         -- CLICK path for BF: covers characters whose M1 anim isn't in the database (the anim path can't catch
-        -- those). Presses 3 shortly after your click; cooldown-shared so it never double-fires with the anim path.
         if input.UserInputType == Enum.UserInputType.MouseButton1 and (Settings.AutoBF or Settings.BFM1) then
             if tick() - R.bfCD >= Settings.BFCooldown then
                 R.bfCD = tick()
@@ -2056,7 +2025,7 @@ do
         setEnabled = function(v) Settings.Enabled = v == true end,
         setMode = function(m) if type(m) == "string" then Settings.Mode = m end end,   -- Side Dash / Back Dash / Jump / Teleport / M1
         setBFM1 = function(v) Settings.BFM1 = v == true end,
-        setAutoBF = function(v) Settings.AutoBF = v == true end,   -- Auto Black Flash: M1 -> auto press 3
+        setAutoBF = function(v) Settings.AutoBF = v == true end,
         setSideAssist = function(v) Settings.SideAssist = v == true end,
         setBackAssist = function(v) Settings.BackAssist = v == true end,
         setCooldown = function(v) if type(v) == "number" then Settings.BFCooldown = v end end,
@@ -2147,7 +2116,7 @@ do
 				repeat cycleIdx = (cycleIdx % 6) + 1; tried = tried + 1 until keys[cycleIdx] or tried >= 6
 				if keys[cycleIdx] then
 					local tr = nearestEnemyHRP()
-					if tr then if _G.VX_ACPASS then _G.VX_ACPASS() end faceEnemy(tr); task.wait(0.03) end   -- whitelist the aim write so the anti-cheat can't revert it
+					if tr then if _G.VX_ACPASS then _G.VX_ACPASS() end faceEnemy(tr); task.wait(0.03) end
 					press(KC[cycleIdx])
 				end
 				task.wait(rate)
@@ -2375,7 +2344,6 @@ end
 
 -- MODULE: M1 COMBO  (Down Slam / Uppercut for EVERY character)
 -- Counts your REAL M1 hits by ANIMATION using the full per-character M1 id database (_G.VX_M1_IDS - all 20
--- characters), not raw clicks. Clicks lie: whiffs count, our own injected clicks count, and the finisher
 -- fires at the wrong combo step ('auto uppercut no work'). An M1 ANIM only plays when your character
 -- actually swings - so hit #3 is exactly when the launcher window is open, on any character.
 do
@@ -2386,7 +2354,7 @@ do
 	local mode, lastSwing, count, busy = "Off", 0, 0, false
 	local needHits = 3   -- chain hits before the launcher fires (slider-adjustable: characters have different chain lengths)
 	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
-	local function act(arg)  -- THE uppercut/slam remote (user capture): <YourChar>Service.RE.Activated:FireServer("Up"/"Down")
+	local function act(arg)
 		local svc = vxMyCharSvc()
 		if svc then
 			fireKnit(svc, "Activated", arg)
@@ -2445,7 +2413,6 @@ do
 	--         THEN fire "Up" — no race, no t=0 fire.
 	-- Exactly ONE change from the standalone: no `if gp then return end` (this game marks every M1 click
 	-- game-processed, so the standalone's gpe bail would stop it from EVER firing inside the hub).
-	-- The old VX_INJECT_UNTIL click gate is GONE - the feints/BF modules stamp that constantly, so it was
 	-- eating your REAL clicks = "uppercut/downslam not working".
 	local Config = {
 		Cooldown = 0.30,
@@ -2851,7 +2818,7 @@ do
 		if crows then local c = crows:FindFirstChildWhichIsA("Model") or crows:FindFirstChildWhichIsA("BasePart"); if c then return c end end
 		local eff = workspace:FindFirstChild("Effects"); return eff and eff:FindFirstChild("Crow")
 	end
-	local function crowControlRemote()  -- the game's OWN crow steering: Character.Info.ControlRemote:FireServer(position). SERVER-side = it really flies there + hits.
+	local function crowControlRemote()
 		local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
 		local info = c and c:FindFirstChild("Info"); local re = info and info:FindFirstChild("ControlRemote")
 		if re and (re:IsA("RemoteEvent") or re:IsA("UnreliableRemoteEvent")) then return re end
@@ -3065,7 +3032,7 @@ do
 		local svc = vxMyCharSvc()
 		if svc then fireKnit(svc, "Activated", arg) else for _, c in ipairs(CHAR_NAMES) do fireKnit(c .. "Service", "Activated", arg) end end
 	end
-	local function acPass() fireKnit("AntiCheatService", "Teleport", workspace:GetServerTimeNow()) end  -- whitelist the approach so it is not set back
+	local function acPass() fireKnit("AntiCheatService", "Teleport", workspace:GetServerTimeNow()) end
 	local function nearest()
 		local hrp = myHRP(); if not hrp then return nil end
 		local best, bd
@@ -3532,7 +3499,6 @@ do
 	local CLICK_ADAPT_IDS = { ["132748613906344"] = true, ["137611726964398"] = true }
 	local function playAdapt(id)
 		if id and CLICK_ADAPT_IDS[id] then                         -- Hollow Purple / fire: adapt by CLICKING, not 4
-			-- it "comes very slow", so a single early click can whiff — fire a short burst across the windup so one
 			-- lands in the parry window (starts the instant it's detected).
 			task.spawn(function() for _ = 1, 4 do clickM1(); task.wait(0.12) end end)
 			return
@@ -3570,8 +3536,6 @@ do
 		local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local r = m:FindFirstChild("HumanoidRootPart"); local h = m:FindFirstChildOfClass("Humanoid"); if r and h and h.Health > 0 and far(r) then return r end end end end
 		return nil
 	end
-	-- ESCAPE uses vxTeleportHard (speed-capped + whitelisted) instead of the hard-snap vxGlide, which the
-	-- anti-cheat was reverting -> you stayed stuck INSIDE. Capped stepping isn't set back, so you actually leave.
 	local function safeTeleport()  -- ESCAPE the domain: to a user/DUMMY OUTSIDE it, else bolt AWAY from the center + up, else train / straight up. Never lands you back inside.
 		local hrp = myHRP(); if not hrp then return end
 		local c = domainCenter()
@@ -3898,7 +3862,6 @@ do
 		if re then pcall(function() re:FireServer(eq) end); return true end
 		return false
 	end
-	-- No auto-fire loop: it must NOT press 3 on its own. It only turns YOUR 3-press into a 2s charged hold
 	-- via the InputBegan hook below. fireQuake stays defined but unused.
 	if false then fireQuake() end
 
@@ -3911,7 +3874,7 @@ do
 	local function doKillEmote()
 		if tick() - keCd < 1.5 then return end
 		keCd = tick()
-		local re = emoteRE("Emote"); if re then pcall(function() re:FireServer(killEmoteSlot) end) end   -- the emote remote you gave: EmoteService.RE.Emote:FireServer(slot)
+		local re = emoteRE("Emote"); if re then pcall(function() re:FireServer(killEmoteSlot) end) end
 		task.delay(2.8, function()
 			local re2 = emoteRE("EmoteEnd"); if re2 then pcall(function() re2:FireServer() end) end
 		end)
@@ -3965,7 +3928,7 @@ do
 			if UISq:GetFocusedTextBox() then return end
 			if input.KeyCode ~= Enum.KeyCode.Three then return end
 			local injK = _G.VX_INJ_KEYS
-			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end   -- skip our own injected 3
+			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end
 			startHold()
 		end)
 	end
@@ -4246,7 +4209,6 @@ do
 	-- M1 swing, not a spam. (Removed the raw-click backup, which fired G on every click incl. GUI clicks.)
 	HeadUltApi = { set = function(v) headOn = v == true end, setLead = function(v) HEI_LEAD = math.clamp(tonumber(v) or 0.26, 0.05, 0.6) end }
 
-	-- AUTO RIKA LOVE SWORD: in Yuta's domain, GRAB a sword (teleport onto it - grabbing a sword IS a whitelisted teleport, and vxGlide fires the AntiCheat Teleport whitelist), then teleport to a user + slash. 4 times, then press 4.
 	local function findSwords()  -- ONLY the exact "Sword" objects at workspace.Domains.Domain.DomainCollider.Sword (NOT the "long" swords)
 		local domains = workspace:FindFirstChild("Domains"); if not domains then return {} end
 		local list = {}
@@ -4487,7 +4449,7 @@ do
 		end
 		return nil
 	end
-	local function fireMove(svcName, moveName)  -- <Service>.RE.Activated:FireServer(Moveset[moveName])
+	local function fireMove(svcName, moveName)
 		local re = activatedRE(svcName); local mv = moveObj(moveName)
 		if re and mv then pcall(function() re:FireServer(mv) end); return true end
 		note("Hollow: missing " .. (mv and svcName or ("Moveset " .. moveName)))
@@ -4603,7 +4565,7 @@ do
 	local function trigger()
 		if not on then return end
 		if tick() - last < 0.4 then return end                     -- one dash per press
-		if tick() < sdaInjecting then return end                   -- never chain off our own injected inputs
+		if tick() < sdaInjecting then return end
 		if tick() - (_G.VX_LAUNCHING or 0) < 0.3 then return end   -- not during an uppercut launch
 		if tick() < (_G.VX_BUSY or 0) then return end              -- not during an Auto Air sequence
 		local mh = getHRP(myModel()); if not mh then return end
@@ -4632,7 +4594,6 @@ do
 		end)
 		if _G.VX_BF_DEBUG then print("[DreamHub SideDash] Q -> Left dash + M1 at "..(tgt and tgt.Name or "no target")) end
 	end
-	-- TRIGGER: the Q key ONLY (real presses; injected Q is ignored). No animation trigger.
 	UIS.InputBegan:Connect(function(input, gpe)
 		if not on or gpe then return end
 		if UIS:GetFocusedTextBox() then return end
@@ -4849,7 +4810,7 @@ do
 			end
 		end
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then local mdl = landedM1Target(); if mdl then lastM1Tgt = mdl end end   -- remember who you're hitting (Auto Air targets THEM)
-		if input.KeyCode == Enum.KeyCode.Three and redOn and tick() >= (_G.VX_INJECT_UNTIL or 0) then   -- REVERSAL RED: press 3 -> click R (ignores injected 3s)
+		if input.KeyCode == Enum.KeyCode.Three and redOn and tick() >= (_G.VX_INJECT_UNTIL or 0) then
 			task.delay(0.12, function() pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.12); VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game) end) end)
 		end
 		-- ══ AUTO AIR sequences ══
@@ -4860,13 +4821,11 @@ do
 			return c and detectCharName(c) or nil
 		end
 		local function tapKey(kc, hold)
-			_G.VX_INJECT_UNTIL = tick() + 0.35   -- injected: other key-triggered features must ignore this
-			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[kc] = tick() + 0.5   -- and remember WHICH key we injected
+			_G.VX_INJECT_UNTIL = tick() + 0.35
+			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[kc] = tick() + 0.5
 			pcall(function() VIM:SendKeyEvent(true, kc, false, game); task.wait(hold or 0.09); VIM:SendKeyEvent(false, kc, false, game) end)
 		end
-		-- PER-KEY injection check (was the global VX_INJECT_UNTIL window - Side Dash / M1 BF stamp that global on
 		-- EVERY M1, which was eating your real 1/2/3/R presses = 'Auto Air doesn't work'). Now a key is only
-		-- ignored if THAT KEY was itself injected.
 		do local injK = _G.VX_INJ_KEYS; if injK and input.KeyCode and injK[input.KeyCode] and tick() < injK[input.KeyCode] then return end end
 		-- ENEMY-PRESENCE GATE (root cause of "Auto Air activates randomly"): every sequence below fires off a real
 		-- key/click (jump, 1/2/3, M1). With no enemy engaged, jumping to move or pressing 1 in the open used to launch
@@ -9982,7 +9941,7 @@ local RunService = game:GetService("RunService") -- Provides frame-by-frame exec
 local Workspace = game:GetService("Workspace") -- Handles 3D world interactions, Raycasting, and spatial queries.
 local Lighting = game:GetService("Lighting") -- Used here to detect global visual changes, such as Domain Expansions.
 local ReplicatedStorage = game:GetService("ReplicatedStorage") -- Stores client-server communication channels (RemoteEvents).
-local CoreGui = game:GetService("CoreGui") -- Secures the UI by placing it outside the standard PlayerGui (prevents simple anti-cheat detection).
+local CoreGui = game:GetService("CoreGui")
 
 -- ==========================================
 -- LOCAL PLAYER ENVIRONMENT
