@@ -1258,6 +1258,7 @@ local function vxTeleportHard(dest, holdTime)
 		if VX_TP_METHOD ~= "Glide" then
 			local function myChar() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
 			vxTeleGen = vxTeleGen + 1; local gen = vxTeleGen
+			pcall(vxClaimOwnership)   -- PUBLIC-SERVER FIX: take client authority so your CFrame writes stick (private worked, public reverted)
 			local char = myChar(); local hrp = char and char:FindFirstChild("HumanoidRootPart")
 			if hrp then
 				local hum = char:FindFirstChildOfClass("Humanoid"); local rot = hrp.CFrame.Rotation
@@ -1278,6 +1279,7 @@ local function vxTeleportHard(dest, holdTime)
 					if hh ~= hrp then hrp = hh; pcall(function() hrp.Anchored = true end) end   -- rig swapped -> re-anchor the new one
 					pcall(function() hrp.CFrame = destCF end)       -- keep asserting the anchored position
 					vxACPass()
+					if math.floor((tick() - h0) * 4) ~= math.floor((tick() - h0 - 0.016) * 4) then pcall(vxClaimOwnership) end   -- re-claim ~4x/s
 					task.wait()
 				end
 				pcall(function() if hrp and hrp.Parent then hrp.Anchored = wasAnchored end end)   -- ALWAYS unanchor so you can move
@@ -5067,8 +5069,10 @@ do
 			lastM1Tgt = mdl; lastGojo = tick()
 			task.delay(0.05, function()
 				faceTargetNow(mdl)
+				-- CLICK R (key WITH a small hold so it registers) + the GojoService remote = the TP-behind, always fires
+				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.R] = tick() + 0.3
+				pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game) end)
 				local re = gojoRE(); if re then pcall(function() re:FireServer(asPlayerCharacter(mdl)) end) end
-				pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game); VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game) end)   -- key backup
 			end)
 		end
 		_G.VX_GOJO_TPBACK = doGojoTpBack   -- the anim counter (below) calls this when the M1 count is reached
@@ -5512,8 +5516,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "3.9"
-local VX_BUILD = "B39"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "4.0"
+local VX_BUILD = "B40"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
@@ -9711,28 +9715,39 @@ do
     do
         local VIMbf = game:GetService("VirtualInputManager")
         local function press3()
-            _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.25
-            pcall(function() VIMbf:SendKeyEvent(true, Enum.KeyCode.Three, false, game); VIMbf:SendKeyEvent(false, Enum.KeyCode.Three, false, game) end)
+            _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.3
+            pcall(function()
+                VIMbf:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
+                task.wait(0.025)   -- the small hold from your working AutoBlackFlash script
+                VIMbf:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
+            end)
         end
         local lastBF = 0
         local hooked = setmetatable({}, { __mode = "k" })
+        local function onAnim(tr)
+            if not bfM1On then return end
+            local id = tr.Animation and tostring(tr.Animation.AnimationId):match("%d+"); if not id then return end
+            if not M1_ANIMS[id] then return end
+            if tick() - lastBF < 0.35 then return end   -- one press per M1, then stop
+            lastBF = tick()
+            task.delay(math.max(0, 0.12 + bfClickOffset), press3)
+        end
+        -- hook EVERY animator your body can have: LP.Character AND workspace.Characters[you] (JJS plays combat
+        -- anims on either rig - hooking only one = "M1 BF randomly never fires"). Build the list by append so a
+        -- nil LP.Character never hides the resolved model.
         local function hook()
+            local bodies = {}
+            if LP.Character then bodies[#bodies + 1] = LP.Character end
             local chs = workspace:FindFirstChild("Characters")
-            local body = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
-            local hum = body and body:FindFirstChildOfClass("Humanoid")
-            local a = hum and hum:FindFirstChildOfClass("Animator")
-            if a and not hooked[a] then
-                hooked[a] = a.AnimationPlayed:Connect(function(tr)
-                    if not bfM1On then return end
-                    local id = tr.Animation and tostring(tr.Animation.AnimationId):match("%d+"); if not id then return end
-                    if not M1_ANIMS[id] then return end
-                    if tick() - lastBF < 0.35 then return end   -- one press per M1, then stop
-                    lastBF = tick()
-                    task.delay(math.max(0, 0.12 + bfClickOffset), press3)
-                end)
+            local resolved = chs and chs:FindFirstChild(LP.Name)
+            if resolved and resolved ~= LP.Character then bodies[#bodies + 1] = resolved end
+            for _, body in ipairs(bodies) do
+                local hum = body:FindFirstChildOfClass("Humanoid")
+                local a = hum and hum:FindFirstChildOfClass("Animator")
+                if a and not hooked[a] then hooked[a] = a.AnimationPlayed:Connect(onAnim) end
             end
         end
-        task.spawn(function() while true do if bfM1On then pcall(hook) end task.wait(0.6) end end)
+        task.spawn(function() while true do if bfM1On then pcall(hook) end task.wait(0.5) end end)
     end
     local function bfSync() if BFApi then BFApi.SetEnabled(bfAutoOn) end end   -- engine = Auto BF only
     bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 BF", "Side Dash", "Back Dash", "Jump", "Teleport", "M1 Chain" } or { "Off", "M1 BF" }), Default = "Off", Callback = function(m)
@@ -9780,11 +9795,7 @@ do
     skSec:Dropdown({ Name = "TP Back Trigger", Items = { "Q Dash", "After M1s" }, Default = "Q Dash", Callback = function(v) _G.VX_GOJO_MODE = (type(v) == "table") and v[1] or v end })
     skSec:Dropdown({ Name = "TP Back After (M1s)", Items = { "1", "2", "3", "4" }, Default = "2", Callback = function(v) v = (type(v) == "table") and v[1] or v; _G.VX_GOJO_COUNT = tonumber(v) or 2 end })
     skSec:Toggle({ Name = "Reversal Red", Callback = function(b) if ReversalRedApi then ReversalRedApi.set(b) end end })
-    skSec:Button({ Name = "Rika Down Slam", Callback = function()
-        local chs = workspace:FindFirstChild("Characters"); local ch = (chs and chs:FindFirstChild(LocalPlayer.Name)) or LocalPlayer.Character
-        local mv = ch and ch:FindFirstChild("Moveset"); local slam = mv and mv:FindFirstChild("Rika Slam")
-        if slam then fireKnit("RikaSlamService", "Activated", slam) elseif VX_NOTIFY then VX_NOTIFY("No 'Rika Slam' in your Moveset", false) end
-    end })
+    skSec:Toggle({ Name = "Auto Rika Down Slam", Callback = function(b) if SlamApi then SlamApi.set(b) end end })   -- near a player/dummy -> auto down slam them
     local ultSec = skSub:Section({ Name = "Ults", Side = 2 })
     if tier("premium") then   -- FREE: no Crow Ult / Crow Lock On
         ultSec:Toggle({ Name = "Crow Ult", Callback = function(b) if CrowUltApi then CrowUltApi.set(b) end end })
@@ -9793,7 +9804,6 @@ do
     ultSec:Toggle({ Name = "Head of Hei Ult", Callback = function(b) if HeadUltApi then HeadUltApi.set(b) end end })
     ultSec:Slider({ Name = "Hei Ult Timing", Min = 0.05, Max = 0.6, Default = 0.26, Decimals = 0.01, Suffix = "s", Callback = function(v) if HeadUltApi and HeadUltApi.setLead then HeadUltApi.setLead(v) end end })
     if tier("premium") then ultSec:Toggle({ Name = "Rika Love Sword", Callback = function(b) if RikaSwordApi then RikaSwordApi.set(b) end end }) end   -- FREE: no auto Rika sword
-    ultSec:Toggle({ Name = "Rika Down Slam", Callback = function(b) if SlamApi then SlamApi.set(b) end end })
     ultSec:Toggle({ Name = "Goku M1", Callback = function(b) if GokuApi then GokuApi.set(b) end end })
     ultSec:Label("Goku M1: it might work, if it dont i will fix it later 😭")
     ultSec:Toggle({ Name = "Hollow Nuke", Callback = function(b) if HollowApi then HollowApi.set(b) end end })
