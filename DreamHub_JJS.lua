@@ -5526,8 +5526,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "4.2"
-local VX_BUILD = "B42"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "4.3"
+local VX_BUILD = "B43"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
@@ -9715,13 +9715,14 @@ do
 
     local bfSub = CombatPage:SubPage({ Name = "Black Flash", Columns = 2 })
     local bfSec = bfSub:Section({ Name = "Black Flash", Side = 1 })
-    -- M1 BF - REMOTE-DRIVEN (your capture: your M1 fires <Char>Service.RE.Activated). We HOOK that remote, so we
-    -- detect every REAL M1 the instant it fires (no click/anim guessing). After the chosen count of M1s, press 3 =
-    -- black flash. Matches ANY "...Service.RE.Activated" fire so it works on every character, not just Itadori.
+    -- M1 BF: count your M1 clicks; after the chosen count, press 3 = black flash, then reset.
+    -- (NO remote hook: the previous build's global remote hook intercepted the SAME remotes your
+    -- moves fire, which is what broke 1-4/R/ult. This version never touches the game's remotes.)
     local bfM1On, bfAutoOn = false, false
     local bfClickOffset = 0
-    local bfCount = 2   -- press 3 after this many M1 remotes
+    local bfCount = 2   -- press 3 after this many M1 clicks
     do
+        local UISbf = game:GetService("UserInputService")
         local VIMbf = game:GetService("VirtualInputManager")
         local function press3()
             _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.3
@@ -9732,43 +9733,18 @@ do
             end)
         end
         local m1s, lastM1 = 0, 0
-        -- called on every M1 remote fire (from the __namecall hook installed once, below)
-        _G.VX_BF_ONM1 = function()
+        UISbf.InputBegan:Connect(function(input, gpe)
             if not bfM1On then return end
-            if tick() - lastM1 > 2.5 then m1s = 0 end   -- new combo
+            if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+            if UISbf:GetFocusedTextBox() then return end
+            if tick() - lastM1 > 2.5 then m1s = 0 end   -- new combo if you stopped clicking
             lastM1 = tick()
             m1s = m1s + 1
             if m1s >= bfCount then
                 m1s = 0
                 task.delay(math.max(0, 0.12 + bfClickOffset), press3)
             end
-        end
-        -- install the remote hook ONCE (executor-dependent). An M1 = a remote named "Activated" under a *Service.RE.
-        if not _G.VX_BF_HOOKED then
-            _G.VX_BF_HOOKED = true
-            local ok = false
-            if typeof(hookmetamethod) == "function" and typeof(getnamecallmethod) == "function" then
-                ok = pcall(function()
-                    local old; old = hookmetamethod(game, "__namecall", function(self, ...)
-                        local m = getnamecallmethod()
-                        if (m == "FireServer" or m == "fireServer") and typeof(self) == "Instance" and self.Name == "Activated" then
-                            local full = ""; pcall(function() full = self:GetFullName() end)
-                            if full:find("Service") and full:find("%.RE%.") then
-                                if _G.VX_BF_ONM1 then task.spawn(_G.VX_BF_ONM1) end
-                            end
-                        end
-                        return old(self, ...)
-                    end)
-                end)
-            end
-            -- fallback: no hook support -> count mouse clicks instead (still works, just less exact)
-            if not ok then
-                local UISbf = game:GetService("UserInputService")
-                UISbf.InputBegan:Connect(function(input)
-                    if input.UserInputType == Enum.UserInputType.MouseButton1 and _G.VX_BF_ONM1 then _G.VX_BF_ONM1() end
-                end)
-            end
-        end
+        end)
     end
     local function bfSync() if BFApi then BFApi.SetEnabled(bfAutoOn) end end   -- engine = Auto BF only
     bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 BF", "Side Dash", "Back Dash", "Jump", "Teleport", "M1 Chain" } or { "Off", "M1 BF" }), Default = "Off", Callback = function(m)
