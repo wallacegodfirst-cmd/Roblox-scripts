@@ -55,16 +55,25 @@ local function doGodMode()
     task.spawn(function()
         local root = getRoot(); if not root then return end
         local dest
-        local p = nearestPlayer(math.huge)                       -- straight to the action: land next to a player
-        local tr = p and p.Character and charPart(p.Character)
-        if tr then dest = tr.Position + Vector3.new(4, 3, 0) end
-        if not dest then                                         -- empty server: land on a map spawn instead
-            pcall(function()
-                local gm = Workspace:FindFirstChild("GameMap")
-                local sp = gm and gm:FindFirstChild("Spawns")
-                local part = sp and sp:FindFirstChildWhichIsA("BasePart", true)
-                if part then dest = part.Position + Vector3.new(0, 4, 0) end
-            end)
+        -- PRIMARY: teleport onto a GameMap.Spawns part (your explorer) - this is what arms you into the fight
+        pcall(function()
+            local gm = Workspace:FindFirstChild("GameMap")
+            local sp = gm and gm:FindFirstChild("Spawns")
+            if sp then
+                local parts = {}
+                for _, c in ipairs(sp:GetChildren()) do if c:IsA("BasePart") then parts[#parts+1] = c end end
+                if #parts == 0 then for _, c in ipairs(sp:GetDescendants()) do if c:IsA("BasePart") then parts[#parts+1] = c end end end
+                if #parts > 0 then
+                    local part = parts[(tick() // 1) % #parts + 1]   -- vary which spawn without Math.random
+                    dest = part.Position + Vector3.new(0, 4, 0)
+                end
+            end
+        end)
+        -- FALLBACK: no GameMap yet -> land next to the nearest player
+        if not dest then
+            local p = nearestPlayer(math.huge)
+            local tr = p and p.Character and charPart(p.Character)
+            if tr then dest = tr.Position + Vector3.new(4, 3, 0) end
         end
         if dest then
             pcall(function() root.CFrame = CFrame.new(dest); root.AssemblyLinearVelocity = Vector3.zero end)
