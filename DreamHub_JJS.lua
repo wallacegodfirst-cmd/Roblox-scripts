@@ -56,16 +56,13 @@ do
 		aimGen = aimGen + 1; local gen = aimGen
 		task.spawn(function()
 			local cam = workspace.CurrentCamera; if not cam then return end
-			local savedFov = cam.FieldOfView
 			local t0 = tick()
 			while tick() - t0 < 0.45 and aimGen == gen and best and best.Parent do
 				pcall(function()
-					cam.CFrame = CFrame.lookAt(cam.CFrame.Position, best.Position)   -- point camera at them
-					cam.FieldOfView = 42                                            -- ZOOM IN (cinematic) for the flash
+					cam.CFrame = CFrame.lookAt(cam.CFrame.Position, best.Position)   -- point camera at them (no zoom)
 				end)
 				task.wait()
 			end
-			if aimGen == gen then pcall(function() cam.FieldOfView = savedFov end) end   -- restore zoom (only if a newer aim didn't take over)
 		end)
 	end
 	local RT = { Running = true, Connection = nil, CharacterConnection = nil, DescendantConnection = nil, Pending = false, Firing = false, LastFireTime = 0, LastAnimationId = "--", LastMatched = false, LastSkipReason = "--", UnknownAnimations = {} }
@@ -87,28 +84,30 @@ do
 	end
 		local function pressKey(keyCode)
 			if not VirtualInputManager then return false end
-			if _G.VX_DEBUG then _G.VX_DBG_KEY = { k = tostring(keyCode), t = tick(), who = "BF" } end
+			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[keyCode] = tick() + 0.5   -- mark OUR press so no other trigger in the hub reacts to it
 			pcall(function()
 				VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
-				VirtualInputManager:SendKeyEvent(false, keyCode, false, game)   -- INSTANT down+up, exactly like your script (the 0.025 wait broke it)
+				VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
 			end)
 			return true
 		end
-		-- THE flash: aim (if on) then, after the wind-up delay, press the flash key. ONE simple debounce (lastFlash),
-		-- no Pending/Firing state that could get stuck = it fires on the FIRST try, every time.
+		-- ONE press per trigger, then a hard lockout. The spam loop was: our own press makes YOUR character play a
+		-- move anim that is ALSO in the trigger table -> it matches -> presses again -> forever. The lockout window
+		-- (well past the move's anim) breaks that cycle for good.
 		local lastFlash = 0
+		local suppressUntil = 0
 		local function doFlash(delayTime)
 			if not CFG.Enabled then return end
-			if os.clock() - lastFlash < 0.12 then return end   -- tiny debounce only (we hook 2 animators; without it one swing = 2 presses)
+			if os.clock() < suppressUntil then return end
+			if os.clock() - lastFlash < 0.12 then return end   -- tiny debounce (we hook 2 animators; without it one swing = 2 presses)
 			lastFlash = os.clock()
 			if CFG.Aim then pcall(bfAim) end
-			-- EXACTLY your script: after the id's delay, press 3. No ownership claim / no long wait — those hitched the timing.
 			task.delay(math.max(0, (delayTime or 0.19) + CFG.TimingOffset), function()
 				if not CFG.Enabled then return end
+				suppressUntil = os.clock() + 1.2   -- lockout AFTER the press: nothing our press causes can re-trigger
 				pressKey(CFG.TriggerKey)
 			end)
 		end
-		-- EXACTLY your AutoBlackFlash script: match ONLY the known BF windup ids, press 3 at that id's delay.
 		local function matchDelay(id)
 			return AnimationTriggers[id]
 		end
@@ -116,7 +115,6 @@ do
 			if not CFG.Enabled then return end
 			local id = getAnimationId(track)
 			local delayTime = matchDelay(id)
-			if _G.VX_DEBUG then _G.VX_DBG_ANIM = { id = id, matched = delayTime ~= nil, t = tick() } end
 			if delayTime then doFlash(delayTime) end
 		end
 		-- (Click trigger removed — your script is anim-only: it flashes on the known BF windup ids, nothing else.)
@@ -983,7 +981,6 @@ local function vxACPass()   -- fire the whitelist EVERY call (the teleport glide
 	vxClaimOwnership()   -- re-claim network ownership on every snap/teleport step (the actual fix for "sets me back")
 	local re = vxResolveAC()
 	if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end
-	if _G.VX_DEBUG then _G.VX_DBG_TP = { found = re ~= nil, path = re and re:GetFullName() or "NOT FOUND", t = tick() } end
 end
 _G.VX_ACPASS = vxACPass   -- expose so the black-flash snap-behind can whitelist its CFrame writes (else the anti-cheat reverts them = never lands on the back)
 local vxTeleGen = 0  -- overlap guard: each teleport takes the next number; a newer one supersedes older holds so rapid teleports (Rika sword) do not fight over your CFrame or leave PlatformStand stuck on (frozen)
@@ -3942,32 +3939,28 @@ do
 
 	MahoTpApi   = { set = function(v) mahoOn = v == true end }
 	AutoQuakeApi = { set = function(v) quakeOn = v == true end }
-	-- Earthquake is a charged hold. You tap 3; the script then holds 3 down 2s for you and releases = the
-	-- shockwave. TWO triggers so it always catches: (1) your 3-press, and (2) the earthquake windup ANIMATION
-	-- (rbxassetid://85024950165903) playing on your body, which confirms the move actually started.
+	-- Earthquake is a charged hold. You tap 3; ON YOUR RELEASE the script sends one clean 3-down, holds it the
+	-- full 2s, then releases = the shockwave. Triggering on your key-UP is the fix for "doesn't work anymore":
+	-- when we started the hold on your key-DOWN, your own release arrived mid-charge and ended it early.
 	do
 		local VIMq = game:GetService("VirtualInputManager")
 		local UISq = game:GetService("UserInputService")
-		local QUAKE_ANIM = "rbxassetid://85024950165903"
 		local holding = false
 		local function startHold()
 			if not quakeOn or holding then return end
 			holding = true
 			task.spawn(function()
-				local hold = tonumber(_G.VX_QUAKE_HOLD) or 2   -- full 2s charge on your press (you wanted the max hold, not the short 0.83s tap)
-				-- clean hold: 3 DOWN, hold 0.83s, UP = shockwave. Short inject-guard window so your NEXT press works.
-				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + hold + 0.1
+				local hold = tonumber(_G.VX_QUAKE_HOLD) or 2
+				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + hold + 0.3
 				pcall(function()
 					VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
 					task.wait(hold)
 					VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
 				end)
-				task.wait(0.05); holding = false   -- reset FAST so every 3-press fires again (fixes "worked only once")
+				task.wait(0.05); holding = false   -- reset FAST so every 3-press fires again
 			end)
 		end
-		local _ = QUAKE_ANIM
-		-- your tap of 3 -> the script holds 3 down for the full 2s charge then releases = the shockwave. It never taps 3 itself.
-		UISq.InputBegan:Connect(function(input, _)
+		UISq.InputEnded:Connect(function(input, _)
 			if not quakeOn then return end
 			if UISq:GetFocusedTextBox() then return end
 			if input.KeyCode ~= Enum.KeyCode.Three then return end
@@ -9350,11 +9343,22 @@ do
                 local W = {}
                 function W:Category() end   -- Fluriore has no categories; wiring calls this as a bare statement
                 function W:SetOpen() if _G.VX_HARDTOGGLE then pcall(_G.VX_HARDTOGGLE) end end   -- minimize button routes through the hard toggle
+                -- SAME ICON SET AS THE ABILITY ARENA HUB: Fluriore only renders rbxassetid (a Lucide name falls
+                -- back to the default flame), so map each tab's name to the real asset id, exactly like AA does.
+                local FL_TAB_ICON = "rbxassetid://16932740082"
+                local FL_ICONS = {
+                    home = "rbxassetid://7733960981", swords = "rbxassetid://7733798747", sparkles = "rbxassetid://8997388430",
+                    navigation = "rbxassetid://7734020989", footprints = "rbxassetid://7743870731", eye = "rbxassetid://7733774602",
+                    target = "rbxassetid://7743872758", wrench = "rbxassetid://7743878358",
+                    -- aliases for this hub's tab names -> the closest AA icon
+                    bot = "rbxassetid://8997388430", crosshair = "rbxassetid://7743872758",
+                    user = "rbxassetid://7733960981", settings = "rbxassetid://7743878358",
+                }
                 function W:Page(pc)
                     pc = pc or {}
-                    -- Icon: a pure number -> rbxassetid; anything else (a Lucide name like "swords") -> pass as-is.
                     local _ic = pc.Icon
-                    if _ic ~= nil and tostring(_ic):match("^%d+$") then _ic = "rbxassetid://" .. tostring(_ic) end
+                    if _ic ~= nil and tostring(_ic):match("^%d+$") then _ic = "rbxassetid://" .. tostring(_ic)
+                    else _ic = FL_ICONS[tostring(_ic or ""):lower()] or FL_TAB_ICON end
                     local flTab; pcall(function() flTab = flWin:CreateTab({ Name = pc.Name or "Tab", Icon = _ic }) end)
                     local P = {}
                     function P:SubPage()   -- Fluriore has no sub-pages; a SubPage just forwards to the tab
@@ -9848,53 +9852,109 @@ do
     miscSec:Button({ Name = "Copy Discord", Callback = function() if setclipboard then pcall(setclipboard, "https://discord.gg/fRcGd9bW") end; if VX_NOTIFY then VX_NOTIFY("Discord copied") end end })
     miscSec:Label("Menu: RightShift (or the on-screen button on mobile)")
 
-    -- DEBUG OVERLAY: turns "it doesn't work" into exact data. Shows the real anim ids your body plays (so we get the
-    -- true M1/hit anim for BF), whether the teleport whitelist remote is found + firing, and the last key we pressed.
+    -- CUSTOMIZE: background color / background image / font / text color — all live re-paints of the menu.
     do
-        local dbgGui, dbgConn, dbgLoop
-        local recent = {}   -- rolling list of the last anim ids your character played
-        local hookedA = setmetatable({}, { __mode = "k" })
-        local function hookAnims()
-            local chs = workspace:FindFirstChild("Characters")
-            local body = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
-            local hum = body and body:FindFirstChildOfClass("Humanoid")
-            local a = hum and hum:FindFirstChildOfClass("Animator")
-            if a and not hookedA[a] then
-                hookedA[a] = a.AnimationPlayed:Connect(function(tr)
-                    local id = tr and tr.Animation and tr.Animation.AnimationId or "?"
-                    table.insert(recent, 1, id); for i = #recent, 7, -1 do recent[i] = nil end
+        local function menuHosts()
+            local hosts = {}
+            pcall(function() if gethui then hosts[#hosts+1] = gethui() end end)
+            pcall(function() hosts[#hosts+1] = game:GetService("CoreGui") end)
+            pcall(function() hosts[#hosts+1] = LP:FindFirstChildOfClass("PlayerGui") end)
+            return hosts
+        end
+        local function eachMenuEl(fn)   -- every element of the menu GUIs, pcall-safe
+            for _, h in ipairs(menuHosts()) do pcall(function()
+                for _, d in ipairs(h:GetDescendants()) do pcall(fn, d) end
+            end) end
+        end
+        -- BACKGROUND COLOR: repaint every dark panel, keeping the light/dark hierarchy (each shade scales
+        -- from the chosen base color, so windows stay darker than elements).
+        local BG = { Black = Color3.fromRGB(10,10,10), ["Dark Red"] = Color3.fromRGB(28,8,10), ["Dark Blue"] = Color3.fromRGB(8,12,32), ["Dark Green"] = Color3.fromRGB(8,24,14), ["Dark Purple"] = Color3.fromRGB(20,8,32), Grey = Color3.fromRGB(24,24,28) }
+        thSec:Dropdown({ Name = "Background Color", Items = { "Black", "Dark Red", "Dark Blue", "Dark Green", "Dark Purple", "Grey" }, Default = "Black", Callback = function(v)
+            v = (type(v) == "table") and v[1] or v
+            local base = BG[v] or BG.Black
+            eachMenuEl(function(d)
+                if (d:IsA("Frame") or d:IsA("ScrollingFrame") or d:IsA("TextButton")) and d.BackgroundTransparency < 1 then
+                    local c = d.BackgroundColor3
+                    local b = math.max(c.R, c.G, c.B)
+                    if b <= 0.22 then   -- only the dark panels; accent/colored elements untouched
+                        local k = math.clamp(b / 0.0392, 0.8, 2.8)
+                        d.BackgroundColor3 = Color3.new(math.min(base.R * k, 1), math.min(base.G * k, 1), math.min(base.B * k, 1))
+                    end
+                end
+            end)
+        end })
+        -- BACKGROUND IMAGE: paste a Roblox image/decal id -> it loads behind the whole menu window.
+        local bgImgs = {}
+        thSec:Textbox({ Name = "Background Image ID", Default = "", Callback = function(txt)
+            local id = tostring(txt or ""):match("%d+")
+            for _, im in ipairs(bgImgs) do pcall(function() im:Destroy() end) end
+            bgImgs = {}
+            if not id then return end
+            local roots = {}
+            eachMenuEl(function(d)   -- the big window frames (>300px wide) are the menu roots
+                if d:IsA("Frame") and d.Visible and d.AbsoluteSize.X > 300 and d.AbsoluteSize.Y > 200 and d.BackgroundTransparency < 1 then roots[#roots+1] = d end
+            end)
+            table.sort(roots, function(a, b) return a.AbsoluteSize.X * a.AbsoluteSize.Y > b.AbsoluteSize.X * b.AbsoluteSize.Y end)
+            local root = roots[1]
+            if not root then if VX_NOTIFY then VX_NOTIFY("Open the menu first, then set the image") end return end
+            local im = Instance.new("ImageLabel")
+            im.Name = "\0"; im.BackgroundTransparency = 1; im.Size = UDim2.fromScale(1, 1)
+            im.Image = "rbxassetid://" .. id; im.ScaleType = Enum.ScaleType.Crop; im.ImageTransparency = 0.45
+            im.ZIndex = root.ZIndex; im.Parent = root
+            pcall(function() local c = root:FindFirstChildOfClass("UICorner"); if c then Instance.new("UICorner", im).CornerRadius = c.CornerRadius end end)
+            bgImgs[#bgImgs+1] = im
+            -- decal ids don't render directly in ImageLabels; the thumb endpoint renders both decals and images
+            task.delay(1.5, function() pcall(function() if im.Parent and not im.IsLoaded then im.Image = "rbxthumb://type=Asset&id=" .. id .. "&w=420&h=420" end end) end)
+        end })
+        -- TEXT: font + color, applied to every label/button in the menu.
+        local FONTS = { ["Gotham"] = Enum.Font.Gotham, ["Gotham Bold"] = Enum.Font.GothamBold, ["Code"] = Enum.Font.Code, ["Arial"] = Enum.Font.Arial, ["Ubuntu"] = Enum.Font.Ubuntu, ["SciFi"] = Enum.Font.SciFi, ["Cartoon"] = Enum.Font.Cartoon }
+        thSec:Dropdown({ Name = "Text Font", Items = { "Gotham", "Gotham Bold", "Code", "Arial", "Ubuntu", "SciFi", "Cartoon" }, Default = "Gotham", Callback = function(v)
+            v = (type(v) == "table") and v[1] or v
+            local f = FONTS[v] or Enum.Font.Gotham
+            eachMenuEl(function(d) if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then d.Font = f end end)
+        end })
+        local TXT = { White = Color3.fromRGB(240,240,245), Red = Color3.fromRGB(255,70,80), Blue = Color3.fromRGB(90,160,255), Green = Color3.fromRGB(90,230,140), Yellow = Color3.fromRGB(250,220,90), Pink = Color3.fromRGB(255,120,190), Purple = Color3.fromRGB(180,120,255) }
+        local curTxt = nil
+        thSec:Dropdown({ Name = "Text Color", Items = { "White", "Red", "Blue", "Green", "Yellow", "Pink", "Purple" }, Default = "White", Callback = function(v)
+            v = (type(v) == "table") and v[1] or v
+            local c = TXT[v] or TXT.White
+            eachMenuEl(function(d)
+                if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
+                    local t = d.TextColor3
+                    -- repaint the readable text: whatever is bright/near-white, or whatever we painted last time
+                    if math.min(t.R, t.G, t.B) > 0.5 or (curTxt and (math.abs(t.R-curTxt.R)+math.abs(t.G-curTxt.G)+math.abs(t.B-curTxt.B)) < 0.1) then d.TextColor3 = c end
+                end
+            end)
+            curTxt = c
+        end })
+        -- SOUND: a soft key click whenever you press anything in the menu.
+        do
+            local SS = game:GetService("SoundService")
+            local snd
+            local function ensureSnd()
+                if snd and snd.Parent then return snd end
+                snd = Instance.new("Sound")
+                snd.Name = "\0"; snd.Volume = 0.55; snd.SoundId = "rbxassetid://6895079853"
+                snd.Parent = SS
+                task.delay(2, function() pcall(function() if snd and not snd.IsLoaded then snd.SoundId = "rbxasset://sounds/electronicpingshort.wav"; snd.PlaybackSpeed = 1.7; snd.Volume = 0.25 end end) end)
+                return snd
+            end
+            local hookedBtn = setmetatable({}, { __mode = "k" })
+            local function hookButtons()
+                eachMenuEl(function(d)
+                    if (d:IsA("TextButton") or d:IsA("ImageButton")) and not hookedBtn[d] then
+                        hookedBtn[d] = d.Activated:Connect(function()
+                            if not _G.VX_UISOUND then return end
+                            local s = ensureSnd(); pcall(function() s.TimePosition = 0; s:Play() end)
+                        end)
+                    end
                 end)
             end
+            miscSec:Toggle({ Name = "Sound", Default = false, Callback = function(b)
+                _G.VX_UISOUND = (b == true)
+                if b then task.spawn(function() while _G.VX_UISOUND do pcall(hookButtons); task.wait(2) end end) end
+            end })
         end
-        local function startDbg()
-            _G.VX_DEBUG = true
-            dbgGui = Instance.new("ScreenGui"); dbgGui.Name = "\0"; dbgGui.ResetOnSpawn = false; dbgGui.DisplayOrder = 2e9
-            pcall(function() dbgGui.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
-            if not dbgGui.Parent then dbgGui.Parent = LP:WaitForChild("PlayerGui") end
-            local f = Instance.new("TextLabel"); f.Size = UDim2.fromOffset(430, 150); f.Position = UDim2.fromOffset(14, 150)
-            f.BackgroundColor3 = Color3.fromRGB(8, 8, 10); f.BackgroundTransparency = 0.1; f.BorderSizePixel = 0
-            f.Font = Enum.Font.Code; f.TextSize = 12; f.TextColor3 = Color3.fromRGB(120, 235, 150)
-            f.TextXAlignment = Enum.TextXAlignment.Left; f.TextYAlignment = Enum.TextYAlignment.Top; f.Text = "debug..."; f.Parent = dbgGui
-            Instance.new("UICorner", f).CornerRadius = UDim.new(0, 8)
-            local pad = Instance.new("UIPadding"); pad.PaddingLeft = UDim.new(0, 8); pad.PaddingTop = UDim.new(0, 6); pad.Parent = f
-            dbgLoop = task.spawn(function()
-                while _G.VX_DEBUG do
-                    pcall(hookAnims)
-                    local tp = _G.VX_DBG_TP; local key = _G.VX_DBG_KEY; local an = _G.VX_DBG_ANIM
-                    local lines = { "DREAM DEBUG  (paste this to me)" }
-                    lines[#lines+1] = "TP whitelist: " .. (tp and ((tp.found and "FOUND " or "MISSING ") .. (tp.found and ("fired " .. string.format("%.1fs ago", tick()-tp.t)) or tp.path)) or "not fired yet")
-                    lines[#lines+1] = "BF last key: " .. (key and (key.k:gsub("Enum.KeyCode.","") .. " " .. string.format("%.1fs ago", tick()-key.t)) or "none")
-                    lines[#lines+1] = "BF anim match: " .. (an and ((an.matched and "YES " or "no ") .. an.id) or "no anim seen")
-                    lines[#lines+1] = "recent anims:"
-                    for _, id in ipairs(recent) do lines[#lines+1] = "  " .. tostring(id) end
-                    f.Text = table.concat(lines, "\n")
-                    task.wait(0.25)
-                end
-                if dbgGui then dbgGui:Destroy() end
-            end)
-        end
-        local function stopDbg() _G.VX_DEBUG = false end
-        miscSec:Toggle({ Name = "Debug Overlay", Default = false, Callback = function(b) if b then startDbg() else stopDbg() end end })
     end
 
     Window:Category("Config")
