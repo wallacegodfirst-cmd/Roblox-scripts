@@ -309,7 +309,7 @@ local S = {
     RemoveWaterBorder=false, AntiKillBricks=false,
     M1Hitbox=false, M1HitboxSize=80,   -- 80 default: long spear-arm reach (arms = slider*1.5 forward, thin sides)
     HitboxAbility=false, HitboxAbilitySize=40, HitboxAllParts=false, HitboxVisible=true,
-    OnePunch=false, OnePunchHits=8, OnePunchGuid="",   -- One Punch: each M1 click sends a burst of extra M1 packets
+    AutoDodge=false, DodgeStuds=6,                     -- Auto Dodge: on click/E/R/T/Q, jitter left-right small studs
     FlingPunch=false, FlingRange=40,                   -- contact fling: warp into the target spinning = collision throws them
     M1Warp=false, M1WarpRange=60, M1WarpReturn=true,   -- M1 Warp: snap behind the nearest enemy for the swing, then back
     AutoM1=false,
@@ -894,26 +894,50 @@ local function firePunchOnce()
         tapKey(Enum.KeyCode.T)
     end)
 end
-local onePunchCD = 0
+-- ============================================================
+-- AUTO DODGE (replaces One Punch): when you CLICK (M1) or press E / R / T / Q, it instantly teleports you a
+-- small amount LEFT then RIGHT (a quick side-to-side jitter) so hits/abilities aimed at you whiff. Small studs,
+-- snappy, and it returns you near where you were. Toggle with "Auto Dodge".
+-- ============================================================
+local dodgeBusy, dodgeCD = false, 0
+local DODGE_KEYS = { [Enum.KeyCode.E]=true, [Enum.KeyCode.R]=true, [Enum.KeyCode.T]=true, [Enum.KeyCode.Q]=true }
+local function doAutoDodge()
+    if dodgeBusy then return end
+    if tick() - dodgeCD < 0.2 then return end
+    dodgeCD = tick()
+    local root = getRoot(); if not root then return end
+    dodgeBusy = true
+    task.spawn(function()
+        local dist = tonumber(S.DodgeStuds) or 6   -- how many studs to jump each way (small)
+        local homeCF = root.CFrame
+        local rightV = homeCF.RightVector
+        pcall(function()
+            root.CFrame = homeCF + rightV * -dist      -- LEFT
+            root.AssemblyLinearVelocity = Vector3.zero
+        end)
+        task.wait(0.07)
+        local r2 = getRoot()
+        if r2 then pcall(function()
+            r2.CFrame = homeCF + rightV * dist          -- RIGHT
+            r2.AssemblyLinearVelocity = Vector3.zero
+        end) end
+        task.wait(0.07)
+        local r3 = getRoot()
+        if r3 then pcall(function()
+            r3.CFrame = homeCF                          -- settle back to center
+            r3.AssemblyLinearVelocity = Vector3.zero
+        end) end
+        dodgeBusy = false
+    end)
+end
 hook(UserInputService.InputBegan, function(i, _)
-    if not S.OnePunch then return end
+    if not S.AutoDodge then return end
     if typingNow() then return end
     if tick() < vimClickUntil then return end   -- skip our own injected clicks
-    if i.UserInputType ~= Enum.UserInputType.MouseButton1 and i.UserInputType ~= Enum.UserInputType.Touch then return end
     if mouseOverGui() then return end
-    if tick() - onePunchCD < 0.25 then return end
-    onePunchCD = tick()
-    task.spawn(function()
-        -- Fire a real M1 click first (One Punch may augment your normal punch)
-        clearMyHitLog()
-        clickM1(true)
-        task.wait(0.05)
-        local n = math.clamp(tonumber(S.OnePunchHits) or 8, 1, 50)
-        for _ = 1, n do
-            firePunchOnce()
-            task.wait(0.05)
-        end
-    end)
+    local isClick = i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch
+    local isKey = i.UserInputType == Enum.UserInputType.Keyboard and DODGE_KEYS[i.KeyCode]
+    if isClick or isKey then doAutoDodge() end
 end)
 
 -- ============================================================
@@ -924,44 +948,49 @@ end)
 -- transfers the momentum on their side and throws them — then snap back to where you were.
 -- ============================================================
 local flingBusy = false
+local flingBusyAt = 0
 local function contactFling(targetChar)
-    if flingBusy then return end
+    -- WORKS-EVERY-TIME reset: if a prior fling left flingBusy stuck (its spin errored before the reset),
+    -- force-clear it after 1s so the next click always flings. This is the "works once" fix.
+    if flingBusy and (tick() - flingBusyAt) < 1 then return end
     local root = getRoot(); local tr = charPart(targetChar)
     if not (root and tr) then return end
-    flingBusy = true
+    flingBusy = true; flingBusyAt = tick()
     local savedCF = root.CFrame
     task.spawn(function()
         local hum = getHum()
         local savedPS = hum and hum.PlatformStand
-        pcall(function() if hum then hum.PlatformStand = true end end)   -- don't let your own humanoid fight the spin
-        local t0 = tick()
-        while tick() - t0 < 0.6 do
-            local r = getRoot()
-            local t2 = targetChar and targetChar.Parent and charPart(targetChar)
-            if not (r and t2) then break end
-            pcall(function()
-                -- bob up/down through them while spinning: every frame makes a FRESH collision contact,
-                -- so the momentum keeps transferring instead of resting inside one overlap
-                r.CFrame = t2.CFrame * CFrame.new(0, math.sin((tick() - t0) * 40) * 1.5, 0)
-                r.AssemblyAngularVelocity = Vector3.new(9e4, 9e5, 9e4)    -- the spin that carries the momentum
-                r.AssemblyLinearVelocity  = Vector3.zero
-            end)
-            RunService.Heartbeat:Wait()
-        end
-        local r = getRoot()
-        pcall(function()
-            if r then
-                r.AssemblyAngularVelocity = Vector3.zero
-                r.AssemblyLinearVelocity  = Vector3.zero
-                r.CFrame = savedCF                                        -- back to your spot like nothing happened
+        local ok = pcall(function()
+            pcall(function() if hum then hum.PlatformStand = true end end)   -- don't let your own humanoid fight the spin
+            local t0 = tick()
+            while tick() - t0 < 0.6 do
+                local r = getRoot()
+                local t2 = targetChar and targetChar.Parent and charPart(targetChar)
+                if not (r and t2) then break end
+                pcall(function()
+                    -- bob up/down through them while spinning: every frame makes a FRESH collision contact,
+                    -- so the momentum keeps transferring instead of resting inside one overlap
+                    r.CFrame = t2.CFrame * CFrame.new(0, math.sin((tick() - t0) * 40) * 1.5, 0)
+                    r.AssemblyAngularVelocity = Vector3.new(9e4, 9e5, 9e4)    -- the spin that carries the momentum
+                    r.AssemblyLinearVelocity  = Vector3.zero
+                end)
+                RunService.Heartbeat:Wait()
             end
-            if hum then hum.PlatformStand = savedPS or false end
+            local r = getRoot()
+            pcall(function()
+                if r then
+                    r.AssemblyAngularVelocity = Vector3.zero
+                    r.AssemblyLinearVelocity  = Vector3.zero
+                    r.CFrame = savedCF                                        -- back to your spot like nothing happened
+                end
+                if hum then hum.PlatformStand = savedPS or false end
+            end)
         end)
-        task.delay(0.1, function()   -- one extra settle write: the snap-back can get eaten by the spin's last replication tick
-            local r2 = getRoot()
-            if r2 then pcall(function() r2.CFrame = savedCF; r2.AssemblyLinearVelocity = Vector3.zero; r2.AssemblyAngularVelocity = Vector3.zero end) end
-            flingBusy = false
-        end)
+        local _ = ok
+        task.wait(0.1)   -- one extra settle write: the snap-back can get eaten by the spin's last replication tick
+        local r2 = getRoot()
+        if r2 then pcall(function() r2.CFrame = savedCF; r2.AssemblyLinearVelocity = Vector3.zero; r2.AssemblyAngularVelocity = Vector3.zero end) end
+        flingBusy = false   -- ALWAYS reset (even if the spin above errored) so every click flings
     end)
 end
 hook(UserInputService.InputBegan, function(i, _)   -- no gpe bail: the game sinks M1 clicks (gpe=true always)
@@ -2570,21 +2599,11 @@ CombatTab:CreateToggle({Name="God Mode (turn ON while in the LOBBY - TPs you to 
     end)
 end})
 
-CombatTab:CreateSection("Hitboxes")
--- (M1 Expand Hitbox REMOVED from the menu per request — M1 Warp below is its replacement. The arm/hitbox
--- grow engine itself stays: Auto Farm / Auto Play still rely on it to land their hits.)
-CombatTab:CreateToggle({Name="Ability Hitbox Expander (pulses bigger on E)", CurrentValue=false, Flag="HitboxAbility", Callback=function(v)
-    S.HitboxAbility=v
-    if not v then destroyAbilityHb(); restoreHitboxes() end
-end})
-CombatTab:CreateSlider({Name="Ability Hitbox Size", Range={1,300}, Increment=1, Suffix="studs", CurrentValue=40, Flag="HitboxAbilitySize", Callback=function(v) S.HitboxAbilitySize=v end})
--- ("Expand Whole Body" removed: growing the visible body parts made every enemy an invisible giant.)
-CombatTab:CreateToggle({Name="Show Hitbox (cyan box - off = invisible)", CurrentValue=true, Flag="HitboxVisible", Callback=function(v) S.HitboxVisible=v end})
+-- (Hitbox Expander REMOVED per request — the whole section is gone. Auto Farm / Auto Play use their own hits.)
 
-CombatTab:CreateSection("One Punch")
-CombatTab:CreateToggle({Name="One Punch (M1 casts the game's One Punch ability)", CurrentValue=false, Flag="OnePunch", Callback=function(v) S.OnePunch=v end})
-CombatTab:CreateSlider({Name="Casts per Click", Range={1,50}, Increment=1, Suffix="casts", CurrentValue=8, Flag="OnePunchHits", Callback=function(v) S.OnePunchHits=v end})
-CombatTab:CreateInput({Name="Ability Name (default: One Punch - change if the game renamed it)", PlaceholderText="One Punch", Callback=function(v) v=tostring(v or ""):gsub("^%s+",""):gsub("%s+$",""); S.OnePunchGuid=v end})
+CombatTab:CreateSection("Auto Dodge")
+CombatTab:CreateToggle({Name="Auto Dodge (click / E R T Q -> jitter left-right)", CurrentValue=false, Flag="AutoDodge", Callback=function(v) S.AutoDodge=v end})
+CombatTab:CreateSlider({Name="Dodge Studs", Range={2,20}, Increment=1, Suffix="studs", CurrentValue=6, Flag="DodgeStuds", Callback=function(v) S.DodgeStuds=v end})
 CombatTab:CreateToggle({Name="Fling Punch (M1 spin-flings the nearest enemy)", CurrentValue=false, Flag="FlingPunch", Callback=function(v) S.FlingPunch=v end})
 CombatTab:CreateSlider({Name="Fling Range", Range={10,120}, Increment=5, Suffix="studs", CurrentValue=40, Flag="FlingRange", Callback=function(v) S.FlingRange=v end})
 
