@@ -87,6 +87,7 @@ do
 	end
 		local function pressKey(keyCode)
 			if not VirtualInputManager then return false end
+			if _G.VX_DEBUG then _G.VX_DBG_KEY = { k = tostring(keyCode), t = tick(), who = "BF" } end
 			pcall(function()
 				VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
 				VirtualInputManager:SendKeyEvent(false, keyCode, false, game)   -- INSTANT down+up, exactly like your script (the 0.025 wait broke it)
@@ -115,6 +116,7 @@ do
 			if not CFG.Enabled then return end
 			local id = getAnimationId(track)
 			local delayTime = matchDelay(id)
+			if _G.VX_DEBUG then _G.VX_DBG_ANIM = { id = id, matched = delayTime ~= nil, t = tick() } end
 			if delayTime then doFlash(delayTime) end
 		end
 		-- (Click trigger removed — your script is anim-only: it flashes on the known BF windup ids, nothing else.)
@@ -981,6 +983,7 @@ local function vxACPass()   -- fire the whitelist EVERY call (the teleport glide
 	vxClaimOwnership()   -- re-claim network ownership on every snap/teleport step (the actual fix for "sets me back")
 	local re = vxResolveAC()
 	if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end
+	if _G.VX_DEBUG then _G.VX_DBG_TP = { found = re ~= nil, path = re and re:GetFullName() or "NOT FOUND", t = tick() } end
 end
 _G.VX_ACPASS = vxACPass   -- expose so the black-flash snap-behind can whitelist its CFrame writes (else the anti-cheat reverts them = never lands on the back)
 local vxTeleGen = 0  -- overlap guard: each teleport takes the next number; a newer one supersedes older holds so rapid teleports (Rika sword) do not fight over your CFrame or leave PlatformStand stuck on (frozen)
@@ -9468,6 +9471,8 @@ do
         if _G.VXBF2 then _G.VXBF2.setAutoBF(false) end   -- avoid the weaker VXBF2 path double-pressing
     end })
     bfSec:Slider({ Name = "BF Cooldown", Min = 0.1, Max = 2, Default = 0.5, Decimals = 0.05, Suffix = "s", Callback = function(v) if _G.VXBF2 then _G.VXBF2.setCooldown(v) end end })
+    -- BF Timing: nudge the flash press earlier(-)/later(+) so you can dial in the exact frame for YOUR character (fixes "it just comes out as a move"). 0 = default.
+    bfSec:Slider({ Name = "BF Timing", Min = -0.15, Max = 0.15, Default = 0, Decimals = 0.01, Suffix = "s", Callback = function(v) if BFApi then BFApi.SetTimingOffset(v) end end })
     if tier("premium") then bfSec:Slider({ Name = "Teleport/Jump Dist", Min = 2, Max = 8, Default = 3, Decimals = 0.5, Callback = function(v) if _G.VXBF2 then _G.VXBF2.setTeleportDist(v) end end }) end
     -- FREE feint keeps only M1 + Moves(skills); premium adds Feint Black Flash
     -- Feint M1 as a direct TOGGLE (dropdown Callbacks are unreliable on this UI lib; toggles always fire).
@@ -9842,6 +9847,55 @@ do
     miscSec:Button({ Name = "Rejoin Server", Callback = function() pcall(function() game:GetService("TeleportService"):Teleport(game.PlaceId, LP) end) end })
     miscSec:Button({ Name = "Copy Discord", Callback = function() if setclipboard then pcall(setclipboard, "https://discord.gg/fRcGd9bW") end; if VX_NOTIFY then VX_NOTIFY("Discord copied") end end })
     miscSec:Label("Menu: RightShift (or the on-screen button on mobile)")
+
+    -- DEBUG OVERLAY: turns "it doesn't work" into exact data. Shows the real anim ids your body plays (so we get the
+    -- true M1/hit anim for BF), whether the teleport whitelist remote is found + firing, and the last key we pressed.
+    do
+        local dbgGui, dbgConn, dbgLoop
+        local recent = {}   -- rolling list of the last anim ids your character played
+        local hookedA = setmetatable({}, { __mode = "k" })
+        local function hookAnims()
+            local chs = workspace:FindFirstChild("Characters")
+            local body = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+            local hum = body and body:FindFirstChildOfClass("Humanoid")
+            local a = hum and hum:FindFirstChildOfClass("Animator")
+            if a and not hookedA[a] then
+                hookedA[a] = a.AnimationPlayed:Connect(function(tr)
+                    local id = tr and tr.Animation and tr.Animation.AnimationId or "?"
+                    table.insert(recent, 1, id); for i = #recent, 7, -1 do recent[i] = nil end
+                end)
+            end
+        end
+        local function startDbg()
+            _G.VX_DEBUG = true
+            dbgGui = Instance.new("ScreenGui"); dbgGui.Name = "\0"; dbgGui.ResetOnSpawn = false; dbgGui.DisplayOrder = 2e9
+            pcall(function() dbgGui.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
+            if not dbgGui.Parent then dbgGui.Parent = LP:WaitForChild("PlayerGui") end
+            local f = Instance.new("TextLabel"); f.Size = UDim2.fromOffset(430, 150); f.Position = UDim2.fromOffset(14, 150)
+            f.BackgroundColor3 = Color3.fromRGB(8, 8, 10); f.BackgroundTransparency = 0.1; f.BorderSizePixel = 0
+            f.Font = Enum.Font.Code; f.TextSize = 12; f.TextColor3 = Color3.fromRGB(120, 235, 150)
+            f.TextXAlignment = Enum.TextXAlignment.Left; f.TextYAlignment = Enum.TextYAlignment.Top; f.Text = "debug..."; f.Parent = dbgGui
+            Instance.new("UICorner", f).CornerRadius = UDim.new(0, 8)
+            local pad = Instance.new("UIPadding"); pad.PaddingLeft = UDim.new(0, 8); pad.PaddingTop = UDim.new(0, 6); pad.Parent = f
+            dbgLoop = task.spawn(function()
+                while _G.VX_DEBUG do
+                    pcall(hookAnims)
+                    local tp = _G.VX_DBG_TP; local key = _G.VX_DBG_KEY; local an = _G.VX_DBG_ANIM
+                    local lines = { "DREAM DEBUG  (paste this to me)" }
+                    lines[#lines+1] = "TP whitelist: " .. (tp and ((tp.found and "FOUND " or "MISSING ") .. (tp.found and ("fired " .. string.format("%.1fs ago", tick()-tp.t)) or tp.path)) or "not fired yet")
+                    lines[#lines+1] = "BF last key: " .. (key and (key.k:gsub("Enum.KeyCode.","") .. " " .. string.format("%.1fs ago", tick()-key.t)) or "none")
+                    lines[#lines+1] = "BF anim match: " .. (an and ((an.matched and "YES " or "no ") .. an.id) or "no anim seen")
+                    lines[#lines+1] = "recent anims:"
+                    for _, id in ipairs(recent) do lines[#lines+1] = "  " .. tostring(id) end
+                    f.Text = table.concat(lines, "\n")
+                    task.wait(0.25)
+                end
+                if dbgGui then dbgGui:Destroy() end
+            end)
+        end
+        local function stopDbg() _G.VX_DEBUG = false end
+        miscSec:Toggle({ Name = "Debug Overlay", Default = false, Callback = function(b) if b then startDbg() else stopDbg() end end })
+    end
 
     Window:Category("Config")
     Library:CreateSettingsPage(Window)
