@@ -1154,6 +1154,7 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
 			acPass()
 			pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero end)
+			pcall(function() cc:PivotTo(cf) end)   -- move the WHOLE rig too (some JJS bodies ignore a bare HRP.CFrame write)
 			task.wait(0.016)
 		end
 		local h0 = tick()
@@ -1162,6 +1163,7 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
 			acPass()
 			pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero end)
+			pcall(function() cc:PivotTo(cf) end)
 			task.wait(0.03)
 		end
 		if vxTeleGen == gen then  -- only the LATEST teleport cleans up, so overlapping calls can't leave PlatformStand stuck (no more "frozen after jump")
@@ -4102,30 +4104,54 @@ do
 				end)
 			end
 		end)
-		local function startHold(alreadyCharged)
-			if not quakeOn or holding then return end
+		-- nearest player OR dummy within range (the trigger for the auto quake)
+		local function enemyNear(range)
+			local mh = myHRP(); if not mh then return false end
+			local function chk(m)
+				if not m or m == myModel() or m.Name == LP.Name then return false end
+				local r = m:FindFirstChild("HumanoidRootPart"); local h = m:FindFirstChildOfClass("Humanoid")
+				if not r then return false end
+				if h and h.Health <= 0 then return false end
+				return (r.Position - mh.Position).Magnitude <= range
+			end
+			for _, pl in ipairs(Players:GetPlayers()) do if pl ~= LP and chk(pl.Character) then return true end end
+			local chs = workspace:FindFirstChild("Characters")
+			if chs then for _, m in ipairs(chs:GetChildren()) do if chk(m) then return true end end end
+			local dummies = workspace:FindFirstChild("Dummies") or workspace:FindFirstChild("Training")
+			if dummies then for _, m in ipairs(dummies:GetChildren()) do if chk(m) then return true end end end
+			return false
+		end
+		-- ONE quake: press 3, HOLD it for the charge, release. Also fire the move's own remote in parallel so it
+		-- lands even if key injection is weak on this executor. Cooldown so a nearby enemy doesn't spam it.
+		local function doQuake()
+			if holding then return end
 			holding = true
 			task.spawn(function()
-				local hold = tonumber(_G.VX_QUAKE_HOLD) or 2.5
+				local hold = tonumber(_G.VX_QUAKE_HOLD) or 2
 				local began = tick()
-				-- your recording: the game only listens to a REAL full press cycle. While your finger is on 3
-				-- a second injected down is swallowed and your early release kills the charge. So we act on your
-				-- RELEASE: if the windup already ran long enough (you held it), do nothing; otherwise send one
-				-- clean full press-hold-release of our own.
-				if not alreadyCharged then
-					_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + hold + 0.15
-					pcall(function()
-						VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
-						task.wait(hold)
-						VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
-					end)
-					task.wait(0.35)
-					if quakeAnimSeen < began then pcall(fireQuake) end   -- the press never started the move -> fire it directly
-				end
-				task.wait(0.05)
+				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + hold + 0.3
+				pcall(function()
+					VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)   -- 3 DOWN
+					task.wait(hold)                                            -- HOLD for the charge (2s default)
+					VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)  -- LET GO -> shockwave
+				end)
+				task.wait(0.3)
+				if quakeAnimSeen < began then pcall(fireQuake) end   -- key hold didn't start it -> fire the remote directly
 				holding = false
 			end)
 		end
+		-- AUTO LOOP: while enabled, whenever a player/dummy is near, do the full 3-hold-release quake, then wait
+		-- out its cooldown before the next one.
+		task.spawn(function()
+			while true do
+				task.wait(0.3)
+				if quakeOn and not holding and enemyNear(tonumber(_G.VX_QUAKE_RANGE) or 60) then
+					doQuake()
+					task.wait((tonumber(_G.VX_QUAKE_HOLD) or 2) + 2.5)   -- charge + real cooldown before the next auto quake
+				end
+			end
+		end)
+		-- MANUAL: you can also still trigger it yourself by tapping 3.
 		local threeDownAt = 0
 		UISq.InputBegan:Connect(function(input, _)
 			if input.KeyCode == Enum.KeyCode.Three then
@@ -4139,8 +4165,8 @@ do
 			if input.KeyCode ~= Enum.KeyCode.Three then return end
 			local injK = _G.VX_INJ_KEYS
 			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end   -- our own injected release
-			local held = tick() - threeDownAt
-			startHold(held >= (tonumber(_G.VX_QUAKE_HOLD) or 2.5))   -- you held it long enough yourself -> the quake already fired
+			if (tick() - threeDownAt) >= (tonumber(_G.VX_QUAKE_HOLD) or 2) then return end   -- you already held it long enough yourself
+			doQuake()
 		end)
 	end
 	KillEmoteApi = { set = function(v) killEmoteOn = v == true end, setSlot = function(n) killEmoteSlot = tonumber(n) or 1 end }
@@ -5443,8 +5469,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "3.4"
-local VX_BUILD = "B34"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "3.5"
+local VX_BUILD = "B35"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
@@ -9763,7 +9789,8 @@ do
     if tier("premium") then acSec:Toggle({ Name = "Auto Adapt", Callback = function(b) if AutoAdaptApi then AutoAdaptApi.set(b) end end }) end   -- FREE: no Auto Adapt (Auto Domain Adapt below is kept)
     acSec:Toggle({ Name = "Auto Domain Adapt", Callback = function(b) if AutoDomainAdaptApi then AutoDomainAdaptApi.set(b) end end })
     acSec:Toggle({ Name = "Auto Earthquake", Callback = function(b) if AutoQuakeApi then AutoQuakeApi.set(b) end end })
-    acSec:Slider({ Name = "Quake Hold", Min = 0.3, Max = 3, Default = 2.5, Decimals = 0.01, Suffix = "s", Callback = function(v) _G.VX_QUAKE_HOLD = tonumber(v) or 2.5 end })
+    acSec:Slider({ Name = "Quake Hold", Min = 0.3, Max = 3, Default = 2, Decimals = 0.01, Suffix = "s", Callback = function(v) _G.VX_QUAKE_HOLD = tonumber(v) or 2 end })
+    acSec:Slider({ Name = "Quake Range", Min = 15, Max = 150, Default = 60, Decimals = 1, Suffix = "st", Callback = function(v) _G.VX_QUAKE_RANGE = tonumber(v) or 60 end })
     acSec:Toggle({ Name = "Auto Kill Emote", Callback = function(b) if KillEmoteApi then KillEmoteApi.set(b) end end })
     local keItems = {}   -- slot list with REAL emote names read from PlayerGui.Emotes.Emote.Page1/Page2 (the 'nan' slider is gone)
     for i = 1, 16 do
