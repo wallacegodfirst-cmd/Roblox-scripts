@@ -1251,16 +1251,38 @@ local function vxTeleportHard(dest, holdTime)
 			return h ~= nil and (h.Position - dest).Magnitude < 12
 		end
 		local function toast(m) pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "Dream Hub", Text = m, Duration = 4 }) end) end
-		-- INSTANT (default): a FAST stepped glide - covers the distance in a few frames so it looks like a real
-		-- teleport (no slow sliding) but each step stays under the anti-cheat limit, so it STICKS. This is the
-		-- "TP not glide" you asked for: high-speed steps = instant feel + no set-back.
+		-- INSTANT (default): a TRUE one-frame snap - you are AT the destination on the very first frame (no glide,
+		-- no stepping). Then it aggressively HOLDS: every frame it re-whitelists and, if the server tried to drag
+		-- you off, it re-snaps you straight back. So it looks like a real teleport and refuses to be set back.
 		if VX_TP_METHOD ~= "Glide" then
-			if vxSteppedGlide(dest, 900, math.max(holdTime or 2, 1.5)) or near() then return end   -- 900 studs/s = ~15/frame = a couple frames for most TPs
-			if VX_TP_METHOD == "Instant" then
-				-- one more try a touch slower before giving up
-				if vxSteppedGlide(dest, 450, (holdTime or 2) + 1) or near() then return end
-				vxTpToast("TP pushed back - lower TP Speed or set Method to Glide"); return
+			local function myChar() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
+			vxTeleGen = vxTeleGen + 1; local gen = vxTeleGen
+			local char = myChar(); local hrp = char and char:FindFirstChild("HumanoidRootPart")
+			if hrp then
+				local hum = char:FindFirstChildOfClass("Humanoid"); local rot = hrp.CFrame.Rotation
+				local destCF = CFrame.new(dest) * rot
+				for _, v in ipairs(hrp:GetChildren()) do
+					if v:IsA("AlignPosition") or v:IsA("AlignOrientation") or v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("BodyGyro") or v:IsA("LinearVelocity") or v:IsA("VectorForce") then pcall(function() v:Destroy() end) end
+				end
+				if hum then pcall(function() hum.PlatformStand = true end) end
+				vxACPass()
+				pcall(function() hrp.CFrame = destCF; hrp.AssemblyLinearVelocity = Vector3.zero end)   -- SNAP (frame 1 = arrived)
+				pcall(function() char:PivotTo(destCF) end)
+				local h0 = tick()
+				while tick() - h0 < math.max(holdTime or 1.5, 1.2) do   -- HOLD: re-whitelist + re-snap if dragged off
+					if vxTeleGen ~= gen then return end
+					local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
+					vxACPass()
+					if (hrp.Position - dest).Magnitude > 4 then
+						pcall(function() hrp.CFrame = destCF; hrp.AssemblyLinearVelocity = Vector3.zero end)
+						pcall(function() cc:PivotTo(destCF) end)
+					end
+					task.wait()
+				end
+				if vxTeleGen == gen and hum then pcall(function() hum.PlatformStand = false end) end
 			end
+			if near() then return end
+			if VX_TP_METHOD == "Instant" then vxTpToast("TP set back by anti-cheat - try Glide method"); return end
 		end
 		-- Glide / Auto fallbacks: the original speed-capped glide, then half speed
 		if not near() then
@@ -5488,8 +5510,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "3.7"
-local VX_BUILD = "B37"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "3.8"
+local VX_BUILD = "B38"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
@@ -9688,7 +9710,7 @@ do
     }
     do
         local VIMbf = game:GetService("VirtualInputManager")
-        local KEYMAP = { ["1"] = Enum.KeyCode.One, ["2"] = Enum.KeyCode.Two, ["3"] = Enum.KeyCode.Three, ["4"] = Enum.KeyCode.Four, ["R"] = Enum.KeyCode.R }
+        local KEYMAP = { ["1"] = Enum.KeyCode.One, ["2"] = Enum.KeyCode.Two, ["3"] = Enum.KeyCode.Three, ["4"] = Enum.KeyCode.Four, ["R"] = Enum.KeyCode.R, ["F"] = Enum.KeyCode.F, ["T"] = Enum.KeyCode.T, ["G"] = Enum.KeyCode.G }
         local function fireBF()
             if bfKey == "M1" then
                 pcall(function() VIMbf:SendMouseButtonEvent(0, 0, 0, true, game, 0); VIMbf:SendMouseButtonEvent(0, 0, 0, false, game, 0) end)
@@ -9727,7 +9749,7 @@ do
         elseif m == "M1 Chain" then _G.VXBF2.setBFM1(false); _G.VXBF2.setMode("M1"); _G.VXBF2.setEnabled(true)
         else _G.VXBF2.setBFM1(false); _G.VXBF2.setMode(m); _G.VXBF2.setEnabled(true) end
     end })
-    bfSec:Dropdown({ Name = "BF Key", Items = { "M1", "1", "2", "3", "4", "R" }, Default = "M1", Callback = function(v) bfKey = (type(v) == "table") and v[1] or v end })
+    bfSec:Dropdown({ Name = "BF Key", Items = { "M1", "F", "R", "T", "G", "1", "2", "3", "4" }, Default = "M1", Callback = function(v) bfKey = (type(v) == "table") and v[1] or v end })
     bfSec:Toggle({ Name = "Auto Black Flash", Default = false, Callback = function(b)
         bfAutoOn = (b == true); bfSync()
         if _G.VXBF2 then _G.VXBF2.setAutoBF(false) end   -- avoid the weaker VXBF2 path double-pressing
