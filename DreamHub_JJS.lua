@@ -3,6 +3,67 @@
       Sources: friend's Auto Block engine, Autoblackflash.lua, ULTIMATE BACK-LOCK BF CHAIN.
       No emojis. Toggle the menu with RightShift. Press E to trigger the BF chain manually.   ]]
 
+-- ══════════════════════════════════════════════════════════════════════════════════════════════════
+-- BYPASS — MUST RUN FIRST, BEFORE ANY OTHER CODE (you got 267-kicked because it was installed too late).
+-- Blocks :Kick(LP) so the anti-cheat can't 267 you, blocks the AntiCheat "Teleport" remote so the
+-- set-back is never reported (a plain CFrame write then STAYS), and disables the local anti-cheat scripts.
+-- This is the user-supplied bypass, installed as the very first thing the hub does.
+-- ══════════════════════════════════════════════════════════════════════════════════════════════════
+_G.VX_AC_ALLOW = false
+if not _G.VX_AC_HOOKED then
+	_G.VX_AC_HOOKED = true
+	local LP0 = game:GetService("Players").LocalPlayer
+	pcall(function()
+		local mt = getrawmetatable(game)
+		local oldNamecall = mt.__namecall
+		setreadonly(mt, false)
+		mt.__namecall = newcclosure(function(self, ...)
+			local ok, method = pcall(getnamecallmethod)
+			if ok then
+				-- block Kick(LocalPlayer) = no Error 267
+				if method == "Kick" and self == LP0 then return nil end
+				-- block the AntiCheat "Teleport" remote = the set-back report never lands
+				if (method == "FireServer" or method == "InvokeServer") and not _G.VX_AC_ALLOW then
+					local ok2, blk = pcall(function()
+						if not (self:IsA("RemoteEvent") or self:IsA("RemoteFunction")) then return false end
+						if self.Name ~= "Teleport" then return false end
+						local p = self.Parent
+						for _ = 1, 5 do
+							if not p then break end
+							if tostring(p.Name):lower():find("anticheat") then return true end
+							p = p.Parent
+						end
+						return false
+					end)
+					if ok2 and blk then return nil end
+				end
+			end
+			return oldNamecall(self, ...)
+		end)
+		setreadonly(mt, true)
+	end)
+	-- disable the local anti-cheat LocalScripts so they stop reporting at all
+	task.spawn(function()
+		local function disableScripts(parent)
+			if not parent then return end
+			for _, v in ipairs(parent:GetDescendants()) do
+				if v:IsA("LocalScript") then
+					local n = tostring(v.Name):lower()
+					if n:find("anti") or n:find("cheat") or n:find("detect") then
+						pcall(function() v.Disabled = true; v.Parent = nil end)
+					end
+				end
+			end
+		end
+		local function disableAll()
+			pcall(function() if LP0:FindFirstChild("PlayerScripts") then disableScripts(LP0.PlayerScripts) end end)
+			pcall(function() if LP0:FindFirstChild("Character") then disableScripts(LP0.Character) end end)
+			pcall(function() disableScripts(game:GetService("StarterPlayer"):FindFirstChild("StarterPlayerScripts")) end)
+		end
+		disableAll(); task.wait(2); disableAll()
+	end)
+end
+
 -- (LOADING SCREEN REMOVED per request — the hub builds straight away, no splash.)
 _G.VX_HUB_READY = false
 
@@ -1072,74 +1133,6 @@ end
 -- never sees me as airborne so uppercut/downslam won't trigger". This was never claimed anywhere in the file.
 -- Claiming it is a standard, well-established exploit technique (SetNetworkOwner) and, when the executor's
 -- security context permits it, makes every physics write in this hub actually stick server-side.
--- ══════════════════════════════════════════════════════════════════════════════════════════════════
--- TELEPORT BYPASS (user-supplied, standalone): instead of FIRING the anti-cheat's whitelist remote to
--- ask permission, we BLOCK it so the set-back can never happen: (1) hook __namecall to swallow the
--- AntiCheat "Teleport" remote's FireServer/InvokeServer, (2) disable the local anti-cheat LocalScripts,
--- (3) block :Kick(LocalPlayer) so a failed check can't 267 you. With the report blocked, a plain CFrame
--- write just STAYS. All pcall-guarded; on executors without these APIs the teleport still runs (unblocked).
--- _G.VX_AC_ALLOW lets our own code fire the remote through the block if ever needed (kept false).
-_G.VX_AC_ALLOW = false
-do
-	local Players = game:GetService("Players"); local LP = Players.LocalPlayer
-	local RS = game:GetService("ReplicatedStorage")
-	local function isAntiCheatTP(self)
-		local ok, isRE = pcall(function() return self:IsA("RemoteEvent") or self:IsA("RemoteFunction") end)
-		if not (ok and isRE) then return false end
-		if self.Name ~= "Teleport" then return false end
-		local p = self.Parent
-		for _ = 1, 6 do
-			if not p then break end
-			if tostring(p.Name):lower():find("anticheat") then return true end
-			p = p.Parent
-		end
-		return false
-	end
-	-- 1 + 3: block the AC teleport remote + block Kick, at the metamethod level
-	if not _G.VX_AC_HOOKED then
-		_G.VX_AC_HOOKED = true
-		pcall(function()
-			local mt = getrawmetatable(game)
-			local old = mt.__namecall
-			setreadonly(mt, false)
-			mt.__namecall = newcclosure(function(self, ...)
-				local ok, method = pcall(getnamecallmethod)
-				if ok then
-					if method == "Kick" and self == LP then return nil end           -- no Error 267
-					if (method == "FireServer" or method == "InvokeServer") and not _G.VX_AC_ALLOW then
-						local ok2, ac = pcall(isAntiCheatTP, self)
-						if ok2 and ac then return nil end                             -- swallow the set-back report
-					end
-				end
-				return old(self, ...)
-			end)
-			setreadonly(mt, true)
-		end)
-	end
-	-- 2: disable the local anti-cheat scripts so they stop reporting at all
-	task.spawn(function()
-		local function killAC(root)
-			if not root then return end
-			pcall(function()
-				for _, v in ipairs(root:GetDescendants()) do
-					if v:IsA("LocalScript") then
-						local n = tostring(v.Name):lower()
-						if n:find("anti") or n:find("cheat") or n:find("detect") then
-							pcall(function() v.Disabled = true; v.Parent = nil end)
-						end
-					end
-				end
-			end)
-		end
-		local function pass()
-			killAC(LP:FindFirstChild("PlayerScripts"))
-			killAC(LP:FindFirstChild("Character"))
-			pcall(function() killAC(game:GetService("StarterPlayer"):FindFirstChild("StarterPlayerScripts")) end)
-		end
-		pass(); task.wait(2); pass()
-	end)
-end
-
 local function vxClaimOwnership()
 	local LP = game:GetService("Players").LocalPlayer
 	local chs = workspace:FindFirstChild("Characters")
@@ -5594,8 +5587,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "4.4"
-local VX_BUILD = "B44"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "4.5"
+local VX_BUILD = "B45"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
