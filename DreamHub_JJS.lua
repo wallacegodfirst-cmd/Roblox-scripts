@@ -3,92 +3,8 @@
       Sources: friend's Auto Block engine, Autoblackflash.lua, ULTIMATE BACK-LOCK BF CHAIN.
       No emojis. Toggle the menu with RightShift. Press E to trigger the BF chain manually.   ]]
 
--- ═══════════════════ LOADING SCREEN ═══════════════════ (staged: loading -> user+profile -> status -> game -> in)
+-- (LOADING SCREEN REMOVED per request — the hub builds straight away, no splash.)
 _G.VX_HUB_READY = false
-pcall(function()
-    local Players = game:GetService("Players")
-    local TweenService = game:GetService("TweenService")
-    local LP = Players.LocalPlayer
-    local isFree = _G.JJS_FREE and true or false
-    local ACCENT = isFree and Color3.fromRGB(255, 40, 52) or Color3.fromRGB(255, 255, 255)
-    local tierLabel = isFree and "FREE" or "VIP"
-    local LOGO = "rbxassetid://100962226150441"   -- Dream Hub hero image (swap the id here anytime)
-
-    local gui = Instance.new("ScreenGui")
-    gui.Name = "VX_Loading"; gui.IgnoreGuiInset = true; gui.ResetOnSpawn = false; gui.DisplayOrder = 2147483000
-    pcall(function() gui.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
-    if not gui.Parent then gui.Parent = LP:WaitForChild("PlayerGui") end
-
-    local bg = Instance.new("Frame"); bg.Size = UDim2.fromScale(1,1); bg.BackgroundColor3 = Color3.fromRGB(6,6,7); bg.BorderSizePixel = 0; bg.Parent = gui
-    local grad = Instance.new("UIGradient"); grad.Rotation = 90
-    grad.Color = ColorSequence.new(Color3.fromRGB(12, isFree and 4 or 12, isFree and 6 or 12), Color3.fromRGB(3,3,4)); grad.Parent = bg
-
-    local card = Instance.new("Frame"); card.AnchorPoint = Vector2.new(0.5,0.5); card.Position = UDim2.fromScale(0.5,0.5)
-    card.Size = UDim2.fromOffset(360, 300); card.BackgroundColor3 = Color3.fromRGB(13,13,15); card.BorderSizePixel = 0; card.Parent = bg
-    Instance.new("UICorner", card).CornerRadius = UDim.new(0,16)
-    local cs = Instance.new("UIStroke"); cs.Color = ACCENT; cs.Thickness = 1.6; cs.Transparency = 0.25; cs.Parent = card
-
-    -- avatar (circular), fetched async
-    local av = Instance.new("ImageLabel"); av.AnchorPoint = Vector2.new(0.5,0); av.Position = UDim2.new(0.5,0,0,26)
-    av.Size = UDim2.fromOffset(84,84); av.BackgroundColor3 = Color3.fromRGB(22,22,26); av.BorderSizePixel = 0; av.Image = ""; av.Parent = card
-    Instance.new("UICorner", av).CornerRadius = UDim.new(1,0)
-    local avs = Instance.new("UIStroke"); avs.Color = ACCENT; avs.Thickness = 2; avs.Parent = av
-    task.spawn(function() local ok,u = pcall(function() return Players:GetUserThumbnailAsync(LP.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size150x150) end); if ok and u then av.Image = u end end)
-
-    local title = Instance.new("TextLabel"); title.BackgroundTransparency = 1; title.Position = UDim2.new(0,0,0,118); title.Size = UDim2.new(1,0,0,26)
-    title.Font = Enum.Font.GothamBlack; title.TextSize = 22; title.TextColor3 = ACCENT; title.Text = "DREAM HUB"; title.Parent = card
-    local sub = Instance.new("TextLabel"); sub.BackgroundTransparency = 1; sub.Position = UDim2.new(0,0,0,144); sub.Size = UDim2.new(1,0,0,16)
-    sub.Font = Enum.Font.GothamMedium; sub.TextSize = 12; sub.TextColor3 = Color3.fromRGB(170,170,178); sub.Text = "Jujutsu Shenanigans  ·  "..tierLabel; sub.Parent = card
-
-    -- game icon (bottom, "the game you play"), fetched async
-    local gi = Instance.new("ImageLabel"); gi.AnchorPoint = Vector2.new(0.5,0); gi.Position = UDim2.new(0.5,0,0,170)
-    gi.Size = UDim2.fromOffset(40,40); gi.BackgroundColor3 = Color3.fromRGB(22,22,26); gi.BorderSizePixel = 0; gi.Image = ""; gi.Visible = false; gi.Parent = card
-    Instance.new("UICorner", gi).CornerRadius = UDim.new(0,8)
-    task.spawn(function()
-        local ok,info = pcall(function() return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId) end)
-        if ok and info and info.IconImageAssetId and info.IconImageAssetId ~= 0 then gi.Image = "rbxassetid://"..info.IconImageAssetId; gi.Visible = true end
-    end)
-
-    -- progress bar
-    local barBg = Instance.new("Frame"); barBg.AnchorPoint = Vector2.new(0.5,1); barBg.Position = UDim2.new(0.5,0,1,-44)
-    barBg.Size = UDim2.new(1,-48,0,6); barBg.BackgroundColor3 = Color3.fromRGB(30,30,34); barBg.BorderSizePixel = 0; barBg.Parent = card
-    Instance.new("UICorner", barBg).CornerRadius = UDim.new(1,0)
-    local bar = Instance.new("Frame"); bar.Size = UDim2.fromScale(0,1); bar.BackgroundColor3 = ACCENT; bar.BorderSizePixel = 0; bar.Parent = barBg
-    Instance.new("UICorner", bar).CornerRadius = UDim.new(1,0)
-    local status = Instance.new("TextLabel"); status.AnchorPoint = Vector2.new(0.5,1); status.Position = UDim2.new(0.5,0,1,-20); status.Size = UDim2.new(1,-40,0,16)
-    status.BackgroundTransparency = 1; status.Font = Enum.Font.Gotham; status.TextSize = 12; status.TextColor3 = Color3.fromRGB(200,200,206); status.Text = "Loading..."; status.Parent = card
-
-    bg.BackgroundTransparency = 1
-    TweenService:Create(bg, TweenInfo.new(0.35), {BackgroundTransparency = 0}):Play()
-
-    task.spawn(function()
-        local stages = {
-            {t = "Loading...", p = 0.12},
-            {t = "Getting user + profile...", p = 0.38},
-            {t = "Checking status:  "..tierLabel, p = 0.6},
-            {t = "Loading game data...", p = 0.82},
-            {t = "Loading you in...", p = 1.0},
-        }
-        for _, s in ipairs(stages) do
-            status.Text = s.t
-            TweenService:Create(bar, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {Size = UDim2.fromScale(s.p, 1)}):Play()
-            task.wait(0.7)
-        end
-        local t0 = tick()   -- hold on the last frame until the hub is actually built (or 8s max)
-        while not _G.VX_HUB_READY and tick() - t0 < 8 do task.wait(0.1) end
-        status.Text = "Welcome, "..(LP.DisplayName or LP.Name).."!"
-        task.wait(0.3)
-        TweenService:Create(bg, TweenInfo.new(0.5), {BackgroundTransparency = 1}):Play()
-        TweenService:Create(cs, TweenInfo.new(0.5), {Transparency = 1}):Play()
-        for _, o in ipairs(card:GetDescendants()) do
-            pcall(function() if o:IsA("TextLabel") then TweenService:Create(o, TweenInfo.new(0.5), {TextTransparency = 1}):Play()
-            elseif o:IsA("ImageLabel") then TweenService:Create(o, TweenInfo.new(0.5), {ImageTransparency = 1, BackgroundTransparency = 1}):Play()
-            elseif o:IsA("Frame") then TweenService:Create(o, TweenInfo.new(0.5), {BackgroundTransparency = 1}):Play() end end)
-        end
-        TweenService:Create(card, TweenInfo.new(0.5), {BackgroundTransparency = 1}):Play()
-        task.wait(0.6); pcall(function() gui:Destroy() end)
-    end)
-end)
 
 -- (Removed the duplicate VX_DreamCircle button — the GUI's own logo toggle button, which uses the Dream logo
 --  image LOGO_ID = 82151574125055, is the single one now.)
@@ -2060,31 +1976,8 @@ do
         elseif m == "M1" then doBFM1Chain() end
     end
 
-    -- ANIM HOOK: simple BF M1 (press 3 on the BF animation) + is-this-an-M1 helper
-    local function onChar(char)
-        if not char then return end
-        local hum = char:WaitForChild("Humanoid", 5); if not hum then return end
-        local animator = hum:FindFirstChildOfClass("Animator"); if not animator then return end
-        animator.AnimationPlayed:Connect(function(track)
-            if not Settings.BFM1 then return end
-            local id = track.Animation and track.Animation.AnimationId
-            local dly = id and AnimationTriggers[id]
-            -- BEST timing = ride the M1 ANIMATION. A known BF-anim id uses its exact window; ANY real M1 swing
-            -- (per-character DB via VX_IS_M1) falls back to the standard 0.19s window so it flashes on EVERY
-            -- character, not just the 5 hardcoded ids. This is the reliable path (click timing was too early).
-            if not dly and _G.VX_IS_M1 and _G.VX_IS_M1(track) then dly = 0.19 end
-            if dly and tick() - R.bfCD >= Settings.BFCooldown then
-                R.bfCD = tick()
-                task.delay(dly, function() if Settings.BFM1 then pressBF() end end)
-            end
-        end)
-    end
-    task.spawn(function()
-        -- hook BOTH the standard character and the workspace.Characters body (JJS uses the latter)
-        if LocalPlayer.Character then pcall(onChar, LocalPlayer.Character) end
-        LocalPlayer.CharacterAdded:Connect(function(c) pcall(onChar, c) end)
-        while true do task.wait(1); local chs = workspace:FindFirstChild("Characters"); local b = chs and chs:FindFirstChild(LocalPlayer.Name); if b and not b:GetAttribute("VXBF2Hooked") then b:SetAttribute("VXBF2Hooked", true); pcall(onChar, b) end end
-    end)
+    -- (ANIM HOOK REMOVED — it pressed 3 on any animation in the trigger DB even when you WEREN'T M1ing = "it
+    --  black flashes randomly without me doing M1". M1 BF now fires ONLY from your real M1 CLICK, below.)
 
     -- INPUT: press 3 -> run the current chain (does NOT sink 3, so the real move still fires). M1 -> M1 chain.
     UserInputService.InputBegan:Connect(function(input, _)
