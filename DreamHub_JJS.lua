@@ -1479,20 +1479,24 @@ do
         pcall(function() g.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
         if not g.Parent then g.Parent = LP:WaitForChild("PlayerGui") end
         local f = Instance.new("Frame"); f.AnchorPoint = Vector2.new(1, 0); f.Position = UDim2.new(1, -14, 0, 96)
-        f.Size = UDim2.fromOffset(236, 86); f.BackgroundColor3 = Color3.fromRGB(12, 12, 14); f.BackgroundTransparency = 0.06; f.BorderSizePixel = 0; f.Parent = g
+        f.Size = UDim2.fromOffset(240, 104); f.BackgroundColor3 = Color3.fromRGB(12, 12, 14); f.BackgroundTransparency = 0.04; f.BorderSizePixel = 0; f.Parent = g
         Instance.new("UICorner", f).CornerRadius = UDim.new(0, 10)
-        local st = Instance.new("UIStroke"); st.Color = Color3.fromRGB(255, 45, 45); st.Thickness = 1.3; st.Transparency = 0.25; st.Parent = f
-        local av = Instance.new("ImageLabel"); av.Position = UDim2.fromOffset(10, 10); av.Size = UDim2.fromOffset(44, 44); av.BackgroundColor3 = Color3.fromRGB(24, 24, 28); av.BorderSizePixel = 0; av.Parent = f
+        local acc = (typeof(_G.VX_ACCENT) == "Color3") and _G.VX_ACCENT or Color3.fromRGB(220, 30, 40)
+        local st = Instance.new("UIStroke"); st.Color = acc; st.Thickness = 1.3; st.Transparency = 0.2; st.Parent = f
+        -- title bar
+        local ttl = Instance.new("TextLabel"); ttl.BackgroundTransparency = 1; ttl.Position = UDim2.fromOffset(12, 6); ttl.Size = UDim2.new(1, -24, 0, 14)
+        ttl.Font = Enum.Font.GothamBold; ttl.TextSize = 11; ttl.TextColor3 = acc; ttl.TextXAlignment = Enum.TextXAlignment.Left; ttl.Text = "TARGET INFO"; ttl.Parent = f
+        local av = Instance.new("ImageLabel"); av.Position = UDim2.fromOffset(10, 26); av.Size = UDim2.fromOffset(44, 44); av.BackgroundColor3 = Color3.fromRGB(24, 24, 28); av.BorderSizePixel = 0; av.Parent = f
         Instance.new("UICorner", av).CornerRadius = UDim.new(1, 0)
-        local nm = Instance.new("TextLabel"); nm.BackgroundTransparency = 1; nm.Position = UDim2.fromOffset(62, 10); nm.Size = UDim2.new(1, -70, 0, 16)
+        local nm = Instance.new("TextLabel"); nm.BackgroundTransparency = 1; nm.Position = UDim2.fromOffset(62, 26); nm.Size = UDim2.new(1, -70, 0, 16)
         nm.Font = Enum.Font.GothamBold; nm.TextSize = 12; nm.TextColor3 = Color3.fromRGB(240, 240, 244); nm.TextXAlignment = Enum.TextXAlignment.Left; nm.TextTruncate = Enum.TextTruncate.AtEnd; nm.Parent = f
-        local meta = Instance.new("TextLabel"); meta.BackgroundTransparency = 1; meta.Position = UDim2.fromOffset(62, 27); meta.Size = UDim2.new(1, -70, 0, 14)
+        local meta = Instance.new("TextLabel"); meta.BackgroundTransparency = 1; meta.Position = UDim2.fromOffset(62, 43); meta.Size = UDim2.new(1, -70, 0, 14)
         meta.Font = Enum.Font.Gotham; meta.TextSize = 11; meta.TextColor3 = Color3.fromRGB(175, 175, 182); meta.TextXAlignment = Enum.TextXAlignment.Left; meta.Parent = f
-        local hpBg = Instance.new("Frame"); hpBg.Position = UDim2.fromOffset(62, 45); hpBg.Size = UDim2.new(1, -74, 0, 8); hpBg.BackgroundColor3 = Color3.fromRGB(30, 30, 34); hpBg.BorderSizePixel = 0; hpBg.Parent = f
+        local hpBg = Instance.new("Frame"); hpBg.Position = UDim2.fromOffset(62, 61); hpBg.Size = UDim2.new(1, -74, 0, 8); hpBg.BackgroundColor3 = Color3.fromRGB(30, 30, 34); hpBg.BorderSizePixel = 0; hpBg.Parent = f
         Instance.new("UICorner", hpBg).CornerRadius = UDim.new(1, 0)
         local hpF = Instance.new("Frame"); hpF.Size = UDim2.fromScale(1, 1); hpF.BackgroundColor3 = Color3.fromRGB(90, 220, 100); hpF.BorderSizePixel = 0; hpF.Parent = hpBg
         Instance.new("UICorner", hpF).CornerRadius = UDim.new(1, 0)
-        local hpT = Instance.new("TextLabel"); hpT.BackgroundTransparency = 1; hpT.Position = UDim2.fromOffset(10, 60); hpT.Size = UDim2.new(1, -20, 0, 16)
+        local hpT = Instance.new("TextLabel"); hpT.BackgroundTransparency = 1; hpT.Position = UDim2.fromOffset(12, 78); hpT.Size = UDim2.new(1, -20, 0, 16)
         hpT.Font = Enum.Font.Gotham; hpT.TextSize = 11; hpT.TextColor3 = Color3.fromRGB(210, 210, 216); hpT.TextXAlignment = Enum.TextXAlignment.Left; hpT.Parent = f
         card = { gui = g, frame = f, av = av, nm = nm, meta = meta, hpF = hpF, hpT = hpT, avFor = nil }
     end
@@ -9830,33 +9834,18 @@ do
     local kbSec = setSub:Section({ Name = "Keybinds", Side = 1 })
     local kbEnabled = false
     kbSec:Toggle({ Name = "Enable Keybinds", Default = false, Callback = function(b) kbEnabled = (b == true) end })
-    kbSec:Label("F1 = Fly")
-    kbSec:Label("F2 = Speed")
-    kbSec:Label("F3 = Auto Black Flash")
-    kbSec:Label("F4 = Auto Earthquake")
+    kbSec:Label("Y = Auto Lock (toggle)")
     do
         local UISkb = game:GetService("UserInputService")
-        local st = {}
-        local function bind(name, api, method)
-            return function()
-                st[name] = not st[name]
-                pcall(function() if api and api[method] then api[method](st[name]) end end)
-                if VX_NOTIFY then VX_NOTIFY(name .. (st[name] and " ON" or " OFF")) end
-            end
-        end
-        local map = {
-            [Enum.KeyCode.F1] = function() return bind("Fly", FlyApi, "set") end,
-            [Enum.KeyCode.F2] = function() return bind("Speed", SpeedApi, "set") end,
-            [Enum.KeyCode.F3] = function() return bind("Auto Black Flash", BFApi, "SetEnabled") end,
-            [Enum.KeyCode.F4] = function() return bind("Auto Earthquake", AutoQuakeApi, "set") end,
-        }
-        local cache = {}
-        UISkb.InputBegan:Connect(function(i, gp)
+        local lockOn = false
+        UISkb.InputBegan:Connect(function(i, _)
             if not kbEnabled then return end
             if UISkb:GetFocusedTextBox() then return end
-            local maker = map[i.KeyCode]; if not maker then return end
-            cache[i.KeyCode] = cache[i.KeyCode] or maker()
-            cache[i.KeyCode]()
+            if i.KeyCode == Enum.KeyCode.Y then
+                lockOn = not lockOn
+                pcall(function() if LockOnApi then LockOnApi.setMode(lockOn and "Both" or "Off") end end)
+                if VX_NOTIFY then VX_NOTIFY("Auto Lock " .. (lockOn and "ON" or "OFF")) end
+            end
         end)
     end
     local thSec = setSub:Section({ Name = "Theme", Side = 2 })
