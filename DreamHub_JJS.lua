@@ -112,9 +112,11 @@ do
 			if not d then local num = tostring(id):match("%d+"); if num and _G.VX_M1_IDS and _G.VX_M1_IDS[num] then d = 0.19 end end
 			return d
 		end
-		-- ANIM trigger (for characters whose M1 ids ARE in the database)
+		-- ANIM trigger — REQUIRES a fresh real click within 0.4s, so it presses 3 exactly ONCE per click
+		-- (without this the anim can replay/re-fire = "it does 3 inf"). The click-only trigger below covers the rest.
 		local function onAnim(track)
 			if not CFG.Enabled then return end
+			if tick() - (_G.VX_LAST_CLICK or 0) > 0.4 then return end
 			local id = getAnimationId(track)
 			local delayTime = matchDelay(id)
 			if delayTime then doFlash(delayTime) end
@@ -3963,32 +3965,18 @@ do
 				task.wait(0.2); holding = false
 			end)
 		end
-		-- trigger 1: your key press
-		UISq.InputBegan:Connect(function(input, _)
-			if UISq:GetFocusedTextBox() then return end
-			if input.KeyCode ~= Enum.KeyCode.Three then return end
-			local injK = _G.VX_INJ_KEYS
-			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end   -- ignore our own injected 3
-			startHold(true)
-		end)
-		-- trigger 2: the earthquake windup ANIMATION on your body
+		-- AUTO-FIRE (user: "make it press 3 on its own, hold 3 for 2s, then let go"): while Auto Earthquake is
+		-- on, the loop presses 3 itself, holds it the 2s, releases = shockwave, waits the cooldown, repeats.
+		local _ = QUAKE_ANIM
 		task.spawn(function()
-			local hooked = setmetatable({}, { __mode = "k" })
-			local function hook(char)
-				local h = char and char:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
-				if not a or hooked[a] then return end
-				hooked[a] = true
-				a.AnimationPlayed:Connect(function(track)
-					if not quakeOn then return end
-					local id = track.Animation and track.Animation.AnimationId
-					if id == QUAKE_ANIM then startHold(false) end
-				end)
-			end
 			while true do
-				local chs = workspace:FindFirstChild("Characters"); local b = chs and chs:FindFirstChild(LP.Name)
-				if b then pcall(hook, b) end
-				if LP.Character then pcall(hook, LP.Character) end
-				task.wait(1)
+				if quakeOn and not holding then
+					startHold(false)   -- press+hold 3 for 2s then release, all on its own
+					task.wait(2.4)      -- let the hold + release finish
+					task.wait(4)        -- earthquake cooldown before the next auto-fire
+				else
+					task.wait(0.3)
+				end
 			end
 		end)
 	end
@@ -9683,22 +9671,7 @@ do
             end)
         end
     end)
-    nameL = tSec:Label("Player:  type a name above")
-    hpL   = tSec:Label("Health:  N/A")
-    ultL  = tSec:Label("Ult:  N/A")
-    killL = tSec:Label("Kills:  N/A")
-    local infoLbl = { SetText = function() end }   -- legacy shim (old refresh path below)
-    local function refreshInfo()
-        if not TargetApi then return end
-        local i = TargetApi.info()
-        if not i or not i.found then pcall(function() infoLbl:SetText("Target not found") end); if VX_NOTIFY then VX_NOTIFY("Target not found", false) end return end
-        local cds = (i.cooldowns and #i.cooldowns > 0) and table.concat(i.cooldowns, ", ") or "n/a"
-        local txt = i.name .. "\nHP: " .. i.health .. " / " .. i.maxHealth .. "   Ult: " .. (i.ult and "USED" or "no") .. "   Kills: " .. (TargetApi.kills() or "?") .. "\nCooldowns: " .. cds
-        pcall(function() infoLbl:SetText(txt) end)
-        if VX_NOTIFY then VX_NOTIFY(i.name .. "  |  HP " .. i.health .. "/" .. i.maxHealth .. "  |  Ult " .. (i.ult and "USED" or "no"), true) end
-    end
-    tSec:Button({ Name = "Check Info (profile / HP / ult / CDs)", Callback = refreshInfo })
-    tSec:Button({ Name = "Check Kills", Callback = function() if TargetApi and VX_NOTIFY then VX_NOTIFY("Kills: " .. tostring(TargetApi.kills()), true) end end })
+    tSec:Label("Type a name above — their full profile pops up top-right.")
     tSec:Toggle({ Name = "View User (spectate)", Callback = function(b) if TargetApi then TargetApi.setView(b) end end })
     local tActSec = tgSub:Section({ Name = "Actions", Side = 2 })
     tActSec:Button({ Name = "Teleport To User", Callback = function() if TargetApi then TargetApi.tpTo() end end })
@@ -9785,7 +9758,7 @@ do
     plySec:Button({ Name = "Teleport To Player", Callback = function() if TPApi and tpPlyName then TPApi.tpPlayer(tpPlyName) end end })
 
     -- ===================== PLAYER =====================
-    local PlyPage = Window:Page({ Name = "Player", Icon = "72732892493295" })
+    local PlyPage = Window:Page({ Name = "Player", Icon = "10709806387" })   -- clean target/crosshair icon (old one looked AI-slop)
     local plySub = PlyPage:SubPage({ Name = "Player", Columns = 2 })
     local lockSec = plySub:Section({ Name = "Lock On", Side = 1 })
     local lockMode = "Off"
