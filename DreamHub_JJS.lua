@@ -1050,8 +1050,11 @@ local function vxResolveAC()
 	local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
 	local svc = k and k:FindFirstChild("AntiCheatService"); local re = svc and svc:FindFirstChild("RE"); re = re and re:FindFirstChild("Teleport")
 	if re and re:IsA("RemoteEvent") then vxACRemote = re; return re end
-	for _, d in ipairs(RS:GetDescendants()) do   -- fallback ONLY if the known path is gone: the first AntiCheat-parented match
+	for _, d in ipairs(RS:GetDescendants()) do   -- fallback: prefer an AntiCheat-parented "Teleport" (game update renamed the known path)
 		if d:IsA("RemoteEvent") and string.lower(d.Name) == "teleport" and string.find(string.lower(d:GetFullName()), "anticheat") then vxACRemote = d; return d end
+	end
+	for _, d in ipairs(RS:GetDescendants()) do   -- broader: ANY RemoteEvent named exactly "Teleport" (whole AntiCheat folder renamed)
+		if d:IsA("RemoteEvent") and string.lower(d.Name) == "teleport" then vxACRemote = d; return d end
 	end
 	return nil
 end
@@ -1098,7 +1101,8 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 			if vxTeleGen ~= gen then return end                 -- a newer teleport superseded this one -> stop fighting over the CFrame
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
 			acPass()
-			pcall(function() hrp.CFrame = cf end)   -- (reverted to the earlier working single-write; PivotTo was added and coincided with TP breaking)
+			pcall(function() hrp.CFrame = cf end)
+			pcall(function() cc:PivotTo(cf) end)   -- ALSO move the whole model: a bare HRP write does not move some JJS rigs
 			task.wait(0.016)
 		end
 		local h0 = tick()  -- HOLD: keep re-asserting position + re-whitelisting so the anti-cheat can't revert after the move
@@ -1107,6 +1111,7 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
 			acPass()
 			pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero end)
+			pcall(function() cc:PivotTo(cf) end)
 			task.wait(0.03)
 		end
 		if vxTeleGen == gen then  -- only the LATEST teleport cleans up, so overlapping calls can't leave PlatformStand stuck (no more "frozen after jump")
@@ -2091,16 +2096,14 @@ do
         if input.UserInputType == Enum.UserInputType.MouseButton1 and Settings.Enabled and Settings.Mode == "M1" then
             task.spawn(doBFM1Chain); return
         end
-        -- M1 BF (simple) CLICK FALLBACK: only for characters whose M1 anim isn't in the DB (so the anim path above
-        -- can't catch them). Fires LATE (0.30s) and only if the anim path DIDN'T already flash within the cooldown —
-        -- so on known characters the better-timed anim window always wins and this never double-presses.
+        -- M1 BF (simple): the RELIABLE path — EVERY M1 click presses the BF key (3) a beat later so the swing
+        -- becomes a Black Flash. Uses its OWN short 0.25s debounce (NOT the long BFCooldown, which was why it
+        -- "didn't work" — it gated most clicks out). "When I M1, it presses 3 = black flash", exactly.
         if input.UserInputType == Enum.UserInputType.MouseButton1 and Settings.BFM1 and Settings.Mode ~= "M1" then
-            task.delay(0.30, function()
-                if Settings.BFM1 and tick() - R.bfCD >= Settings.BFCooldown then
-                    R.bfCD = tick()
-                    pressBF()
-                end
-            end)
+            if tick() - (R.m1bfClick or 0) >= 0.25 then
+                R.m1bfClick = tick()
+                task.delay(0.12, function() if Settings.BFM1 then pressBF() end end)
+            end
         end
     end)
     LocalPlayer.CharacterAdded:Connect(ReleaseAll)
@@ -2563,11 +2566,11 @@ do
 		end
 	end
 	local function fireDir(dir)
-		if State.remote then
-			pcall(function() State.remote:FireServer(dir, nil) end)
-		else
-			act(dir)   -- hub fallback: char not detected -> fire every <Char>Service (only YOURS exists server-side)
-		end
+		-- Fire BOTH the v5-resolved remote AND the hub's per-char resolver (act = your <Char>Service, or all 21
+		-- if undetected — only YOURS responds server-side). Guarantees the correct Activated("Down"/"Up") lands
+		-- even when v5 character detection misses = "auto down slam / uppercut doesn't work" fix.
+		if State.remote then pcall(function() State.remote:FireServer(dir, nil) end) end
+		pcall(function() act(dir) end)
 	end
 	local function spaceDown()
 		if State.spaceHeld then return end
