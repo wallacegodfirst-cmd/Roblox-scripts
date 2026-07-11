@@ -15,15 +15,21 @@ local BFApi    -- forward-declared: Auto Black Flash control API (assigned in it
 local ChainApi -- forward-declared: BF Chain control API (assigned in its module below)
 
 -- ============================================================
--- MODULE: AUTO BLACK FLASH  (from Autoblackflash.lua)
--- ability key inside the window to convert the hit into a Black Flash.
+-- MODULE: AUTO BLACK FLASH  (the user's AutoBlackFlash.lua, VERBATIM)
 -- ============================================================
 do
 	local Players = game:GetService("Players")
-	local player = Players.LocalPlayer
 
 	local VirtualInputManager
-	pcall(function() VirtualInputManager = game:GetService("VirtualInputManager") end)
+	pcall(function()
+		VirtualInputManager = game:GetService("VirtualInputManager")
+	end)
+
+	local player = Players.LocalPlayer
+	while not player do
+		Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+		player = Players.LocalPlayer
+	end
 
 	local AnimationTriggers = {
 		["rbxassetid://100962226150441"] = 0.19,
@@ -31,153 +37,284 @@ do
 		["rbxassetid://74145636023952"] = 0.19,
 		["rbxassetid://72475960800126"] = 0.20,
 		["rbxassetid://123171106092050"] = 0.19,
-		["rbxassetid://120133391090244"] = 0.19,   -- your character's M1 (from your recording) = BF now fires for you
 	}
-	-- ClickOn = M1 BF (your CLICK is the trigger — works on EVERY character, no anim list needed).
-	-- AnimOn = Auto BF (the anim watcher). Either one active = the module runs.
-	local CFG = { ClickOn = false, AnimOn = false, Aim = false, DebugUnknownAnimations = false, TriggerKey = Enum.KeyCode.Three, Cooldown = 0.3, TimingOffset = 0, AnimatorWait = 8 }
-	local function bfOn() return CFG.ClickOn or CFG.AnimOn end
-	-- AIM (the user's explicit ask: "add the aim thing inside the BF"): when on, face the nearest enemy's back +
-	-- "Auto Single" = CFG.Aim off (the raw snippet, zero movement). "M1 Black Flash" = CFG.Aim on.
-	local function bfNearestEnemyHRP()
-		local LP = player
-		local chs = workspace:FindFirstChild("Characters")
-		local char = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
-		local hrp = char and char:FindFirstChild("HumanoidRootPart"); if not hrp then return nil, nil end
-		local best, bd
-		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then local rr = plr.Character:FindFirstChild("HumanoidRootPart"); if rr then local d = (rr.Position - hrp.Position).Magnitude; if not bd or d < bd then best, bd = rr, d end end end end
-		if chs then for _, m in ipairs(chs:GetChildren()) do if m.Name ~= LP.Name then local rr = m:FindFirstChild("HumanoidRootPart"); if rr then local d = (rr.Position - hrp.Position).Magnitude; if not bd or d < bd then best, bd = rr, d end end end end end
-		return best, bd, hrp
-	end
-	local aimGen = 0
-	local function bfAim()
-		local best, _, hrp = bfNearestEnemyHRP()
-		if not (best and hrp) then return end
-		pcall(function() hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(best.Position.X, hrp.Position.Y, best.Position.Z)) end)   -- face them
-		aimGen = aimGen + 1; local gen = aimGen
-		task.spawn(function()
-			local cam = workspace.CurrentCamera; if not cam then return end
-			local t0 = tick()
-			while tick() - t0 < 0.45 and aimGen == gen and best and best.Parent do
-				pcall(function()
-					cam.CFrame = CFrame.lookAt(cam.CFrame.Position, best.Position)   -- point camera at them (no zoom)
-				end)
-				task.wait()
-			end
-		end)
-	end
-	local RT = { Running = true, Connection = nil, CharacterConnection = nil, DescendantConnection = nil, Pending = false, Firing = false, LastFireTime = 0, LastAnimationId = "--", LastMatched = false, LastSkipReason = "--", UnknownAnimations = {} }
+
+	local CFG = {
+		Enabled = false,   -- the GUI toggle turns this on
+		DebugUnknownAnimations = false,
+		TriggerKey = Enum.KeyCode.Three,
+		Cooldown = 0.45,
+		TimingOffset = 0,
+		AnimatorWait = 8,
+	}
+
+	local RT = {
+		Running = true,
+		Connection = nil,
+		CharacterConnection = nil,
+		DescendantConnection = nil,
+		Pending = false,
+		Firing = false,
+		LastFireTime = 0,
+		LastAnimationId = "--",
+		LastMatched = false,
+		LastSkipReason = "--",
+		UnknownAnimations = {},
+	}
 
 	local function disconnect(name)
-		local c = RT[name]
-		if c then pcall(function() c:Disconnect() end); RT[name] = nil end
+		local connection = RT[name]
+		if connection then
+			pcall(function()
+				connection:Disconnect()
+			end)
+			RT[name] = nil
+		end
 	end
+
 	local function normalizeAnimationId(id)
 		id = tostring(id or "")
-		if id == "" then return "" end
-		if id:match("^%d+$") then return "rbxassetid://" .. id end
+		if id == "" then
+			return ""
+		end
+		if id:match("^%d+$") then
+			return "rbxassetid://" .. id
+		end
 		return id
 	end
+
 	local function getAnimationId(track)
-		local ok, id = pcall(function() return track and track.Animation and track.Animation.AnimationId or "" end)
-		if not ok then return "" end
+		local ok, id = pcall(function()
+			return track and track.Animation and track.Animation.AnimationId or ""
+		end)
+		if not ok then
+			return ""
+		end
 		return normalizeAnimationId(id)
 	end
-		local function pressKey(keyCode)
-			if not VirtualInputManager then return false end
-			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[keyCode] = tick() + 0.5   -- mark OUR press so no other trigger in the hub reacts to it
-			pcall(function()
-				VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
-				VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
-			end)
-			return true
-		end
-		-- ONE press per trigger, then a hard lockout. The spam loop was: our own press makes YOUR character play a
-		-- move anim that is ALSO in the trigger table -> it matches -> presses again -> forever. The lockout window
-		-- (well past the move's anim) breaks that cycle for good.
-		local lastFlash = 0
-		local suppressUntil = 0
-		local function doFlash(delayTime)
-			if not bfOn() then return end
-			if os.clock() < suppressUntil then return end
-			if os.clock() - lastFlash < 0.12 then return end   -- tiny debounce (we hook 2 animators; without it one swing = 2 presses)
-			lastFlash = os.clock()
-			if CFG.Aim then pcall(bfAim) end
-			task.delay(math.max(0, (delayTime or 0.19) + CFG.TimingOffset), function()
-				if not bfOn() then return end
-				suppressUntil = os.clock() + 1.2   -- lockout AFTER the press: nothing our press causes can re-trigger
-				pressKey(CFG.TriggerKey)
-			end)
-		end
-		local function matchDelay(id)
-			return AnimationTriggers[id]
-		end
-		local function onAnim(track)
-			if not CFG.AnimOn then return end
-			local id = getAnimationId(track)
-			local delayTime = matchDelay(id)
-			if delayTime then doFlash(delayTime) end
-		end
-		-- M1 BF: YOUR click is the trigger. This works on every character (no anim id list to go stale) —
-		-- click -> short wind-up delay -> flash press. The lockout above still guarantees ONE press per click.
-		do
-			local UISc = game:GetService("UserInputService")
-			UISc.InputBegan:Connect(function(input, gpe)
-				if gpe then return end
-				if not CFG.ClickOn then return end
-				if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
-				doFlash(0.19)
-			end)
-		end
-	-- BULLETPROOF hook: connect to EVERY animator your body can have — LP.Character AND workspace.Characters[name]
-	-- (JJS can play combat anims on either rig; hooking only one is exactly why M1 BF "randomly" never fired). A
-	-- weak-keyed poller re-hooks after respawn / character swap. One clean listener path, no LP.Character-only guess.
-	local hookedAnims = setmetatable({}, { __mode = "k" })
-	local function hookBoth()
-		-- FOUND THE REAL BUG ("M1 Black Flash randomly never fires"): ipairs() STOPS at the first nil element.
-		-- The old code built `{ player.Character, resolvedModel }` — when player.Character is nil (which this file
-		-- repeatedly notes is COMMON in JJS: "LP.Character can lag/differ", "your live body lives under
-		-- workspace.Characters"), ipairs() saw a nil in slot 1 and NEVER EVEN LOOKED at slot 2 — silently skipping
-		-- the resolved model, the ONE that actually has your combat animations, every single poll where
-		-- LP.Character happened to be nil/stale. Build the list by explicit append so there's never a gap.
-		local chars = workspace:FindFirstChild("Characters")
-		local bodies = {}
-		if player.Character then bodies[#bodies + 1] = player.Character end
-		local resolved = chars and chars:FindFirstChild(player.Name)
-		if resolved and resolved ~= player.Character then bodies[#bodies + 1] = resolved end
-		for _, char in ipairs(bodies) do
-			local hum = char:FindFirstChildOfClass("Humanoid")
-			local a = hum and hum:FindFirstChildOfClass("Animator")
-			if a and not hookedAnims[a] then hookedAnims[a] = a.AnimationPlayed:Connect(onAnim) end
-		end
-	end
-	task.spawn(function() while RT.Running do pcall(hookBoth); task.wait(0.5) end end)
-	local function reconnect() hookedAnims = setmetatable({}, { __mode = "k" }); pcall(hookBoth); return true end
 
-	-- KEY-3 TRIGGER (user: "auto bf / m1 bf should work when I click 3"): the anim path above only auto-presses on
-	-- snap-aim to the nearest enemy's back + camera-lock so your flash lands on-target. No extra key press, so your
-	do
-		local UISbf = game:GetService("UserInputService")
-		UISbf.InputBegan:Connect(function(input, gpe)
-			if gpe then return end
-			if not bfOn() then return end
-			if input.KeyCode ~= Enum.KeyCode.Three then return end
-			if UISbf:GetFocusedTextBox() then return end
-			local injK = _G.VX_INJ_KEYS
-			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end
-			pcall(bfAim)   -- aim on YOUR press regardless of the Aim toggle (that's the whole point of this trigger)
-		end)
+	local function canFire()
+		if not RT.Running then return false, "stopped" end
+		if not CFG.Enabled then return false, "disabled" end
+		if not VirtualInputManager then return false, "no VirtualInputManager" end
+		if RT.Pending or RT.Firing then return false, "pending" end
+		if os.clock() - RT.LastFireTime < CFG.Cooldown then return false, "cooldown" end
+		return true, "ready"
 	end
+
+	local function pressKey(keyCode)
+		if not VirtualInputManager then
+			RT.LastSkipReason = "no VirtualInputManager"
+			return false
+		end
+		do   -- never fight another feature that is holding this key right now (e.g. the quake hold)
+			local inj = _G.VX_INJ_KEYS
+			if inj and inj[keyCode] and tick() < inj[keyCode] then
+				RT.LastSkipReason = "key busy"
+				return false
+			end
+		end
+		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[keyCode] = tick() + 0.3
+
+		pcall(function()
+			VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
+			task.wait(0.025)
+			VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+		end)
+		return true
+	end
+
+	local function scheduleFire(delayTime, sourceId)
+		local ok, reason = canFire()
+		if not ok then
+			RT.LastSkipReason = reason
+			return false
+		end
+
+		RT.Pending = true
+		task.delay(math.max(0, delayTime + CFG.TimingOffset), function()
+			if not RT.Running then return end
+
+			RT.Pending = false
+			local ready, skipReason = canFire()
+			if not ready then
+				RT.LastSkipReason = skipReason
+				return
+			end
+
+			RT.Firing = true
+			RT.LastFireTime = os.clock()
+			RT.LastAnimationId = sourceId
+			pressKey(CFG.TriggerKey)
+			RT.Firing = false
+		end)
+		return true
+	end
+
+	local function bindAnimator(animator)
+		disconnect("Connection")
+		if not animator then
+			RT.LastSkipReason = "no animator"
+			return false
+		end
+
+		RT.Connection = animator.AnimationPlayed:Connect(function(track)
+			if not CFG.Enabled then return end
+
+			local id = getAnimationId(track)
+			RT.LastAnimationId = id ~= "" and id or "--"
+			local delayTime = AnimationTriggers[id]
+			RT.LastMatched = delayTime ~= nil
+
+			if delayTime then
+				scheduleFire(delayTime, id)
+			elseif CFG.DebugUnknownAnimations and id ~= "" and not RT.UnknownAnimations[id] then
+				RT.UnknownAnimations[id] = true
+				warn("[AutoBlackFlash] Unknown animation id:", id)
+			end
+		end)
+
+		RT.LastSkipReason = "listener ready"
+		return true
+	end
+
+	local function getAnimator(character)
+		if not character then
+			return nil
+		end
+
+		local humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid", CFG.AnimatorWait)
+		if not humanoid then
+			return nil
+		end
+
+		local animator = humanoid:FindFirstChildOfClass("Animator")
+		if animator then
+			return animator
+		end
+
+		local started = os.clock()
+		while RT.Running and character.Parent and os.clock() - started < CFG.AnimatorWait do
+			animator = humanoid:FindFirstChildOfClass("Animator")
+			if animator then
+				return animator
+			end
+			task.wait(0.1)
+		end
+
+		return humanoid:FindFirstChildOfClass("Animator")
+	end
+
+	local function setup(character)
+		disconnect("DescendantConnection")
+		disconnect("Connection")
+
+		if not character then
+			RT.LastSkipReason = "no character"
+			return false
+		end
+
+		RT.Pending = false
+		RT.Firing = false
+
+		local animator = getAnimator(character)
+		if animator then
+			bindAnimator(animator)
+		else
+			RT.LastSkipReason = "waiting for animator"
+		end
+
+		RT.DescendantConnection = character.DescendantAdded:Connect(function(descendant)
+			if descendant:IsA("Animator") then
+				bindAnimator(descendant)
+			end
+		end)
+
+		return animator ~= nil
+	end
+
+	-- JJS: your live body is OFTEN workspace.Characters[you], not player.Character. Same setup(), right rig.
+	local function liveBody()
+		local chs = workspace:FindFirstChild("Characters")
+		return (chs and chs:FindFirstChild(player.Name)) or player.Character
+	end
+
+	local function reconnect()
+		return setup(liveBody())
+	end
+
+	if player.Character then
+		task.defer(setup, liveBody())
+	end
+
+	RT.CharacterConnection = player.CharacterAdded:Connect(function(character)
+		task.wait(0.25)
+		setup(liveBody() or character)
+	end)
+
+	task.spawn(function()   -- if the rig swaps between LP.Character and workspace.Characters, re-bind to the live one
+		local last
+		while RT.Running do
+			task.wait(1)
+			local b = liveBody()
+			if b and b ~= last then last = b; pcall(setup, b) end
+		end
+	end)
 
 	BFApi = {
-		SetEnabled = function(v) CFG.AnimOn = v == true end,   -- Auto BF: the anim watcher
-		SetClick = function(v) CFG.ClickOn = v == true end,    -- M1 BF: your click triggers the flash
-		IsEnabled = function() return bfOn() end,
-		SetAim = function(v) CFG.Aim = v == true end,   -- Auto Single = false (raw), M1 Black Flash = true (aim + camera lock)
-		SetCooldown = function(v) if type(v) == "number" then CFG.Cooldown = math.max(0, v) end end,
-		SetTimingOffset = function(v) if type(v) == "number" then CFG.TimingOffset = v end end,
-		SetKey = function(kc) if typeof(kc) == "EnumItem" then CFG.TriggerKey = kc end end,
+		SetEnabled = function(value)
+			CFG.Enabled = value == true
+			if not CFG.Enabled then
+				RT.Pending = false
+				RT.Firing = false
+			end
+		end,
+
+		IsEnabled = function()
+			return CFG.Enabled
+		end,
+
+		SetCooldown = function(value)
+			if type(value) == "number" then
+				CFG.Cooldown = math.max(0, value)
+			end
+		end,
+
+		SetTimingOffset = function(value)
+			if type(value) == "number" then
+				CFG.TimingOffset = value
+			end
+		end,
+
+		SetDebugUnknownAnimations = function(value)
+			CFG.DebugUnknownAnimations = value == true
+		end,
+
+		AddTrigger = function(animationId, delayTime)
+			if type(delayTime) ~= "number" then return false end
+			AnimationTriggers[normalizeAnimationId(animationId)] = delayTime
+			return true
+		end,
+
+		RemoveTrigger = function(animationId)
+			AnimationTriggers[normalizeAnimationId(animationId)] = nil
+		end,
+
 		Reconnect = reconnect,
+
+		Status = function()
+			return {
+				enabled = CFG.Enabled,
+				running = RT.Running,
+				pending = RT.Pending,
+				firing = RT.Firing,
+				lastAnimationId = RT.LastAnimationId,
+				lastMatched = RT.LastMatched,
+				lastSkipReason = RT.LastSkipReason,
+				cooldown = CFG.Cooldown,
+				timingOffset = CFG.TimingOffset,
+			}
+		end,
 	}
 end
 
@@ -974,11 +1111,8 @@ local function vxResolveAC()
 	return nil
 end
 local vxTeleLastActive = 0  -- last time a teleport actually moved you; the safety loop uses it to know when NO teleport is running
-local vxACLast = 0
 local function vxACPass()
 	vxTeleLastActive = tick()
-	if tick() - vxACLast < 0.12 then return end   -- the game itself fires this ONCE per teleport (your capture); rapid-firing it is what stopped working
-	vxACLast = tick()
 	local re = vxResolveAC()
 	if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end
 end
@@ -1013,19 +1147,23 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 		end
 		pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero; hrp.AssemblyAngularVelocity = Vector3.zero end)
 		if humanoid then pcall(function() humanoid.PlatformStand = true end) end
-		-- EXACTLY like the game's own move (your capture): ONE pass, ONE snap. Then only WATCH: if the server
-		-- sets you back, pass + snap again. No per-frame hammering — that constant re-fire is what broke it.
+		-- THE version you had working in-game: pass + snap EVERY frame for 15 frames, then keep re-asserting
+		-- through the hold window. (The single-fire experiment was the regression - reverted.)
 		acPass()
-		pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero end)
+		for _ = 1, 15 do
+			if vxTeleGen ~= gen then return end                 -- a newer teleport superseded this one -> stop fighting over the CFrame
+			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
+			acPass()
+			pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero end)
+			task.wait(0.016)
+		end
 		local h0 = tick()
 		while tick() - h0 < (holdTime or 0.7) do
 			if vxTeleGen ~= gen then return end                 -- superseded -> let the newer teleport own the body
-			task.wait(0.05)
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
-			if (hrp.Position - cf.Position).Magnitude > 6 then  -- got set back -> one more pass + snap
-				acPass()
-				pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero end)
-			end
+			acPass()
+			pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero end)
+			task.wait(0.03)
 		end
 		if vxTeleGen == gen then  -- only the LATEST teleport cleans up, so overlapping calls can't leave PlatformStand stuck (no more "frozen after jump")
 			if hrp then pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero; hrp.AssemblyAngularVelocity = Vector3.zero end) end
@@ -9434,16 +9572,26 @@ do
     local bfSub = CombatPage:SubPage({ Name = "Black Flash", Columns = 2 })
     local bfSec = bfSub:Section({ Name = "Black Flash", Side = 1 })
     -- Free gets Off + M1 BF. The chain modes (Side/Back Dash, Jump, Teleport, M1 Chain) are premium.
+    -- Both routes drive the SAME proven engine (your AutoBlackFlash script, verbatim):
+    --   M1 BF  = the engine + YOUR character's M1 anim added as a trigger, so your M1s convert.
+    --   Auto Black Flash = the engine with its stock trigger list.
+    local bfM1On, bfAutoOn = false, false
+    local M1_ANIM = "rbxassetid://120133391090244"
+    local function bfSync()
+        if not BFApi then return end
+        if bfM1On then BFApi.AddTrigger(M1_ANIM, 0.19) else BFApi.RemoveTrigger(M1_ANIM) end
+        BFApi.SetEnabled(bfM1On or bfAutoOn)
+    end
     bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 BF", "Side Dash", "Back Dash", "Jump", "Teleport", "M1 Chain" } or { "Off", "M1 BF" }), Default = "Off", Callback = function(m)
         m = (type(m) == "table") and m[1] or m
         if not _G.VXBF2 then return end
-        if m == "Off" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false); if BFApi then BFApi.SetClick(false) end
-        elseif m == "M1 BF" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false); if BFApi then BFApi.SetClick(true) end
+        if m == "Off" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false); bfM1On = false; bfSync()
+        elseif m == "M1 BF" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false); bfM1On = true; bfSync()
         elseif m == "M1 Chain" then _G.VXBF2.setBFM1(false); _G.VXBF2.setMode("M1"); _G.VXBF2.setEnabled(true)
         else _G.VXBF2.setBFM1(false); _G.VXBF2.setMode(m); _G.VXBF2.setEnabled(true) end
     end })
     bfSec:Toggle({ Name = "Auto Black Flash", Default = false, Callback = function(b)
-        if BFApi then BFApi.SetEnabled(b) end
+        bfAutoOn = (b == true); bfSync()
         if _G.VXBF2 then _G.VXBF2.setAutoBF(false) end   -- avoid the weaker VXBF2 path double-pressing
     end })
     bfSec:Slider({ Name = "BF Cooldown", Min = 0.1, Max = 2, Default = 0.5, Decimals = 0.05, Suffix = "s", Callback = function(v) if _G.VXBF2 then _G.VXBF2.setCooldown(v) end end })
@@ -9919,15 +10067,15 @@ do
         -- SOUND: a click/sfx whenever you press anything in the menu. Pick the sound, or paste any Roblox sound id.
         do
             local SS = game:GetService("SoundService")
-            local SOUNDS = {   -- name -> { id, volume, speed }
+            local SOUNDS = {   -- name -> { id, volume, speed, maxSeconds (nil = play out) }
                 ["Keyboard (Basic)"] = { "rbxassetid://7147420522", 0.6, 1 },
-                ["Goku Scream"]      = { "rbxassetid://6157432689", 0.5, 1 },
-                ["Jesus Rising"]     = { "rbxassetid://104307285983733", 0.5, 1 },
-                ["67"]               = { "rbxassetid://117816189937562", 0.5, 1 },
-                ["Money"]            = { "rbxassetid://7112275565", 0.6, 1 },
+                ["Goku Scream"]      = { "rbxassetid://6157432689", 0.5, 1, 1.6 },
+                ["Jesus Rising"]     = { "rbxassetid://104307285983733", 0.5, 1, 1.6 },
+                ["67"]               = { "rbxassetid://117816189937562", 0.5, 1, 1.6 },
+                ["Money"]            = { "rbxassetid://7112275565", 0.6, 1, 1.6 },
             }
             local cur = SOUNDS["Keyboard (Basic)"]
-            local snd
+            local snd, playGen = nil, 0
             local function ensureSnd()
                 if snd and snd.Parent then return snd end
                 snd = Instance.new("Sound"); snd.Name = "\0"; snd.Parent = SS
@@ -9935,10 +10083,14 @@ do
             end
             local function playClick()
                 local s = ensureSnd()
+                playGen = playGen + 1; local gen = playGen
                 pcall(function()
                     if s.SoundId ~= cur[1] then s.SoundId = cur[1] end
                     s.Volume = cur[2]; s.PlaybackSpeed = cur[3]; s.TimePosition = 0; s:Play()
                 end)
+                if cur[4] then   -- SHORT clip: cut the long memes off after ~1.6s (a newer click restarts them)
+                    task.delay(cur[4], function() pcall(function() if playGen == gen and s.IsPlaying then s:Stop() end end) end)
+                end
                 task.delay(1.5, function() pcall(function() if s.SoundId == cur[1] and not s.IsLoaded then   -- id blocked/moderated -> built-in ping so you always hear something
                     s.SoundId = "rbxasset://sounds/electronicpingshort.wav"; s.PlaybackSpeed = 1.7; s.Volume = 0.25; s:Play()
                 end end) end)
