@@ -3955,17 +3955,12 @@ do
 			task.spawn(function()
 				local hold = tonumber(_G.VX_QUAKE_HOLD) or 2.0
 				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + hold + 0.6
-				-- RE-ASSERT the key-down every frame for the whole 2s. There is ONE key state for "3"; your
-				-- physical release would otherwise flip it up and cancel the charge — re-sending down each frame
-				-- keeps it held the full 2s no matter when you let go. Then release once = the shockwave.
+				-- ONE clean hold: press 3 DOWN once, keep it down 2s, release once = charged shockwave. (Re-sending
+				-- down every frame made the game read it as tapping 3 repeatedly instead of a single hold.)
 				pcall(function()
-					local t0 = tick()
-					while tick() - t0 < hold do
-						VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
-						_G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + hold + 0.6
-						task.wait(0.03)
-					end
-					VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
+					VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)   -- DOWN
+					task.wait(hold)                                            -- hold 2s
+					VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)  -- UP = release the charge
 				end)
 				task.wait(0.2); holding = false
 			end)
