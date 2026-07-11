@@ -33,7 +33,10 @@ do
 		["rbxassetid://123171106092050"] = 0.19,
 		["rbxassetid://120133391090244"] = 0.19,   -- your character's M1 (from your recording) = BF now fires for you
 	}
-	local CFG = { Enabled = false, Aim = false, DebugUnknownAnimations = false, TriggerKey = Enum.KeyCode.Three, Cooldown = 0.3, TimingOffset = 0, AnimatorWait = 8 }
+	-- ClickOn = M1 BF (your CLICK is the trigger — works on EVERY character, no anim list needed).
+	-- AnimOn = Auto BF (the anim watcher). Either one active = the module runs.
+	local CFG = { ClickOn = false, AnimOn = false, Aim = false, DebugUnknownAnimations = false, TriggerKey = Enum.KeyCode.Three, Cooldown = 0.3, TimingOffset = 0, AnimatorWait = 8 }
+	local function bfOn() return CFG.ClickOn or CFG.AnimOn end
 	-- AIM (the user's explicit ask: "add the aim thing inside the BF"): when on, face the nearest enemy's back +
 	-- "Auto Single" = CFG.Aim off (the raw snippet, zero movement). "M1 Black Flash" = CFG.Aim on.
 	local function bfNearestEnemyHRP()
@@ -95,13 +98,13 @@ do
 		local lastFlash = 0
 		local suppressUntil = 0
 		local function doFlash(delayTime)
-			if not CFG.Enabled then return end
+			if not bfOn() then return end
 			if os.clock() < suppressUntil then return end
 			if os.clock() - lastFlash < 0.12 then return end   -- tiny debounce (we hook 2 animators; without it one swing = 2 presses)
 			lastFlash = os.clock()
 			if CFG.Aim then pcall(bfAim) end
 			task.delay(math.max(0, (delayTime or 0.19) + CFG.TimingOffset), function()
-				if not CFG.Enabled then return end
+				if not bfOn() then return end
 				suppressUntil = os.clock() + 1.2   -- lockout AFTER the press: nothing our press causes can re-trigger
 				pressKey(CFG.TriggerKey)
 			end)
@@ -110,10 +113,21 @@ do
 			return AnimationTriggers[id]
 		end
 		local function onAnim(track)
-			if not CFG.Enabled then return end
+			if not CFG.AnimOn then return end
 			local id = getAnimationId(track)
 			local delayTime = matchDelay(id)
 			if delayTime then doFlash(delayTime) end
+		end
+		-- M1 BF: YOUR click is the trigger. This works on every character (no anim id list to go stale) —
+		-- click -> short wind-up delay -> flash press. The lockout above still guarantees ONE press per click.
+		do
+			local UISc = game:GetService("UserInputService")
+			UISc.InputBegan:Connect(function(input, gpe)
+				if gpe then return end
+				if not CFG.ClickOn then return end
+				if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
+				doFlash(0.19)
+			end)
 		end
 	-- BULLETPROOF hook: connect to EVERY animator your body can have — LP.Character AND workspace.Characters[name]
 	-- (JJS can play combat anims on either rig; hooking only one is exactly why M1 BF "randomly" never fired). A
@@ -146,7 +160,7 @@ do
 		local UISbf = game:GetService("UserInputService")
 		UISbf.InputBegan:Connect(function(input, gpe)
 			if gpe then return end
-			if not CFG.Enabled then return end
+			if not bfOn() then return end
 			if input.KeyCode ~= Enum.KeyCode.Three then return end
 			if UISbf:GetFocusedTextBox() then return end
 			local injK = _G.VX_INJ_KEYS
@@ -156,8 +170,9 @@ do
 	end
 
 	BFApi = {
-		SetEnabled = function(v) CFG.Enabled = v == true end,
-		IsEnabled = function() return CFG.Enabled end,
+		SetEnabled = function(v) CFG.AnimOn = v == true end,   -- Auto BF: the anim watcher
+		SetClick = function(v) CFG.ClickOn = v == true end,    -- M1 BF: your click triggers the flash
+		IsEnabled = function() return bfOn() end,
 		SetAim = function(v) CFG.Aim = v == true end,   -- Auto Single = false (raw), M1 Black Flash = true (aim + camera lock)
 		SetCooldown = function(v) if type(v) == "number" then CFG.Cooldown = math.max(0, v) end end,
 		SetTimingOffset = function(v) if type(v) == "number" then CFG.TimingOffset = v end end,
@@ -959,9 +974,11 @@ local function vxResolveAC()
 	return nil
 end
 local vxTeleLastActive = 0  -- last time a teleport actually moved you; the safety loop uses it to know when NO teleport is running
+local vxACLast = 0
 local function vxACPass()
 	vxTeleLastActive = tick()
-	vxClaimOwnership()   -- re-claim network ownership on every snap/teleport step (the actual fix for "sets me back")
+	if tick() - vxACLast < 0.12 then return end   -- the game itself fires this ONCE per teleport (your capture); rapid-firing it is what stopped working
+	vxACLast = tick()
 	local re = vxResolveAC()
 	if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end
 end
@@ -996,22 +1013,19 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 		end
 		pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero; hrp.AssemblyAngularVelocity = Vector3.zero end)
 		if humanoid then pcall(function() humanoid.PlatformStand = true end) end
+		-- EXACTLY like the game's own move (your capture): ONE pass, ONE snap. Then only WATCH: if the server
+		-- sets you back, pass + snap again. No per-frame hammering — that constant re-fire is what broke it.
 		acPass()
-		for _ = 1, 15 do
-			if vxTeleGen ~= gen then return end                 -- a newer teleport superseded this one -> stop fighting over the CFrame
-			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
-			acPass()
-			pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero end)
-			task.wait(0.016)
-		end
-		-- (serverTimeNow) — same as we fire. So teleport wasn't broken by the remote; the BodyPosition I'd added
+		pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero end)
 		local h0 = tick()
 		while tick() - h0 < (holdTime or 0.7) do
 			if vxTeleGen ~= gen then return end                 -- superseded -> let the newer teleport own the body
+			task.wait(0.05)
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
-			acPass()
-			pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero end)
-			task.wait(0.03)
+			if (hrp.Position - cf.Position).Magnitude > 6 then  -- got set back -> one more pass + snap
+				acPass()
+				pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero end)
+			end
 		end
 		if vxTeleGen == gen then  -- only the LATEST teleport cleans up, so overlapping calls can't leave PlatformStand stuck (no more "frozen after jump")
 			if hrp then pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero; hrp.AssemblyAngularVelocity = Vector3.zero end) end
@@ -1327,7 +1341,7 @@ do
 	ItemsApi = {
 		setESP = function(v) espOn = v == true; if not espOn then clearESP() end end,
 		setGrab = function(v) grabOn = v == true end,
-		setFilter = function(name) grabFilter = name or "Any" end,
+		setFilter = function(name) if type(name) == "table" then name = name[1] end grabFilter = name or "Any" end,
 		names = function()
 			local out, seen = { "Any" }, { Any = true }
 			local f = itemsFolder()
@@ -3902,9 +3916,8 @@ do
 
 	MahoTpApi   = { set = function(v) mahoOn = v == true end }
 	AutoQuakeApi = { set = function(v) quakeOn = v == true end }
-	-- Earthquake is a charged hold. You tap 3; ON YOUR RELEASE the script sends one clean 3-down, holds it the
-	-- full 2s, then releases = the shockwave. Triggering on your key-UP is the fix for "doesn't work anymore":
-	-- when we started the hold on your key-DOWN, your own release arrived mid-charge and ended it early.
+	-- Earthquake: you tap 3, the script does the charged hold for you. This is the exact version you confirmed
+	-- working (your recording's timing); the hold length is now a slider because the hard-coded 2s broke it.
 	do
 		local VIMq = game:GetService("VirtualInputManager")
 		local UISq = game:GetService("UserInputService")
@@ -3913,8 +3926,8 @@ do
 			if not quakeOn or holding then return end
 			holding = true
 			task.spawn(function()
-				local hold = tonumber(_G.VX_QUAKE_HOLD) or 2
-				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + hold + 0.3
+				local hold = tonumber(_G.VX_QUAKE_HOLD) or 0.83
+				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + hold + 0.1
 				pcall(function()
 					VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
 					task.wait(hold)
@@ -3923,7 +3936,7 @@ do
 				task.wait(0.05); holding = false   -- reset FAST so every 3-press fires again
 			end)
 		end
-		UISq.InputEnded:Connect(function(input, _)
+		UISq.InputBegan:Connect(function(input, _)
 			if not quakeOn then return end
 			if UISq:GetFocusedTextBox() then return end
 			if input.KeyCode ~= Enum.KeyCode.Three then return end
@@ -5420,14 +5433,14 @@ local Library do
 
     Library.Theme = TableClone(Themes["Preset"])
 
-    -- WHITE & BLACK for every tier (user request) — near-black panels, white accent/text, grey borders.
+    -- RED & BLACK for every tier (same look as the Ability Arena hub) — near-black panels, red accent.
     -- The accent is changeable live from Settings > Theme (Library:ChangeTheme repaints registered items).
-    Library.Theme["Background"] = FromRGB(10, 10, 10)
-    Library.Theme["Inline"]     = FromRGB(16, 16, 16)
-    Library.Theme["Element"]    = FromRGB(26, 26, 26)
-    Library.Theme["Accent"]     = FromRGB(255, 255, 255)
-    Library.Theme["Border"]     = FromRGB(34, 34, 34)
-    Library.Theme["Border 2"]   = FromRGB(70, 70, 70)
+    Library.Theme["Background"] = FromRGB(6, 6, 8)
+    Library.Theme["Inline"]     = FromRGB(11, 11, 13)
+    Library.Theme["Element"]    = FromRGB(18, 18, 20)
+    Library.Theme["Accent"]     = FromRGB(220, 30, 40)
+    Library.Theme["Border"]     = FromRGB(26, 26, 28)
+    Library.Theme["Border 2"]   = FromRGB(58, 58, 60)
 
     -- Folders
     pcall(function()
@@ -9280,7 +9293,7 @@ do
                             local c = o.BackgroundColor3
                             local mx = math.max(c.R, c.G, c.B)
                             if mx < 0.30 and math.abs(c.R - c.B) < 0.12 and math.abs(c.G - c.B) < 0.12 then   -- a neutral dark grey (not the red accent)
-                                o.BackgroundColor3 = Color3.new(c.R * 0.45, c.G * 0.45, c.B * 0.45)
+                                o.BackgroundColor3 = Color3.new(c.R * 0.3, c.G * 0.3, c.B * 0.3)   -- AA-dark: pull the greys to near-black
                             end
                         end
                     end)
@@ -9424,8 +9437,8 @@ do
     bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 BF", "Side Dash", "Back Dash", "Jump", "Teleport", "M1 Chain" } or { "Off", "M1 BF" }), Default = "Off", Callback = function(m)
         m = (type(m) == "table") and m[1] or m
         if not _G.VXBF2 then return end
-        if m == "Off" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false); if BFApi then BFApi.SetEnabled(false) end
-        elseif m == "M1 BF" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false); if BFApi then BFApi.SetEnabled(true) end
+        if m == "Off" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false); if BFApi then BFApi.SetClick(false) end
+        elseif m == "M1 BF" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false); if BFApi then BFApi.SetClick(true) end
         elseif m == "M1 Chain" then _G.VXBF2.setBFM1(false); _G.VXBF2.setMode("M1"); _G.VXBF2.setEnabled(true)
         else _G.VXBF2.setBFM1(false); _G.VXBF2.setMode(m); _G.VXBF2.setEnabled(true) end
     end })
@@ -9523,6 +9536,7 @@ do
     if tier("premium") then acSec:Toggle({ Name = "Auto Adapt", Callback = function(b) if AutoAdaptApi then AutoAdaptApi.set(b) end end }) end   -- FREE: no Auto Adapt (Auto Domain Adapt below is kept)
     acSec:Toggle({ Name = "Auto Domain Adapt", Callback = function(b) if AutoDomainAdaptApi then AutoDomainAdaptApi.set(b) end end })
     acSec:Toggle({ Name = "Auto Earthquake", Callback = function(b) if AutoQuakeApi then AutoQuakeApi.set(b) end end })
+    acSec:Slider({ Name = "Quake Hold", Min = 0.3, Max = 2, Default = 0.83, Decimals = 0.01, Suffix = "s", Callback = function(v) _G.VX_QUAKE_HOLD = tonumber(v) or 0.83 end })
     acSec:Toggle({ Name = "Auto Kill Emote", Callback = function(b) if KillEmoteApi then KillEmoteApi.set(b) end end })
     local keItems = {}   -- slot list with REAL emote names read from PlayerGui.Emotes.Emote.Page1/Page2 (the 'nan' slider is gone)
     for i = 1, 16 do
@@ -9556,7 +9570,11 @@ do
     auSec:Slider({ Name = "QTE Click Gap (ms)", Min = 0, Max = 100, Default = 20, Decimals = 1, Callback = function(v) if AutoQTEApi then AutoQTEApi.setTapGap(v) end end })
     auSec:Toggle({ Name = "Anti Final Judgment (dash away)", Callback = function(b) if AutoQTEApi_setAnti then AutoQTEApi_setAnti(b) end end })
     auSec:Toggle({ Name = "Auto Grab", Callback = function(b) if ItemsApi then ItemsApi.setGrab(b) end end })
-    auSec:Dropdown({ Name = "Grab Filter", Items = ((ItemsApi and ItemsApi.names()) or { "Any" }), Default = "Any", Callback = function(v) if ItemsApi then ItemsApi.setFilter(v) end end })
+    local grabDD = auSec:Dropdown({ Name = "Grab Filter", Items = ((ItemsApi and ItemsApi.names()) or { "Any" }), Default = "Any", Callback = function(v) if ItemsApi then ItemsApi.setFilter(v) end end })
+    auSec:Button({ Name = "Refresh Items", Callback = function() if grabDD and ItemsApi then grabDD:Refresh(ItemsApi.names()) end end })
+    task.spawn(function()   -- keep the item list current: refresh with the REAL items on the map every 10s
+        while true do task.wait(10); pcall(function() if grabDD and ItemsApi then grabDD:Refresh(ItemsApi.names()) end end) end
+    end)
     auSec:Toggle({ Name = "Auto Farm", Callback = function(b) if FarmApi then FarmApi.set(b) end end })
     auSec:Dropdown({ Name = "Farm Target", Items = playerList(), Default = "Nearest", Callback = function(v) if FarmApi then FarmApi.setTarget(v) end end })
     auSec:Toggle({ Name = "Auto Train", Callback = function(b) if TrainApi then TrainApi.setAuto(b) end end })
@@ -9634,7 +9652,8 @@ do
     tActSec:Button({ Name = "Teleport To User", Callback = function() if TargetApi then TargetApi.tpTo() end end })
     tActSec:Toggle({ Name = "Auto Farm User", Callback = function(b) if TargetApi then TargetApi.setFarm(b) end end })
     local bringFilter = "Any"
-    tActSec:Dropdown({ Name = "Item To Bring", Items = ((ItemsApi and ItemsApi.names()) or { "Any" }), Default = "Any", Callback = function(v) bringFilter = (type(v) == "table") and v[1] or v end })
+    local bringDD = tActSec:Dropdown({ Name = "Item To Bring", Items = ((ItemsApi and ItemsApi.names()) or { "Any" }), Default = "Any", Callback = function(v) bringFilter = (type(v) == "table") and v[1] or v end })
+    task.spawn(function() while true do task.wait(10); pcall(function() if bringDD and ItemsApi then bringDD:Refresh(ItemsApi.names()) end end) end end)
     tActSec:Button({ Name = "Bring Item To User", Callback = function() if TargetApi then TargetApi.bringItem(bringFilter) end end })
     tActSec:Button({ Name = "Throw Trash At User", Callback = function() if TargetApi then TargetApi.throwTrash() end end })
     -- keep the readout fresh while the tab's open (live HP/ult; the Check buttons still force a full refresh)
@@ -9788,7 +9807,14 @@ do
             pcall(function() if gethui then hosts[#hosts+1] = gethui() end end)
             pcall(function() hosts[#hosts+1] = game:GetService("CoreGui") end)
             pcall(function() hosts[#hosts+1] = LP:FindFirstChildOfClass("PlayerGui") end)
-            for _, h in ipairs(hosts) do pcall(function()
+            local ours = {}
+            for _, h in ipairs(hosts) do pcall(function()   -- only OUR ScreenGuis, never the game's UI
+                for _, sg in ipairs(h:GetChildren()) do
+                    local n = sg.Name
+                    if sg:IsA("ScreenGui") and (n == "HirimiGui" or n == "\0" or n:sub(1, 5) == "Dream" or n:sub(1, 3) == "VX_") then ours[#ours+1] = sg end
+                end
+            end) end
+            for _, h in ipairs(ours) do pcall(function()
                 for _, d in ipairs(h:GetDescendants()) do pcall(function()
                     if d:IsA("UIStroke") and near(d.Color, curAccent) then d.Color = newC
                     elseif (d:IsA("Frame") or d:IsA("TextButton")) and d.BackgroundTransparency < 1 and near(d.BackgroundColor3, curAccent) then d.BackgroundColor3 = newC
@@ -9813,16 +9839,20 @@ do
 
     -- CUSTOMIZE: background color / background image / font / text color — all live re-paints of the menu.
     do
-        local function menuHosts()
+        local function isOurGui(sg)   -- ONLY the hub's own ScreenGuis — NEVER the game's UI (repainting the game's
+            if not sg:IsA("ScreenGui") then return false end   -- top bar was the yellow overlapping text bug)
+            local n = sg.Name
+            return n == "HirimiGui" or n == "\0" or n:sub(1, 5) == "Dream" or n:sub(1, 3) == "VX_"
+        end
+        local function eachMenuEl(fn)   -- every element of OUR menu GUIs, pcall-safe
             local hosts = {}
             pcall(function() if gethui then hosts[#hosts+1] = gethui() end end)
             pcall(function() hosts[#hosts+1] = game:GetService("CoreGui") end)
             pcall(function() hosts[#hosts+1] = LP:FindFirstChildOfClass("PlayerGui") end)
-            return hosts
-        end
-        local function eachMenuEl(fn)   -- every element of the menu GUIs, pcall-safe
-            for _, h in ipairs(menuHosts()) do pcall(function()
-                for _, d in ipairs(h:GetDescendants()) do pcall(fn, d) end
+            for _, h in ipairs(hosts) do pcall(function()
+                for _, sg in ipairs(h:GetChildren()) do
+                    if isOurGui(sg) then for _, d in ipairs(sg:GetDescendants()) do pcall(fn, d) end end
+                end
             end) end
         end
         -- BACKGROUND COLOR: repaint every dark panel, keeping the light/dark hierarchy (each shade scales
@@ -9886,17 +9916,32 @@ do
             end)
             curTxt = c
         end })
-        -- SOUND: a soft key click whenever you press anything in the menu.
+        -- SOUND: a click/sfx whenever you press anything in the menu. Pick the sound, or paste any Roblox sound id.
         do
             local SS = game:GetService("SoundService")
+            local SOUNDS = {   -- name -> { id, volume, speed }
+                ["Keyboard (Basic)"] = { "rbxassetid://7147420522", 0.6, 1 },
+                ["Goku Scream"]      = { "rbxassetid://6157432689", 0.5, 1 },
+                ["Jesus Rising"]     = { "rbxassetid://104307285983733", 0.5, 1 },
+                ["67"]               = { "rbxassetid://117816189937562", 0.5, 1 },
+                ["Money"]            = { "rbxassetid://7112275565", 0.6, 1 },
+            }
+            local cur = SOUNDS["Keyboard (Basic)"]
             local snd
             local function ensureSnd()
                 if snd and snd.Parent then return snd end
-                snd = Instance.new("Sound")
-                snd.Name = "\0"; snd.Volume = 0.55; snd.SoundId = "rbxassetid://6895079853"
-                snd.Parent = SS
-                task.delay(2, function() pcall(function() if snd and not snd.IsLoaded then snd.SoundId = "rbxasset://sounds/electronicpingshort.wav"; snd.PlaybackSpeed = 1.7; snd.Volume = 0.25 end end) end)
+                snd = Instance.new("Sound"); snd.Name = "\0"; snd.Parent = SS
                 return snd
+            end
+            local function playClick()
+                local s = ensureSnd()
+                pcall(function()
+                    if s.SoundId ~= cur[1] then s.SoundId = cur[1] end
+                    s.Volume = cur[2]; s.PlaybackSpeed = cur[3]; s.TimePosition = 0; s:Play()
+                end)
+                task.delay(1.5, function() pcall(function() if s.SoundId == cur[1] and not s.IsLoaded then   -- id blocked/moderated -> built-in ping so you always hear something
+                    s.SoundId = "rbxasset://sounds/electronicpingshort.wav"; s.PlaybackSpeed = 1.7; s.Volume = 0.25; s:Play()
+                end end) end)
             end
             local hookedBtn = setmetatable({}, { __mode = "k" })
             local function hookButtons()
@@ -9904,7 +9949,7 @@ do
                     if (d:IsA("TextButton") or d:IsA("ImageButton")) and not hookedBtn[d] then
                         hookedBtn[d] = d.Activated:Connect(function()
                             if not _G.VX_UISOUND then return end
-                            local s = ensureSnd(); pcall(function() s.TimePosition = 0; s:Play() end)
+                            playClick()
                         end)
                     end
                 end)
@@ -9912,6 +9957,16 @@ do
             miscSec:Toggle({ Name = "Sound", Default = false, Callback = function(b)
                 _G.VX_UISOUND = (b == true)
                 if b then task.spawn(function() while _G.VX_UISOUND do pcall(hookButtons); task.wait(2) end end) end
+            end })
+            miscSec:Dropdown({ Name = "Click Sound", Items = { "Keyboard (Basic)", "Goku Scream", "Jesus Rising", "67", "Money" }, Default = "Keyboard (Basic)", Callback = function(v)
+                v = (type(v) == "table") and v[1] or v
+                cur = SOUNDS[v] or SOUNDS["Keyboard (Basic)"]
+                if snd then pcall(function() snd.SoundId = cur[1] end) end
+                if _G.VX_UISOUND then playClick() end   -- instant preview
+            end })
+            miscSec:Textbox({ Name = "Custom Sound ID", Default = "", Callback = function(txt)
+                local id = tostring(txt or ""):match("%d+")
+                if id then cur = { "rbxassetid://" .. id, 0.6, 1 }; if _G.VX_UISOUND then playClick() end end
             end })
         end
     end
