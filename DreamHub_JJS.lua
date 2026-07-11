@@ -2030,6 +2030,14 @@ do
         if input.UserInputType == Enum.UserInputType.MouseButton1 and Settings.Enabled and Settings.Mode == "M1" then
             task.spawn(doBFM1Chain); return
         end
+        -- CLICK path for BF: covers characters whose M1 anim isn't in the database (the anim path can't catch
+        -- those). Presses 3 shortly after your click; cooldown-shared so it never double-fires with the anim path.
+        if input.UserInputType == Enum.UserInputType.MouseButton1 and (Settings.AutoBF or Settings.BFM1) then
+            if tick() - R.bfCD >= Settings.BFCooldown then
+                R.bfCD = tick()
+                task.delay(0.14, function() if Settings.AutoBF or Settings.BFM1 then pressBF() end end)
+            end
+        end
     end)
     LocalPlayer.CharacterAdded:Connect(ReleaseAll)
 
