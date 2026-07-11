@@ -9332,7 +9332,10 @@ do
                 function W:SetOpen() if _G.VX_HARDTOGGLE then pcall(_G.VX_HARDTOGGLE) end end   -- minimize button routes through the hard toggle
                 function W:Page(pc)
                     pc = pc or {}
-                    local flTab; pcall(function() flTab = flWin:CreateTab({ Name = pc.Name or "Tab", Icon = pc.Icon and ("rbxassetid://" .. tostring(pc.Icon)) or nil }) end)
+                    -- Icon: a pure number -> rbxassetid; anything else (a Lucide name like "swords") -> pass as-is.
+                    local _ic = pc.Icon
+                    if _ic ~= nil and tostring(_ic):match("^%d+$") then _ic = "rbxassetid://" .. tostring(_ic) end
+                    local flTab; pcall(function() flTab = flWin:CreateTab({ Name = pc.Name or "Tab", Icon = _ic }) end)
                     local P = {}
                     function P:SubPage()   -- Fluriore has no sub-pages; a SubPage just forwards to the tab
                         local SP = {}
@@ -9430,7 +9433,7 @@ do
     Window:Category("Vaultix")
 
     -- ===================== COMBAT =====================
-    local CombatPage = Window:Page({ Name = "Combat", Icon = "136879043989014" })
+    local CombatPage = Window:Page({ Name = "Combat", Icon = "swords" })
 
     local bfSub = CombatPage:SubPage({ Name = "Black Flash", Columns = 2 })
     local bfSec = bfSub:Section({ Name = "Black Flash", Side = 1 })
@@ -9523,7 +9526,7 @@ do
     antiSec:Toggle({ Name = "Mahoraga Safe TP", Callback = function(b) if MahoTpApi then MahoTpApi.set(b) end end })
 
     -- ===================== AUTO (all the automation toggles in one tab) =====================
-    local AutoPage = Window:Page({ Name = "Auto", Icon = "94627324690861" })
+    local AutoPage = Window:Page({ Name = "Auto", Icon = "bot" })
     local autoSub = AutoPage:SubPage({ Name = "Auto", Columns = 2 })
     local acSec = autoSub:Section({ Name = "Auto Combat", Side = 1 })
     acSec:Toggle({ Name = "Auto Counter", Callback = function(b) if CounterApi then CounterApi.set(b) end end })
@@ -9581,7 +9584,7 @@ do
     auSec:Toggle({ Name = "Auto Train", Callback = function(b) if TrainApi then TrainApi.setAuto(b) end end })
 
     -- ===================== TARGET (type a username -> act on that player) =====================
-    local TargetPage = Window:Page({ Name = "Target", Icon = "72732892493295" })
+    local TargetPage = Window:Page({ Name = "Target", Icon = "crosshair" })
     local tgSub = TargetPage:SubPage({ Name = "Target", Columns = 2 })
     local tSec = tgSub:Section({ Name = "Target", Side = 1 })
     -- IN-GUI info panel (user: "show it inside the gui"): one line per stat, all live-updating.
@@ -9660,7 +9663,7 @@ do
     task.spawn(function() while true do task.wait(0.6); pcall(function() if _G.VX_HUB_READY then liveInfo() end end) end end)
 
     -- ===================== MOVEMENT =====================
-    local MovePage = Window:Page({ Name = "Movement", Icon = "97491613646216" })
+    local MovePage = Window:Page({ Name = "Movement", Icon = "footprints" })
     local mvSub = MovePage:SubPage({ Name = "Movement", Columns = 2 })
     local coreSec = mvSub:Section({ Name = "Core", Side = 1 })
     coreSec:Toggle({ Name = "Remove Trees", Callback = function(b) if RemoveTreesApi then RemoveTreesApi.set(b) end end })
@@ -9676,7 +9679,7 @@ do
     spdSec:Slider({ Name = "Fly Speed", Min = 20, Max = 250, Default = 80, Decimals = 1, Callback = function(v) if FlyApi then FlyApi.setSpeed(v) end end })
 
     -- ===================== VISUALS =====================
-    local VisPage = Window:Page({ Name = "Visuals", Icon = "131595494666590" })
+    local VisPage = Window:Page({ Name = "Visuals", Icon = "eye" })
     local visSub = VisPage:SubPage({ Name = "Visuals", Columns = 2 })
     local espSec = visSub:Section({ Name = "Player ESP", Side = 1 })
     espSec:Toggle({ Name = "Enable ESP", Callback = function(b) if PlayerEspApi then PlayerEspApi.setMaster(b) end end })
@@ -9702,7 +9705,7 @@ do
     worldSec:Slider({ Name = "FOV", Min = 40, Max = 120, Default = 70, Decimals = 1, Callback = function(v) if VisualApi then VisualApi.setFov(v) end end })
 
     -- ===================== TELEPORTS =====================
-    local TpPage = Window:Page({ Name = "Teleports", Icon = "10709806387" })
+    local TpPage = Window:Page({ Name = "Teleports", Icon = "navigation" })
     local tpSub = TpPage:SubPage({ Name = "Teleports", Columns = 2 })
     local locSec = tpSub:Section({ Name = "Locations", Side = 1 })
     if TPApi and TPApi.spotNames then for _, n in ipairs(TPApi.spotNames()) do locSec:Button({ Name = n, Callback = function() if TPApi then TPApi.spot(n) end end }) end end
@@ -9734,7 +9737,7 @@ do
     plySec:Button({ Name = "Teleport To Player", Callback = function() if TPApi and tpPlyName then TPApi.tpPlayer(tpPlyName) end end })
 
     -- ===================== PLAYER =====================
-    local PlyPage = Window:Page({ Name = "Player", Icon = "72732892493295" })   -- clean target/crosshair icon (old one looked AI-slop)
+    local PlyPage = Window:Page({ Name = "Player", Icon = "user" })   -- clean target/crosshair icon (old one looked AI-slop)
     local plySub = PlyPage:SubPage({ Name = "Player", Columns = 2 })
     local lockSec = plySub:Section({ Name = "Lock On", Side = 1 })
     local lockMode = "Off"
@@ -9778,7 +9781,7 @@ do
     srvSec:Button({ Name = "Unlock Extra Emote Slot", Callback = function() if EmoteSlotApi then EmoteSlotApi.unlock() end end })
 
     -- ===================== SETTINGS (keybinds + theme) =====================
-    local SettingsPage = Window:Page({ Name = "Settings", Icon = "136879043989014" })
+    local SettingsPage = Window:Page({ Name = "Settings", Icon = "settings" })
     local setSub = SettingsPage:SubPage({ Name = "Settings", Columns = 2 })
     local kbSec = setSub:Section({ Name = "Keybinds", Side = 1 })
     local kbEnabled = false
@@ -9798,12 +9801,37 @@ do
         end)
     end
     local thSec = setSub:Section({ Name = "Theme", Side = 2 })
-    thSec:Dropdown({ Name = "Accent Color", Items = { "Red", "Blue", "Green", "Purple", "Orange", "White" }, Default = "Red", Callback = function(v)
-        v = (type(v) == "table") and v[1] or v
-        local COLORS = { Red = Color3.fromRGB(220,30,40), Blue = Color3.fromRGB(45,120,255), Green = Color3.fromRGB(50,200,110), Purple = Color3.fromRGB(150,70,255), Orange = Color3.fromRGB(255,140,40), White = Color3.fromRGB(240,240,245) }
-        _G.VX_ACCENT = COLORS[v] or COLORS.Red   -- our custom elements (mobile button, notifications, target card) read this
-    end })
-    thSec:Label("Accent applies to the hub's own elements.")
+    do
+        local COLORS = { Red = Color3.fromRGB(220,30,40), Blue = Color3.fromRGB(45,120,255), Green = Color3.fromRGB(50,200,110), Purple = Color3.fromRGB(150,70,255), Orange = Color3.fromRGB(255,140,40), Pink = Color3.fromRGB(255,80,170), White = Color3.fromRGB(240,240,245) }
+        local curAccent = COLORS.Red
+        local function near(a, b) return (math.abs(a.R-b.R) + math.abs(a.G-b.G) + math.abs(a.B-b.B)) < 0.45 end   -- catches both red shades (255,45,45 and 220,30,40)
+        local function applyAccent(newC)
+            local hosts = {}
+            pcall(function() if gethui then hosts[#hosts+1] = gethui() end end)
+            pcall(function() hosts[#hosts+1] = game:GetService("CoreGui") end)
+            pcall(function() hosts[#hosts+1] = LP:FindFirstChildOfClass("PlayerGui") end)
+            for _, h in ipairs(hosts) do pcall(function()
+                for _, d in ipairs(h:GetDescendants()) do pcall(function()
+                    if d:IsA("UIStroke") and near(d.Color, curAccent) then d.Color = newC
+                    elseif (d:IsA("Frame") or d:IsA("TextButton")) and d.BackgroundTransparency < 1 and near(d.BackgroundColor3, curAccent) then d.BackgroundColor3 = newC
+                    elseif d:IsA("TextLabel") and near(d.TextColor3, curAccent) then d.TextColor3 = newC
+                    elseif d:IsA("ImageLabel") and near(d.ImageColor3, curAccent) then d.ImageColor3 = newC
+                    elseif d:IsA("UIGradient") then local ok = pcall(function() end) end
+                end) end
+            end) end
+            curAccent = newC; _G.VX_ACCENT = newC
+        end
+        thSec:Dropdown({ Name = "Accent Color", Items = { "Red", "Blue", "Green", "Purple", "Orange", "Pink", "White" }, Default = "Red", Callback = function(v)
+            v = (type(v) == "table") and v[1] or v
+            applyAccent(COLORS[v] or COLORS.Red)
+        end })
+        thSec:Label("Changes the red accent across the whole menu.")
+    end
+    local miscSec = setSub:Section({ Name = "Misc", Side = 1 })
+    miscSec:Toggle({ Name = "Show Notifications", Default = false, Callback = function(b) _G.VX_SILENT = (b ~= true) end })
+    miscSec:Button({ Name = "Rejoin Server", Callback = function() pcall(function() game:GetService("TeleportService"):Teleport(game.PlaceId, LP) end) end })
+    miscSec:Button({ Name = "Copy Discord", Callback = function() if setclipboard then pcall(setclipboard, "https://discord.gg/fRcGd9bW") end; if VX_NOTIFY then VX_NOTIFY("Discord copied") end end })
+    miscSec:Label("Menu: RightShift (or the on-screen button on mobile)")
 
     Window:Category("Config")
     Library:CreateSettingsPage(Window)
