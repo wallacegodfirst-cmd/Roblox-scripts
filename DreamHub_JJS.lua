@@ -5516,8 +5516,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "4.0"
-local VX_BUILD = "B40"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "4.1"
+local VX_BUILD = "B41"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
@@ -9705,14 +9705,13 @@ do
 
     local bfSub = CombatPage:SubPage({ Name = "Black Flash", Columns = 2 })
     local bfSec = bfSub:Section({ Name = "Black Flash", Side = 1 })
-    -- M1 BF: its OWN anim watcher. When one of your M1 anims plays, it presses 3 ONCE right after = the flash,
-    -- then stops. Nothing else touches the key. (Simple + exactly what you asked: detect M1 anim -> click 3.)
+    -- M1 BF - DEAD SIMPLE, exactly what you asked: COUNT your clicks (M1s). After the chosen number of M1s,
+    -- press 3 = the black flash. Then reset. A dropdown picks the count (1 / 2 / 3 M1s).
     local bfM1On, bfAutoOn = false, false
     local bfClickOffset = 0
-    local M1_ANIMS = {
-        ["95295463826732"] = true, ["105077924973072"] = true, ["124862357369335"] = true, ["120133391090244"] = true,
-    }
+    local bfCount = 2   -- press 3 after this many M1 clicks
     do
+        local UISbf = game:GetService("UserInputService")
         local VIMbf = game:GetService("VirtualInputManager")
         local function press3()
             _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.3
@@ -9722,32 +9721,19 @@ do
                 VIMbf:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
             end)
         end
-        local lastBF = 0
-        local hooked = setmetatable({}, { __mode = "k" })
-        local function onAnim(tr)
+        local clicks, lastClick = 0, 0
+        UISbf.InputBegan:Connect(function(input, gpe)
             if not bfM1On then return end
-            local id = tr.Animation and tostring(tr.Animation.AnimationId):match("%d+"); if not id then return end
-            if not M1_ANIMS[id] then return end
-            if tick() - lastBF < 0.35 then return end   -- one press per M1, then stop
-            lastBF = tick()
-            task.delay(math.max(0, 0.12 + bfClickOffset), press3)
-        end
-        -- hook EVERY animator your body can have: LP.Character AND workspace.Characters[you] (JJS plays combat
-        -- anims on either rig - hooking only one = "M1 BF randomly never fires"). Build the list by append so a
-        -- nil LP.Character never hides the resolved model.
-        local function hook()
-            local bodies = {}
-            if LP.Character then bodies[#bodies + 1] = LP.Character end
-            local chs = workspace:FindFirstChild("Characters")
-            local resolved = chs and chs:FindFirstChild(LP.Name)
-            if resolved and resolved ~= LP.Character then bodies[#bodies + 1] = resolved end
-            for _, body in ipairs(bodies) do
-                local hum = body:FindFirstChildOfClass("Humanoid")
-                local a = hum and hum:FindFirstChildOfClass("Animator")
-                if a and not hooked[a] then hooked[a] = a.AnimationPlayed:Connect(onAnim) end
+            if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+            if UISbf:GetFocusedTextBox() then return end
+            if tick() - lastClick > 2 then clicks = 0 end   -- new combo if you stopped clicking
+            lastClick = tick()
+            clicks = clicks + 1
+            if clicks >= bfCount then
+                clicks = 0
+                task.delay(math.max(0, 0.12 + bfClickOffset), press3)   -- after your Nth M1 -> press 3 = black flash
             end
-        end
-        task.spawn(function() while true do if bfM1On then pcall(hook) end task.wait(0.5) end end)
+        end)
     end
     local function bfSync() if BFApi then BFApi.SetEnabled(bfAutoOn) end end   -- engine = Auto BF only
     bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 BF", "Side Dash", "Back Dash", "Jump", "Teleport", "M1 Chain" } or { "Off", "M1 BF" }), Default = "Off", Callback = function(m)
@@ -9758,6 +9744,7 @@ do
         elseif m == "M1 Chain" then _G.VXBF2.setBFM1(false); _G.VXBF2.setMode("M1"); _G.VXBF2.setEnabled(true)
         else _G.VXBF2.setBFM1(false); _G.VXBF2.setMode(m); _G.VXBF2.setEnabled(true) end
     end })
+    bfSec:Dropdown({ Name = "BF After (M1s)", Items = { "1", "2", "3" }, Default = "2", Callback = function(v) v = (type(v) == "table") and v[1] or v; bfCount = tonumber(v) or 2 end })
     bfSec:Toggle({ Name = "Auto Black Flash", Default = false, Callback = function(b)
         bfAutoOn = (b == true); bfSync()
         if _G.VXBF2 then _G.VXBF2.setAutoBF(false) end   -- avoid the weaker VXBF2 path double-pressing
