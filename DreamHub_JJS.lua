@@ -1167,6 +1167,12 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 		if vxTeleGen == gen then  -- only the LATEST teleport cleans up, so overlapping calls can't leave PlatformStand stuck (no more "frozen after jump")
 			if hrp then pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero; hrp.AssemblyAngularVelocity = Vector3.zero end) end
 			if humanoid then pcall(function() humanoid.PlatformStand = false end) end  -- ALWAYS release so you can move normally after a jump/teleport
+			-- REPORT a blocked teleport instead of failing silently ("teleport doesn't work" -> we see WHY)
+			if hrp and (hrp.Position - cf.Position).Magnitude > 10 and tick() - (_G.VX_TPFAIL_T or 0) > 3 then
+				_G.VX_TPFAIL_T = tick()
+				local d = math.floor((hrp.Position - cf.Position).Magnitude)
+				pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "Dream Hub", Text = "Teleport was pushed back (" .. d .. " studs short). Screenshot this.", Duration = 5 }) end)
+			end
 		end
 		task.wait(0.05)
 		if onArrive then pcall(onArrive) end
@@ -4079,30 +4085,45 @@ do
 				end)
 			end
 		end)
-		local function startHold()
+		local function startHold(alreadyCharged)
 			if not quakeOn or holding then return end
 			holding = true
 			task.spawn(function()
 				local hold = tonumber(_G.VX_QUAKE_HOLD) or 0.83
 				local began = tick()
-				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + hold + 0.1
-				pcall(function()
-					VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
-					task.wait(hold)
-					VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
-				end)
-				task.wait(0.3)
-				if quakeAnimSeen < began then pcall(fireQuake) end   -- the hold never started the move -> fire it directly
+				-- your recording: the game only listens to a REAL full press cycle. While your finger is on 3
+				-- a second injected down is swallowed and your early release kills the charge. So we act on your
+				-- RELEASE: if the windup already ran long enough (you held it), do nothing; otherwise send one
+				-- clean full press-hold-release of our own.
+				if not alreadyCharged then
+					_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + hold + 0.15
+					pcall(function()
+						VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
+						task.wait(hold)
+						VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
+					end)
+					task.wait(0.35)
+					if quakeAnimSeen < began then pcall(fireQuake) end   -- the press never started the move -> fire it directly
+				end
+				task.wait(0.05)
 				holding = false
 			end)
 		end
+		local threeDownAt = 0
 		UISq.InputBegan:Connect(function(input, _)
+			if input.KeyCode == Enum.KeyCode.Three then
+				local injK = _G.VX_INJ_KEYS
+				if not (injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three]) then threeDownAt = tick() end
+			end
+		end)
+		UISq.InputEnded:Connect(function(input, _)
 			if not quakeOn then return end
 			if UISq:GetFocusedTextBox() then return end
 			if input.KeyCode ~= Enum.KeyCode.Three then return end
 			local injK = _G.VX_INJ_KEYS
-			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end
-			startHold()
+			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end   -- our own injected release
+			local held = tick() - threeDownAt
+			startHold(held >= (tonumber(_G.VX_QUAKE_HOLD) or 0.83))   -- you held it long enough yourself -> the quake already fired
 		end)
 	end
 	KillEmoteApi = { set = function(v) killEmoteOn = v == true end, setSlot = function(n) killEmoteSlot = tonumber(n) or 1 end }
@@ -5405,8 +5426,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "3.2"
-local VX_BUILD = "B32"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "3.3"
+local VX_BUILD = "B33"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
@@ -9595,15 +9616,33 @@ do
     local bfSub = CombatPage:SubPage({ Name = "Black Flash", Columns = 2 })
     local bfSec = bfSub:Section({ Name = "Black Flash", Side = 1 })
     -- Free gets Off + M1 BF. The chain modes (Side/Back Dash, Jump, Teleport, M1 Chain) are premium.
-    -- Both routes drive the SAME proven engine (your AutoBlackFlash script, verbatim):
-    --   M1 BF  = the engine + YOUR character's M1 anim added as a trigger, so your M1s convert.
-    --   Auto Black Flash = the engine with its stock trigger list.
+    -- The user's exact spec: "when u click, it clicks 3 for you, then the BF script handles it after".
+    --   M1 BF  = your CLICK -> the script presses 3 for you -> the engine converts it (anim-timed press).
+    --   Auto Black Flash = the engine alone (it converts your own manual 3-presses).
     local bfM1On, bfAutoOn = false, false
-    local M1_ANIM = "rbxassetid://120133391090244"
     local function bfSync()
-        if not BFApi then return end
-        if bfM1On then BFApi.AddTrigger(M1_ANIM, 0.19) else BFApi.RemoveTrigger(M1_ANIM) end
-        BFApi.SetEnabled(bfM1On or bfAutoOn)
+        if BFApi then BFApi.SetEnabled(bfM1On or bfAutoOn) end
+    end
+    do
+        local UISm = game:GetService("UserInputService")
+        local VIMm = game:GetService("VirtualInputManager")
+        local lastM1BF = 0
+        UISm.InputBegan:Connect(function(input, gpe)
+            if gpe then return end
+            if not bfM1On then return end
+            if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+            if tick() - lastM1BF < 0.6 then return end
+            lastM1BF = tick()
+            task.delay(0.14, function()   -- let the M1 land first (same feel as the mobile BF button)
+                -- short mark: just enough that same-frame key-3 triggers skip it, but NOT so long that the
+                -- engine's own timed conversion press (~0.25s later) gets blocked by its key-busy guard
+                _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.1
+                pcall(function()
+                    VIMm:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
+                    VIMm:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
+                end)
+            end)
+        end)
     end
     bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 BF", "Side Dash", "Back Dash", "Jump", "Teleport", "M1 Chain" } or { "Off", "M1 BF" }), Default = "Off", Callback = function(m)
         m = (type(m) == "table") and m[1] or m
