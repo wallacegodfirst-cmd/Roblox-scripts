@@ -1182,7 +1182,7 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 end
 
 -- TP METHOD: "Glide" (DEFAULT - the PROVEN stepped glide that works in-game) steps there at the speed cap,
-local VX_TP_METHOD = "Auto"   -- Auto = instant, then stepped glide, then slow glide - whichever lands first
+local VX_TP_METHOD = "Glide"   -- DEFAULT = the stepped glide that worked in the early chats (instant snap is opt-in)
 
 local function vxTpToast(msg)  -- visible red warning when a teleport FAILS (VX_NOTIFY isn't built yet at this point in the file)
 	pcall(function()
@@ -5034,17 +5034,24 @@ do
 		-- are EXACTLY the presses Auto Air chains off. Only skip while you're TYPING in a textbox.
 		if UIS:GetFocusedTextBox() then return end
 		if input.KeyCode == Enum.KeyCode.Three then lastThree = tick() end
-		-- GOJO TP BACK MID-BATTLE: while you're M1ing, it presses R FOR you (Gojo TP behind) so the combo continues from their back
-		if input.UserInputType == Enum.UserInputType.MouseButton1 and gojoOn and tick() - lastGojo > 1.1 and tick() - lastThree > 4 then
-			local mdl = landedM1Target()
-			if mdl then
-				lastM1Tgt = mdl
-				lastGojo = tick()
-				task.delay(0.22, function()   -- let the M1 register, then the auto-R
-					faceTargetNow(mdl)
-					local re = gojoRE(); if re then pcall(function() re:FireServer(mdl) end) end
-				end)
-			end
+		-- GOJO TP BACK: configurable. Mode "Q Dash" = TP behind the moment you press Q. Mode "After M1s" =
+		-- TP behind after your chosen number of Gojo M1s land (counted by anim below). Both fire GojoService TP.
+		local function doGojoTpBack()
+			if tick() - lastGojo < 0.9 then return end
+			local mdl = lastM1Tgt or landedM1Target() or nearestEnemyChar()
+			if not mdl then return end
+			lastM1Tgt = mdl; lastGojo = tick()
+			task.delay(0.05, function()
+				faceTargetNow(mdl)
+				local re = gojoRE(); if re then pcall(function() re:FireServer(asPlayerCharacter(mdl)) end) end
+				pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game); VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game) end)   -- key backup
+			end)
+		end
+		_G.VX_GOJO_TPBACK = doGojoTpBack   -- the anim counter (below) calls this when the M1 count is reached
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then local mdl = landedM1Target(); if mdl then lastM1Tgt = mdl end end
+		-- Q DASH mode: press Q -> TP behind them right away
+		if input.KeyCode == Enum.KeyCode.Q and gojoOn and (tostring(_G.VX_GOJO_MODE or "Q Dash") == "Q Dash") then
+			doGojoTpBack()
 		end
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then local mdl = landedM1Target(); if mdl then lastM1Tgt = mdl end end   -- remember who you're hitting (Auto Air targets THEM)
 		if input.KeyCode == Enum.KeyCode.Three and redOn and tick() >= (_G.VX_INJECT_UNTIL or 0) then
@@ -5149,6 +5156,9 @@ do
 	-- ANIM-DRIVEN backup (your captured ids): keeps aiming through Gojo's R (99920923658527), and the RED
 	-- charge anim (137654778575373) auto-clicks R even if the key-3 press was missed/eaten.
 	local GOJO_R_ANIM, RED_ANIM = "99920923658527", "137654778575373"
+	-- Gojo M1 landing anims (your capture) -> count them for the "After N M1s" TP-back mode
+	local GOJO_M1 = { ["127851700400958"] = true, ["72548435296350"] = true, ["84547415708554"] = true }
+	local gojoM1Count, lastGojoM1 = 0, 0
 	local lastRedR = 0
 	local hookedA = setmetatable({}, { __mode = "k" })
 	local function hookSelfAnims()
@@ -5159,6 +5169,15 @@ do
 			local id = track.Animation and tostring(track.Animation.AnimationId):match("%d+"); if not id then return end
 			if id == GOJO_R_ANIM and gojoOn then                                          -- Gojo R started: keep AIMING at the target through the grab window
 				task.spawn(function() local mdl = currentTarget(); for _ = 1, 8 do if not (mdl and mdl.Parent) then break end faceTargetNow(mdl); task.wait(0.04) end end)
+			end
+			-- AFTER-M1s mode: count YOUR Gojo M1s; at the chosen count, TP behind. Reset the count if you stop M1ing.
+			if GOJO_M1[id] and gojoOn and (tostring(_G.VX_GOJO_MODE or "Q Dash") == "After M1s") then
+				if tick() - lastGojoM1 > 2 then gojoM1Count = 0 end   -- new combo
+				lastGojoM1 = tick(); gojoM1Count = gojoM1Count + 1
+				if gojoM1Count >= (tonumber(_G.VX_GOJO_COUNT) or 2) then
+					gojoM1Count = 0
+					if _G.VX_GOJO_TPBACK then task.spawn(_G.VX_GOJO_TPBACK) end
+				end
 			end
 			if id == RED_ANIM and redOn and tick() - lastRedR > 0.6 then                  -- Red charge anim: click R
 				lastRedR = tick()
@@ -5469,8 +5488,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "3.5"
-local VX_BUILD = "B35"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "3.6"
+local VX_BUILD = "B36"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
@@ -9659,33 +9678,18 @@ do
     local bfSub = CombatPage:SubPage({ Name = "Black Flash", Columns = 2 })
     local bfSec = bfSub:Section({ Name = "Black Flash", Side = 1 })
     -- Free gets Off + M1 BF. The chain modes (Side/Back Dash, Jump, Teleport, M1 Chain) are premium.
-    --   M1 BF = your CLICK -> ONE press of 3 at the flash timing (0.19s after the click, adjustable with
-    --   BF Timing). This is the same press timing as the build that actually flashed - one press, nothing
-    --   else touches the key, so nothing can cancel it.
-    --   Auto Black Flash = the engine alone (converts on the known windup anims).
+    --   M1 BF = the verbatim engine + YOUR M1 anim ids (your capture): when any of those anims plays, it
+    --   presses 3 right after = the flash. Anim-detected, so it fires on the exact frame your M1 lands.
+    --   Auto Black Flash = the engine alone (its stock windup anims).
     local bfM1On, bfAutoOn = false, false
     local bfClickOffset = 0
+    local M1_ANIMS = { "rbxassetid://95295463826732", "rbxassetid://105077924973072", "rbxassetid://124862357369335", "rbxassetid://120133391090244" }
     local function bfSync()
-        if BFApi then BFApi.SetEnabled(bfAutoOn) end   -- the engine runs ONLY for Auto BF; M1 BF is the single click-press below
-    end
-    do
-        local UISm = game:GetService("UserInputService")
-        local VIMm = game:GetService("VirtualInputManager")
-        local lastM1BF = 0
-        UISm.InputBegan:Connect(function(input, gpe)
-            if gpe then return end
-            if not bfM1On then return end
-            if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-            if tick() - lastM1BF < 0.6 then return end
-            lastM1BF = tick()
-            task.delay(math.max(0, 0.19 + bfClickOffset), function()
-                _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.25
-                pcall(function()
-                    VIMm:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
-                    VIMm:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
-                end)
-            end)
-        end)
+        if not BFApi then return end
+        for _, id in ipairs(M1_ANIMS) do
+            if bfM1On then BFApi.AddTrigger(id, 0.19) else BFApi.RemoveTrigger(id) end
+        end
+        BFApi.SetEnabled(bfM1On or bfAutoOn)
     end
     bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 BF", "Side Dash", "Back Dash", "Jump", "Teleport", "M1 Chain" } or { "Off", "M1 BF" }), Default = "Off", Callback = function(m)
         m = (type(m) == "table") and m[1] or m
@@ -9729,6 +9733,8 @@ do
     local skSub = CombatPage:SubPage({ Name = "Skills", Columns = 2 })
     local skSec = skSub:Section({ Name = "Skills & M1", Side = 1 })
     skSec:Toggle({ Name = "Gojo TP Back", Callback = function(b) if GojoTpApi then GojoTpApi.set(b) end end })
+    skSec:Dropdown({ Name = "TP Back Trigger", Items = { "Q Dash", "After M1s" }, Default = "Q Dash", Callback = function(v) _G.VX_GOJO_MODE = (type(v) == "table") and v[1] or v end })
+    skSec:Dropdown({ Name = "TP Back After (M1s)", Items = { "1", "2", "3", "4" }, Default = "2", Callback = function(v) v = (type(v) == "table") and v[1] or v; _G.VX_GOJO_COUNT = tonumber(v) or 2 end })
     skSec:Toggle({ Name = "Reversal Red", Callback = function(b) if ReversalRedApi then ReversalRedApi.set(b) end end })
     skSec:Button({ Name = "Rika Down Slam", Callback = function()
         local chs = workspace:FindFirstChild("Characters"); local ch = (chs and chs:FindFirstChild(LocalPlayer.Name)) or LocalPlayer.Character
@@ -9961,7 +9967,7 @@ do
     local locSec = tpSub:Section({ Name = "Locations", Side = 1 })
     if TPApi and TPApi.spotNames then for _, n in ipairs(TPApi.spotNames()) do locSec:Button({ Name = n, Callback = function() if TPApi then TPApi.spot(n) end end }) end end
     local quickSec = tpSub:Section({ Name = "Quick", Side = 2 })
-    quickSec:Dropdown({ Name = "TP Method", Items = { "Auto", "Instant", "Glide" }, Default = "Auto", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
+    quickSec:Dropdown({ Name = "TP Method", Items = { "Glide", "Auto", "Instant" }, Default = "Glide", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
     quickSec:Slider({ Name = "TP Speed", Min = 16, Max = 400, Default = 130, Decimals = 0, Callback = function(v) if TPApi then TPApi.setSpeed(v) end end })
     quickSec:Button({ Name = "Print TP Remote", Callback = function()
         local RS = game:GetService("ReplicatedStorage"); local found = 0
