@@ -9,59 +9,107 @@
       Load: loadstring(game:HttpGet("<this url>"))()  ]]
 _G.JJS_FREE = true   -- switches the shared hub to the FREE tier (red/black + trimmed features + FREE badge)
 
--- BYPASS FIRST (before the download even starts): block Kick(LP) so nothing can 267-kick you while the
--- hub loads, and block the AntiCheat "Teleport" remote so teleports don't get set back. The main hub
--- re-checks _G.VX_AC_HOOKED so this never double-installs.
+-- ═══════════════════════════════════════════════════════════
+-- JUJUTSU SHENANIGANS BYPASS (your EXACT script, verbatim) — runs FIRST, before the download.
+-- ═══════════════════════════════════════════════════════════
 if not _G.VX_AC_HOOKED then
 	_G.VX_AC_HOOKED = true
-	_G.VX_AC_ALLOW = false
-	local LP0 = game:GetService("Players").LocalPlayer
+	local Players = game:GetService("Players")
+	local LP = Players.LocalPlayer
+
+	local allowAntiCheatTP = false
+	local AntiCheatTP = nil
+
+	-- 1. Dynamically find the AntiCheat Teleport Remote
+	local function findAntiCheatRemote()
+		local rs = game:GetService("ReplicatedStorage")
+		for _, v in ipairs(rs:GetDescendants()) do
+			if (v:IsA("RemoteEvent") or v:IsA("RemoteFunction")) and v.Name == "Teleport" then
+				local parent = v.Parent
+				for i = 1, 5 do
+					if not parent then break end
+					if parent.Name:lower():find("anticheat") then
+						return v
+					end
+					parent = parent.Parent
+				end
+			end
+		end
+		return nil
+	end
+
+	AntiCheatTP = findAntiCheatRemote()
+
+	-- 2. Hook Metamethods (Block Kick & Block Anti-Cheat Remote)
 	pcall(function()
 		local mt = getrawmetatable(game)
 		local oldNamecall = mt.__namecall
 		setreadonly(mt, false)
+
 		mt.__namecall = newcclosure(function(self, ...)
-			local ok, method = pcall(getnamecallmethod)
-			if ok then
-				if method == "Kick" and self == LP0 then return nil end
-				if (method == "FireServer" or method == "InvokeServer") and not _G.VX_AC_ALLOW then
-					local ok2, blk = pcall(function()
-						if not (self:IsA("RemoteEvent") or self:IsA("RemoteFunction")) then return false end
-						if self.Name ~= "Teleport" then return false end
-						local p = self.Parent
-						for _ = 1, 5 do
-							if not p then break end
-							if tostring(p.Name):lower():find("anticheat") then return true end
-							p = p.Parent
+			local method = getnamecallmethod()
+
+			-- Intercept and block any kick attempts (Prevents Error 267)
+			if method == "Kick" and self == LP then
+				return nil
+			end
+
+			-- Intercept and block the AntiCheat Teleport remote
+			if (method == "FireServer" or method == "InvokeServer") and not allowAntiCheatTP then
+				if self == AntiCheatTP then
+					return nil
+				end
+				-- Fallback check just in case the instance reference was lost
+				if self and (self:IsA("RemoteEvent") or self:IsA("RemoteFunction")) and self.Name == "Teleport" then
+					local p = self.Parent
+					local isAC = false
+					for i=1, 5 do
+						if not p then break end
+						if p.Name:lower():find("anticheat") then
+							isAC = true
+							break
 						end
-						return false
-					end)
-					if ok2 and blk then return nil end
+						p = p.Parent
+					end
+					if isAC then return nil end
 				end
 			end
+
 			return oldNamecall(self, ...)
 		end)
+
 		setreadonly(mt, true)
 	end)
+
+	-- 3. Disable Local Anti-Cheat Scripts
 	task.spawn(function()
 		local function disableScripts(parent)
 			if not parent then return end
 			for _, v in ipairs(parent:GetDescendants()) do
 				if v:IsA("LocalScript") then
-					local n = tostring(v.Name):lower()
-					if n:find("anti") or n:find("cheat") or n:find("detect") then
-						pcall(function() v.Disabled = true; v.Parent = nil end)
+					local name = v.Name:lower()
+					if name:find("anti") or name:find("cheat") or name:find("detect") then
+						pcall(function()
+							v.Disabled = true
+							v.Parent = nil -- Destroy to prevent restart
+						end)
 					end
 				end
 			end
 		end
+
 		local function disableAll()
-			pcall(function() if LP0:FindFirstChild("PlayerScripts") then disableScripts(LP0.PlayerScripts) end end)
-			pcall(function() if LP0:FindFirstChild("Character") then disableScripts(LP0.Character) end end)
-			pcall(function() disableScripts(game:GetService("StarterPlayer"):FindFirstChild("StarterPlayerScripts")) end)
+			if LP:FindFirstChild("PlayerScripts") then disableScripts(LP.PlayerScripts) end
+			if LP:FindFirstChild("Character") then disableScripts(LP.Character) end
+			disableScripts(game:GetService("StarterPlayer"):FindFirstChild("StarterPlayerScripts"))
 		end
-		disableAll(); task.wait(2); disableAll()
+
+		disableAll()
+		task.wait(2) -- Wait for Knit to fully load
+		disableAll()
 	end)
+
+	print("[JJS Bypass] Loaded: Kick Blocked & Anti-Cheat Disabled!")
 end
 
 local URLS = {
