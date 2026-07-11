@@ -960,6 +960,8 @@ local VX_TP_SPEED = 130   -- studs/sec for the glide (80 was so slow a far spot 
 -- game updates -> teleports set back). Try the known path first, else search for any RemoteEvent named
 -- "Teleport" (preferring an AntiCheat-ish parent). Cached; re-resolves if the cached one is destroyed.
 local vxACRemote = nil   -- the ONE AntiCheat whitelist remote. Firing extra 'Teleport' remotes broke it - exact path only, single fallback.
+local vxACStamp = 0
+task.spawn(function() while true do task.wait(20); vxACRemote = nil; vxACStamp = 0 end end)   -- "TP works ~1min then stops": the game swaps the remote instance; drop the cache every 20s so we re-find the live one
 local function vxResolveAC()
 	if vxACRemote and vxACRemote.Parent then return vxACRemote end
 	local RS = game:GetService("ReplicatedStorage")
