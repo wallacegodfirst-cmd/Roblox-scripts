@@ -9475,12 +9475,15 @@ do
     bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 BF (simple)", "Side Dash", "Back Dash", "Jump", "Teleport", "M1 Chain" } or { "Off", "M1 BF (simple)" }), Default = "Off", Callback = function(m)
         m = (type(m) == "table") and m[1] or m
         if not _G.VXBF2 then return end
-        if m == "Off" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false)
-        elseif m == "M1 BF (simple)" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(true)
+        if m == "Off" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false); if BFApi then BFApi.SetEnabled(false) end
+        elseif m == "M1 BF (simple)" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false); if BFApi then BFApi.SetEnabled(true) end   -- use the PROVEN BFApi module, not the weaker VXBF2 path
         elseif m == "M1 Chain" then _G.VXBF2.setBFM1(false); _G.VXBF2.setMode("M1"); _G.VXBF2.setEnabled(true)
         else _G.VXBF2.setBFM1(false); _G.VXBF2.setMode(m); _G.VXBF2.setEnabled(true) end
     end })
-    bfSec:Toggle({ Name = "Auto Black Flash", Default = false, Callback = function(b) if _G.VXBF2 then _G.VXBF2.setAutoBF(b) end end })   -- free: every M1 auto-presses 3 = black flash, works on all characters
+    bfSec:Toggle({ Name = "Auto Black Flash", Default = false, Callback = function(b)   -- routes through the PROVEN BFApi (anim + click triggers, works on every character); was wired to nothing before
+        if BFApi then BFApi.SetEnabled(b) end
+        if _G.VXBF2 then _G.VXBF2.setAutoBF(false) end   -- avoid the weaker VXBF2 path double-pressing
+    end })
     bfSec:Slider({ Name = "BF Cooldown", Min = 0.1, Max = 2, Default = 0.5, Decimals = 0.05, Suffix = "s", Callback = function(v) if _G.VXBF2 then _G.VXBF2.setCooldown(v) end end })
     if tier("premium") then bfSec:Slider({ Name = "Teleport/Jump Dist", Min = 2, Max = 8, Default = 3, Decimals = 0.5, Callback = function(v) if _G.VXBF2 then _G.VXBF2.setTeleportDist(v) end end }) end
     -- FREE feint keeps only M1 + Moves(skills); premium adds Feint Black Flash
