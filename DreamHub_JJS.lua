@@ -1515,7 +1515,19 @@ do
                 card.nm.Text = plr.DisplayName .. " (@" .. plr.Name .. ")"
                 local ls = plr:FindFirstChild("leaderstats"); local kills = "?"
                 if ls then for _, s in ipairs(ls:GetChildren()) do if s.Name:lower():find("kill") then kills = tostring(s.Value) break end end end
-                card.meta.Text = "Ult: " .. (usedUlt(mdl, plr) and "USED" or "no") .. "   Kills: " .. kills
+                -- FRIENDS: fetch the count once per target (async + cached; harmless if the API is rate-limited)
+                if card.friendsFor ~= plr.UserId then
+                    card.friendsFor = plr.UserId; card.friends = "..."
+                    task.spawn(function()
+                        local ok, pages = pcall(function() return Players:GetFriendsAsync(plr.UserId) end)
+                        if ok and pages then
+                            local n = 0
+                            pcall(function() while true do for _ in ipairs(pages:GetCurrentPage()) do n += 1 end; if pages.IsFinished then break end; pages:AdvanceToNextPageAsync() end end)
+                            card.friends = tostring(n)
+                        else card.friends = "?" end
+                    end)
+                end
+                card.meta.Text = "Ult: " .. (usedUlt(mdl, plr) and "USED" or "no") .. "   Kills: " .. kills .. "   Friends: " .. tostring(card.friends or "...")
                 card.hpF.Size = UDim2.fromScale(math.clamp(hp / math.max(mx, 1), 0, 1), 1)
                 card.hpF.BackgroundColor3 = (hp / math.max(mx, 1)) > 0.5 and Color3.fromRGB(90, 220, 100) or ((hp / math.max(mx, 1)) > 0.25 and Color3.fromRGB(235, 200, 70) or Color3.fromRGB(230, 70, 70))
                 card.hpT.Text = "HP " .. hp .. " / " .. mx
