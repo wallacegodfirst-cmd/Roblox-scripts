@@ -1182,7 +1182,7 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 end
 
 -- TP METHOD: "Glide" (DEFAULT - the PROVEN stepped glide that works in-game) steps there at the speed cap,
-local VX_TP_METHOD = "Glide"   -- DEFAULT = the stepped glide that worked in the early chats (instant snap is opt-in)
+local VX_TP_METHOD = "Instant"   -- DEFAULT = fast stepped glide (instant feel, still sticks). "Glide" = slower/stealthier.
 
 local function vxTpToast(msg)  -- visible red warning when a teleport FAILS (VX_NOTIFY isn't built yet at this point in the file)
 	pcall(function()
@@ -1251,23 +1251,23 @@ local function vxTeleportHard(dest, holdTime)
 			return h ~= nil and (h.Position - dest).Magnitude < 12
 		end
 		local function toast(m) pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "Dream Hub", Text = m, Duration = 4 }) end) end
-		-- A) instant snap (skipped when the dropdown forces Glide)
+		-- INSTANT (default): a FAST stepped glide - covers the distance in a few frames so it looks like a real
+		-- teleport (no slow sliding) but each step stays under the anti-cheat limit, so it STICKS. This is the
+		-- "TP not glide" you asked for: high-speed steps = instant feel + no set-back.
 		if VX_TP_METHOD ~= "Glide" then
-			vxGlide(dest, nil, math.max(holdTime or 2, 1.2))
-			task.wait(math.max(holdTime or 2, 1.2) + 0.25)
-			if near() then return end
-			if VX_TP_METHOD == "Instant" then vxTpToast("TP pushed back - switch TP Method to Glide (or Auto)"); return end
+			if vxSteppedGlide(dest, 900, math.max(holdTime or 2, 1.5)) or near() then return end   -- 900 studs/s = ~15/frame = a couple frames for most TPs
+			if VX_TP_METHOD == "Instant" then
+				-- one more try a touch slower before giving up
+				if vxSteppedGlide(dest, 450, (holdTime or 2) + 1) or near() then return end
+				vxTpToast("TP pushed back - lower TP Speed or set Method to Glide"); return
+			end
 		end
-		-- B) the original stepped glide at the set speed
+		-- Glide / Auto fallbacks: the original speed-capped glide, then half speed
 		if not near() then
-			if vxSteppedGlide(dest, VX_TP_SPEED, holdTime or 3) or near() then toast("TP landed (glide)"); return end
+			if vxSteppedGlide(dest, VX_TP_SPEED, holdTime or 3) or near() then return end
 		end
-		-- C) half speed, longer hold - the strictest fallback
-		if vxSteppedGlide(dest, math.max(math.floor(VX_TP_SPEED / 2), 30), (holdTime or 3) + 1.5) or near() then
-			toast("TP landed (slow glide)")
-			return
-		end
-		vxTpToast("TP blocked on all 3 methods - tell me and send an F9 screenshot")
+		if vxSteppedGlide(dest, math.max(math.floor(VX_TP_SPEED / 2), 30), (holdTime or 3) + 1.5) or near() then return end
+		vxTpToast("TP blocked on all methods - tell me and send an F9 screenshot")
 		print("[DreamHub TP] all strategies pushed back. whitelist remote:", (vxResolveAC() and vxResolveAC():GetFullName()) or "NOT FOUND (game updated)")
 	end)
 end
@@ -5488,8 +5488,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "3.6"
-local VX_BUILD = "B36"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "3.7"
+local VX_BUILD = "B37"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
@@ -9677,20 +9677,48 @@ do
 
     local bfSub = CombatPage:SubPage({ Name = "Black Flash", Columns = 2 })
     local bfSec = bfSub:Section({ Name = "Black Flash", Side = 1 })
-    -- Free gets Off + M1 BF. The chain modes (Side/Back Dash, Jump, Teleport, M1 Chain) are premium.
-    --   M1 BF = the verbatim engine + YOUR M1 anim ids (your capture): when any of those anims plays, it
-    --   presses 3 right after = the flash. Anim-detected, so it fires on the exact frame your M1 lands.
-    --   Auto Black Flash = the engine alone (its stock windup anims).
+    -- M1 BF = its OWN anim watcher (NOT the key-3 engine). When one of your M1 anims plays, it fires the
+    -- chosen BF input after a short delay. Default input = re-click M1 (key 3 was hitting Diver Fist on your
+    -- character - that is a skill slot, not the flash). BF Key lets you map it to whatever your char uses.
     local bfM1On, bfAutoOn = false, false
     local bfClickOffset = 0
-    local M1_ANIMS = { "rbxassetid://95295463826732", "rbxassetid://105077924973072", "rbxassetid://124862357369335", "rbxassetid://120133391090244" }
-    local function bfSync()
-        if not BFApi then return end
-        for _, id in ipairs(M1_ANIMS) do
-            if bfM1On then BFApi.AddTrigger(id, 0.19) else BFApi.RemoveTrigger(id) end
+    local bfKey = "M1"   -- M1 / 1 / 2 / 3 / 4 / R
+    local M1_ANIMS = {
+        ["95295463826732"] = true, ["105077924973072"] = true, ["124862357369335"] = true, ["120133391090244"] = true,
+    }
+    do
+        local VIMbf = game:GetService("VirtualInputManager")
+        local KEYMAP = { ["1"] = Enum.KeyCode.One, ["2"] = Enum.KeyCode.Two, ["3"] = Enum.KeyCode.Three, ["4"] = Enum.KeyCode.Four, ["R"] = Enum.KeyCode.R }
+        local function fireBF()
+            if bfKey == "M1" then
+                pcall(function() VIMbf:SendMouseButtonEvent(0, 0, 0, true, game, 0); VIMbf:SendMouseButtonEvent(0, 0, 0, false, game, 0) end)
+            else
+                local kc = KEYMAP[bfKey]; if not kc then return end
+                _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[kc] = tick() + 0.25
+                pcall(function() VIMbf:SendKeyEvent(true, kc, false, game); VIMbf:SendKeyEvent(false, kc, false, game) end)
+            end
         end
-        BFApi.SetEnabled(bfM1On or bfAutoOn)
+        local lastBF = 0
+        local hooked = setmetatable({}, { __mode = "k" })
+        local function hook()
+            local chs = workspace:FindFirstChild("Characters")
+            local body = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+            local hum = body and body:FindFirstChildOfClass("Humanoid")
+            local a = hum and hum:FindFirstChildOfClass("Animator")
+            if a and not hooked[a] then
+                hooked[a] = a.AnimationPlayed:Connect(function(tr)
+                    if not bfM1On then return end
+                    local id = tr.Animation and tostring(tr.Animation.AnimationId):match("%d+"); if not id then return end
+                    if not M1_ANIMS[id] then return end
+                    if tick() - lastBF < 0.35 then return end
+                    lastBF = tick()
+                    task.delay(math.max(0, 0.12 + bfClickOffset), fireBF)
+                end)
+            end
+        end
+        task.spawn(function() while true do if bfM1On then pcall(hook) end task.wait(0.6) end end)
     end
+    local function bfSync() if BFApi then BFApi.SetEnabled(bfAutoOn) end end   -- engine = Auto BF only
     bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 BF", "Side Dash", "Back Dash", "Jump", "Teleport", "M1 Chain" } or { "Off", "M1 BF" }), Default = "Off", Callback = function(m)
         m = (type(m) == "table") and m[1] or m
         if not _G.VXBF2 then return end
@@ -9699,13 +9727,14 @@ do
         elseif m == "M1 Chain" then _G.VXBF2.setBFM1(false); _G.VXBF2.setMode("M1"); _G.VXBF2.setEnabled(true)
         else _G.VXBF2.setBFM1(false); _G.VXBF2.setMode(m); _G.VXBF2.setEnabled(true) end
     end })
+    bfSec:Dropdown({ Name = "BF Key", Items = { "M1", "1", "2", "3", "4", "R" }, Default = "M1", Callback = function(v) bfKey = (type(v) == "table") and v[1] or v end })
     bfSec:Toggle({ Name = "Auto Black Flash", Default = false, Callback = function(b)
         bfAutoOn = (b == true); bfSync()
         if _G.VXBF2 then _G.VXBF2.setAutoBF(false) end   -- avoid the weaker VXBF2 path double-pressing
     end })
     bfSec:Slider({ Name = "BF Cooldown", Min = 0.1, Max = 2, Default = 0.5, Decimals = 0.05, Suffix = "s", Callback = function(v) if _G.VXBF2 then _G.VXBF2.setCooldown(v) end end })
-    -- BF Timing: nudge the flash press earlier(-)/later(+) so you can dial in the exact frame for YOUR character (fixes "it just comes out as a move"). 0 = default.
-    bfSec:Slider({ Name = "BF Timing", Min = -0.19, Max = 0.3, Default = 0, Decimals = 0.01, Suffix = "s", Callback = function(v) v = tonumber(v) or 0; bfClickOffset = v; if BFApi then BFApi.SetTimingOffset(v) end end })
+    -- BF Timing: nudge the flash input earlier(-)/later(+) to hit the exact flash frame for YOUR character.
+    bfSec:Slider({ Name = "BF Timing", Min = -0.12, Max = 0.4, Default = 0, Decimals = 0.01, Suffix = "s", Callback = function(v) v = tonumber(v) or 0; bfClickOffset = v; if BFApi then BFApi.SetTimingOffset(v) end end })
     if tier("premium") then bfSec:Slider({ Name = "Teleport/Jump Dist", Min = 2, Max = 8, Default = 3, Decimals = 0.5, Callback = function(v) if _G.VXBF2 then _G.VXBF2.setTeleportDist(v) end end }) end
     -- FREE feint keeps only M1 + Moves(skills); premium adds Feint Black Flash
     -- Feint M1 as a direct TOGGLE (dropdown Callbacks are unreliable on this UI lib; toggles always fire).
@@ -9967,7 +9996,7 @@ do
     local locSec = tpSub:Section({ Name = "Locations", Side = 1 })
     if TPApi and TPApi.spotNames then for _, n in ipairs(TPApi.spotNames()) do locSec:Button({ Name = n, Callback = function() if TPApi then TPApi.spot(n) end end }) end end
     local quickSec = tpSub:Section({ Name = "Quick", Side = 2 })
-    quickSec:Dropdown({ Name = "TP Method", Items = { "Glide", "Auto", "Instant" }, Default = "Glide", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
+    quickSec:Dropdown({ Name = "TP Method", Items = { "Instant", "Glide", "Auto" }, Default = "Instant", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
     quickSec:Slider({ Name = "TP Speed", Min = 16, Max = 400, Default = 130, Decimals = 0, Callback = function(v) if TPApi then TPApi.setSpeed(v) end end })
     quickSec:Button({ Name = "Print TP Remote", Callback = function()
         local RS = game:GetService("ReplicatedStorage"); local found = 0
