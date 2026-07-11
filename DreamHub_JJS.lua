@@ -143,6 +143,23 @@ do
 	task.spawn(function() while RT.Running do pcall(hookBoth); task.wait(0.5) end end)
 	local function reconnect() hookedAnims = setmetatable({}, { __mode = "k" }); pcall(hookBoth); return true end
 
+	-- KEY-3 TRIGGER (user: "auto bf / m1 bf should work when I click 3"): the anim path above only auto-presses on
+	-- a windup and mistimes ("just a delay after M1"). So ALSO fire off YOUR real 3-press: the instant you tap 3,
+	-- snap-aim to the nearest enemy's back + camera-lock so your flash lands on-target. No extra key press, so your
+	-- 3 is never wasted. Skips our own injected 3 (earthquake hold / auto presses) so they don't cross-fire.
+	do
+		local UISbf = game:GetService("UserInputService")
+		UISbf.InputBegan:Connect(function(input, gpe)
+			if gpe then return end
+			if not CFG.Enabled then return end
+			if input.KeyCode ~= Enum.KeyCode.Three then return end
+			if UISbf:GetFocusedTextBox() then return end
+			local injK = _G.VX_INJ_KEYS
+			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end   -- ignore our own injected 3
+			pcall(bfAim)   -- aim on YOUR press regardless of the Aim toggle (that's the whole point of this trigger)
+		end)
+	end
+
 	BFApi = {
 		SetEnabled = function(v) CFG.Enabled = v == true end,
 		IsEnabled = function() return CFG.Enabled end,
