@@ -9824,7 +9824,49 @@ do
     srvSec:Toggle({ Name = "Show Notifications (off by default)", Default = false, Callback = function(b) _G.VX_SILENT = (b ~= true) end })   -- user asked: NO toasts. Silent unless you opt back in; F9 console prints stay for debugging.
     srvSec:Button({ Name = "Unlock Extra Emote Slot", Callback = function() if EmoteSlotApi then EmoteSlotApi.unlock() end end })
 
-    -- ===================== SETTINGS (configs / theming / menu keybind) =====================
+    -- ===================== SETTINGS (keybinds + theme) =====================
+    local SettingsPage = Window:Page({ Name = "Settings", Icon = "72732892493295" })
+    local setSub = SettingsPage:SubPage({ Name = "Settings", Columns = 2 })
+    local kbSec = setSub:Section({ Name = "Keybinds", Side = 1 })
+    local kbEnabled = false
+    kbSec:Toggle({ Name = "Enable Keybinds", Default = false, Callback = function(b) kbEnabled = (b == true) end })
+    kbSec:Label("F1 = Fly")
+    kbSec:Label("F2 = Speed")
+    kbSec:Label("F3 = Auto Black Flash")
+    kbSec:Label("F4 = Auto Earthquake")
+    do
+        local UISkb = game:GetService("UserInputService")
+        local st = {}
+        local function bind(name, api, method)
+            return function()
+                st[name] = not st[name]
+                pcall(function() if api and api[method] then api[method](st[name]) end end)
+                if VX_NOTIFY then VX_NOTIFY(name .. (st[name] and " ON" or " OFF")) end
+            end
+        end
+        local map = {
+            [Enum.KeyCode.F1] = function() return bind("Fly", FlyApi, "set") end,
+            [Enum.KeyCode.F2] = function() return bind("Speed", SpeedApi, "set") end,
+            [Enum.KeyCode.F3] = function() return bind("Auto Black Flash", BFApi, "SetEnabled") end,
+            [Enum.KeyCode.F4] = function() return bind("Auto Earthquake", AutoQuakeApi, "set") end,
+        }
+        local cache = {}
+        UISkb.InputBegan:Connect(function(i, gp)
+            if not kbEnabled then return end
+            if UISkb:GetFocusedTextBox() then return end
+            local maker = map[i.KeyCode]; if not maker then return end
+            cache[i.KeyCode] = cache[i.KeyCode] or maker()
+            cache[i.KeyCode]()
+        end)
+    end
+    local thSec = setSub:Section({ Name = "Theme", Side = 2 })
+    thSec:Dropdown({ Name = "Accent Color", Items = { "Red", "Blue", "Green", "Purple", "Orange", "White" }, Default = "Red", Callback = function(v)
+        v = (type(v) == "table") and v[1] or v
+        local COLORS = { Red = Color3.fromRGB(220,30,40), Blue = Color3.fromRGB(45,120,255), Green = Color3.fromRGB(50,200,110), Purple = Color3.fromRGB(150,70,255), Orange = Color3.fromRGB(255,140,40), White = Color3.fromRGB(240,240,245) }
+        _G.VX_ACCENT = COLORS[v] or COLORS.Red   -- our custom elements (mobile button, notifications, target card) read this
+    end })
+    thSec:Label("Accent applies to the hub's own elements.")
+
     Window:Category("Config")
     Library:CreateSettingsPage(Window)
 
