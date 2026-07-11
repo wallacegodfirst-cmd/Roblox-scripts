@@ -1018,7 +1018,6 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
 			acPass()
 			pcall(function() hrp.CFrame = cf end)
-			pcall(function() cc:PivotTo(cf) end)   -- ALSO move the whole model: a bare HRP write does not move some JJS rigs
 			task.wait(0.016)
 		end
 		local h0 = tick()  -- HOLD: keep re-asserting position + re-whitelisting so the anti-cheat can't revert after the move
@@ -1027,7 +1026,6 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
 			acPass()
 			pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero end)
-			pcall(function() cc:PivotTo(cf) end)
 			task.wait(0.03)
 		end
 		if vxTeleGen == gen then  -- only the LATEST teleport cleans up, so overlapping calls can't leave PlatformStand stuck (no more "frozen after jump")
@@ -1988,8 +1986,39 @@ do
         elseif m == "M1" then doBFM1Chain() end
     end
 
-    -- (ANIM HOOK REMOVED — it pressed 3 on any animation in the trigger DB even when you WEREN'T M1ing = "it
-    --  black flashes randomly without me doing M1". M1 BF now fires ONLY from your real M1 CLICK, below.)
+    -- ═══ M1 BLACK FLASH — user's AutoBlackFlash logic ═══ Fires key 3 ONLY when one of the KNOWN Black-Flash
+    -- windup animation ids plays (the AnimationTriggers table = the 5 real BF anims), each at its own timed
+    -- offset, guarded by a single cooldown + pending flag so one anim can't double-fire. Narrow id list = it
+    -- NEVER flashes randomly, and it flashes at the correct frame when you actually swing into a BF.
+    local bfPending = false
+    local function bfOnChar(char)
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 6); if not hum then return end
+        local animator = hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator", 6); if not animator then return end
+        if animator:GetAttribute("VXBFM1Hooked") then return end
+        animator:SetAttribute("VXBFM1Hooked", true)
+        animator.AnimationPlayed:Connect(function(track)
+            if not Settings.BFM1 then return end
+            local id = track.Animation and track.Animation.AnimationId
+            local dly = id and AnimationTriggers[id]     -- ONLY the 5 known BF windup ids (no random fire)
+            if not dly then return end
+            if bfPending or tick() - R.bfCD < Settings.BFCooldown then return end
+            bfPending = true
+            task.delay(dly, function()
+                bfPending = false
+                if Settings.BFM1 and tick() - R.bfCD >= Settings.BFCooldown then R.bfCD = tick(); pressBF() end
+            end)
+        end)
+    end
+    task.spawn(function()
+        if LocalPlayer.Character then pcall(bfOnChar, LocalPlayer.Character) end
+        LocalPlayer.CharacterAdded:Connect(function(c) task.wait(0.25); pcall(bfOnChar, c) end)
+        while true do task.wait(1)   -- JJS body lives under workspace.Characters; re-hook it (and after respawn)
+            local chs = workspace:FindFirstChild("Characters"); local b = chs and chs:FindFirstChild(LocalPlayer.Name)
+            if b then pcall(bfOnChar, b) end
+            if LocalPlayer.Character then pcall(bfOnChar, LocalPlayer.Character) end
+        end
+    end)
 
     -- INPUT: press 3 -> run the current chain (does NOT sink 3, so the real move still fires). M1 -> M1 chain.
     UserInputService.InputBegan:Connect(function(input, _)
@@ -2000,15 +2029,6 @@ do
         end
         if input.UserInputType == Enum.UserInputType.MouseButton1 and Settings.Enabled and Settings.Mode == "M1" then
             task.spawn(doBFM1Chain); return
-        end
-        -- M1 BF (simple): the RELIABLE path — EVERY M1 click presses the BF key (3) a beat later so the swing
-        -- becomes a Black Flash. Uses its OWN short 0.25s debounce (NOT the long BFCooldown, which was why it
-        -- "didn't work" — it gated most clicks out). "When I M1, it presses 3 = black flash", exactly.
-        if input.UserInputType == Enum.UserInputType.MouseButton1 and Settings.BFM1 and Settings.Mode ~= "M1" then
-            if tick() - (R.m1bfClick or 0) >= 0.25 then
-                R.m1bfClick = tick()
-                task.delay(0.12, function() if Settings.BFM1 then pressBF() end end)
-            end
         end
     end)
     LocalPlayer.CharacterAdded:Connect(ReleaseAll)
@@ -2555,7 +2575,7 @@ do
 	end)
 
 	M1ComboApi = {
-		setMode = function(m) mode = m or "Off"; count = 0; busy = false; State.m1Count = 0; State.spaceToken = nil; spaceUp(); if mode ~= "Off" then refreshDetection() end end,
+		setMode = function(m) if type(m) == "table" then m = m[1] end; mode = m or "Off"; count = 0; busy = false; State.m1Count = 0; State.spaceToken = nil; spaceUp(); if mode ~= "Off" then refreshDetection() end end,   -- unwrap Fluriore's {"Down Slam"} table (else the mode check never matched = "doesn't work")
 		setDelay = function() end,
 		setCount = function() end,
 		setChar = function(c) Config.Manual = (c and c ~= "" and c ~= "Auto") and c or nil; State.char = nil; State.remote = nil; refreshDetection() end,
@@ -9244,7 +9264,7 @@ do
         local FluLib
         pcall(function() FluLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mc4121ban/Fluriore-UI/main/source.lua"))() end)
         if type(FluLib) == "table" and type(FluLib.MakeGui) == "function" then
-            local RED = Color3.fromRGB(255, 45, 45)   -- Ability Arena accent
+            local RED = Color3.fromRGB(220, 30, 40)   -- Ability Arena accent: deeper blood red on near-black
             local function arr(t) local o = {}; if type(t) == "table" then for _, v in ipairs(t) do o[#o + 1] = v end elseif t ~= nil then o[1] = t end return o end
             local function asTable(v) if type(v) == "table" then return v elseif v ~= nil then return { v } else return {} end end
             local flWin
@@ -9275,6 +9295,27 @@ do
                 pcall(function() flWin = FluLib:MakeGui({ NameHub = cfg.Name or "Dream Hub", Description = cfg.SubTitle or "", Color = RED }) end)
                 local flScreen
                 for _, h in ipairs(hosts) do pcall(function() for _, g in ipairs(h:GetChildren()) do if not before[g] and g:IsA("ScreenGui") then flScreen = g; break end end end); if flScreen then break end end
+                -- DARKER BLACK theme: pull Fluriore's grey panels toward near-black (keeps the red accent popping).
+                -- Gentle: only recolours dark-grey backgrounds (leaves the red accent + text alone), and re-applies
+                -- to elements added later.
+                local function darken(o)
+                    pcall(function()
+                        if (o:IsA("Frame") or o:IsA("ScrollingFrame") or o:IsA("TextButton") or o:IsA("ImageButton")) and o.BackgroundTransparency < 0.95 then
+                            local c = o.BackgroundColor3
+                            local mx = math.max(c.R, c.G, c.B)
+                            if mx < 0.30 and math.abs(c.R - c.B) < 0.12 and math.abs(c.G - c.B) < 0.12 then   -- a neutral dark grey (not the red accent)
+                                o.BackgroundColor3 = Color3.new(c.R * 0.45, c.G * 0.45, c.B * 0.45)
+                            end
+                        end
+                    end)
+                end
+                task.spawn(function()
+                    task.wait(0.3)
+                    if flScreen then
+                        pcall(function() for _, d in ipairs(flScreen:GetDescendants()) do darken(d) end end)
+                        pcall(function() flScreen.DescendantAdded:Connect(function(d) task.defer(darken, d) end) end)
+                    end
+                end)
                 _G.VX_HARDTOGGLE = function()   -- the Dream icon calls this: flip the Fluriore menu's visibility
                     if flWin then
                         if type(flWin.Toggle) == "function" then pcall(function() flWin:Toggle() end); return end
@@ -9316,7 +9357,7 @@ do
         end
     end
 
-    local Window = Library:Window({ Name = "Dream Hub", SubTitle = "JJS " .. tierNice, ExpiresIn = "lifetime" })
+    local Window = Library:Window({ Name = "D R E A M   H U B", SubTitle = "JJS  " .. tierNice, ExpiresIn = "lifetime" })   -- spaced-out title
 
     -- MINIMIZE button (PC + mobile): a small floating, draggable tap button that hides/shows the whole menu.
     pcall(function()
