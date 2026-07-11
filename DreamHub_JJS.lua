@@ -3930,35 +3930,30 @@ do
 		local UISq = game:GetService("UserInputService")
 		local QUAKE_ANIM = "rbxassetid://85024950165903"
 		local holding = false
-		local function startHold(fromKey)
+		local function startHold()
 			if not quakeOn or holding then return end
 			holding = true
 			task.spawn(function()
-				local hold = tonumber(_G.VX_QUAKE_HOLD) or 0.83   -- your recording: 3 held 0.32s->1.15s = 0.83s charge, not 2s
-				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + hold + 0.6
-				-- ONE clean hold: press 3 DOWN once, keep it down 2s, release once = charged shockwave. (Re-sending
-				-- down every frame made the game read it as tapping 3 repeatedly instead of a single hold.)
+				local hold = tonumber(_G.VX_QUAKE_HOLD) or 0.83   -- your recording: 3 held 0.32s->1.15s = 0.83s charge
+				-- clean hold: 3 DOWN, hold 0.83s, UP = shockwave. Short inject-guard window so your NEXT press works.
+				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + hold + 0.1
 				pcall(function()
-					VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)   -- DOWN
-					task.wait(hold)                                            -- hold 2s
-					VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)  -- UP = release the charge
+					VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
+					task.wait(hold)
+					VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
 				end)
-				task.wait(0.2); holding = false
+				task.wait(0.05); holding = false   -- reset FAST so every 3-press fires again (fixes "worked only once")
 			end)
 		end
-		-- AUTO-FIRE (user: "make it press 3 on its own, hold 3 for 2s, then let go"): while Auto Earthquake is
-		-- on, the loop presses 3 itself, holds it the 2s, releases = shockwave, waits the cooldown, repeats.
 		local _ = QUAKE_ANIM
-		task.spawn(function()
-			while true do
-				if quakeOn and not holding then
-					startHold(false)   -- press+hold 3 for 2s then release, all on its own
-					task.wait(2.4)      -- let the hold + release finish
-					task.wait(4)        -- earthquake cooldown before the next auto-fire
-				else
-					task.wait(0.3)
-				end
-			end
+		-- KEY TRIGGER (user: "when I click 3, it does the earthquake"): your tap of 3 -> clean 0.83s hold + release.
+		UISq.InputBegan:Connect(function(input, _)
+			if not quakeOn then return end
+			if UISq:GetFocusedTextBox() then return end
+			if input.KeyCode ~= Enum.KeyCode.Three then return end
+			local injK = _G.VX_INJ_KEYS
+			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end   -- skip our own injected 3
+			startHold()
 		end)
 	end
 	KillEmoteApi = { set = function(v) killEmoteOn = v == true end, setSlot = function(n) killEmoteSlot = tonumber(n) or 1 end }
@@ -9528,7 +9523,7 @@ do
     antiSec:Toggle({ Name = "Mahoraga Safe TP", Callback = function(b) if MahoTpApi then MahoTpApi.set(b) end end })
 
     -- ===================== AUTO (all the automation toggles in one tab) =====================
-    local AutoPage = Window:Page({ Name = "Auto", Icon = "136879043989014" })
+    local AutoPage = Window:Page({ Name = "Auto", Icon = "94627324690861" })
     local autoSub = AutoPage:SubPage({ Name = "Auto", Columns = 2 })
     local acSec = autoSub:Section({ Name = "Auto Combat", Side = 1 })
     acSec:Toggle({ Name = "Auto Counter", Callback = function(b) if CounterApi then CounterApi.set(b) end end })
@@ -9665,7 +9660,7 @@ do
     task.spawn(function() while true do task.wait(0.6); pcall(function() if _G.VX_HUB_READY then liveInfo() end end) end end)
 
     -- ===================== MOVEMENT =====================
-    local MovePage = Window:Page({ Name = "Movement", Icon = "94627324690861" })
+    local MovePage = Window:Page({ Name = "Movement", Icon = "97491613646216" })
     local mvSub = MovePage:SubPage({ Name = "Movement", Columns = 2 })
     local coreSec = mvSub:Section({ Name = "Core", Side = 1 })
     coreSec:Toggle({ Name = "Remove Trees", Callback = function(b) if RemoveTreesApi then RemoveTreesApi.set(b) end end })
@@ -9681,7 +9676,7 @@ do
     spdSec:Slider({ Name = "Fly Speed", Min = 20, Max = 250, Default = 80, Decimals = 1, Callback = function(v) if FlyApi then FlyApi.setSpeed(v) end end })
 
     -- ===================== VISUALS =====================
-    local VisPage = Window:Page({ Name = "Visuals", Icon = "97491613646216" })
+    local VisPage = Window:Page({ Name = "Visuals", Icon = "131595494666590" })
     local visSub = VisPage:SubPage({ Name = "Visuals", Columns = 2 })
     local espSec = visSub:Section({ Name = "Player ESP", Side = 1 })
     espSec:Toggle({ Name = "Enable ESP", Callback = function(b) if PlayerEspApi then PlayerEspApi.setMaster(b) end end })
@@ -9707,7 +9702,7 @@ do
     worldSec:Slider({ Name = "FOV", Min = 40, Max = 120, Default = 70, Decimals = 1, Callback = function(v) if VisualApi then VisualApi.setFov(v) end end })
 
     -- ===================== TELEPORTS =====================
-    local TpPage = Window:Page({ Name = "Teleports", Icon = "131595494666590" })
+    local TpPage = Window:Page({ Name = "Teleports", Icon = "10709806387" })
     local tpSub = TpPage:SubPage({ Name = "Teleports", Columns = 2 })
     local locSec = tpSub:Section({ Name = "Locations", Side = 1 })
     if TPApi and TPApi.spotNames then for _, n in ipairs(TPApi.spotNames()) do locSec:Button({ Name = n, Callback = function() if TPApi then TPApi.spot(n) end end }) end end
@@ -9739,7 +9734,7 @@ do
     plySec:Button({ Name = "Teleport To Player", Callback = function() if TPApi and tpPlyName then TPApi.tpPlayer(tpPlyName) end end })
 
     -- ===================== PLAYER =====================
-    local PlyPage = Window:Page({ Name = "Player", Icon = "10709806387" })   -- clean target/crosshair icon (old one looked AI-slop)
+    local PlyPage = Window:Page({ Name = "Player", Icon = "72732892493295" })   -- clean target/crosshair icon (old one looked AI-slop)
     local plySub = PlyPage:SubPage({ Name = "Player", Columns = 2 })
     local lockSec = plySub:Section({ Name = "Lock On", Side = 1 })
     local lockMode = "Off"
@@ -9783,7 +9778,7 @@ do
     srvSec:Button({ Name = "Unlock Extra Emote Slot", Callback = function() if EmoteSlotApi then EmoteSlotApi.unlock() end end })
 
     -- ===================== SETTINGS (keybinds + theme) =====================
-    local SettingsPage = Window:Page({ Name = "Settings", Icon = "72732892493295" })
+    local SettingsPage = Window:Page({ Name = "Settings", Icon = "136879043989014" })
     local setSub = SettingsPage:SubPage({ Name = "Settings", Columns = 2 })
     local kbSec = setSub:Section({ Name = "Keybinds", Side = 1 })
     local kbEnabled = false
