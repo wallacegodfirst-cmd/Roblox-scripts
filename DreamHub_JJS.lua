@@ -1175,24 +1175,12 @@ end
 -- never sees me as airborne so uppercut/downslam won't trigger". This was never claimed anywhere in the file.
 -- Claiming it is a standard, well-established exploit technique (SetNetworkOwner) and, when the executor's
 -- security context permits it, makes every physics write in this hub actually stick server-side.
-local function vxClaimOwnership()
-	local LP = game:GetService("Players").LocalPlayer
-	local chs = workspace:FindFirstChild("Characters")
-	local char = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
-	if not char then return end
-	pcall(function()
-		for _, p in ipairs(char:GetDescendants()) do
-			if p:IsA("BasePart") then pcall(function() if p:CanSetNetworkOwnership() then p:SetNetworkOwner(LP) end end) end
-		end
-	end)
-end
+-- NO-OP now: the old SetNetworkOwner loop (called every 2s across all body parts) is a server-only API
+-- and was very likely what tripped the anti-cheat into 267-kicking you ("your script kicks, mine doesn't").
+-- The teleport doesn't need it anymore — the bypass blocks the set-back report instead. Kept as an empty
+-- function so every existing call site is a harmless no-op.
+local function vxClaimOwnership() end
 _G.VX_CLAIMOWN = vxClaimOwnership
-task.spawn(function()
-	local Players = game:GetService("Players"); local LP = Players.LocalPlayer
-	LP.CharacterAdded:Connect(function() task.wait(0.3); vxClaimOwnership() end)
-	if LP.Character then task.defer(vxClaimOwnership) end
-	while true do task.wait(2); pcall(vxClaimOwnership) end
-end)
 -- Shared anti-setback teleport BYPASS: JJS snaps you back if a single frame moves you faster than
 -- maxSpeed*dt, so instead of one big jump we glide to the target in capped per-frame steps that stay
 -- under that limit. Lower VX_TP_SPEED (TP Speed slider) if you still get set back.
@@ -1233,172 +1221,63 @@ task.spawn(function()
 		end
 	end
 end)
-local function vxGlide(target, onArrive, holdTime)  -- faithful port of your forceTeleport: clean constraints, spam CFrame, PlatformStand. holdTime = how long to keep re-asserting (longer = far teleports stick).
-	local LP = game:GetService("Players").LocalPlayer
-	task.spawn(function()
-		local function myChar() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
-		local acPass = vxACPass
-		local char = myChar(); if not char then return end  -- JJS parents your character under workspace.Characters; LP.Character can lag/differ
-		local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
-		vxTeleGen = vxTeleGen + 1; local gen = vxTeleGen  -- claim the generation ONLY after we have a body: an early-abort call must NOT supersede an in-flight teleport (that orphaned PlatformStand = froze you)
-		local humanoid = char:FindFirstChildOfClass("Humanoid")
-		local cf = (typeof(target) == "CFrame") and target or (CFrame.new(target) * hrp.CFrame.Rotation)
-		-- clean up any align / body movers on the HRP that would drag you back
-		for _, v in ipairs(hrp:GetChildren()) do
-			if v:IsA("AlignPosition") or v:IsA("AlignOrientation") or v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("BodyGyro") or v:IsA("LinearVelocity") or v:IsA("VectorForce") then pcall(function() v:Destroy() end) end
-		end
-		pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero; hrp.AssemblyAngularVelocity = Vector3.zero end)
-		if humanoid then pcall(function() humanoid.PlatformStand = true end) end
-		-- THE version you had working in-game: pass + snap EVERY frame for 15 frames, then keep re-asserting
-		-- through the hold window. (The single-fire experiment was the regression - reverted.)
-		acPass()
-		for _ = 1, 15 do
-			if vxTeleGen ~= gen then return end                 -- a newer teleport superseded this one -> stop fighting over the CFrame
-			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
-			acPass()
-			pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero end)
-			pcall(function() cc:PivotTo(cf) end)   -- move the WHOLE rig too (some JJS bodies ignore a bare HRP.CFrame write)
-			task.wait(0.016)
-		end
-		local h0 = tick()
-		while tick() - h0 < (holdTime or 0.7) do
-			if vxTeleGen ~= gen then return end                 -- superseded -> let the newer teleport own the body
-			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
-			acPass()
-			pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero end)
-			pcall(function() cc:PivotTo(cf) end)
-			task.wait(0.03)
-		end
-		if vxTeleGen == gen then  -- only the LATEST teleport cleans up, so overlapping calls can't leave PlatformStand stuck (no more "frozen after jump")
-			if hrp then pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero; hrp.AssemblyAngularVelocity = Vector3.zero end) end
-			if humanoid then pcall(function() humanoid.PlatformStand = false end) end  -- ALWAYS release so you can move normally after a jump/teleport
-			-- REPORT a blocked teleport instead of failing silently ("teleport doesn't work" -> we see WHY)
-			if hrp and (hrp.Position - cf.Position).Magnitude > 10 and tick() - (_G.VX_TPFAIL_T or 0) > 3 then
-				_G.VX_TPFAIL_T = tick()
-				local d = math.floor((hrp.Position - cf.Position).Magnitude)
-				pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "Dream Hub", Text = "Teleport was pushed back (" .. d .. " studs short). Screenshot this.", Duration = 5 }) end)
+-- TELEPORT = your exact safeTeleport (simple CFrame write + a short Heartbeat lock). No SetNetworkOwner,
+-- no per-frame whitelist spam, no anchor - all of which were kick/detection risks. The BYPASS at the top
+-- blocks the anti-cheat set-back report, so a plain CFrame write just stays. vxGlide / vxTeleportHard are
+-- kept as thin wrappers so every existing call site (locations, players, saved slots) routes through this.
+local vxTeleportLock = false
+local vxCurrentTargetCF = nil
+game:GetService("RunService").Heartbeat:Connect(function()
+	if vxTeleportLock and vxCurrentTargetCF then
+		local LP = game:GetService("Players").LocalPlayer
+		local chs = workspace:FindFirstChild("Characters")
+		local char = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+		if char then
+			local hrp = char:FindFirstChild("HumanoidRootPart")
+			if hrp then
+				hrp.CFrame = vxCurrentTargetCF
+				hrp.AssemblyLinearVelocity = Vector3.new(0,0,0)
+				hrp.AssemblyAngularVelocity = Vector3.new(0,0,0)
 			end
 		end
-		task.wait(0.05)
-		if onArrive then pcall(onArrive) end
-	end)
-end
-
--- TP METHOD: "Glide" (DEFAULT - the PROVEN stepped glide that works in-game) steps there at the speed cap,
-local VX_TP_METHOD = "Instant"   -- DEFAULT = fast stepped glide (instant feel, still sticks). "Glide" = slower/stealthier.
-
-local function vxTpToast(msg)  -- visible red warning when a teleport FAILS (VX_NOTIFY isn't built yet at this point in the file)
-	pcall(function()
-		local g = Instance.new("ScreenGui"); g.Name = "\0"; g.ResetOnSpawn = false; g.DisplayOrder = 99999
-		g.Parent = (gethui and gethui()) or game:GetService("CoreGui")
-		local l = Instance.new("TextLabel"); l.Size = UDim2.fromOffset(420, 30); l.Position = UDim2.new(0.5, -210, 0, 64)
-		l.BackgroundColor3 = Color3.fromRGB(140, 30, 30); l.BackgroundTransparency = 0.15; l.BorderSizePixel = 0
-		l.Font = Enum.Font.GothamBold; l.TextSize = 14; l.TextColor3 = Color3.fromRGB(255, 255, 255); l.Text = msg; l.Parent = g
-		local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 8); c.Parent = l
-		task.delay(4, function() pcall(function() g:Destroy() end) end)
-	end)
-end
-
--- ALL-OUT teleport: three escalating strategies, auto-advancing whenever the anti-cheat pushes you back.
---   A) instant whitelisted snap (fastest, works most of the time)
---   B) the ORIGINAL speed-capped stepped glide (the engine from the era teleports worked every time):
---      per-frame steps under the anti-cheat's speed limit, whitelist + PivotTo every frame
---   C) the same glide at half speed with a longer hold (for the strictest checks)
--- Reports which strategy landed; only complains if ALL THREE were pushed back.
-local function vxSteppedGlide(dest, speed, holdTime)   -- SYNCHRONOUS stepped glide; returns true if it ended near dest
+	end
+end)
+local function safeTeleport(targetCFrame, holdTime)
 	local LP = game:GetService("Players").LocalPlayer
-	local function myChar() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
-	vxTeleGen = vxTeleGen + 1; local gen = vxTeleGen
-	local acPass = vxACPass
-	local char = myChar(); local hrp = char and char:FindFirstChild("HumanoidRootPart"); if not hrp then return false end
-	local hum = char:FindFirstChildOfClass("Humanoid"); local rot = hrp.CFrame.Rotation
+	local chs = workspace:FindFirstChild("Characters")
+	local char = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+	if not char then return false end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return false end
+	-- clean up any body movers that would drag you back
 	for _, v in ipairs(hrp:GetChildren()) do
-		if v:IsA("AlignPosition") or v:IsA("AlignOrientation") or v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("BodyGyro") or v:IsA("LinearVelocity") or v:IsA("VectorForce") then pcall(function() v:Destroy() end) end
+		if v:IsA("AlignPosition") or v:IsA("AlignOrientation") or v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("BodyGyro") then pcall(function() v:Destroy() end) end
 	end
-	if hum then pcall(function() hum.PlatformStand = true end) end
-	local dt = 1/60
-	local startT = tick()
-	while tick() - startT < 25 do
-		if vxTeleGen ~= gen then return false end
-		local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
-		acPass()
-		local to = dest - hrp.Position; local d = to.Magnitude
-		if d < 3 then break end
-		local step = math.max(speed, 12) * dt   -- studs THIS frame = speed * real frame time; stays under the per-tick distance limit
-		local stepCF = CFrame.new(hrp.Position + to.Unit * math.min(d, step)) * rot
-		pcall(function() hrp.CFrame = stepCF; hrp.AssemblyLinearVelocity = Vector3.zero end)
-		pcall(function() cc:PivotTo(stepCF) end)   -- also PivotTo: moves the WHOLE model (some rigs don't follow a bare HRP.CFrame write)
-		dt = task.wait()                            -- next step uses the ACTUAL frame delta
-	end
-	local h0 = tick()
-	while tick() - h0 < (holdTime or 3) do
-		if vxTeleGen ~= gen then return false end
-		local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
-		acPass()
-		local destCF = CFrame.new(dest) * rot
-		pcall(function() hrp.CFrame = destCF; hrp.AssemblyLinearVelocity = Vector3.zero end)
-		pcall(function() cc:PivotTo(destCF) end)
-		task.wait(0.03)
-	end
-	if vxTeleGen == gen and hum then pcall(function() hum.PlatformStand = false end) end
-	local cEnd = myChar(); local hEnd = cEnd and cEnd:FindFirstChild("HumanoidRootPart")
-	return hEnd ~= nil and (hEnd.Position - dest).Magnitude < 12
+	hrp.AssemblyLinearVelocity = Vector3.new(0,0,0)
+	hrp.AssemblyAngularVelocity = Vector3.new(0,0,0)
+	vxCurrentTargetCF = targetCFrame
+	vxTeleportLock = true
+	hrp.CFrame = targetCFrame
+	task.delay(holdTime or 0.5, function()
+		vxTeleportLock = false
+		vxCurrentTargetCF = nil
+	end)
+	return true
+end
+-- wrappers: everything in the hub that used to glide now just safe-teleports (the bypass makes it stick)
+local function vxGlide(target, onArrive, holdTime)
+	local hrp
+	do local LP = game:GetService("Players").LocalPlayer; local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character; hrp = c and c:FindFirstChild("HumanoidRootPart") end
+	local cf = (typeof(target) == "CFrame") and target or (hrp and (CFrame.new(target) * hrp.CFrame.Rotation)) or CFrame.new(target)
+	safeTeleport(cf, holdTime or 0.5)
+	if onArrive then task.delay((holdTime or 0.5) + 0.05, function() pcall(onArrive) end) end
 end
 local function vxTeleportHard(dest, holdTime)
-	if typeof(dest) == "CFrame" then dest = dest.Position end
-	task.spawn(function()
-		local LP = game:GetService("Players").LocalPlayer
-		local function near()
-			local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
-			local h = c and c:FindFirstChild("HumanoidRootPart")
-			return h ~= nil and (h.Position - dest).Magnitude < 12
-		end
-		local function toast(m) pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "Dream Hub", Text = m, Duration = 4 }) end) end
-		-- INSTANT (default) - NEW METHOD (the old CFrame+whitelist path was patched by a JJS update): snap to the
-		-- destination in one frame, then ANCHOR the root there. An anchored part can't be shoved by server physics,
-		-- so the anti-cheat's set-back has nothing to push. Held anchored briefly, re-asserted each frame, then
-		-- unanchored so you move normally again. Instant, no glide.
-		if VX_TP_METHOD ~= "Glide" then
-			local function myChar() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
-			vxTeleGen = vxTeleGen + 1; local gen = vxTeleGen
-			pcall(vxClaimOwnership)   -- PUBLIC-SERVER FIX: take client authority so your CFrame writes stick (private worked, public reverted)
-			local char = myChar(); local hrp = char and char:FindFirstChild("HumanoidRootPart")
-			if hrp then
-				local hum = char:FindFirstChildOfClass("Humanoid"); local rot = hrp.CFrame.Rotation
-				local destCF = CFrame.new(dest) * rot
-				local wasAnchored = hrp.Anchored
-				for _, v in ipairs(hrp:GetChildren()) do
-					if v:IsA("AlignPosition") or v:IsA("AlignOrientation") or v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("BodyGyro") or v:IsA("LinearVelocity") or v:IsA("VectorForce") then pcall(function() v:Destroy() end) end
-				end
-				pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero; hrp.AssemblyAngularVelocity = Vector3.zero end)
-				pcall(function() char:PivotTo(destCF) end)
-				pcall(function() hrp.CFrame = destCF end)          -- SNAP (frame 1 = arrived)
-				pcall(function() hrp.Anchored = true end)           -- LOCK in place so the set-back can't move you
-				vxACPass()
-				local h0 = tick()
-				while tick() - h0 < math.max(holdTime or 1.2, 1) do
-					if vxTeleGen ~= gen then break end
-					local cc = myChar(); local hh = cc and cc:FindFirstChild("HumanoidRootPart"); if not hh then break end
-					if hh ~= hrp then hrp = hh; pcall(function() hrp.Anchored = true end) end   -- rig swapped -> re-anchor the new one
-					pcall(function() hrp.CFrame = destCF end)       -- keep asserting the anchored position
-					vxACPass()
-					if math.floor((tick() - h0) * 4) ~= math.floor((tick() - h0 - 0.016) * 4) then pcall(vxClaimOwnership) end   -- re-claim ~4x/s
-					task.wait()
-				end
-				pcall(function() if hrp and hrp.Parent then hrp.Anchored = wasAnchored end end)   -- ALWAYS unanchor so you can move
-				task.delay(0.4, function() local cc = myChar(); local hh = cc and cc:FindFirstChild("HumanoidRootPart"); if hh and hh.Anchored and not wasAnchored then pcall(function() hh.Anchored = false end) end end)   -- safety: never leave you frozen
-			end
-			if near() then return end
-			if VX_TP_METHOD == "Instant" then vxTpToast("TP still blocked - try Glide method"); return end
-		end
-		-- Glide / Auto fallbacks: the original speed-capped glide, then half speed
-		if not near() then
-			if vxSteppedGlide(dest, VX_TP_SPEED, holdTime or 3) or near() then return end
-		end
-		if vxSteppedGlide(dest, math.max(math.floor(VX_TP_SPEED / 2), 30), (holdTime or 3) + 1.5) or near() then return end
-		vxTpToast("TP blocked on all methods - tell me and send an F9 screenshot")
-		print("[DreamHub TP] all strategies pushed back. whitelist remote:", (vxResolveAC() and vxResolveAC():GetFullName()) or "NOT FOUND (game updated)")
-	end)
+	if typeof(dest) == "CFrame" then safeTeleport(dest, holdTime or 0.6); return end
+	local hrp
+	do local LP = game:GetService("Players").LocalPlayer; local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character; hrp = c and c:FindFirstChild("HumanoidRootPart") end
+	local cf = hrp and (CFrame.new(dest) * hrp.CFrame.Rotation) or CFrame.new(dest)
+	safeTeleport(cf, holdTime or 0.6)
 end
 
 -- Fire a Knit service RemoteEvent by name. Resolves the path fresh each call so it survives character
@@ -5629,8 +5508,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "4.6"
-local VX_BUILD = "B46"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "4.7"
+local VX_BUILD = "B47"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
