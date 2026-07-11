@@ -3928,34 +3928,59 @@ do
 
 	MahoTpApi   = { set = function(v) mahoOn = v == true end }
 	AutoQuakeApi = { set = function(v) quakeOn = v == true end }
-	-- EARTHQUAKE = charged hold-3-then-release. Your quick TAP of 3 cancels the charge; so when Auto Earthquake
-	-- is on, on your 3-press we inject a CLEAN held 3 (down, hold, release) = the game sees a proper charged
-	-- hold and the shockwave fires. CAS-sink didn't work (the game reads 3 via UserInputService, which a CAS
-	-- Sink can't block). Hold duration defaults to 0.9s (the wiki charge window); tune with
-	-- `_G.VX_QUAKE_HOLD = <seconds>` before the loadstring if your character needs longer.
+	-- Earthquake is a charged hold. You tap 3; the script then holds 3 down 2s for you and releases = the
+	-- shockwave. TWO triggers so it always catches: (1) your 3-press, and (2) the earthquake windup ANIMATION
+	-- (rbxassetid://85024950165903) playing on your body, which confirms the move actually started.
 	do
 		local VIMq = game:GetService("VirtualInputManager")
 		local UISq = game:GetService("UserInputService")
+		local QUAKE_ANIM = "rbxassetid://85024950165903"
 		local holding = false
-		UISq.InputBegan:Connect(function(input, _)
-			if UISq:GetFocusedTextBox() then return end
+		local function startHold(fromKey)
 			if not quakeOn or holding then return end
-			if input.KeyCode ~= Enum.KeyCode.Three then return end
-			local injK = _G.VX_INJ_KEYS
-			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end   -- our own injected 3: ignore
 			holding = true
 			task.spawn(function()
-				local hold = tonumber(_G.VX_QUAKE_HOLD) or 2.0   -- hold 3 for 2s so it fully charges before release
-				local t0 = tick()
-				repeat task.wait() until (not UISq:IsKeyDown(Enum.KeyCode.Three)) or tick() - t0 > 0.4   -- let YOUR tap lift first, else your key-up cuts our hold short
+				local hold = tonumber(_G.VX_QUAKE_HOLD) or 2.0
+				if fromKey then   -- let YOUR physical tap lift first, else your key-up cuts our hold short
+					local t0 = tick()
+					repeat task.wait() until (not UISq:IsKeyDown(Enum.KeyCode.Three)) or tick() - t0 > 0.4
+				end
 				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + hold + 0.5
 				pcall(function()
-					VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)   -- start the charge
-					task.wait(hold)                                            -- hold it 2s
-					VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)  -- release = shockwave
+					VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
+					task.wait(hold)
+					VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
 				end)
 				task.wait(0.2); holding = false
 			end)
+		end
+		-- trigger 1: your key press
+		UISq.InputBegan:Connect(function(input, _)
+			if UISq:GetFocusedTextBox() then return end
+			if input.KeyCode ~= Enum.KeyCode.Three then return end
+			local injK = _G.VX_INJ_KEYS
+			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end   -- ignore our own injected 3
+			startHold(true)
+		end)
+		-- trigger 2: the earthquake windup ANIMATION on your body
+		task.spawn(function()
+			local hooked = setmetatable({}, { __mode = "k" })
+			local function hook(char)
+				local h = char and char:FindFirstChildOfClass("Humanoid"); local a = h and h:FindFirstChildOfClass("Animator")
+				if not a or hooked[a] then return end
+				hooked[a] = true
+				a.AnimationPlayed:Connect(function(track)
+					if not quakeOn then return end
+					local id = track.Animation and track.Animation.AnimationId
+					if id == QUAKE_ANIM then startHold(false) end
+				end)
+			end
+			while true do
+				local chs = workspace:FindFirstChild("Characters"); local b = chs and chs:FindFirstChild(LP.Name)
+				if b then pcall(hook, b) end
+				if LP.Character then pcall(hook, LP.Character) end
+				task.wait(1)
+			end
 		end)
 	end
 	KillEmoteApi = { set = function(v) killEmoteOn = v == true end, setSlot = function(n) killEmoteSlot = tonumber(n) or 1 end }
@@ -9497,6 +9522,7 @@ do
     if tier("premium") then ultSec:Toggle({ Name = "Rika Love Sword", Callback = function(b) if RikaSwordApi then RikaSwordApi.set(b) end end }) end   -- FREE: no auto Rika sword
     ultSec:Toggle({ Name = "Rika Down Slam", Callback = function(b) if SlamApi then SlamApi.set(b) end end })
     ultSec:Toggle({ Name = "Goku M1", Callback = function(b) if GokuApi then GokuApi.set(b) end end })
+    ultSec:Label("Goku M1: it might work, if it dont i will fix it later 😭")
     ultSec:Toggle({ Name = "Hollow Nuke", Callback = function(b) if HollowApi then HollowApi.set(b) end end })
 
     local defSub = CombatPage:SubPage({ Name = "Defense", Columns = 2 })
