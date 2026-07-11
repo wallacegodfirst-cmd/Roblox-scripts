@@ -88,8 +88,7 @@ do
 			if not VirtualInputManager then return false end
 			pcall(function()
 				VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
-				task.wait(0.025)
-				VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+				VirtualInputManager:SendKeyEvent(false, keyCode, false, game)   -- INSTANT down+up, exactly like your script (the 0.025 wait broke it)
 			end)
 			return true
 		end
@@ -98,12 +97,12 @@ do
 		local lastFlash = 0
 		local function doFlash(delayTime)
 			if not CFG.Enabled then return end
-			if os.clock() - lastFlash < CFG.Cooldown then return end
+			if os.clock() - lastFlash < 0.12 then return end   -- tiny debounce only (we hook 2 animators; without it one swing = 2 presses)
 			lastFlash = os.clock()
-			if CFG.Aim then pcall(bfAim) end   -- face their back + zoom the camera in, immediately
+			if CFG.Aim then pcall(bfAim) end
+			-- EXACTLY your script: after the id's delay, press 3. No ownership claim / no long wait — those hitched the timing.
 			task.delay(math.max(0, (delayTime or 0.19) + CFG.TimingOffset), function()
 				if not CFG.Enabled then return end
-				if _G.VX_CLAIMOWN then pcall(_G.VX_CLAIMOWN) end
 				pressKey(CFG.TriggerKey)
 			end)
 		end
