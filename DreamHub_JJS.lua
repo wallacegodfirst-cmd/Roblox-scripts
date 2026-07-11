@@ -996,27 +996,25 @@ local function vxGlide(target, onArrive, holdTime)  -- faithful port of your for
 		end
 		pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero; hrp.AssemblyAngularVelocity = Vector3.zero end)
 		if humanoid then pcall(function() humanoid.PlatformStand = true end) end
-		acPass(); acPass()  -- whitelist HARD before moving
-		for _ = 1, 30 do    -- longer snap phase = the write wins even if the anti-cheat pushes back a frame
+		acPass()  -- whitelist BEFORE moving (one call, exactly like the game's own teleport in your capture)
+		for _ = 1, 15 do   -- proven snap count; whitelist once per frame
 			if vxTeleGen ~= gen then return end                 -- a newer teleport superseded this one -> stop fighting over the CFrame
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
 			acPass()
-			pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero; hrp.AssemblyAngularVelocity = Vector3.zero end)
-			task.wait()
+			pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero end)
+			task.wait(0.016)
 		end
-		-- PHYSICS PIN: a BodyPosition holds you at the spot through the hold, which resists the anti-cheat's
-		-- rubber-band harder than bare CFrame writes. Removed at the end.
-		local bp
-		pcall(function() bp = Instance.new("BodyPosition"); bp.MaxForce = Vector3.new(9e9, 9e9, 9e9); bp.P = 3e4; bp.D = 2500; bp.Position = cf.Position; bp.Parent = hrp end)
+		-- NO BodyPosition pin: your capture proves the whitelist is exactly AntiCheatService.RE.Teleport:FireServer
+		-- (serverTimeNow) — same as we fire. So teleport wasn't broken by the remote; the BodyPosition I'd added
+		-- was an illegal physics mover the anti-cheat flags = the setback. Pure CFrame write + whitelist per frame.
 		local h0 = tick()  -- HOLD: keep re-asserting position + re-whitelisting so the anti-cheat can't revert after the move
-		while tick() - h0 < math.max(holdTime or 0.7, 1.2) do
-			if vxTeleGen ~= gen then break end                 -- superseded -> let the newer teleport own the body
+		while tick() - h0 < (holdTime or 0.7) do
+			if vxTeleGen ~= gen then return end                 -- superseded -> let the newer teleport own the body
 			local cc = myChar(); hrp = cc and cc:FindFirstChild("HumanoidRootPart"); if not hrp then break end
 			acPass()
-			pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero; if bp and bp.Parent ~= hrp then bp.Parent = hrp end end)
+			pcall(function() hrp.CFrame = cf; hrp.AssemblyLinearVelocity = Vector3.zero end)
 			task.wait(0.03)
 		end
-		pcall(function() if bp then bp:Destroy() end end)
 		if vxTeleGen == gen then  -- only the LATEST teleport cleans up, so overlapping calls can't leave PlatformStand stuck (no more "frozen after jump")
 			if hrp then pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero; hrp.AssemblyAngularVelocity = Vector3.zero end) end
 			if humanoid then pcall(function() humanoid.PlatformStand = false end) end  -- ALWAYS release so you can move normally after a jump/teleport
