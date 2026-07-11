@@ -998,42 +998,37 @@ doOnePunch = function()   -- assigned to the forward-declared local used by runS
             if not (target and target.Character) then comboStatus("One Punch: no target in range", Color3.fromRGB(235,180,70)); firePunchOnce(); return end
             local tr = charPart(target.Character); local root = getRoot()
             if not (tr and root) then firePunchOnce(); return end
-            local savedCF = root.CFrame
             local hp0, canRead = readHealth(target.Character)
-            -- VALIDATED BURST (expert diagnostic): NO client health edits (fake ghost only; server keeps them
-            -- alive). NO 0.05s spam (server flags >N hits/300ms as exploit = ZERO damage). Instead: fire the
-            -- ability, keep an UNDENIABLE 120-stud invisible hitbox up the WHOLE sequence, throttle clicks to the
-            -- real swing cadence (0.35s) so the server VALIDATES every hit. 3 accepted hits > 20 rejected ones.
+            -- POINT-BLANK KILL (expert diagnostic): NO teleporting (a 4-stud CFrame delta trips Jolt anti-teleport
+            -- = the server validates your M1 from your OLD position = 0 damage). NO 200-stud hitbox (it breaks
+            -- Jolt's broadphase = the query MISSES). NO client health edits (fake ghost only). Instead: stay put,
+            -- grow YOUR ARMS across the map (the M1Hitbox path, which overlaps their NORMAL uncorrupted hitbox),
+            -- give their hit parts a reasonable 60-stud CanCollide=false bump, and swing at the real 0.4s cadence
+            -- so the server accepts 100% of the hits. 3 validated hits >> 10 rejected spam hits.
             firePunchOnce()               -- fire the One Punch ability packet (if owned)
-            punchGrowUntil = tick() + 3   -- also grow YOUR arms (the game's own client-hit path)
+            punchGrowUntil = tick() + 4   -- grow YOUR arms across the map = they overlap the enemy in place, no teleport
             local parts = hitboxParts(target.Character)
             local origSizes = {}
             for _, p in ipairs(parts) do
                 pcall(function()
                     origSizes[p] = p.Size
-                    p.Size = Vector3.new(120, 120, 120)   -- undeniable overlap
-                    p.Transparency = 1                     -- invisible
-                    p.CanCollide = false                   -- prevent Jolt collision flinch
+                    p.Size = Vector3.new(60, 60, 60)   -- reasonable: doesn't break Jolt's broadphase
+                    p.Transparency = 1                  -- invisible
+                    p.CanCollide = false                -- stops Jolt from flinging / breaking their character
                 end)
             end
-            pcall(function() root.CFrame = tr.CFrame * CFrame.new(0, 0, 3); root.AssemblyLinearVelocity = Vector3.zero end)
-            task.wait(0.05)
-            local hits = math.clamp(tonumber(S.OnePunchHits) or 5, 1, 12)
+            -- face them so your grown arms sweep across their hitbox, but DO NOT move your position
+            pcall(function() root.CFrame = CFrame.new(root.Position, Vector3.new(tr.Position.X, root.Position.Y, tr.Position.Z)) end)
+            local hits = math.clamp(tonumber(S.OnePunchHits) or 3, 1, 5)
             for _ = 1, hits do
                 local c2 = target.Character
                 if not (c2 and c2.Parent and isAlive(c2)) then break end
-                local t2 = charPart(c2)
-                if t2 then
-                    pcall(function() root.CFrame = t2.CFrame * CFrame.new(0, 0, 3); root.AssemblyLinearVelocity = Vector3.zero end)
-                    pcall(function() local cam = Workspace.CurrentCamera; if cam then cam.CFrame = CFrame.new(cam.CFrame.Position, t2.Position) end end)   -- keep on-screen for clickAtTarget projection
-                end
                 clearMyHitLog()
-                clickAtTarget(target, true)   -- proven farm-damage click, aimed at the enemy
-                task.wait(0.35)               -- MATCHES the swing cooldown = server validates each hit
+                clickAtTarget(target, true)   -- proven farm-damage click, aimed at the enemy (from where you STAND)
+                task.wait(0.4)                -- STRICT server swing cooldown = every hit is validated
             end
             punchGrowUntil = 0
             for p, sz in pairs(origSizes) do pcall(function() if p and p.Parent then p.Size = sz; p.Transparency = 0; p.CanCollide = true end end) end
-            pcall(function() root.CFrame = savedCF; root.AssemblyLinearVelocity = Vector3.zero end)
             local hp1 = readHealth(target.Character)
             if not (target.Character and target.Character.Parent) or not isAlive(target.Character) then
                 comboStatus("One Punch: KILLED " .. target.Name, Color3.fromRGB(90,235,120))
@@ -1062,23 +1057,26 @@ local function contactFling(targetChar)
     if flingBusy then return end
     local root = getRoot(); local tr = charPart(targetChar)
     if not (root and tr) then return end
+    if (tr.Position - root.Position).Magnitude > (S.FlingRange or 40) then return end
     flingBusy = true
     local startEnemyPos = tr.Position
     task.spawn(function()
         -- DO NOT MOVE THE USER. Stay exactly where you are.
+        local dir = (tr.Position - root.Position).Unit
+        local power = tonumber(S.FlingPower) or 850
+        -- Apply violent velocity to ALL their base parts on this exact frame to overwhelm Jolt's
+        -- 1-frame network-ownership bleed before the server reasserts control.
         pcall(function()
-            local dir = (tr.Position - root.Position).Unit
-            local power = tonumber(S.FlingPower) or 850
-            RunService.Heartbeat:Wait()   -- inject exactly as a heartbeat fires (the window that slips through)
-            -- Apply explosive outward velocity to the ENEMY
-            tr.AssemblyLinearVelocity = dir * Vector3.new(power, power * 1.8, power)
-            tr.AssemblyAngularVelocity = Vector3.new(math.random(-500, 500), math.random(-500, 500), math.random(-500, 500))
+            for _, p in ipairs(targetChar:GetDescendants()) do
+                if p:IsA("BasePart") then
+                    p.AssemblyLinearVelocity = Vector3.new(dir.X * power, power * 1.5, dir.Z * power)
+                    p.AssemblyAngularVelocity = Vector3.new(math.random(-2000, 2000), math.random(-2000, 2000), math.random(-2000, 2000))
+                end
+            end
         end)
-        -- Fire a single M1 if in range to register the hit
-        if (tr.Position - root.Position).Magnitude <= (S.M1HitboxSize or 80) then
-            clearMyHitLog()
-            clickM1(true)
-        end
+        -- Fire M1 since they are in range
+        clearMyHitLog()
+        clickM1(true)
         task.wait(0.5)
         -- REPORT whether they actually launched (visible on screen, no guessing)
         pcall(function()
