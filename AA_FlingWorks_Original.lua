@@ -509,7 +509,20 @@ local function mouseOverGui()
     pcall(function() conts[#conts+1] = game:GetService("CoreGui") end)
     for _,c in ipairs(conts) do
         local ok, objs = pcall(function() return c:GetGuiObjectsAtPosition(m.X, m.Y) end)
-        if ok and objs and #objs > 0 then return true end
+        if ok and objs then
+            for _,o in ipairs(objs) do
+                -- only a REAL, visible, opaque panel/button blocks the click - NOT invisible fullscreen
+                -- touch-eater frames (those have BackgroundTransparency 1 and aren't buttons), which used to
+                -- make this return true everywhere and silently kill click-combat + dodge.
+                local okc, blocks = pcall(function()
+                    if not o.Visible then return false end
+                    if o:IsA("GuiButton") or o:IsA("TextBox") then return true end
+                    if (o:IsA("Frame") or o:IsA("ImageLabel") or o:IsA("TextLabel")) and o.BackgroundTransparency < 0.95 then return true end
+                    return false
+                end)
+                if okc and blocks then return true end
+            end
+        end
     end
     return false
 end
@@ -933,11 +946,12 @@ end
 hook(UserInputService.InputBegan, function(i, _)
     if not S.AutoDodge then return end
     if typingNow() then return end
-    if tick() < vimClickUntil then return end   -- skip our own injected clicks
-    if mouseOverGui() then return end
-    local isClick = i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch
     local isKey = i.UserInputType == Enum.UserInputType.Keyboard and DODGE_KEYS[i.KeyCode]
-    if isClick or isKey then doAutoDodge() end
+    if isKey then doAutoDodge(); return end   -- keys ALWAYS dodge (a keypress doesn't care about the cursor)
+    if tick() < vimClickUntil then return end   -- skip our own injected clicks
+    if i.UserInputType ~= Enum.UserInputType.MouseButton1 and i.UserInputType ~= Enum.UserInputType.Touch then return end
+    if mouseOverGui() then return end   -- a real click, only blocked if you clicked an actual menu panel
+    doAutoDodge()
 end)
 
 -- ============================================================
