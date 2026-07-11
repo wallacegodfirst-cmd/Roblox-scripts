@@ -5062,16 +5062,26 @@ do
 		if input.KeyCode == Enum.KeyCode.Three then lastThree = tick() end
 		-- GOJO TP BACK: configurable. Mode "Q Dash" = TP behind the moment you press Q. Mode "After M1s" =
 		-- TP behind after your chosen number of Gojo M1s land (counted by anim below). Both fire GojoService TP.
+		local function pressR()
+			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.R] = tick() + 0.3
+			pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game) end)
+		end
 		local function doGojoTpBack()
 			if tick() - lastGojo < 0.9 then return end
 			local mdl = lastM1Tgt or landedM1Target() or nearestEnemyChar()
 			if not mdl then return end
 			lastM1Tgt = mdl; lastGojo = tick()
-			task.delay(0.05, function()
+			task.spawn(function()
+				-- LOCK ON THE BACK for ~1s: keep facing + snapping just behind them, so the TP lands on their back.
+				local hold = tonumber(_G.VX_GOJO_LOCK) or 1
+				local t0 = tick()
+				while tick() - t0 < hold and mdl and mdl.Parent do
+					faceTargetNow(mdl)
+					task.wait(0.05)
+				end
+				-- then TELEPORT: press R, R (double) + the GojoService remote = TP behind them
 				faceTargetNow(mdl)
-				-- CLICK R (key WITH a small hold so it registers) + the GojoService remote = the TP-behind, always fires
-				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.R] = tick() + 0.3
-				pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game) end)
+				pressR(); task.wait(0.06); pressR()
 				local re = gojoRE(); if re then pcall(function() re:FireServer(asPlayerCharacter(mdl)) end) end
 			end)
 		end
@@ -5516,8 +5526,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "4.1"
-local VX_BUILD = "B41"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "4.2"
+local VX_BUILD = "B42"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
@@ -9705,13 +9715,13 @@ do
 
     local bfSub = CombatPage:SubPage({ Name = "Black Flash", Columns = 2 })
     local bfSec = bfSub:Section({ Name = "Black Flash", Side = 1 })
-    -- M1 BF - DEAD SIMPLE, exactly what you asked: COUNT your clicks (M1s). After the chosen number of M1s,
-    -- press 3 = the black flash. Then reset. A dropdown picks the count (1 / 2 / 3 M1s).
+    -- M1 BF - REMOTE-DRIVEN (your capture: your M1 fires <Char>Service.RE.Activated). We HOOK that remote, so we
+    -- detect every REAL M1 the instant it fires (no click/anim guessing). After the chosen count of M1s, press 3 =
+    -- black flash. Matches ANY "...Service.RE.Activated" fire so it works on every character, not just Itadori.
     local bfM1On, bfAutoOn = false, false
     local bfClickOffset = 0
-    local bfCount = 2   -- press 3 after this many M1 clicks
+    local bfCount = 2   -- press 3 after this many M1 remotes
     do
-        local UISbf = game:GetService("UserInputService")
         local VIMbf = game:GetService("VirtualInputManager")
         local function press3()
             _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.3
@@ -9721,19 +9731,44 @@ do
                 VIMbf:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
             end)
         end
-        local clicks, lastClick = 0, 0
-        UISbf.InputBegan:Connect(function(input, gpe)
+        local m1s, lastM1 = 0, 0
+        -- called on every M1 remote fire (from the __namecall hook installed once, below)
+        _G.VX_BF_ONM1 = function()
             if not bfM1On then return end
-            if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-            if UISbf:GetFocusedTextBox() then return end
-            if tick() - lastClick > 2 then clicks = 0 end   -- new combo if you stopped clicking
-            lastClick = tick()
-            clicks = clicks + 1
-            if clicks >= bfCount then
-                clicks = 0
-                task.delay(math.max(0, 0.12 + bfClickOffset), press3)   -- after your Nth M1 -> press 3 = black flash
+            if tick() - lastM1 > 2.5 then m1s = 0 end   -- new combo
+            lastM1 = tick()
+            m1s = m1s + 1
+            if m1s >= bfCount then
+                m1s = 0
+                task.delay(math.max(0, 0.12 + bfClickOffset), press3)
             end
-        end)
+        end
+        -- install the remote hook ONCE (executor-dependent). An M1 = a remote named "Activated" under a *Service.RE.
+        if not _G.VX_BF_HOOKED then
+            _G.VX_BF_HOOKED = true
+            local ok = false
+            if typeof(hookmetamethod) == "function" and typeof(getnamecallmethod) == "function" then
+                ok = pcall(function()
+                    local old; old = hookmetamethod(game, "__namecall", function(self, ...)
+                        local m = getnamecallmethod()
+                        if (m == "FireServer" or m == "fireServer") and typeof(self) == "Instance" and self.Name == "Activated" then
+                            local full = ""; pcall(function() full = self:GetFullName() end)
+                            if full:find("Service") and full:find("%.RE%.") then
+                                if _G.VX_BF_ONM1 then task.spawn(_G.VX_BF_ONM1) end
+                            end
+                        end
+                        return old(self, ...)
+                    end)
+                end)
+            end
+            -- fallback: no hook support -> count mouse clicks instead (still works, just less exact)
+            if not ok then
+                local UISbf = game:GetService("UserInputService")
+                UISbf.InputBegan:Connect(function(input)
+                    if input.UserInputType == Enum.UserInputType.MouseButton1 and _G.VX_BF_ONM1 then _G.VX_BF_ONM1() end
+                end)
+            end
+        end
     end
     local function bfSync() if BFApi then BFApi.SetEnabled(bfAutoOn) end end   -- engine = Auto BF only
     bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 BF", "Side Dash", "Back Dash", "Jump", "Teleport", "M1 Chain" } or { "Off", "M1 BF" }), Default = "Off", Callback = function(m)
@@ -9781,6 +9816,7 @@ do
     skSec:Toggle({ Name = "Gojo TP Back", Callback = function(b) if GojoTpApi then GojoTpApi.set(b) end end })
     skSec:Dropdown({ Name = "TP Back Trigger", Items = { "Q Dash", "After M1s" }, Default = "Q Dash", Callback = function(v) _G.VX_GOJO_MODE = (type(v) == "table") and v[1] or v end })
     skSec:Dropdown({ Name = "TP Back After (M1s)", Items = { "1", "2", "3", "4" }, Default = "2", Callback = function(v) v = (type(v) == "table") and v[1] or v; _G.VX_GOJO_COUNT = tonumber(v) or 2 end })
+    skSec:Slider({ Name = "Back Lock Time", Min = 0, Max = 2, Default = 1, Decimals = 0.05, Suffix = "s", Callback = function(v) _G.VX_GOJO_LOCK = tonumber(v) or 1 end })
     skSec:Toggle({ Name = "Reversal Red", Callback = function(b) if ReversalRedApi then ReversalRedApi.set(b) end end })
     skSec:Toggle({ Name = "Auto Rika Down Slam", Callback = function(b) if SlamApi then SlamApi.set(b) end end })   -- near a player/dummy -> auto down slam them
     local ultSec = skSub:Section({ Name = "Ults", Side = 2 })
