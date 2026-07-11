@@ -9357,7 +9357,7 @@ do
         end
     end
 
-    local Window = Library:Window({ Name = "D R E A M   H U B", SubTitle = "JJS  " .. tierNice, ExpiresIn = "lifetime" })   -- spaced-out title
+    local Window = Library:Window({ Name = "Dream Hub", SubTitle = "  JJS " .. tierNice, ExpiresIn = "lifetime" })   -- clean title (spaced version collided with the JJS badge)
 
     -- MINIMIZE button (PC + mobile): a small floating, draggable tap button that hides/shows the whole menu.
     pcall(function()
