@@ -650,12 +650,8 @@ local function fakeEat()
 	end
 	for _,id in pairs(WATER_IDS) do pcall(function() rs:FireServer(id, "Bite", buf) end) end  -- every land's source id
 	replicaActionAll("Bite", buf)                          -- + every captured source id (use-many-ids)
-	-- give the server a real chewing delay before finishing (firing AnimationEnded instantly = server rejects the
-	-- food gain). Deferred so the loop isn't blocked; Consuming stays true until the animation genuinely ends.
-	task.delay(0.6, function()
-		replicaFire("SetAction","Consuming",false)         -- dino: stop consuming
-		replicaFire("AnimationEnded","Eat")                -- dino: finish (food gained)
-	end)
+	replicaFire("SetAction","Consuming",false)             -- dino: stop consuming
+	replicaFire("AnimationEnded","Eat")                    -- dino: finish (food gained)
 end
 -- ═══ ATTACK (the REAL captured bite-damage call — fires server-side damage) ═══
 -- Pattern: (myDinoId,"Attack", nil, {Group,Name,Position}, {Group="Head",Name="Jaw",Position=myJawPos}, groupString)
@@ -2241,7 +2237,7 @@ local function nearbyFood(range)
 	if me then
 		local cnt=0
 		-- edible-plant / herb name list (this game's flora) so INF Food eats ANY plant type around you, not just corpses
-		local PLKW={"plant","sapling","tree","fern","berry","berries","pine","needle","leaf","leaves","frond","conifer","cycad","mushroom","fungus","grass","moss","bush","shrub","flower","seed","cone","horsetail","redwood","ginkgo","sequoia","equisetum","woodwardia","blechn","gleichenia","osmunda","zingiber","dicksonia","williamsonia","dryophyll","sabalite","marmarthia","coniopteris","wielandiella","hermanophyton","anthill","herb","foliage","trunk","paleoaster","sabalit"}
+		local PLKW={"plant","sapling","tree","fern","berry","berries","pine","needle","leaf","leaves","frond","conifer","cycad","mushroom","fungus","grass","moss","bush","shrub","flower","seed","cone","horsetail","redwood","ginkgo","sequoia","equisetum","woodwardia","blechn","gleichenia","osmunda","zingiber","dicksonia","williamsonia","dryophyll","sabalit","marmarthia","coniopteris","wielandiella","hermanophyton","anthill","herb","foliage","trunk","paleoaster","palaeoaster","araucaria","agathis","athrotaxite","brachyphyllum","elatide","platanites","cycadeoidea"}
 		local function isPlantN(n) for _,k in ipairs(PLKW) do if n:find(k,1,true) then return true end end return false end
 		-- 1) prompts: corpses (investigate/eat/consume) AND plants (graze/forage/feed/pick/harvest/eat). Fire ANY of them.
 		for _,d in ipairs(WS:GetDescendants()) do
@@ -2768,40 +2764,24 @@ do
 end
 task.spawn(function() while RUNNING do
 	if CFG.InfFood and alive() then
-		-- Read how full food is FIRST. fakeEat() forces Consuming=false which interrupts YOUR manual E hold, so
-		-- we only run it (and the auto-eat) when food is genuinely LOW - the rest of the time your E is untouched.
-		local low, veryLow = false, false
-		pcall(function()
-			local stats, maxs = csStats()
-			for _,k in ipairs({"Food","Hunger","Nutrition","Fullness"}) do
-				if stats and stats[k]~=nil then local cur=tonumber(stats[k]); local mx=(maxs and maxs[k]) or (__gg.MH_max and __gg.MH_max[k])
-					if cur and mx then low = cur < mx*0.5; veryLow = cur < mx*0.25; break end
+		-- ORIGINAL METHOD (your fix): auto-eat = DIRECTLY FIRE the nearest plant/corpse ProximityPrompt.
+		-- No E key press at all (so your manual E is never blocked), and NO food-bar pin (so the game never
+		-- thinks you're full and blocks growth). Scans the whole map for the plant list + any eat prompt.
+		fakeEat()   -- replay a captured bite (fills bar); harmless, presses no keys
+		local me=hrp(); local list=nearbyFood(CFG.FoodEatRange)
+		if me then for _,fd in ipairs(list) do
+			local m,r,prompt=fd[1],fd[2],fd.prompt
+			if not prompt and m then prompt=m:FindFirstChildWhichIsA("ProximityPrompt",true) end
+			if prompt and r and r.Parent and dist(me.Position,r.Position)<=math.min(CFG.FoodEatRange,60) then
+				local kk="food_"..tostring(prompt); local last=FARM.tried[kk]
+				if not last or tick()-last>2 then
+					FARM.tried[kk]=tick()
+					pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=9999; prompt.HoldDuration=0 end)
+					if fireprox then pcall(function() fireprox(prompt) end) end   -- fire the prompt = one clean eat, no E press
 				end
+				break  -- nearest only
 			end
-		end)
-		if veryLow then fakeEat() end   -- only replay the captured bite when actually starving, never over your manual eat
-		if CFG.AutoEatFood and low then
-			-- food is low -> eat the NEAREST plant/corpse FOR REAL: fire its prompt AND briefly hold E (the real
-			-- eat that always registers server-side AND captures the food id so fakeEat can replay it after).
-			local me=hrp(); local list=nearbyFood(CFG.FoodEatRange)
-			if me then for _,fd in ipairs(list) do
-				local m,r,prompt=fd[1],fd[2],fd.prompt
-				if not prompt and m then prompt=m:FindFirstChildWhichIsA("ProximityPrompt",true) end
-				if prompt and r and r.Parent and dist(me.Position,r.Position)<=math.min(CFG.FoodEatRange,40) then
-					local kk="food_"..tostring(prompt); local last=FARM.tried[kk]
-					if not last or tick()-last>2.5 then
-						FARM.tried[kk]=tick()
-						local hd = prompt.HoldDuration
-						pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.huge; prompt.HoldDuration=0 end)
-						if fireprox then pcall(function() fireprox(prompt) end) end
-						-- real E hold as the reliable backup (only when low, so it rarely touches your E)
-						holdKey(prompt.KeyboardKeyCode ~= Enum.KeyCode.Unknown and prompt.KeyboardKeyCode or Enum.KeyCode.E, math.max(hd, 0.35))
-						pcall(function() prompt.HoldDuration = hd end)
-					end
-					break  -- nearest only
-				end
-			end end
-		end
+		end end
 		task.wait(0.4)
 	else task.wait(0.4) end
 end end)
