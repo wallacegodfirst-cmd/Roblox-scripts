@@ -2755,11 +2755,19 @@ task.spawn(function() while RUNNING do
 					local kk="food_"..tostring(prompt); local last=FARM.tried[kk]
 					if not last or tick()-last>2 then
 						FARM.tried[kk]=tick()
-						-- SAVE + RESTORE HoldDuration (leaving it at 0 permanently broke your manual hold-to-eat).
-						local oh=prompt.HoldDuration; local od=prompt.MaxActivationDistance
-						pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=9999; prompt.HoldDuration=0 end)
-						if fireprox then pcall(function() fireprox(prompt) end) end   -- fire the prompt = one clean eat, no E press
-						pcall(function() prompt.HoldDuration=oh; prompt.MaxActivationDistance=od end)   -- restore BOTH so your hold-to-eat still works
+						-- RE-CHECK the hold RIGHT before firing: fakeEat() above yields ~0.36s, so if you started
+						-- holding your interact key during it, this prompt must NOT be fired out from under you. Also
+						-- honor a rebound interact key (not just E) so non-default keybinds are covered too.
+						local stillHold=false
+						pcall(function() stillHold = UIS:IsKeyDown(Enum.KeyCode.E)
+							or (prompt.KeyboardKeyCode and prompt.KeyboardKeyCode~=Enum.KeyCode.Unknown and UIS:IsKeyDown(prompt.KeyboardKeyCode)) end)
+						if not stillHold then
+							-- SAVE + RESTORE HoldDuration (leaving it at 0 permanently broke your manual hold-to-eat).
+							local oh=prompt.HoldDuration; local od=prompt.MaxActivationDistance
+							pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=9999; prompt.HoldDuration=0 end)
+							if fireprox then pcall(function() fireprox(prompt) end) end   -- fire the prompt = one clean eat, no E press
+							pcall(function() prompt.HoldDuration=oh; prompt.MaxActivationDistance=od end)   -- restore BOTH so your hold-to-eat still works
+						end
 					end
 					break  -- nearest only
 				end
