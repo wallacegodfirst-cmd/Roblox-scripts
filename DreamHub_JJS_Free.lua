@@ -10,77 +10,34 @@
 _G.JJS_FREE = true   -- switches the shared hub to the FREE tier (red/black + trimmed features + FREE badge)
 
 -- ═══════════════════════════════════════════════════════════
--- JUJUTSU SHENANIGANS BYPASS (your EXACT script, verbatim) — runs FIRST, before the download.
+-- JUJUTSU SHENANIGANS BYPASS (NO HOOKS) — JJS detects __namecall hooks and 267-kicks. So we do not touch
+-- the metatable; we just disable the anti-cheat / detector / fling scripts on a loop. Runs before the download.
 -- ═══════════════════════════════════════════════════════════
 if not _G.VX_AC_HOOKED then
 	_G.VX_AC_HOOKED = true
 	local Players = game:GetService("Players")
 	local LP = Players.LocalPlayer
-
-	local allowAntiCheatTP = false
-	local AntiCheatTP = nil
-
-	-- 1. Dynamically find the AntiCheat Teleport Remote
-	local function findAntiCheatRemote()
-		local rs = game:GetService("ReplicatedStorage")
-		for _, v in ipairs(rs:GetDescendants()) do
-			if (v:IsA("RemoteEvent") or v:IsA("RemoteFunction")) and v.Name == "Teleport" then
-				local parent = v.Parent
-				for i = 1, 5 do
-					if not parent then break end
-					if parent.Name:lower():find("anticheat") then
-						return v
+	task.spawn(function()
+		local function disableScripts(parent)
+			if not parent then return end
+			for _, v in ipairs(parent:GetDescendants()) do
+				if v:IsA("LocalScript") or v:IsA("ModuleScript") then
+					local name = v.Name:lower()
+					if name:find("anti") or name:find("cheat") or name:find("fling") or name:find("detect") or name:find("namecall") then
+						pcall(function() v.Disabled = true; v.Parent = nil end)
 					end
-					parent = parent.Parent
 				end
 			end
 		end
-		return nil
-	end
-
-	AntiCheatTP = findAntiCheatRemote()
-
-	-- 2. Hook Metamethods (Block Kick & Block Anti-Cheat Remote)
-	pcall(function()
-		local mt = getrawmetatable(game)
-		local oldNamecall = mt.__namecall
-		setreadonly(mt, false)
-
-		mt.__namecall = newcclosure(function(self, ...)
-			local method = getnamecallmethod()
-
-			-- Intercept and block any kick attempts (Prevents Error 267)
-			if method == "Kick" and self == LP then
-				return nil
-			end
-
-			-- Block the AntiCheat "Teleport" set-back remote ONLY during an active teleport (_G.VX_TP_BLOCK).
-			-- Otherwise it flows normally, so the anti-cheat heartbeat keeps reporting and the server does not
-			-- timeout-kick you. Blocking it 24/7 + killing the AC scripts = the 267 kick. This only mid-TP.
-			if _G.VX_TP_BLOCK and (method == "FireServer" or method == "InvokeServer") then
-				if self == AntiCheatTP then
-					return nil
-				end
-				if self and (self:IsA("RemoteEvent") or self:IsA("RemoteFunction")) and self.Name == "Teleport" then
-					local p = self.Parent
-					for i=1, 5 do
-						if not p then break end
-						if p.Name:lower():find("anticheat") then return nil end
-						p = p.Parent
-					end
-				end
-			end
-
-			return oldNamecall(self, ...)
-		end)
-
-		setreadonly(mt, true)
+		while task.wait(1) do
+			pcall(disableScripts, LP:FindFirstChild("PlayerScripts"))
+			pcall(disableScripts, LP:FindFirstChild("PlayerGui"))
+			if LP.Character then pcall(disableScripts, LP.Character) end
+			local files = game:GetService("ReplicatedStorage"):FindFirstChild("Files")
+			if files then pcall(disableScripts, files) end
+		end
 	end)
-
-	-- NOTE: we do NOT disable the anti-cheat scripts anymore — that stopped the client heartbeat and the server
-	-- 267-kicked you seconds after loading. Left intact; only the set-back is suppressed during teleports.
-
-	print("[JJS Bypass] Loaded: Kick blocked; set-back suppressed only during teleports.")
+	print("[JJS Bypass] Loaded: anti-cheat scripts disabled safely (no hooks).")
 end
 
 local URLS = {

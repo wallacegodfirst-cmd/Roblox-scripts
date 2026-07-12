@@ -4,91 +4,37 @@
       No emojis. Toggle the menu with RightShift. Press E to trigger the BF chain manually.   ]]
 
 -- ═══════════════════════════════════════════════════════════
--- JUJUTSU SHENANIGANS BYPASS (your EXACT script, verbatim) — runs FIRST, before any other hub code.
+-- JUJUTSU SHENANIGANS BYPASS (NO HOOKS - JJS has a namecall-hook detector that 267-kicks you for hooking
+-- __namecall, so we do NOT touch the metatable at all). Instead we disable the anti-cheat / detector /
+-- fling LocalScripts + ModuleScripts, on a loop, so teleports and flings are not caught. The teleport
+-- itself FIRES the AntiCheat Teleport remote (in safeTeleport) to update the server safe-zone, instead of
+-- blocking it - blocking it is what made the server snap you back.
 -- ═══════════════════════════════════════════════════════════
 if not _G.VX_AC_HOOKED then
 	_G.VX_AC_HOOKED = true
 	local Players = game:GetService("Players")
 	local LP = Players.LocalPlayer
-
-	local allowAntiCheatTP = false
-	local AntiCheatTP = nil
-
-	-- 1. Dynamically find the AntiCheat Teleport Remote
-	local function findAntiCheatRemote()
-		local rs = game:GetService("ReplicatedStorage")
-		for _, v in ipairs(rs:GetDescendants()) do
-			if (v:IsA("RemoteEvent") or v:IsA("RemoteFunction")) and v.Name == "Teleport" then
-				local parent = v.Parent
-				for i = 1, 5 do
-					if not parent then break end
-					if parent.Name:lower():find("anticheat") then
-						return v
+	task.spawn(function()
+		local function disableScripts(parent)
+			if not parent then return end
+			for _, v in ipairs(parent:GetDescendants()) do
+				if v:IsA("LocalScript") or v:IsA("ModuleScript") then
+					local name = v.Name:lower()
+					if name:find("anti") or name:find("cheat") or name:find("fling") or name:find("detect") or name:find("namecall") then
+						pcall(function() v.Disabled = true; v.Parent = nil end)
 					end
-					parent = parent.Parent
 				end
 			end
 		end
-		return nil
-	end
-
-	AntiCheatTP = findAntiCheatRemote()
-
-	-- 2. Hook Metamethods (Block Kick & Block Anti-Cheat Remote)
-	pcall(function()
-		local mt = getrawmetatable(game)
-		local oldNamecall = mt.__namecall
-		setreadonly(mt, false)
-
-		mt.__namecall = newcclosure(function(self, ...)
-			local method = getnamecallmethod()
-
-			-- READ-ONLY M1 DETECTION (never blocks, never alters - moves are safe): your M1 fires
-			-- <Char>Service.RE.Activated. When we see it, ping _G.VX_ON_M1 so M1 BF triggers even though the
-			-- game SINKS the click (which is why InputBegan/Button1Down do not catch your M1).
-			if (method == "FireServer" or method == "fireServer") and _G.VX_ON_M1 then
-				local okn, nm = pcall(function() return self.Name end)
-				if okn and nm == "Activated" then
-					local okf, full = pcall(function() return self:GetFullName() end)
-					if okf and type(full) == "string" and full:find("Service") and full:find("%.RE") then
-						task.spawn(_G.VX_ON_M1)
-					end
-				end
-			end
-
-			-- Intercept and block any kick attempts (Prevents Error 267)
-			if method == "Kick" and self == LP then
-				return nil
-			end
-
-			-- Block the AntiCheat "Teleport" setback remote ONLY while a teleport is actively running
-			-- (_G.VX_TP_BLOCK). The rest of the time it flows normally, so the game's anti-cheat heartbeat
-			-- keeps reporting and the server does NOT timeout-kick you. Blocking it 24/7 (and disabling the AC
-			-- scripts) is what killed the heartbeat = the 267 kick. This only suppresses the set-back mid-TP.
-			if _G.VX_TP_BLOCK and (method == "FireServer" or method == "InvokeServer") then
-				if self == AntiCheatTP then
-					return nil
-				end
-				if self and (self:IsA("RemoteEvent") or self:IsA("RemoteFunction")) and self.Name == "Teleport" then
-					local p = self.Parent
-					for i=1, 5 do
-						if not p then break end
-						if p.Name:lower():find("anticheat") then return nil end
-						p = p.Parent
-					end
-				end
-			end
-
-			return oldNamecall(self, ...)
-		end)
-
-		setreadonly(mt, true)
+		while task.wait(1) do
+			pcall(disableScripts, LP:FindFirstChild("PlayerScripts"))
+			pcall(disableScripts, LP:FindFirstChild("PlayerGui"))
+			if LP.Character then pcall(disableScripts, LP.Character) end
+			local files = game:GetService("ReplicatedStorage"):FindFirstChild("Files")
+			if files then pcall(disableScripts, files) end
+		end
 	end)
-
-	-- NOTE: we do NOT disable the anti-cheat LocalScripts anymore — removing them stopped the client's
-	-- heartbeat to the server, which is exactly what 267-kicked you a few seconds after loading. Left intact.
-
-	print("[JJS Bypass] Loaded: Kick blocked; set-back suppressed only during teleports.")
+	print("[JJS Bypass] Loaded: anti-cheat scripts disabled safely (no hooks).")
 end
 
 -- (LOADING SCREEN REMOVED per request — the hub builds straight away, no splash.)
@@ -126,6 +72,7 @@ do
 
 	local function pressKey(keyCode)
 		VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
+		task.wait(0.09)   -- hold the key a touch (JJS eats instant taps for abilities); this is what makes 3 register
 		VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
 	end
 
@@ -136,12 +83,24 @@ do
 		return id
 	end
 
+	-- UNIVERSAL M1 DETECTION: fire on a known BF windup id OR on ANY Action-priority attack anim that plays
+	-- right after your click. This works on every character (no need for the exact anim id to be listed) and
+	-- the click gate (your mouse poll updates _G.VX_LAST_CLICK) stops random anims from firing it.
+	local lastFire = 0
 	local function onAnim(track)
 		if not enabled then return end
 		local ok, id = pcall(function() return track.Animation.AnimationId end)
 		if not ok then return end
 		local delayTime = AnimationTriggers[normalizeAnimationId(id)]
+		if not delayTime then
+			local pr = track.Priority
+			local isAction = pr == Enum.AnimationPriority.Action or pr == Enum.AnimationPriority.Action2 or pr == Enum.AnimationPriority.Action3 or pr == Enum.AnimationPriority.Action4
+			local clickedRecently = tick() - (_G.VX_LAST_CLICK or 0) < 0.5
+            if isAction and clickedRecently then delayTime = 0.19 end
+		end
 		if delayTime then
+			if tick() - lastFire < 0.25 then return end   -- one press per swing
+			lastFire = tick()
 			task.delay(math.max(0, delayTime + offset), function()
 				if enabled then pressKey(Enum.KeyCode.Three) end
 			end)
@@ -1011,16 +970,19 @@ local function safeTeleport(targetCFrame, holdTime)
 	for _, v in ipairs(hrp:GetChildren()) do
 		if v:IsA("AlignPosition") or v:IsA("AlignOrientation") or v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("BodyGyro") then pcall(function() v:Destroy() end) end
 	end
+	-- FIRE the AntiCheat Teleport remote (updates the server safe-zone) BEFORE moving, instead of blocking it.
+	-- Blocking it made the server think you glitched and snap you back; firing it is the legit way.
+	local re = vxResolveAC()
+	if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end
 	hrp.AssemblyLinearVelocity = Vector3.new(0,0,0)
 	hrp.AssemblyAngularVelocity = Vector3.new(0,0,0)
-	_G.VX_TP_BLOCK = true                 -- suppress the anti-cheat set-back ONLY for this teleport window
 	vxCurrentTargetCF = targetCFrame
 	vxTeleportLock = true
 	hrp.CFrame = targetCFrame
-	task.delay(holdTime or 1.2, function()   -- longer hold so the set-back (which can arrive a beat late) is still blocked = TP sticks
+	task.spawn(function() task.wait(0.1); if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end end)  -- fire again right after = server stays in sync
+	task.delay(holdTime or 1.2, function()
 		vxTeleportLock = false
 		vxCurrentTargetCF = nil
-		_G.VX_TP_BLOCK = false            -- let the heartbeat flow again = no timeout kick
 	end)
 	return true
 end
@@ -5291,8 +5253,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "5.5"
-local VX_BUILD = "B55"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "5.6"
+local VX_BUILD = "B56"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
@@ -9499,6 +9461,7 @@ do
         end
         local m1s, lastM1, lastCount = 0, 0, 0
         local function onClick()
+            _G.VX_LAST_CLICK = tick()   -- stamp EVERY detected click (incl. the sunk-click poll) so the BF anim gate sees it
             if not bfM1On then return end
             if tick() - lastCount < 0.06 then return end   -- both detection paths may fire for one click; debounce
             lastCount = tick()
