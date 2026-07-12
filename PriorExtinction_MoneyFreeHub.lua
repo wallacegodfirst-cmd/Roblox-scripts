@@ -2764,20 +2764,34 @@ do
 end
 task.spawn(function() while RUNNING do
 	if CFG.InfFood and alive() then
-		fakeEat()
-		if CFG.AutoEatFood then
-			-- Eat the NEAREST food/corpse: fire its prompt ONCE (per-corpse 3s cooldown = "click E once", not a spam).
-			-- Only acts when genuinely close (≤40 studs — the server rejects a far prompt anyway). One corpse per pass.
+		fakeEat()   -- replay any captured bite (works once you've eaten one plant this session)
+		-- Read how full food is. Only auto-eat when it drops LOW so we don't fight your manual E when you're fine.
+		local low = true
+		pcall(function()
+			local stats, maxs = csStats()
+			for _,k in ipairs({"Food","Hunger","Nutrition","Fullness"}) do
+				if stats and stats[k]~=nil then local cur=tonumber(stats[k]); local mx=(maxs and maxs[k]) or (__gg.MH_max and __gg.MH_max[k])
+					if cur and mx then low = cur < mx*0.6; break end
+				end
+			end
+		end)
+		if CFG.AutoEatFood and low then
+			-- food is low -> eat the NEAREST plant/corpse FOR REAL: fire its prompt AND briefly hold E (the real
+			-- eat that always registers server-side AND captures the food id so fakeEat can replay it after).
 			local me=hrp(); local list=nearbyFood(CFG.FoodEatRange)
 			if me then for _,fd in ipairs(list) do
 				local m,r,prompt=fd[1],fd[2],fd.prompt
-				if not prompt and m then for _,d in ipairs(m:GetDescendants()) do if d:IsA("ProximityPrompt") then prompt=d; break end end end
+				if not prompt and m then prompt=m:FindFirstChildWhichIsA("ProximityPrompt",true) end
 				if prompt and r and r.Parent and dist(me.Position,r.Position)<=math.min(CFG.FoodEatRange,40) then
 					local kk="food_"..tostring(prompt); local last=FARM.tried[kk]
-					if not last or tick()-last>3 then
+					if not last or tick()-last>2.5 then
 						FARM.tried[kk]=tick()
-						pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.huge end)
-						if fireprox then pcall(function() fireprox(prompt) end) end  -- runs the full hold = one clean eat
+						local hd = prompt.HoldDuration
+						pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.huge; prompt.HoldDuration=0 end)
+						if fireprox then pcall(function() fireprox(prompt) end) end
+						-- real E hold as the reliable backup (only when low, so it rarely touches your E)
+						holdKey(prompt.KeyboardKeyCode ~= Enum.KeyCode.Unknown and prompt.KeyboardKeyCode or Enum.KeyCode.E, math.max(hd, 0.35))
+						pcall(function() prompt.HoldDuration = hd end)
 					end
 					break  -- nearest only
 				end
