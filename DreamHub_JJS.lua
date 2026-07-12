@@ -48,24 +48,21 @@ if not _G.VX_AC_HOOKED then
 				return nil
 			end
 
-			-- Intercept and block the AntiCheat Teleport remote
-			if (method == "FireServer" or method == "InvokeServer") and not allowAntiCheatTP then
+			-- Block the AntiCheat "Teleport" setback remote ONLY while a teleport is actively running
+			-- (_G.VX_TP_BLOCK). The rest of the time it flows normally, so the game's anti-cheat heartbeat
+			-- keeps reporting and the server does NOT timeout-kick you. Blocking it 24/7 (and disabling the AC
+			-- scripts) is what killed the heartbeat = the 267 kick. This only suppresses the set-back mid-TP.
+			if _G.VX_TP_BLOCK and (method == "FireServer" or method == "InvokeServer") then
 				if self == AntiCheatTP then
 					return nil
 				end
-				-- Fallback check just in case the instance reference was lost
 				if self and (self:IsA("RemoteEvent") or self:IsA("RemoteFunction")) and self.Name == "Teleport" then
 					local p = self.Parent
-					local isAC = false
 					for i=1, 5 do
 						if not p then break end
-						if p.Name:lower():find("anticheat") then
-							isAC = true
-							break
-						end
+						if p.Name:lower():find("anticheat") then return nil end
 						p = p.Parent
 					end
-					if isAC then return nil end
 				end
 			end
 
@@ -75,33 +72,10 @@ if not _G.VX_AC_HOOKED then
 		setreadonly(mt, true)
 	end)
 
-	-- 3. Disable Local Anti-Cheat Scripts
-	local function disableScripts(parent)
-		if not parent then return end
-		for _, v in ipairs(parent:GetDescendants()) do
-			if v:IsA("LocalScript") then
-				local name = v.Name:lower()
-				if name:find("anti") or name:find("cheat") or name:find("detect") then
-					pcall(function()
-						v.Disabled = true
-						v.Parent = nil -- Destroy to prevent restart
-					end)
-				end
-			end
-		end
-	end
-	local function disableAll()
-		if LP:FindFirstChild("PlayerScripts") then disableScripts(LP.PlayerScripts) end
-		if LP:FindFirstChild("Character") then disableScripts(LP.Character) end
-		disableScripts(game:GetService("StarterPlayer"):FindFirstChild("StarterPlayerScripts"))
-	end
-	-- RUN IT SYNCHRONOUSLY, RIGHT NOW, BEFORE the rest of the 11k-line hub loads. The old task.spawn version
-	-- got starved: the hub loads synchronously and blocks the scheduler, so the disable didn't run until AFTER
-	-- everything loaded — long enough for the anti-cheat detector to 267-kick you. This kills it up front.
-	disableAll()
-	task.spawn(function() task.wait(2); disableAll() end)   -- second pass later for anything that respawned
+	-- NOTE: we do NOT disable the anti-cheat LocalScripts anymore — removing them stopped the client's
+	-- heartbeat to the server, which is exactly what 267-kicked you a few seconds after loading. Left intact.
 
-	print("[JJS Bypass] Loaded: Kick Blocked & Anti-Cheat Disabled!")
+	print("[JJS Bypass] Loaded: Kick blocked; set-back suppressed only during teleports.")
 end
 
 -- (LOADING SCREEN REMOVED per request — the hub builds straight away, no splash.)
@@ -1253,12 +1227,14 @@ local function safeTeleport(targetCFrame, holdTime)
 	end
 	hrp.AssemblyLinearVelocity = Vector3.new(0,0,0)
 	hrp.AssemblyAngularVelocity = Vector3.new(0,0,0)
+	_G.VX_TP_BLOCK = true                 -- suppress the anti-cheat set-back ONLY for this teleport window
 	vxCurrentTargetCF = targetCFrame
 	vxTeleportLock = true
 	hrp.CFrame = targetCFrame
 	task.delay(holdTime or 0.5, function()
 		vxTeleportLock = false
 		vxCurrentTargetCF = nil
+		_G.VX_TP_BLOCK = false            -- let the heartbeat flow again = no timeout kick
 	end)
 	return true
 end
@@ -5506,8 +5482,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "4.8"
-local VX_BUILD = "B48"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "4.9"
+local VX_BUILD = "B49"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)

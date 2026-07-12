@@ -54,24 +54,20 @@ if not _G.VX_AC_HOOKED then
 				return nil
 			end
 
-			-- Intercept and block the AntiCheat Teleport remote
-			if (method == "FireServer" or method == "InvokeServer") and not allowAntiCheatTP then
+			-- Block the AntiCheat "Teleport" set-back remote ONLY during an active teleport (_G.VX_TP_BLOCK).
+			-- Otherwise it flows normally, so the anti-cheat heartbeat keeps reporting and the server does not
+			-- timeout-kick you. Blocking it 24/7 + killing the AC scripts = the 267 kick. This only mid-TP.
+			if _G.VX_TP_BLOCK and (method == "FireServer" or method == "InvokeServer") then
 				if self == AntiCheatTP then
 					return nil
 				end
-				-- Fallback check just in case the instance reference was lost
 				if self and (self:IsA("RemoteEvent") or self:IsA("RemoteFunction")) and self.Name == "Teleport" then
 					local p = self.Parent
-					local isAC = false
 					for i=1, 5 do
 						if not p then break end
-						if p.Name:lower():find("anticheat") then
-							isAC = true
-							break
-						end
+						if p.Name:lower():find("anticheat") then return nil end
 						p = p.Parent
 					end
-					if isAC then return nil end
 				end
 			end
 
@@ -81,30 +77,10 @@ if not _G.VX_AC_HOOKED then
 		setreadonly(mt, true)
 	end)
 
-	-- 3. Disable Local Anti-Cheat Scripts — SYNCHRONOUS, before the download even starts
-	local function disableScripts(parent)
-		if not parent then return end
-		for _, v in ipairs(parent:GetDescendants()) do
-			if v:IsA("LocalScript") then
-				local name = v.Name:lower()
-				if name:find("anti") or name:find("cheat") or name:find("detect") then
-					pcall(function()
-						v.Disabled = true
-						v.Parent = nil -- Destroy to prevent restart
-					end)
-				end
-			end
-		end
-	end
-	local function disableAll()
-		if LP:FindFirstChild("PlayerScripts") then disableScripts(LP.PlayerScripts) end
-		if LP:FindFirstChild("Character") then disableScripts(LP.Character) end
-		disableScripts(game:GetService("StarterPlayer"):FindFirstChild("StarterPlayerScripts"))
-	end
-	disableAll()
-	task.spawn(function() task.wait(2); disableAll() end)
+	-- NOTE: we do NOT disable the anti-cheat scripts anymore — that stopped the client heartbeat and the server
+	-- 267-kicked you seconds after loading. Left intact; only the set-back is suppressed during teleports.
 
-	print("[JJS Bypass] Loaded: Kick Blocked & Anti-Cheat Disabled!")
+	print("[JJS Bypass] Loaded: Kick blocked; set-back suppressed only during teleports.")
 end
 
 local URLS = {
