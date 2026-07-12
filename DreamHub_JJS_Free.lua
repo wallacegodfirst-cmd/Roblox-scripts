@@ -10,34 +10,13 @@
 _G.JJS_FREE = true   -- switches the shared hub to the FREE tier (red/black + trimmed features + FREE badge)
 
 -- ═══════════════════════════════════════════════════════════
--- JUJUTSU SHENANIGANS BYPASS (NO HOOKS) — JJS detects __namecall hooks and 267-kicks. So we do not touch
--- the metatable; we just disable the anti-cheat / detector / fling scripts on a loop. Runs before the download.
+-- JUJUTSU SHENANIGANS BYPASS (SAFE - NO RUBBERBAND, NO HOOKS)
+-- We do NOT hook __namecall (JJS 267-kicks for that) and we do NOT disable the anti-cheat scripts
+-- (disabling them stops the heartbeat = rubberband). The teleport uses a stepped lerp instead.
 -- ═══════════════════════════════════════════════════════════
 if not _G.VX_AC_HOOKED then
 	_G.VX_AC_HOOKED = true
-	local Players = game:GetService("Players")
-	local LP = Players.LocalPlayer
-	task.spawn(function()
-		local function disableScripts(parent)
-			if not parent then return end
-			for _, v in ipairs(parent:GetDescendants()) do
-				if v:IsA("LocalScript") or v:IsA("ModuleScript") then
-					local name = v.Name:lower()
-					if name:find("anti") or name:find("cheat") or name:find("fling") or name:find("detect") or name:find("namecall") then
-						pcall(function() v.Disabled = true; v.Parent = nil end)
-					end
-				end
-			end
-		end
-		while task.wait(1) do
-			pcall(disableScripts, LP:FindFirstChild("PlayerScripts"))
-			pcall(disableScripts, LP:FindFirstChild("PlayerGui"))
-			if LP.Character then pcall(disableScripts, LP.Character) end
-			local files = game:GetService("ReplicatedStorage"):FindFirstChild("Files")
-			if files then pcall(disableScripts, files) end
-		end
-	end)
-	print("[JJS Bypass] Loaded: anti-cheat scripts disabled safely (no hooks).")
+	print("[JJS Bypass] Loaded: anti-cheat left intact (prevents rubberband).")
 end
 
 local URLS = {

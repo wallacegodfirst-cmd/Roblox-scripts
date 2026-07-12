@@ -4,37 +4,15 @@
       No emojis. Toggle the menu with RightShift. Press E to trigger the BF chain manually.   ]]
 
 -- ═══════════════════════════════════════════════════════════
--- JUJUTSU SHENANIGANS BYPASS (NO HOOKS - JJS has a namecall-hook detector that 267-kicks you for hooking
--- __namecall, so we do NOT touch the metatable at all). Instead we disable the anti-cheat / detector /
--- fling LocalScripts + ModuleScripts, on a loop, so teleports and flings are not caught. The teleport
--- itself FIRES the AntiCheat Teleport remote (in safeTeleport) to update the server safe-zone, instead of
--- blocking it - blocking it is what made the server snap you back.
+-- JUJUTSU SHENANIGANS BYPASS (SAFE - NO RUBBERBAND, NO HOOKS)
+-- We do NOT hook __namecall (JJS 267-kicks for that) and we do NOT disable the anti-cheat LocalScripts
+-- (disabling them stops the client heartbeat, which is what makes the server rubberband you back). We
+-- leave them running and beat the teleport check with a STEPPED lerp teleport (see safeTeleport) that
+-- moves under the server's per-frame distance limit, so it reads as a fast dash, not a teleport.
 -- ═══════════════════════════════════════════════════════════
 if not _G.VX_AC_HOOKED then
 	_G.VX_AC_HOOKED = true
-	local Players = game:GetService("Players")
-	local LP = Players.LocalPlayer
-	task.spawn(function()
-		local function disableScripts(parent)
-			if not parent then return end
-			for _, v in ipairs(parent:GetDescendants()) do
-				if v:IsA("LocalScript") or v:IsA("ModuleScript") then
-					local name = v.Name:lower()
-					if name:find("anti") or name:find("cheat") or name:find("fling") or name:find("detect") or name:find("namecall") then
-						pcall(function() v.Disabled = true; v.Parent = nil end)
-					end
-				end
-			end
-		end
-		while task.wait(1) do
-			pcall(disableScripts, LP:FindFirstChild("PlayerScripts"))
-			pcall(disableScripts, LP:FindFirstChild("PlayerGui"))
-			if LP.Character then pcall(disableScripts, LP.Character) end
-			local files = game:GetService("ReplicatedStorage"):FindFirstChild("Files")
-			if files then pcall(disableScripts, files) end
-		end
-	end)
-	print("[JJS Bypass] Loaded: anti-cheat scripts disabled safely (no hooks).")
+	print("[JJS Bypass] Loaded: anti-cheat left intact (prevents rubberband); stepped teleport used instead.")
 end
 
 -- (LOADING SCREEN REMOVED per request — the hub builds straight away, no splash.)
@@ -966,37 +944,50 @@ game:GetService("RunService").Heartbeat:Connect(function()
 		end
 	end
 end)
+-- STEPPED LERP TELEPORT: instead of an instant CFrame snap (which JJS detects and snaps back), move to
+-- the target in ~60-stud-per-frame steps. Each step is under the server's per-frame distance limit, so it
+-- reads as a very fast dash, not a teleport = no rubberband. We DO NOT disable the anti-cheat, so the
+-- heartbeat keeps flowing.
+local isTeleporting = false
 local function safeTeleport(targetCFrame, holdTime)
 	local LP = game:GetService("Players").LocalPlayer
 	local chs = workspace:FindFirstChild("Characters")
 	local char = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
 	if not char then return false end
 	local hrp = char:FindFirstChild("HumanoidRootPart")
+	local hum = char:FindFirstChildOfClass("Humanoid")
 	if not hrp then return false end
 	-- clean up any body movers that would drag you back
 	for _, v in ipairs(hrp:GetChildren()) do
 		if v:IsA("AlignPosition") or v:IsA("AlignOrientation") or v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("BodyGyro") then pcall(function() v:Destroy() end) end
 	end
-	-- FIRE the AntiCheat Teleport remote (updates the server safe-zone) instead of blocking it. Blocking made
-	-- the server think you glitched and snap you back; firing it is the legit way.
-	local re = vxResolveAC()
-	if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end
-	hrp.AssemblyLinearVelocity = Vector3.new(0,0,0)
-	hrp.AssemblyAngularVelocity = Vector3.new(0,0,0)
-	vxCurrentTargetCF = targetCFrame
-	vxTeleportLock = true
-	hrp.CFrame = targetCFrame
-	-- keep firing the remote through the whole hold: every ~0.15s the safe-zone is re-confirmed, so a set-back
-	-- that would land a beat later has nothing to revert to. The Heartbeat lock re-asserts the CFrame meanwhile.
-	local hold = holdTime or 1.2
-	task.spawn(function()
-		local t0 = tick()
-		while tick() - t0 < hold do
-			if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end
-			task.wait(0.15)
-		end
-		vxTeleportLock = false
-		vxCurrentTargetCF = nil
+	local startPos = hrp.Position
+	local targetPos = targetCFrame.Position
+	local dist = (startPos - targetPos).Magnitude
+	if dist < 15 then   -- already close: just snap
+		pcall(function() hrp.CFrame = targetCFrame; hrp.AssemblyLinearVelocity = Vector3.new(0,0,0) end)
+		return true
+	end
+	isTeleporting = true
+	if hum then pcall(function() hum.PlatformStand = true end) end
+	pcall(function() hrp.AssemblyLinearVelocity = Vector3.new(0,0,0) end)
+	local myHrp = function() local cc = (workspace:FindFirstChild("Characters") and workspace.Characters:FindFirstChild(LP.Name)) or LP.Character; return cc and cc:FindFirstChild("HumanoidRootPart") end
+	local steps = math.ceil(dist / 60)   -- 60 studs per frame = under the server limit, feels instant
+	for i = 1, steps do
+		local h = myHrp(); if not h then break end
+		local currentPos = startPos:Lerp(targetPos, i / steps)
+		pcall(function() h.CFrame = CFrame.new(currentPos, targetPos); h.AssemblyLinearVelocity = Vector3.new(0,0,0) end)
+		game:GetService("RunService").Heartbeat:Wait()
+	end
+	local h = myHrp()
+	if h then pcall(function() h.CFrame = targetCFrame; h.AssemblyLinearVelocity = Vector3.new(0,0,0) end) end
+	-- brief hold so we settle exactly on target, then release PlatformStand so you can move
+	vxCurrentTargetCF = targetCFrame; vxTeleportLock = true
+	task.delay(holdTime or 0.4, function()
+		vxTeleportLock = false; vxCurrentTargetCF = nil
+		local hh = myHrp() and char:FindFirstChildOfClass("Humanoid")
+		if hum then pcall(function() hum.PlatformStand = false end) end
+		isTeleporting = false
 	end)
 	return true
 end
@@ -5267,8 +5258,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "5.7"
-local VX_BUILD = "B57"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "5.8"
+local VX_BUILD = "B58"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
