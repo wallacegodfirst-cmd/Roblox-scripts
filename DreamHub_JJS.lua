@@ -93,302 +93,75 @@ local ChainApi -- forward-declared: BF Chain control API (assigned in its module
 -- MODULE: AUTO BLACK FLASH  (the user's AutoBlackFlash.lua, VERBATIM)
 -- ============================================================
 do
+	-- ═══ YOUR EXACT Black Flash script (the correct one) ═══ instant press, hooks the Humanoid's animator,
+	-- presses 3 after the trigger anim's delay. Wrapped to expose the API the GUI uses + hook BOTH rigs
+	-- (LP.Character AND workspace.Characters[you], since JJS plays combat anims on either).
 	local Players = game:GetService("Players")
-
-	local VirtualInputManager
-	pcall(function()
-		VirtualInputManager = game:GetService("VirtualInputManager")
-	end)
-
+	local VirtualInputManager = game:GetService("VirtualInputManager")
 	local player = Players.LocalPlayer
-	while not player do
-		Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
-		player = Players.LocalPlayer
-	end
 
 	local AnimationTriggers = {
 		["rbxassetid://100962226150441"] = 0.19,
-		["rbxassetid://95852624447551"] = 0.19,
-		["rbxassetid://74145636023952"] = 0.19,
-		["rbxassetid://72475960800126"] = 0.20,
+		["rbxassetid://95852624447551"]  = 0.19,
+		["rbxassetid://74145636023952"]  = 0.19,
+		["rbxassetid://72475960800126"]  = 0.20,
 		["rbxassetid://123171106092050"] = 0.19,
 	}
 
-	local CFG = {
-		Enabled = false,   -- the GUI toggle turns this on
-		DebugUnknownAnimations = false,
-		TriggerKey = Enum.KeyCode.Three,
-		Cooldown = 0.45,
-		TimingOffset = 0,
-		AnimatorWait = 8,
-	}
+	local enabled = false   -- the GUI toggle turns it on
+	local offset = 0        -- BF Timing slider
 
-	local RT = {
-		Running = true,
-		Connection = nil,
-		CharacterConnection = nil,
-		DescendantConnection = nil,
-		Pending = false,
-		Firing = false,
-		LastFireTime = 0,
-		LastAnimationId = "--",
-		LastMatched = false,
-		LastSkipReason = "--",
-		UnknownAnimations = {},
-	}
-
-	local function disconnect(name)
-		local connection = RT[name]
-		if connection then
-			pcall(function()
-				connection:Disconnect()
-			end)
-			RT[name] = nil
-		end
+	local function pressKey(keyCode)
+		VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
+		VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
 	end
 
 	local function normalizeAnimationId(id)
 		id = tostring(id or "")
-		if id == "" then
-			return ""
-		end
-		if id:match("^%d+$") then
-			return "rbxassetid://" .. id
-		end
+		if id == "" then return "" end
+		if id:match("^%d+$") then return "rbxassetid://" .. id end
 		return id
 	end
 
-	local function getAnimationId(track)
-		local ok, id = pcall(function()
-			return track and track.Animation and track.Animation.AnimationId or ""
-		end)
-		if not ok then
-			return ""
+	local function onAnim(track)
+		if not enabled then return end
+		local ok, id = pcall(function() return track.Animation.AnimationId end)
+		if not ok then return end
+		local delayTime = AnimationTriggers[normalizeAnimationId(id)]
+		if delayTime then
+			task.delay(math.max(0, delayTime + offset), function()
+				if enabled then pressKey(Enum.KeyCode.Three) end
+			end)
 		end
-		return normalizeAnimationId(id)
 	end
 
-	local function canFire()
-		if not RT.Running then return false, "stopped" end
-		if not CFG.Enabled then return false, "disabled" end
-		if not VirtualInputManager then return false, "no VirtualInputManager" end
-		if RT.Pending or RT.Firing then return false, "pending" end
-		if os.clock() - RT.LastFireTime < CFG.Cooldown then return false, "cooldown" end
-		return true, "ready"
-	end
-
-	local function pressKey(keyCode)
-		if not VirtualInputManager then
-			RT.LastSkipReason = "no VirtualInputManager"
-			return false
-		end
-		do   -- never fight another feature that is holding this key right now (e.g. the quake hold)
-			local inj = _G.VX_INJ_KEYS
-			if inj and inj[keyCode] and tick() < inj[keyCode] then
-				RT.LastSkipReason = "key busy"
-				return false
-			end
-		end
-		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[keyCode] = tick() + 0.3
-
-		pcall(function()
-			VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
-			VirtualInputManager:SendKeyEvent(false, keyCode, false, game)   -- instant: the only variant confirmed converting in-game (the 0.025 gap landed as the plain move)
-		end)
-		return true
-	end
-
-	local function scheduleFire(delayTime, sourceId)
-		local ok, reason = canFire()
-		if not ok then
-			RT.LastSkipReason = reason
-			return false
-		end
-
-		RT.Pending = true
-		task.delay(math.max(0, delayTime + CFG.TimingOffset), function()
-			if not RT.Running then return end
-
-			RT.Pending = false
-			local ready, skipReason = canFire()
-			if not ready then
-				RT.LastSkipReason = skipReason
-				return
-			end
-
-			RT.Firing = true
-			RT.LastFireTime = os.clock()
-			RT.LastAnimationId = sourceId
-			pressKey(CFG.TriggerKey)
-			RT.Firing = false
-		end)
-		return true
-	end
-
-	local function bindAnimator(animator)
-		disconnect("Connection")
-		if not animator then
-			RT.LastSkipReason = "no animator"
-			return false
-		end
-
-		RT.Connection = animator.AnimationPlayed:Connect(function(track)
-			if not CFG.Enabled then return end
-
-			local id = getAnimationId(track)
-			RT.LastAnimationId = id ~= "" and id or "--"
-			local delayTime = AnimationTriggers[id]
-			RT.LastMatched = delayTime ~= nil
-
-			if delayTime then
-				scheduleFire(delayTime, id)
-			elseif CFG.DebugUnknownAnimations and id ~= "" and not RT.UnknownAnimations[id] then
-				RT.UnknownAnimations[id] = true
-				warn("[AutoBlackFlash] Unknown animation id:", id)
-			end
-		end)
-
-		RT.LastSkipReason = "listener ready"
-		return true
-	end
-
-	local function getAnimator(character)
-		if not character then
-			return nil
-		end
-
-		local humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid", CFG.AnimatorWait)
-		if not humanoid then
-			return nil
-		end
-
-		local animator = humanoid:FindFirstChildOfClass("Animator")
-		if animator then
-			return animator
-		end
-
-		local started = os.clock()
-		while RT.Running and character.Parent and os.clock() - started < CFG.AnimatorWait do
-			animator = humanoid:FindFirstChildOfClass("Animator")
-			if animator then
-				return animator
-			end
-			task.wait(0.1)
-		end
-
-		return humanoid:FindFirstChildOfClass("Animator")
-	end
-
-	local function setup(character)
-		disconnect("DescendantConnection")
-		disconnect("Connection")
-
-		if not character then
-			RT.LastSkipReason = "no character"
-			return false
-		end
-
-		RT.Pending = false
-		RT.Firing = false
-
-		local animator = getAnimator(character)
-		if animator then
-			bindAnimator(animator)
-		else
-			RT.LastSkipReason = "waiting for animator"
-		end
-
-		RT.DescendantConnection = character.DescendantAdded:Connect(function(descendant)
-			if descendant:IsA("Animator") then
-				bindAnimator(descendant)
-			end
-		end)
-
-		return animator ~= nil
-	end
-
-	-- JJS: your live body is OFTEN workspace.Characters[you], not player.Character. Same setup(), right rig.
-	local function liveBody()
+	-- hook every animator your body can have (both rigs); re-hook after respawn/character swap
+	local hooked = setmetatable({}, { __mode = "k" })
+	local function hookAll()
+		local bodies = {}
+		if player.Character then bodies[#bodies+1] = player.Character end
 		local chs = workspace:FindFirstChild("Characters")
-		return (chs and chs:FindFirstChild(player.Name)) or player.Character
-	end
-
-	local function reconnect()
-		return setup(liveBody())
-	end
-
-	if player.Character then
-		task.defer(setup, liveBody())
-	end
-
-	RT.CharacterConnection = player.CharacterAdded:Connect(function(character)
-		task.wait(0.25)
-		setup(liveBody() or character)
-	end)
-
-	task.spawn(function()   -- if the rig swaps between LP.Character and workspace.Characters, re-bind to the live one
-		local last
-		while RT.Running do
-			task.wait(1)
-			local b = liveBody()
-			if b and b ~= last then last = b; pcall(setup, b) end
+		local resolved = chs and chs:FindFirstChild(player.Name)
+		if resolved and resolved ~= player.Character then bodies[#bodies+1] = resolved end
+		for _, char in ipairs(bodies) do
+			local hum = char:FindFirstChildOfClass("Humanoid")
+			local animator = hum and hum:FindFirstChildOfClass("Animator")
+			if animator and not hooked[animator] then hooked[animator] = animator.AnimationPlayed:Connect(onAnim) end
 		end
-	end)
+	end
+	task.spawn(function() while true do pcall(hookAll); task.wait(0.5) end end)
+	local function reconnect() hooked = setmetatable({}, { __mode = "k" }); pcall(hookAll); return true end
 
 	BFApi = {
-		SetEnabled = function(value)
-			CFG.Enabled = value == true
-			if not CFG.Enabled then
-				RT.Pending = false
-				RT.Firing = false
-			end
-		end,
-
-		IsEnabled = function()
-			return CFG.Enabled
-		end,
-
-		SetCooldown = function(value)
-			if type(value) == "number" then
-				CFG.Cooldown = math.max(0, value)
-			end
-		end,
-
-		SetTimingOffset = function(value)
-			if type(value) == "number" then
-				CFG.TimingOffset = value
-			end
-		end,
-
-		SetDebugUnknownAnimations = function(value)
-			CFG.DebugUnknownAnimations = value == true
-		end,
-
-		AddTrigger = function(animationId, delayTime)
-			if type(delayTime) ~= "number" then return false end
-			AnimationTriggers[normalizeAnimationId(animationId)] = delayTime
-			return true
-		end,
-
-		RemoveTrigger = function(animationId)
-			AnimationTriggers[normalizeAnimationId(animationId)] = nil
-		end,
-
+		SetEnabled = function(v) enabled = v == true end,
+		IsEnabled = function() return enabled end,
+		SetCooldown = function() end,
+		SetTimingOffset = function(v) if type(v) == "number" then offset = v end end,
+		SetDebugUnknownAnimations = function() end,
+		AddTrigger = function(animationId, delayTime) if type(delayTime) ~= "number" then return false end AnimationTriggers[normalizeAnimationId(animationId)] = delayTime return true end,
+		RemoveTrigger = function(animationId) AnimationTriggers[normalizeAnimationId(animationId)] = nil end,
 		Reconnect = reconnect,
-
-		Status = function()
-			return {
-				enabled = CFG.Enabled,
-				running = RT.Running,
-				pending = RT.Pending,
-				firing = RT.Firing,
-				lastAnimationId = RT.LastAnimationId,
-				lastMatched = RT.LastMatched,
-				lastSkipReason = RT.LastSkipReason,
-				cooldown = CFG.Cooldown,
-				timingOffset = CFG.TimingOffset,
-			}
-		end,
+		Status = function() return { enabled = enabled } end,
 	}
 end
 
@@ -5505,8 +5278,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "5.1"
-local VX_BUILD = "B52"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "5.3"
+local VX_BUILD = "B53"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
