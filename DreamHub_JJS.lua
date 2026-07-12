@@ -4734,16 +4734,26 @@ do
 	local Players = game:GetService("Players")
 	local LP = Players.LocalPlayer
 	ResetApi = { reset = function()
-		-- User spec: KILL me but DON'T respawn, and no camera shake. So: set Health=0 only (a clean death) —
-		-- NO BreakJoints (its ragdoll flings your parts = the camera-shake) and NO LoadCharacter (that respawns you).
+		-- Force Reset that ACTUALLY kills you in JJS (Health=0 alone gets ignored by the custom-health system).
+		-- Try every real kill path: Humanoid.Health=0, the Health attribute/value, the game's own reset request,
+		-- and finally BreakJoints (the guaranteed one) — whatever the game respects, one of these ends you.
 		local chs = workspace:FindFirstChild("Characters")
-		for _, c in ipairs({ chs and chs:FindFirstChild(LP.Name), LP.Character }) do
-			if c then
+		local bodies = {}
+		if chs and chs:FindFirstChild(LP.Name) then bodies[#bodies+1] = chs:FindFirstChild(LP.Name) end
+		if LP.Character then bodies[#bodies+1] = LP.Character end
+		for _, c in ipairs(bodies) do
+			pcall(function()
 				local h = c:FindFirstChildOfClass("Humanoid")
-				if h then pcall(function() h.Health = 0 end) end
-				pcall(function() c:SetAttribute("Health", 0) end)   -- custom-health games also read this
-			end
+				if h then h.Health = 0; h:TakeDamage(1e9) end
+				c:SetAttribute("Health", 0)
+				local hv = c:FindFirstChild("Health")
+				if hv and hv:IsA("ValueBase") then hv.Value = 0 end
+			end)
 		end
+		-- the game's own reset button (many games bind character-reset to this)
+		pcall(function() game:GetService("StarterGui"):SetCore("ResetButtonCallback", true) end)
+		-- guaranteed fallback: break the rig so you die for sure
+		for _, c in ipairs(bodies) do pcall(function() c:BreakJoints() end) end
 	end }
 end
 
@@ -5496,7 +5506,7 @@ end
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
 local VX_VERSION = "5.0"
-local VX_BUILD = "B50"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_BUILD = "B51"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
