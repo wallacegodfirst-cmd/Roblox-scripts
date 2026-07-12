@@ -49,6 +49,9 @@ do
 	local offset = 0        -- BF Timing slider
 
 	local function pressKey(keyCode)
+		-- mark this as our own injected press so other key-3 features (e.g. Auto Earthquake) don't treat the
+		-- Black Flash press as a real player tap and cross-trigger.
+		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[keyCode] = tick() + 0.2
 		VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
 		task.wait(0.09)   -- hold the key a touch (JJS eats instant taps for abilities); this is what makes 3 register
 		VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
