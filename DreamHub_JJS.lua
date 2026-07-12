@@ -1231,7 +1231,7 @@ local function safeTeleport(targetCFrame, holdTime)
 	vxCurrentTargetCF = targetCFrame
 	vxTeleportLock = true
 	hrp.CFrame = targetCFrame
-	task.delay(holdTime or 0.5, function()
+	task.delay(holdTime or 1.2, function()   -- longer hold so the set-back (which can arrive a beat late) is still blocked = TP sticks
 		vxTeleportLock = false
 		vxCurrentTargetCF = nil
 		_G.VX_TP_BLOCK = false            -- let the heartbeat flow again = no timeout kick
@@ -5505,8 +5505,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "5.0"
-local VX_BUILD = "B51"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "5.1"
+local VX_BUILD = "B52"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
@@ -9699,7 +9699,7 @@ do
     -- moves fire, which is what broke 1-4/R/ult. This version never touches the game's remotes.)
     local bfM1On, bfAutoOn = false, false
     local bfClickOffset = 0
-    local bfCount = 2   -- press 3 after this many M1 clicks
+    local bfCount = 1   -- press 3 after this many M1 clicks (1 = every click)
     do
         local UISbf = game:GetService("UserInputService")
         local VIMbf = game:GetService("VirtualInputManager")
@@ -9730,7 +9730,9 @@ do
         -- second path: some executors don't fire InputBegan for M1 while the game sinks clicks; the mouse hook does
         pcall(function() LP:GetMouse().Button1Down:Connect(onClick) end)
     end
-    local function bfSync() if BFApi then BFApi.SetEnabled(bfAutoOn) end end   -- engine = Auto BF only
+    -- M1 BF AND Auto BF both run your verbatim AutoBlackFlash engine (the anim watcher that presses 3 on the
+    -- BF windup anims) — so M1 BF = your exact script running on your character's M1 + the click press below.
+    local function bfSync() if BFApi then BFApi.SetEnabled(bfAutoOn or bfM1On) end end
     bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 BF", "Side Dash", "Back Dash", "Jump", "Teleport", "M1 Chain" } or { "Off", "M1 BF" }), Default = "Off", Callback = function(m)
         m = (type(m) == "table") and m[1] or m
         if not _G.VXBF2 then return end
@@ -9739,7 +9741,7 @@ do
         elseif m == "M1 Chain" then _G.VXBF2.setBFM1(false); _G.VXBF2.setMode("M1"); _G.VXBF2.setEnabled(true)
         else _G.VXBF2.setBFM1(false); _G.VXBF2.setMode(m); _G.VXBF2.setEnabled(true) end
     end })
-    bfSec:Dropdown({ Name = "BF After (M1s)", Items = { "1", "2", "3" }, Default = "2", Callback = function(v) v = (type(v) == "table") and v[1] or v; bfCount = tonumber(v) or 2 end })
+    bfSec:Dropdown({ Name = "BF After (M1s)", Items = { "1", "2", "3" }, Default = "1", Callback = function(v) v = (type(v) == "table") and v[1] or v; bfCount = tonumber(v) or 1 end })
     bfSec:Toggle({ Name = "Auto Black Flash", Default = false, Callback = function(b)
         bfAutoOn = (b == true); bfSync()
         if _G.VXBF2 then _G.VXBF2.setAutoBF(false) end   -- avoid the weaker VXBF2 path double-pressing
