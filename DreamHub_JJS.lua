@@ -971,16 +971,30 @@ local function safeTeleport(targetCFrame, holdTime)
 	isTeleporting = true
 	if hum then pcall(function() hum.PlatformStand = true end) end
 	pcall(function() hrp.AssemblyLinearVelocity = Vector3.new(0,0,0) end)
+	-- Acknowledge the move on the game's OWN anti-cheat remote as we go. The server tracks a legit teleport
+	-- through this; firing it per step is what keeps a fast lerp from reading as a bad jump and getting set back.
+	local function acAck()
+		pcall(function()
+			local k = game:GetService("ReplicatedStorage"):FindFirstChild("Knit")
+			k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
+			local svc = k and k:FindFirstChild("AntiCheatService")
+			local re = svc and svc:FindFirstChild("RE"); re = re and re:FindFirstChild("Teleport")
+			if re then re:FireServer(workspace:GetServerTimeNow()) end
+		end)
+	end
+	acAck()
 	local myHrp = function() local cc = (workspace:FindFirstChild("Characters") and workspace.Characters:FindFirstChild(LP.Name)) or LP.Character; return cc and cc:FindFirstChild("HumanoidRootPart") end
 	local steps = math.ceil(dist / 60)   -- 60 studs per frame = under the server limit, feels instant
 	for i = 1, steps do
 		local h = myHrp(); if not h then break end
 		local currentPos = startPos:Lerp(targetPos, i / steps)
 		pcall(function() h.CFrame = CFrame.new(currentPos, targetPos); h.AssemblyLinearVelocity = Vector3.new(0,0,0) end)
+		acAck()
 		game:GetService("RunService").Heartbeat:Wait()
 	end
 	local h = myHrp()
 	if h then pcall(function() h.CFrame = targetCFrame; h.AssemblyLinearVelocity = Vector3.new(0,0,0) end) end
+	acAck()
 	-- brief hold so we settle exactly on target, then release PlatformStand so you can move
 	vxCurrentTargetCF = targetCFrame; vxTeleportLock = true
 	task.delay(holdTime or 0.4, function()
@@ -9485,7 +9499,10 @@ do
             local RS_bf = game:GetService("RunService")
             local wasDown = false
             RS_bf.RenderStepped:Connect(function()
-                if not bfM1On then wasDown = false; return end
+                -- Stamp the click for BOTH M1 BF and Auto BF. The engine's universal fallback (fire on any
+                -- Action-priority attack anim right after a click) needs this stamp; without it Auto BF only
+                -- caught the handful of hardcoded windup ids and missed most characters' M1 windups.
+                if not (bfM1On or bfAutoOn) then wasDown = false; return end
                 local down = UISbf:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
                 if down and not wasDown and not UISbf:GetFocusedTextBox() then onClick() end
                 wasDown = down

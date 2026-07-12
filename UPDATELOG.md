@@ -36,6 +36,11 @@ JUJUTSU SHENANIGANS - FREE  (finally out after a long wait)
     game remote instead. It fires even when the click is consumed.
   - Earthquake trigger fires on your key press (not release), so there is
     no lag between pressing 3 and the hold starting.
+  - Auto Black Flash now uses the same universal M1 detection as M1 BF, so
+    it fires on every character's M1 windup instead of only a few known
+    animations.
+  - Teleport now acknowledges each step on the game's own anti-cheat
+    channel, so a fast teleport is far less likely to be set back.
   - Method hints removed from labels and source.
 
 note: next update will bring Paid / Plus Jujutsu Shenanigans. just wait.
