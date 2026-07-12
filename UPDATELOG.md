@@ -43,6 +43,9 @@ JUJUTSU SHENANIGANS - FREE  (finally out after a long wait)
     animations.
   - Teleport now acknowledges each step on the game's own anti-cheat
     channel, so a fast teleport is far less likely to be set back.
+  - The TP Step slider is now actually wired to the teleport (it was a
+    dead control before) — lower it if a server still sets you back. The
+    dead "TP Method" dropdown was removed.
   - Method hints removed from labels and source.
 
 note: next update will bring Paid / Plus Jujutsu Shenanigans. just wait.

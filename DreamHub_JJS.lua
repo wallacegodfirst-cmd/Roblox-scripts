@@ -887,9 +887,10 @@ end
 local function vxClaimOwnership() end
 _G.VX_CLAIMOWN = vxClaimOwnership
 -- Shared anti-setback teleport BYPASS: JJS snaps you back if a single frame moves you faster than
--- maxSpeed*dt, so instead of one big jump we glide to the target in capped per-frame steps that stay
--- under that limit. Lower VX_TP_SPEED (TP Speed slider) if you still get set back.
-local VX_TP_SPEED = 130   -- studs/sec for the glide (80 was so slow a far spot took 6+s = felt like 'nothing happened'; drop the slider if you get set back)
+-- maxSpeed*dt, so instead of one big jump we step to the target in capped per-frame hops that stay under
+-- that limit. VX_TP_SPEED is the studs-per-frame step and safeTeleport reads it directly, so lowering the
+-- TP Step slider genuinely makes the teleport gentler if a server still sets you back.
+local VX_TP_SPEED = 60   -- studs PER FRAME (was a dead 'studs/sec' value the stepped teleport ignored). 60 feels instant and clears the per-frame check on public servers; drop it if you still get set back.
 -- game updates -> teleports set back). Try the known path first, else search for any RemoteEvent named
 local vxACRemote = nil
 local vxACStamp = 0
@@ -987,7 +988,8 @@ local function safeTeleport(targetCFrame, holdTime)
 	end
 	acAck()
 	local myHrp = function() local cc = (workspace:FindFirstChild("Characters") and workspace.Characters:FindFirstChild(LP.Name)) or LP.Character; return cc and cc:FindFirstChild("HumanoidRootPart") end
-	local steps = math.ceil(dist / 60)   -- 60 studs per frame = under the server limit, feels instant
+	local perFrame = math.clamp(tonumber(VX_TP_SPEED) or 60, 15, 150)   -- the TP Step slider: lower it if a server still sets you back
+	local steps = math.ceil(dist / perFrame)   -- capped studs per frame = under the server limit, feels instant
 	for i = 1, steps do
 		local h = myHrp(); if not h then break end
 		local currentPos = startPos:Lerp(targetPos, i / steps)
@@ -9797,8 +9799,7 @@ do
     local locSec = tpSub:Section({ Name = "Locations", Side = 1 })
     if TPApi and TPApi.spotNames then for _, n in ipairs(TPApi.spotNames()) do locSec:Button({ Name = n, Callback = function() if TPApi then TPApi.spot(n) end end }) end end
     local quickSec = tpSub:Section({ Name = "Quick", Side = 2 })
-    quickSec:Dropdown({ Name = "TP Method", Items = { "Instant", "Glide", "Auto" }, Default = "Instant", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
-    quickSec:Slider({ Name = "TP Speed", Min = 16, Max = 400, Default = 130, Decimals = 0, Callback = function(v) if TPApi then TPApi.setSpeed(v) end end })
+    quickSec:Slider({ Name = "TP Step (lower if set back)", Min = 15, Max = 120, Default = 60, Decimals = 0, Callback = function(v) if TPApi then TPApi.setSpeed(v) end end })
     quickSec:Button({ Name = "Print TP Remote", Callback = function()
         local RS = game:GetService("ReplicatedStorage"); local found = 0
         for _, d in ipairs(RS:GetDescendants()) do
