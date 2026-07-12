@@ -1350,7 +1350,8 @@ local function pinHud()
 			end
 		end
 	end
-	pinOne(CFG.InfFood,   {"Food","Hunger"})
+	-- do NOT pin the FOOD hud bar to full: a full bar (real or displayed) makes the game reject every eat, so
+	-- you could never eat/grow. Auto-eat keeps real food topped up; the bar reflects that.
 	pinOne(CFG.InfWater,  {"Water","Thirst"})
 	pinOne(CFG.InfStam,   {"Stamina","Stam","Energy"})
 	pinOne(CFG.InfOxygen, {"Oxygen","Air","Breath"})
@@ -1748,7 +1749,9 @@ conn(RunService.Heartbeat:Connect(function()
 				-- Pin to the REAL max only (never inflate past it — writing 1000 to a 50-max stat made the server
 				-- fight every write = the snapback/slowness). If max is unknown, leave it (the deep-walk handles it).
 				if CFG.InfStam   and stats.Stamina ~= nil and maxs and maxs.Stamina then stats.Stamina = maxs.Stamina end
-				if CFG.InfFood   and stats.Food    ~= nil and maxs and maxs.Food    then stats.Food    = maxs.Food    end
+				-- FOOD: only top up when it drops LOW (anti-starve). Pinning it to full made the game think you were
+				-- full and REJECT every eat (manual E + auto), so you could never eat/grow. Leave headroom to eat.
+				if CFG.InfFood   and stats.Food    ~= nil and maxs and maxs.Food and tonumber(stats.Food) and tonumber(stats.Food) < maxs.Food*0.35 then stats.Food = maxs.Food*0.7 end
 				if CFG.InfWater  and stats.Water   ~= nil and maxs and maxs.Water   then stats.Water   = maxs.Water   end
 				if CFG.InfOxygen and stats.Oxygen  ~= nil and maxs and maxs.Oxygen  then stats.Oxygen  = maxs.Oxygen  end
 				if CFG.GodMode   and stats.Health  ~= nil and maxs and maxs.Health  then stats.Health  = maxs.Health  end
@@ -1769,7 +1772,11 @@ conn(RunService.Heartbeat:Connect(function()
 					if mx then for _,k in ipairs(keys) do if type(CharacterState[k])=="number" then CharacterState[k]=mx end end end
 				end
 				topPin(CFG.InfStam, {"Stamina","Stam","Energy","Endurance"}, {"MaxStamina","MaxStam","MaxEnergy"})
-				topPin(CFG.InfFood, {"Food","Hunger","Nutrition"}, {"MaxFood","MaxHunger","MaxNutrition"})
+				-- FOOD: top up only when LOW (leave room to eat/grow), not pin-to-full which blocked eating.
+				if CFG.InfFood then
+					local mx; for _,mk in ipairs({"MaxFood","MaxHunger","MaxNutrition"}) do if type(CharacterState[mk])=="number" then mx=CharacterState[mk]; break end end
+					if mx then for _,k in ipairs({"Food","Hunger","Nutrition"}) do if type(CharacterState[k])=="number" and CharacterState[k] < mx*0.35 then CharacterState[k]=mx*0.7 end end end
+				end
 				topPin(CFG.InfWater, {"Water","Thirst","Hydration"}, {"MaxWater","MaxThirst","MaxHydration"})
 			end) end
 		end
@@ -1800,7 +1807,12 @@ conn(RunService.RenderStepped:Connect(function()
 		if stats then
 			if CFG.InfStam   then pin({"Stamina","Stam","Energy","Endurance"}); zero({"Exhaustion","Fatigue","Tired","Exhausted"}) end
 			if CFG.InfOxygen then pin({"Oxygen","Air","Breath","O2","Lung"}) end
-			if CFG.InfFood   then pin({"Food","Hunger","Nutrition","Fullness"}) end
+			-- FOOD: top up only when LOW so eating still works and grows you (pinning to full blocked all eating)
+			if CFG.InfFood then for _,k in ipairs({"Food","Hunger","Nutrition","Fullness"}) do
+				if stats[k]~=nil then local cur=tonumber(stats[k]); local target=(maxs and maxs[k]) or (__gg.MH_max and __gg.MH_max[k])
+					if cur and target and cur < target*0.35 then stats[k]=target*0.7 end
+				end
+			end end
 			if CFG.InfWater  then pin({"Water","Thirst","Hydration"}) end
 			-- (Anti bleed/fracture/break handled by the dedicated PATH-AWARE antiInjurySweep loop below — more thorough.)
 		end
