@@ -54,6 +54,19 @@ note: next update will bring Paid / Plus Jujutsu Shenanigans. just wait.
 PRIOR EXTINCTION - PLUS
 ===================================================================
 
+~ Fixes (this update):
+  - INF Stamina is now separate from any speed boost. It only keeps the
+    stamina bar full and stops the drain — the old sprint speed-keeper
+    that glitched movement and "prevented progress" is gone. Use Speed
+    Hack if you want extra speed.
+  - INF Food no longer glues the food bar to max, which was hiding the
+    eat prompt so you could not hold E to eat. It now uses the original
+    herb method: it fires the eat for you to keep food high while leaving
+    the prompt available, so you can hold E to eat any time.
+  - Every place that touched a food prompt now restores its hold time and
+    range afterward, and the gem/fossil farm no longer sends an E release
+    that cancelled a manual eat.
+
 + New:
   - Auto Play.
   - Pro Food.

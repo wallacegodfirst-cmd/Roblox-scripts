@@ -651,6 +651,10 @@ local function fakeEat()
 	end
 	for _,id in pairs(WATER_IDS) do pcall(function() rs:FireServer(id, "Bite", buf) end) end  -- every land's source id
 	replicaActionAll("Bite", buf)                          -- + every captured source id (use-many-ids)
+	-- RE-CHECK E right before ending the action: the loop above YIELDS (task.wait), so if you started holding E
+	-- during it, the entry guard already passed. Skip the Consuming=false/AnimationEnded finish so we never cut
+	-- off a manual hold-to-eat you began mid-fakeEat.
+	if UIS and UIS:IsKeyDown(Enum.KeyCode.E) then return end
 	replicaFire("SetAction","Consuming",false)             -- dino: stop consuming
 	replicaFire("AnimationEnded","Eat")                    -- dino: finish (food gained)
 end
@@ -1295,7 +1299,8 @@ local function detectDinoModel(model)
 end
 -- Deep stat pinner: walks the WHOLE CharacterState replica and forces matching numeric stats to max.
 STAT_GROUPS = {
-	{cfg="InfFood",   keys={"food","hunger","nutri","fullness","satiat","satiet"}},
+	-- InfFood deliberately absent: pinning the food bar to max hid the eat prompt (you couldn't hold E). Auto-eat
+	-- keeps food up instead. Starvation is still prevented via the STAT_ZERO "starv/hungry" entry below.
 	{cfg="InfWater",  keys={"water","thirst","hydrat","drink","liquid"}},
 	{cfg="InfStam",   keys={"stamina","stam","energy","endur"}},
 	{cfg="InfOxygen", keys={"oxygen","air","breath","o2","lung"}},
@@ -1351,7 +1356,7 @@ local function pinHud()
 			end
 		end
 	end
-	pinOne(CFG.InfFood,   {"Food","Hunger"})
+	-- (food HUD not force-filled — it reflects the real bar so the eat prompt logic stays consistent)
 	pinOne(CFG.InfWater,  {"Water","Thirst"})
 	pinOne(CFG.InfStam,   {"Stamina","Stam","Energy"})
 	pinOne(CFG.InfOxygen, {"Oxygen","Air","Breath"})
@@ -1463,7 +1468,7 @@ do local p=Pages["Survival"]
 	-- (INF Food / INF Water / Carnivore Meat TP / Teleport Back moved to the Growth tab.) Stamina stays here.
 	local _,f=mkSec(p,"Stamina",1)
 	mkToggle(f,"INF Stamina","InfStam",1)
-	mkSlider(f,"INF Stam Run Speed","RunSpeed",12,26,2,1)
+	-- INF Stamina is pure now: it only keeps the bar full, no speed boost attached (use Speed Hack for speed).
 	local _,pr=mkSec(p,"Protection",2)
 	mkToggle(pr,"Anti Drown","AntiDrown",1)
 	mkToggle(pr,"Walk on Water","WalkWater",2)
@@ -1749,7 +1754,9 @@ conn(RunService.Heartbeat:Connect(function()
 				-- Pin to the REAL max only (never inflate past it — writing 1000 to a 50-max stat made the server
 				-- fight every write = the snapback/slowness). If max is unknown, leave it (the deep-walk handles it).
 				if CFG.InfStam   and stats.Stamina ~= nil and maxs and maxs.Stamina then stats.Stamina = maxs.Stamina end
-				if CFG.InfFood   and stats.Food    ~= nil and maxs and maxs.Food    then stats.Food    = maxs.Food    end
+				-- INF Food does NOT pin the food bar (that pins it to max -> the game hides the eat prompt -> you
+				-- can't hold E to eat). Auto-eat below keeps you fed by replaying bites, so food stays high but the
+				-- prompt is always available. (Original herb method.)
 				if CFG.InfWater  and stats.Water   ~= nil and maxs and maxs.Water   then stats.Water   = maxs.Water   end
 				if CFG.InfOxygen and stats.Oxygen  ~= nil and maxs and maxs.Oxygen  then stats.Oxygen  = maxs.Oxygen  end
 				if CFG.GodMode   and stats.Health  ~= nil and maxs and maxs.Health  then stats.Health  = maxs.Health  end
@@ -1770,7 +1777,7 @@ conn(RunService.Heartbeat:Connect(function()
 					if mx then for _,k in ipairs(keys) do if type(CharacterState[k])=="number" then CharacterState[k]=mx end end end
 				end
 				topPin(CFG.InfStam, {"Stamina","Stam","Energy","Endurance"}, {"MaxStamina","MaxStam","MaxEnergy"})
-				topPin(CFG.InfFood, {"Food","Hunger","Nutrition"}, {"MaxFood","MaxHunger","MaxNutrition"})
+				-- (food intentionally NOT pinned — see the note above; auto-eat keeps it up without hiding the eat prompt)
 				topPin(CFG.InfWater, {"Water","Thirst","Hydration"}, {"MaxWater","MaxThirst","MaxHydration"})
 			end) end
 		end
@@ -1801,7 +1808,7 @@ conn(RunService.RenderStepped:Connect(function()
 		if stats then
 			if CFG.InfStam   then pin({"Stamina","Stam","Energy","Endurance"}); zero({"Exhaustion","Fatigue","Tired","Exhausted"}) end
 			if CFG.InfOxygen then pin({"Oxygen","Air","Breath","O2","Lung"}) end
-			if CFG.InfFood   then pin({"Food","Hunger","Nutrition","Fullness"}) end
+			-- (food is NOT pinned here — pinning it to max hid the eat prompt so you couldn't hold E. Auto-eat refills it.)
 			if CFG.InfWater  then pin({"Water","Thirst","Hydration"}) end
 			-- (Anti bleed/fracture/break handled by the dedicated PATH-AWARE antiInjurySweep loop below — more thorough.)
 		end
@@ -2052,36 +2059,14 @@ end
 -- made the server snap you back AND counted as sprinting (which drained stamina, then exhausted = slow when you
 -- toggled off). INF Stam now just suppresses the drain (hook + stat pin), so you move at NORMAL speed, stam full.
 conn(RunService.Heartbeat:Connect(function() if CFG.SpeedHack and alive() and not CFG.Fly then local r=hrp(); if r then local spd=CFG.SpeedVal; local dir=Vector3.zero; local cf=workspace.CurrentCamera and workspace.CurrentCamera.CFrame or CFrame.new() if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end if dir.Magnitude<=0 then local hh=hum(); local md=hh and hh.MoveDirection; if md and md.Magnitude>0 then dir=md end end if dir.Magnitude>0 then dir=Vector3.new(dir.X,0,dir.Z).Unit*spd; r.AssemblyLinearVelocity=Vector3.new(dir.X,r.AssemblyLinearVelocity.Y,dir.Z) end end end end))
--- INF STAM SPEED KEEPER: since we SWALLOW the "Run=true" report (so the server never drains stamina), the server
--- also stops sprinting you = it would rubber-band you to walk speed ("slow"). This re-asserts your sprint speed
--- every frame AFTER replication, so the server can't drag you down. It ONLY pushes you UP to the sprint target and
--- NEVER caps a naturally-faster dino, and only while you're actually moving — so it never fights normal walking.
--- SMOOTH BodyVelocity keeper (the snap fix): swallowing Run makes the server think you walk, so a RAW velocity SET
--- fought the server = the snap-back at higher speeds. A BodyVelocity is a FORCE the PE dino accepts (same as Float/
--- Water), so it holds your sprint speed smoothly with NO snap. X/Z only (Y untouched = gravity/jump still normal);
--- velocity zeroes the instant you release the keys so you stop naturally.
+-- INF STAM IS PURE NOW (per client request): infinite stamina is DECOUPLED from any speed boost. We do NOT
+-- swallow the "Run" report anymore, so the server keeps sprinting you at your real sprint speed on its own —
+-- the old BodyVelocity speed-keeper is therefore unnecessary AND was the thing that glitched movement / "prevented
+-- progress" when combined with the speed-up. INF Stam now only holds the bar full + suppresses the drain (the hook
+-- + the HARD STAMINA PIN below). This loop just makes sure any leftover keeper velocity is removed so nothing
+-- ever drives your movement. If you want extra speed, use the separate Speed Hack toggle.
 conn(RunService.Heartbeat:Connect(function()
-	local keep = CFG.InfStam and alive() and not CFG.SpeedHack and not CFG.Fly
-	local r = keep and hrp() or nil
-	if not r then if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end return end
-	local dir=Vector3.zero; local cf=Cam.CFrame
-	if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end
-	if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end
-	if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end
-	if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end
-	if Vector3.new(dir.X,0,dir.Z).Magnitude<=0 and UIS.TouchEnabled then local hh=hum(); local md=hh and hh.MoveDirection; if md and md.Magnitude>0 then dir+=md end end   -- mobile: thumbstick keeps sprint speed
-	dir=Vector3.new(dir.X,0,dir.Z)
-	-- ensure the BodyVelocity exists (X/Z force only, Y=0 so it never lifts/pins you vertically)
-	local bv=__gg.MH_stamBV
-	if not (bv and bv.Parent==r) then pcall(function() if bv then bv:Destroy() end end); bv=Instance.new("BodyVelocity"); bv.Name="MH_Stam"; bv.MaxForce=Vector3.new(9e9,0,9e9); bv.P=5000; bv.Velocity=Vector3.zero; bv.Parent=r; __gg.MH_stamBV=bv end
-	if dir.Magnitude<=0 then pcall(function() bv.Velocity=Vector3.zero end); return end   -- no input = don't push
-	-- ONLY NUDGE UP when you're slower than target (never OVERRIDE your natural sprint) — forcing a fixed velocity
-	-- every frame is what fought the server = the "keeps sending me back" snapback. Now Run passes through (real
-	-- sprint speed) and this only fills in when you're below target, then RELEASES so nothing fights the server.
-	local target=math.clamp(tonumber(CFG.RunSpeed) or 19, 12, 80)   -- allow higher speeds (was capped at 26 = slider did nothing above it)
-	local v=r.AssemblyLinearVelocity; local curH=math.sqrt(v.X*v.X+v.Z*v.Z)
-	if curH < target-1 then pcall(function() bv.Velocity=dir.Unit*target end)
-	else pcall(function() bv.Velocity=Vector3.zero end) end
+	if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end
 end))
 -- HARD STAMINA PIN (the reference's fix for NOT swallowing Run): slam the stamina value back to its REAL max in ALL
 -- THREE frame phases — RenderStepped (start), Stepped (after physics), Heartbeat (after replication). If the server
@@ -2214,7 +2199,7 @@ task.spawn(function() while RUNNING do task.wait(0.25); if not alive() then cont
 			if CFG.InfOxygen and not (CFG.TurnHack or CFG.Aimbot or CFG.SilentAim or CFG.LockOn) then setHeadAngles(0.36270577982068064, -1.5707963267948966) end end
 	-- (No more per-frame setReplicaProp(...,1000) — that spammed the server with an invalid value every frame. The
 	-- local stat pin + the real eat/Sip actions are what actually refill; the HUD pin keeps the bar visually full.)
-	if CFG.InfFood then pinStat({"hunger","food","fullness","nutri","satiet"},{"Hunger","Food","Nutrition","Fullness"},100) end
+	-- (food is NOT pinned — it hid the eat prompt; auto-eat keeps it up while leaving the prompt usable)
 	if CFG.InfWater then pinStat({"thirst","water","hydrat","drink"},{"Thirst","Water","Hydration"},100) end
 end end)
 -- INF FOOD: eat nearby food IN PLACE (NO teleport). PE eating = look at food + hold E within range; we fire
@@ -2546,8 +2531,9 @@ local function tpToCorpse(part)
 		end
 	end)
 	pcall(function() local m=part:FindFirstAncestorWhichIsA("Model"); local prompt=(m and m:FindFirstChildWhichIsA("ProximityPrompt",true)) or part:FindFirstChildWhichIsA("ProximityPrompt")
-		if prompt then prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(prompt.MaxActivationDistance or 8, 30); prompt.Enabled=true
+		if prompt then local od=prompt.MaxActivationDistance; prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(od or 8, 30); prompt.Enabled=true
 			if fireprox then local oh=prompt.HoldDuration; prompt.HoldDuration=0; fireprox(prompt); prompt.HoldDuration=oh end
+			pcall(function() prompt.MaxActivationDistance=od end)   -- restore native range so your hold-to-eat still works
 		end end)
 	-- (removed the holdKey(E) — pressing/holding E every teleport is what "kept clicking" and locked your controls)
 	task.delay(2.1, function() for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end; pcall(function() if bp then bp:Destroy() end end); carnBusy=false end)
@@ -2698,7 +2684,7 @@ do
 		local m,part,prompt = fd[1],fd[2],fd.prompt
 		if not prompt and m then prompt=m:FindFirstChildWhichIsA("ProximityPrompt",true) end
 		if not prompt and part then local mm=part:FindFirstAncestorWhichIsA("Model"); prompt=mm and mm:FindFirstChildWhichIsA("ProximityPrompt",true) end
-		if prompt then pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(prompt.MaxActivationDistance or 8,30); prompt.HoldDuration=0; if fireprox then fireprox(prompt) end end) end
+		if prompt then pcall(function() local od,oh=prompt.MaxActivationDistance,prompt.HoldDuration; prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(od or 8,30); prompt.HoldDuration=0; if fireprox then fireprox(prompt) end; prompt.MaxActivationDistance=od; prompt.HoldDuration=oh end) end   -- restore so YOUR hold-to-eat still works
 		-- NO E key presses (user: the E spam blocked their own E for the herb). We fire the prompt + Bite remotes
 		-- ONLY, so the food bar fills without the script ever touching E — you press E yourself, once, freely.
 		pcall(fakeEat)
@@ -2709,7 +2695,7 @@ do
 		if not part then return end
 		local m=part:FindFirstAncestorWhichIsA("Model")
 		local prompt=(m and m:FindFirstChildWhichIsA("ProximityPrompt",true)) or part:FindFirstChildWhichIsA("ProximityPrompt")
-		if prompt then pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(prompt.MaxActivationDistance or 8,40); prompt.HoldDuration=0; if fireprox then fireprox(prompt) end end) end
+		if prompt then pcall(function() local od,oh=prompt.MaxActivationDistance,prompt.HoldDuration; prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(od or 8,40); prompt.HoldDuration=0; if fireprox then fireprox(prompt) end; prompt.MaxActivationDistance=od; prompt.HoldDuration=oh end) end   -- restore so YOUR hold-to-eat still works
 		pcall(fakeEat)   -- captured Bite remotes — fills the bar without pressing E
 	end
 	-- FULL → walk in a CIRCLE using the real W/A/S/D keys (native movement, no velocity snap). We press the WASD combo
@@ -2770,10 +2756,10 @@ task.spawn(function() while RUNNING do
 					if not last or tick()-last>2 then
 						FARM.tried[kk]=tick()
 						-- SAVE + RESTORE HoldDuration (leaving it at 0 permanently broke your manual hold-to-eat).
-						local oh=prompt.HoldDuration
+						local oh=prompt.HoldDuration; local od=prompt.MaxActivationDistance
 						pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=9999; prompt.HoldDuration=0 end)
 						if fireprox then pcall(function() fireprox(prompt) end) end   -- fire the prompt = one clean eat, no E press
-						pcall(function() prompt.HoldDuration=oh end)
+						pcall(function() prompt.HoldDuration=oh; prompt.MaxActivationDistance=od end)   -- restore BOTH so your hold-to-eat still works
 					end
 					break  -- nearest only
 				end
@@ -3265,15 +3251,20 @@ local function runFarm(enabledKey, kind, rangeKey)
 						local done=false
 						local tconn; if prompt then pcall(function() tconn=prompt.Triggered:Connect(function() done=true end) end) end
 						local me=hrp(); local bp; pcall(function() if me then bp=Instance.new("BodyPosition"); bp.MaxForce=Vector3.new(9e9,9e9,9e9); bp.P=2e4; bp.D=2500; bp.Position=me.Position; bp.Parent=me end end)
-						if prompt then pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=1e9; prompt.KeyboardKeyCode=Enum.KeyCode.E; prompt.Enabled=true end) end
+						local od,ol,okc,oen
+						if prompt then pcall(function() od,ol,okc,oen=prompt.MaxActivationDistance,prompt.RequiresLineOfSight,prompt.KeyboardKeyCode,prompt.Enabled; prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=1e9; prompt.KeyboardKeyCode=Enum.KeyCode.E; prompt.Enabled=true end) end
 						if prompt and fireprox then pcall(function() fireprox(prompt) end) end
-						pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game) end)   -- hold E the whole channel (backup for no-fireprox)
+						-- raw E is only a fallback for no-fireprox executors, and ONLY when you are not physically holding E,
+						-- so a running farm never injects a key-up that cancels your manual hold-to-eat.
+						local eManual=false; pcall(function() eManual=UIS:IsKeyDown(Enum.KeyCode.E) end)
+						if not eManual then pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game) end) end
 						if FARM.dig and FARM.dig.Parent then pcall(function() fireRemoteMulti(FARM.dig, holder) end) end
 						local t0=tick()
 						while CFG[enabledKey] and tick()-t0<hold+2 and holder.Parent and part.Parent and not done do task.wait(0.15) end
-						pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game) end)
+						if not eManual then pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game) end) end
 						if tconn then pcall(function() tconn:Disconnect() end) end
 						if prompt and fireprox then pcall(function() fireprox(prompt) end) end   -- backup: complete it now
+						if prompt then pcall(function() prompt.MaxActivationDistance=od; prompt.RequiresLineOfSight=ol; prompt.KeyboardKeyCode=okc; prompt.Enabled=oen end) end   -- restore native prompt state
 						pcall(function() if bp then bp:Destroy() end end)
 						if done or not (part and part.Parent) then FARM.count[kind]=(FARM.count[kind] or 0)+1; FARM.tried[holder]=nil end
 						-- SLOW cadence for fossils (you asked for it): pause between each fossil so it collects one at a
