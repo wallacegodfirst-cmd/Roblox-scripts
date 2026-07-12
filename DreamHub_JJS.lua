@@ -9523,6 +9523,13 @@ do
         elseif m == "M1 Chain" then _G.VXBF2.setBFM1(false); _G.VXBF2.setMode("M1"); _G.VXBF2.setEnabled(true)
         else _G.VXBF2.setBFM1(false); _G.VXBF2.setMode(m); _G.VXBF2.setEnabled(true) end
     end })
+    -- M1 BF as a direct TOGGLE too: the Mode dropdown callback is flaky on this UI lib (that is why Feint M1
+    -- is a toggle), so selecting "M1 BF" from the dropdown sometimes never fired and M1 BF stayed off. This
+    -- toggle always fires, so it is the reliable way to turn M1 Black Flash on.
+    bfSec:Toggle({ Name = "M1 Black Flash", Default = false, Callback = function(b)
+        bfM1On = (b == true); bfSync()
+        if _G.VXBF2 then _G.VXBF2.setBFM1(bfM1On) end
+    end })
     _G.VX_BF_AFTER = 1
     bfSec:Dropdown({ Name = "BF After (M1s)", Items = { "1", "2", "3" }, Default = "1", Callback = function(v) v = (type(v) == "table") and v[1] or v; bfCount = tonumber(v) or 1; _G.VX_BF_AFTER = bfCount end })
     bfSec:Toggle({ Name = "Auto Black Flash", Default = false, Callback = function(b)

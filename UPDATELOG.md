@@ -36,6 +36,8 @@ JUJUTSU SHENANIGANS - FREE  (finally out after a long wait)
     game remote instead. It fires even when the click is consumed.
   - Earthquake trigger fires on your key press (not release), so there is
     no lag between pressing 3 and the hold starting.
+  - M1 Black Flash is now its own toggle (not only a Mode dropdown entry).
+    The dropdown could silently fail to turn it on; the toggle always does.
   - Auto Black Flash now uses the same universal M1 detection as M1 BF, so
     it fires on every character's M1 windup instead of only a few known
     animations.
