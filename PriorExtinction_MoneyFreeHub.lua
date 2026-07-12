@@ -2755,28 +2755,37 @@ task.spawn(function() while RUNNING do
 		-- ORIGINAL METHOD (your fix): auto-eat = DIRECTLY FIRE the nearest plant/corpse ProximityPrompt.
 		-- No E key press at all (so your manual E is never blocked), and NO food-bar pin (so the game never
 		-- thinks you're full and blocks growth). Scans the whole map for the plant list + any eat prompt.
-		fakeEat()   -- replay a captured bite (fills bar); harmless, presses no keys
-		local me=hrp(); local list=nearbyFood(CFG.FoodEatRange)
-		if me then for _,fd in ipairs(list) do
-			local m,r,prompt=fd[1],fd[2],fd.prompt
-			if not prompt and m then prompt=m:FindFirstChildWhichIsA("ProximityPrompt",true) end
-			if prompt and r and r.Parent and dist(me.Position,r.Position)<=math.min(CFG.FoodEatRange,60) then
-				local kk="food_"..tostring(prompt); local last=FARM.tried[kk]
-				if not last or tick()-last>2 then
-					FARM.tried[kk]=tick()
-					pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=9999; prompt.HoldDuration=0 end)
-					if fireprox then pcall(function() fireprox(prompt) end) end   -- fire the prompt = one clean eat, no E press
+		-- BACK OFF while YOU are holding E to eat: firing fakeEat (SetAction Consuming=false) or re-firing the
+		-- prompt mid-hold cancels YOUR manual eat. If E is down, do nothing this pass so your hold completes.
+		local eHeld = false; pcall(function() eHeld = UIS:IsKeyDown(Enum.KeyCode.E) end)
+		if not eHeld then
+			fakeEat()   -- replay a captured bite (fills bar); harmless, presses no keys
+			local me=hrp(); local list=nearbyFood(CFG.FoodEatRange)
+			if me then for _,fd in ipairs(list) do
+				local m,r,prompt=fd[1],fd[2],fd.prompt
+				if not prompt and m then prompt=m:FindFirstChildWhichIsA("ProximityPrompt",true) end
+				if prompt and r and r.Parent and dist(me.Position,r.Position)<=math.min(CFG.FoodEatRange,60) then
+					local kk="food_"..tostring(prompt); local last=FARM.tried[kk]
+					if not last or tick()-last>2 then
+						FARM.tried[kk]=tick()
+						-- SAVE + RESTORE HoldDuration (leaving it at 0 permanently broke your manual hold-to-eat).
+						local oh=prompt.HoldDuration
+						pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=9999; prompt.HoldDuration=0 end)
+						if fireprox then pcall(function() fireprox(prompt) end) end   -- fire the prompt = one clean eat, no E press
+						pcall(function() prompt.HoldDuration=oh end)
+					end
+					break  -- nearest only
 				end
-				break  -- nearest only
-			end
-		end end
+			end end
+		end
 		task.wait(0.4)
 	else task.wait(0.4) end
 end end)
 task.spawn(function() while RUNNING do
 	if CFG.InfWater and alive() then
 		fakeDrink()                       -- the captured "Sip" action (works at a water source)
-		holdKey(Enum.KeyCode.E, 0.3)      -- drinking is also hold-E at water; harmless elsewhere
+		local eHeld2 = false; pcall(function() eHeld2 = UIS:IsKeyDown(Enum.KeyCode.E) end)
+		if not eHeld2 then holdKey(Enum.KeyCode.E, 0.3) end   -- don't fight your own E-hold (was interrupting manual eat while INF Water on)
 		task.wait(0.6)
 	else task.wait(0.4) end
 end end)
