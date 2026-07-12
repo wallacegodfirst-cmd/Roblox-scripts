@@ -2836,7 +2836,24 @@ if _G.AA_PLUS then
 CombatTab:CreateToggle({Name="God Mode", CurrentValue=false, Flag="GodModeLobby", Callback=function(v)
     S.GodMode=v
     if not v then return end
-    pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "God Mode", Text = "Must be in the LOBBY. Reset first, then turn this on.", Duration = 5 }) end)
+    -- only warn if they are NOT already in the lobby (far from the arena map). In the lobby = no notification.
+    local function inLobby()
+        local gm = Workspace:FindFirstChild("GameMap"); if not gm then return true end
+        local root = getRoot(); if not root then return true end
+        local nearest, n = math.huge, 0
+        for _, d in ipairs(gm:GetDescendants()) do
+            if d:IsA("BasePart") then
+                local dd = (d.Position - root.Position).Magnitude
+                if dd < nearest then nearest = dd end
+                if nearest < 300 then return false end
+                n = n + 1; if n > 400 then break end
+            end
+        end
+        return nearest > 300
+    end
+    if not inLobby() then
+        pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "God Mode", Text = "Must be in the LOBBY. Reset first, then turn this on.", Duration = 5 }) end)
+    end
     task.spawn(function()
         local root = getRoot(); if not root then return end
         local dest
