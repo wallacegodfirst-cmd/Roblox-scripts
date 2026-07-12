@@ -76,32 +76,30 @@ if not _G.VX_AC_HOOKED then
 	end)
 
 	-- 3. Disable Local Anti-Cheat Scripts
-	task.spawn(function()
-		local function disableScripts(parent)
-			if not parent then return end
-			for _, v in ipairs(parent:GetDescendants()) do
-				if v:IsA("LocalScript") then
-					local name = v.Name:lower()
-					if name:find("anti") or name:find("cheat") or name:find("detect") then
-						pcall(function()
-							v.Disabled = true
-							v.Parent = nil -- Destroy to prevent restart
-						end)
-					end
+	local function disableScripts(parent)
+		if not parent then return end
+		for _, v in ipairs(parent:GetDescendants()) do
+			if v:IsA("LocalScript") then
+				local name = v.Name:lower()
+				if name:find("anti") or name:find("cheat") or name:find("detect") then
+					pcall(function()
+						v.Disabled = true
+						v.Parent = nil -- Destroy to prevent restart
+					end)
 				end
 			end
 		end
-
-		local function disableAll()
-			if LP:FindFirstChild("PlayerScripts") then disableScripts(LP.PlayerScripts) end
-			if LP:FindFirstChild("Character") then disableScripts(LP.Character) end
-			disableScripts(game:GetService("StarterPlayer"):FindFirstChild("StarterPlayerScripts"))
-		end
-
-		disableAll()
-		task.wait(2) -- Wait for Knit to fully load
-		disableAll()
-	end)
+	end
+	local function disableAll()
+		if LP:FindFirstChild("PlayerScripts") then disableScripts(LP.PlayerScripts) end
+		if LP:FindFirstChild("Character") then disableScripts(LP.Character) end
+		disableScripts(game:GetService("StarterPlayer"):FindFirstChild("StarterPlayerScripts"))
+	end
+	-- RUN IT SYNCHRONOUSLY, RIGHT NOW, BEFORE the rest of the 11k-line hub loads. The old task.spawn version
+	-- got starved: the hub loads synchronously and blocks the scheduler, so the disable didn't run until AFTER
+	-- everything loaded — long enough for the anti-cheat detector to 267-kick you. This kills it up front.
+	disableAll()
+	task.spawn(function() task.wait(2); disableAll() end)   -- second pass later for anything that respawned
 
 	print("[JJS Bypass] Loaded: Kick Blocked & Anti-Cheat Disabled!")
 end
@@ -5508,8 +5506,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "4.7"
-local VX_BUILD = "B47"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "4.8"
+local VX_BUILD = "B48"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)

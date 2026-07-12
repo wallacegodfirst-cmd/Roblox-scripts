@@ -81,33 +81,28 @@ if not _G.VX_AC_HOOKED then
 		setreadonly(mt, true)
 	end)
 
-	-- 3. Disable Local Anti-Cheat Scripts
-	task.spawn(function()
-		local function disableScripts(parent)
-			if not parent then return end
-			for _, v in ipairs(parent:GetDescendants()) do
-				if v:IsA("LocalScript") then
-					local name = v.Name:lower()
-					if name:find("anti") or name:find("cheat") or name:find("detect") then
-						pcall(function()
-							v.Disabled = true
-							v.Parent = nil -- Destroy to prevent restart
-						end)
-					end
+	-- 3. Disable Local Anti-Cheat Scripts — SYNCHRONOUS, before the download even starts
+	local function disableScripts(parent)
+		if not parent then return end
+		for _, v in ipairs(parent:GetDescendants()) do
+			if v:IsA("LocalScript") then
+				local name = v.Name:lower()
+				if name:find("anti") or name:find("cheat") or name:find("detect") then
+					pcall(function()
+						v.Disabled = true
+						v.Parent = nil -- Destroy to prevent restart
+					end)
 				end
 			end
 		end
-
-		local function disableAll()
-			if LP:FindFirstChild("PlayerScripts") then disableScripts(LP.PlayerScripts) end
-			if LP:FindFirstChild("Character") then disableScripts(LP.Character) end
-			disableScripts(game:GetService("StarterPlayer"):FindFirstChild("StarterPlayerScripts"))
-		end
-
-		disableAll()
-		task.wait(2) -- Wait for Knit to fully load
-		disableAll()
-	end)
+	end
+	local function disableAll()
+		if LP:FindFirstChild("PlayerScripts") then disableScripts(LP.PlayerScripts) end
+		if LP:FindFirstChild("Character") then disableScripts(LP.Character) end
+		disableScripts(game:GetService("StarterPlayer"):FindFirstChild("StarterPlayerScripts"))
+	end
+	disableAll()
+	task.spawn(function() task.wait(2); disableAll() end)
 
 	print("[JJS Bypass] Loaded: Kick Blocked & Anti-Cheat Disabled!")
 end
