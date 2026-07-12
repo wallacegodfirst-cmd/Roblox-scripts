@@ -1393,9 +1393,14 @@ do
 			local f = workspace:FindFirstChild(nm)
 			if f and #f:GetChildren() > 0 then _itemsF = f; return f end
 		end
-		-- JJS: throwable items (Trash / TNT / etc) live under workspace.Destructible.Throwable
-		local d = workspace:FindFirstChild("Destructible"); local t = d and d:FindFirstChild("Throwable")
-		if t and #t:GetChildren() > 0 then _itemsF = t; return t end
+		-- JJS: throwable items (Trash / TNT / etc) live under workspace.Map.Destructible.Throwable
+		-- (your explorer). Also check workspace.Destructible.Throwable in case a map has no Map wrapper.
+		for _, base in ipairs({ workspace:FindFirstChild("Map"), workspace }) do
+			if base then
+				local d = base:FindFirstChild("Destructible"); local t = d and d:FindFirstChild("Throwable")
+				if t and #t:GetChildren() > 0 then _itemsF = t; return t end
+			end
+		end
 		return workspace:FindFirstChild("Items")
 	end
 	local function itemPart(m)
@@ -1547,14 +1552,22 @@ do
     local function grabNearestItem(filter)   -- pick up an item (filter name or "Any"), returns true if grabbed
         local hrp = myHRP(); if not hrp then return false end
         local best, bd
-        for _, fn in ipairs({ "Items", "Drops", "Loot", "Destructible" }) do
-            local f = workspace:FindFirstChild(fn)
-            if f then for _, m in ipairs(f:GetDescendants()) do
+        -- roots to search: the resolved items folder (Map.Destructible.Throwable) FIRST, then common fallbacks
+        local roots = {}
+        local okF, itF = pcall(itemsFolder); if okF and itF then roots[#roots+1] = itF end
+        local mp = workspace:FindFirstChild("Map")
+        for _, base in ipairs({ mp, workspace }) do
+            if base then for _, fn in ipairs({ "Destructible", "Throwable", "Items", "Drops", "Loot" }) do
+                local f = base:FindFirstChild(fn); if f then roots[#roots+1] = f end
+            end end
+        end
+        for _, f in ipairs(roots) do
+            for _, m in ipairs(f:GetDescendants()) do
                 if (m:IsA("Model") or m:IsA("BasePart")) and (filter == "Any" or filter == nil or m.Name == filter) then
                     local part = m:IsA("BasePart") and m or partOf(m)
                     if part then local d = (part.Position - hrp.Position).Magnitude; if not bd or d < bd then best, bd = m, d end end
                 end
-            end end
+            end
             if best then break end
         end
         if not best then return false end
@@ -5482,8 +5495,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "4.9"
-local VX_BUILD = "B49"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "5.0"
+local VX_BUILD = "B50"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
@@ -9688,19 +9701,24 @@ do
                 VIMbf:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
             end)
         end
-        local m1s, lastM1 = 0, 0
-        UISbf.InputBegan:Connect(function(input, gpe)
+        local m1s, lastM1, lastCount = 0, 0, 0
+        local function onClick()
             if not bfM1On then return end
-            if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-            if UISbf:GetFocusedTextBox() then return end
-            if tick() - lastM1 > 2.5 then m1s = 0 end   -- new combo if you stopped clicking
+            if tick() - lastCount < 0.06 then return end   -- both detection paths may fire for one click; debounce
+            lastCount = tick()
+            if tick() - lastM1 > 2.5 then m1s = 0 end       -- new combo if you stopped clicking
             lastM1 = tick()
             m1s = m1s + 1
             if m1s >= bfCount then
                 m1s = 0
                 task.delay(math.max(0, 0.12 + bfClickOffset), press3)
             end
+        end
+        UISbf.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 and not UISbf:GetFocusedTextBox() then onClick() end
         end)
+        -- second path: some executors don't fire InputBegan for M1 while the game sinks clicks; the mouse hook does
+        pcall(function() LP:GetMouse().Button1Down:Connect(onClick) end)
     end
     local function bfSync() if BFApi then BFApi.SetEnabled(bfAutoOn) end end   -- engine = Auto BF only
     bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 BF", "Side Dash", "Back Dash", "Jump", "Teleport", "M1 Chain" } or { "Off", "M1 BF" }), Default = "Off", Callback = function(m)
