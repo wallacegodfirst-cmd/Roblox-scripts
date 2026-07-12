@@ -629,6 +629,7 @@ end
 -- fire the Bite to ALL of them every tick = works on every land. Buffer captured = "\027\206\000\000\001".
 EAT_BUFFER = "\027\206\000\000\001"
 local function fakeEat()
+	if UIS and UIS:IsKeyDown(Enum.KeyCode.E) then return end   -- CENTRAL GUARD: never cancel YOUR manual E-hold eat (any caller)
 	local rs=getReplicaSignal(); if not rs then return end
 	replicaFire("SetAction","Consuming",true)              -- dino: start eating
 	-- ID-FREE: fire the eat Bite to MANY source ids so the right one always lands, no matter the land:
@@ -3611,7 +3612,8 @@ task.spawn(function()
 					if botNearWater() then
 						BOT.goal=nil                              -- at water: stand + sip
 						BOT.waterPos=me.Position                  -- remember this watering hole
-						holdKey(Enum.KeyCode.E, 0.3)
+						local ebd=false; pcall(function() ebd=UIS:IsKeyDown(Enum.KeyCode.E) end)
+						if not ebd then holdKey(Enum.KeyCode.E, 0.3) end   -- never steal your manual E-hold
 					elseif BOT.waterPos then
 						BOT.goal=BOT.waterPos                     -- walk back to the known water
 					else
@@ -3630,7 +3632,8 @@ task.spawn(function()
 							if fprompt then
 								pcall(function() local oh=fprompt.HoldDuration; fprompt.RequiresLineOfSight=false; fprompt.HoldDuration=0; if fireprox then fireprox(fprompt) end; fprompt.HoldDuration=oh end)
 							end
-							holdKey(Enum.KeyCode.E, 0.6)
+							local ebe=false; pcall(function() ebe=UIS:IsKeyDown(Enum.KeyCode.E) end)
+							if not ebe then holdKey(Enum.KeyCode.E, 0.6) end   -- never steal your manual E-hold
 						else
 							BOT.goal=fpart.Position; BOT.target=fm
 						end
