@@ -1,68 +1,69 @@
 DREAM HUB - UPDATE LOG
 
 ===================================================================
-JUJUTSU SHENANIGANS  (DreamHub_JJS / Free + Plus + VIP)   build B54
+JUJUTSU SHENANIGANS - FREE  (finally out after a long wait)
 ===================================================================
 
-+ New:
-  - Black Flash engine rebuilt to the clean anim-driven version: presses 3 the
-    instant a Black Flash windup animation plays, instant key press, no delay.
-  - M1 BF now runs the Black Flash engine AND fires on your click. Default is
-    every click (BF After = 1).
-  - Auto Earthquake is fully automatic: near a player or dummy it presses 3,
-    holds it 2 seconds, then releases. Quake Hold and Quake Range sliders.
-  - Gojo TP Back is configurable: Q Dash or After N M1s, with a Back Lock Time.
-    It locks the target's back for a moment, then presses R, R and teleports.
-  - Auto Rika Down Slam: near a player or dummy it down slams them.
-  - Settings: Background Color, Background Image ID, Text Font, Text Color,
-    Sound with a Click Sound picker (Keyboard, Goku Scream, Jesus, 67, Money)
-    and a Custom Sound ID box.
-  - Tab icons matched to the Ability Arena set so every tab is distinct.
++ NEW GAME ADDED: Jujutsu Shenanigans (Dream Hub Free). After a long time in
+  the works, the Free build is finally here, and it is loaded.
+
++ Features (15+ and more inside):
+  - M1 Black Flash: on your M1 it presses 3 for you = the flash.
+  - Auto Black Flash: presses 3 on the Black Flash windup automatically.
+  - Auto Earthquake: near a player or dummy it presses 3, holds 2 seconds,
+    then releases. Quake Hold and Quake Range sliders.
+  - Gojo TP Back: Q Dash or After N M1s, locks the back then R, R and teleport.
+  - Auto Rika Down Slam near a player or dummy.
+  - Auto Slam / Uppercut, Auto Air, Auto Domain Adapt.
+  - Feint M1 and Feint Abilities.
+  - Teleport: named locations, teleport to any player, save and go slots,
+    up / spawn / nearest, anti-cheat bypass so it sticks in public servers.
+  - Force Reset with no respawn and no camera shake.
+  - Movement: Fly, Speed, Infinite Jump, No Dash Cooldown, Auto Parkour.
+  - Auto Farm, Auto Grab items, Auto Train, Drink Low HP.
+  - Target profile lookup, Bring Item To User, Throw Trash At User.
+  - Anti Ragdoll, Anti Stun, Anti Domain, Anti Counter, Auto Counter.
+  - Full ESP: chams, names, health, distance, boxes, tracers.
+  - Settings: background color, background image, text font and color, and a
+    Sound pack (Keyboard, Goku Scream, Jesus, 67, Money) plus custom sound id.
 
 ~ Fixes:
-  - Teleport reworked to the anti-cheat bypass method: blocks the set-back
-    remote only during a teleport and never removes the anti-cheat scripts, so
-    it no longer times you out. Teleport now sticks in public servers.
-  - Load kick fixed: the anti-cheat is no longer disabled at load, which was
-    causing a server-side 267 kick a few seconds after loading.
-  - M1 BF click detection: the game sinks the M1 click so it was not being
-    caught. Now a per-frame mouse poll catches the click even when the game
-    consumes it.
-  - Force Reset kills you without a respawn and without the camera shake.
-  - Method hints removed from the labels and source so the tricks are not
-    exposed.
+  - Load kick fixed: the anti-cheat is no longer disabled at load.
+  - Teleport now sticks in public servers.
+  - M1 detection: the game sinks the M1 click, so M1 is now detected by the
+    game remote instead. It fires even when the click is consumed.
+  - Method hints removed from labels and source.
+
+note: next update will bring Paid / Plus Jujutsu Shenanigans. just wait.
 
 ===================================================================
-ABILITY ARENA  (AbilityArena_CozyHub Free / AbilityArena_PLUS)
+PRIOR EXTINCTION - PLUS
 ===================================================================
 
 + New:
-  - Combat Pro: Legit Auto Play (holds W, dashes back on an enemy M1, then
-    fights), Auto Dodge (detects enemy M1s by arm velocity and animation, then
-    teleports you left or right), Instant 1v1 Win (front or back combo), and a
-    stronger Aura M1.
-  - God Mode is now Plus only. It teleports you onto a Map spawn from the lobby
-    so you can not be hurt. A bottom-right notice shows only when you are not
-    already in the lobby.
-  - Separate Plus build (AbilityArena_PLUS) that adds God Mode on top of Free.
-
-~ Fixes:
-  - Fling and the click features no longer silently blocked by invisible full
-    screen frames; the menu-hit check now only counts real visible panels.
-  - Removed Fling Punch, One Punch, and the M1 hitbox expander.
-  - Method hints removed from the toggle names.
-
-===================================================================
-PRIOR EXTINCTION  (PE_Plus_Loader / PE_NoFood_Loader)
-===================================================================
-
-+ New:
-  - Fossil Collect Delay slider so Auto Farm Fossil collects at a calm pace
-    instead of blinking node to node.
-  - Ecosystem Teleport lists the biomes loaded around you and teleports to any.
+  - Auto Play.
+  - Pro Food.
+  - Corpse TP Food.
+  - Fossil Collect Delay slider so Auto Farm Fossil collects at a calm pace.
+  - Ecosystem Teleport lists the biomes loaded around you.
 
 ~ Fixes:
   - Auto Farm Fossil now matches Fossil, FossilS, FossilM and FossilL parts
-    under workspace.SpawnedFossils (it was only matching FossilS, so it skipped
-    most fossils).
+    under workspace.SpawnedFossils (was only FossilS, so it skipped most).
   - Auto fossil collects slow, not fast.
+
+===================================================================
+ABILITY ARENA  (Free / Plus)
+===================================================================
+
++ New:
+  - Combat Pro: Legit Auto Play, Auto Dodge, Instant 1v1 Win (front or back),
+    stronger Aura M1.
+  - God Mode is Plus only; teleports you onto a Map spawn from the lobby. A
+    bottom-right notice shows only when you are not already in the lobby.
+  - Separate Plus build.
+
+~ Fixes:
+  - Fling and click features no longer blocked by invisible fullscreen frames.
+  - Removed Fling Punch, One Punch, and the M1 hitbox expander.
+  - Method hints removed from the toggle names.
