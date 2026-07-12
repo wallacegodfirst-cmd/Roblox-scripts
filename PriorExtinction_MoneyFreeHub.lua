@@ -2691,7 +2691,8 @@ do
 		if not prompt and m then prompt=m:FindFirstChildWhichIsA("ProximityPrompt",true) end
 		if not prompt and part then local mm=part:FindFirstAncestorWhichIsA("Model"); prompt=mm and mm:FindFirstChildWhichIsA("ProximityPrompt",true) end
 		if prompt then pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(prompt.MaxActivationDistance or 8,30); prompt.HoldDuration=0; if fireprox then fireprox(prompt) end end) end
-		holdKey(Enum.KeyCode.E, 0.35); task.wait(0.1); holdKey(Enum.KeyCode.E, 0.35)   -- E, then E again (as requested)
+		-- NO E key presses (user: the E spam blocked their own E for the herb). We fire the prompt + Bite remotes
+		-- ONLY, so the food bar fills without the script ever touching E — you press E yourself, once, freely.
 		pcall(fakeEat)
 	end
 	-- eat the corpse IN PLACE with NO key presses at all (user: "don't click E, not at all"). We fire the eat REMOTELY
