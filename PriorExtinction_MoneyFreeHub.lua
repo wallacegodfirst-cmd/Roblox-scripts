@@ -95,7 +95,7 @@ loadCfg()
 -- MIGRATE + CLAMP the INF-Stam run speed on load: the old 30 default was above what the server tolerates = "it
 -- keeps sending me back". Any saved value ABOVE the safe band gets reset to 20 (the sweet spot: clearly faster
 -- than walking, low enough the server doesn't snap you); values you set inside 14-28 are kept as-is.
-do local rs = tonumber(CFG.RunSpeed) or 19; CFG.RunSpeed = (rs > 26 or rs < 12) and 19 or rs end   -- ~normal sprint speed
+do local rs = tonumber(CFG.RunSpeed) or 19; CFG.RunSpeed = (rs < 12) and 19 or rs end   -- only floor at 12; do NOT reset high values (that reset the slider so you couldnt go faster)
 MS("1 config ok")
 CFG.Keybinds = CFG.Keybinds or {}
 CFG.Keybinds.UIKey = CFG.Keybinds.UIKey or CFG.UIKey
@@ -650,8 +650,12 @@ local function fakeEat()
 	end
 	for _,id in pairs(WATER_IDS) do pcall(function() rs:FireServer(id, "Bite", buf) end) end  -- every land's source id
 	replicaActionAll("Bite", buf)                          -- + every captured source id (use-many-ids)
-	replicaFire("SetAction","Consuming",false)             -- dino: stop consuming
-	replicaFire("AnimationEnded","Eat")                    -- dino: finish (food gained)
+	-- give the server a real chewing delay before finishing (firing AnimationEnded instantly = server rejects the
+	-- food gain). Deferred so the loop isn't blocked; Consuming stays true until the animation genuinely ends.
+	task.delay(0.6, function()
+		replicaFire("SetAction","Consuming",false)         -- dino: stop consuming
+		replicaFire("AnimationEnded","Eat")                -- dino: finish (food gained)
+	end)
 end
 -- ═══ ATTACK (the REAL captured bite-damage call — fires server-side damage) ═══
 -- Pattern: (myDinoId,"Attack", nil, {Group,Name,Position}, {Group="Head",Name="Jaw",Position=myJawPos}, groupString)
@@ -2089,7 +2093,7 @@ conn(RunService.Heartbeat:Connect(function()
 	-- ONLY NUDGE UP when you're slower than target (never OVERRIDE your natural sprint) — forcing a fixed velocity
 	-- every frame is what fought the server = the "keeps sending me back" snapback. Now Run passes through (real
 	-- sprint speed) and this only fills in when you're below target, then RELEASES so nothing fights the server.
-	local target=math.clamp(tonumber(CFG.RunSpeed) or 19, 12, 26)
+	local target=math.clamp(tonumber(CFG.RunSpeed) or 19, 12, 80)   -- allow higher speeds (was capped at 26 = slider did nothing above it)
 	local v=r.AssemblyLinearVelocity; local curH=math.sqrt(v.X*v.X+v.Z*v.Z)
 	if curH < target-1 then pcall(function() bv.Velocity=dir.Unit*target end)
 	else pcall(function() bv.Velocity=Vector3.zero end) end
@@ -2764,17 +2768,18 @@ do
 end
 task.spawn(function() while RUNNING do
 	if CFG.InfFood and alive() then
-		fakeEat()   -- replay any captured bite (works once you've eaten one plant this session)
-		-- Read how full food is. Only auto-eat when it drops LOW so we don't fight your manual E when you're fine.
-		local low = true
+		-- Read how full food is FIRST. fakeEat() forces Consuming=false which interrupts YOUR manual E hold, so
+		-- we only run it (and the auto-eat) when food is genuinely LOW - the rest of the time your E is untouched.
+		local low, veryLow = false, false
 		pcall(function()
 			local stats, maxs = csStats()
 			for _,k in ipairs({"Food","Hunger","Nutrition","Fullness"}) do
 				if stats and stats[k]~=nil then local cur=tonumber(stats[k]); local mx=(maxs and maxs[k]) or (__gg.MH_max and __gg.MH_max[k])
-					if cur and mx then low = cur < mx*0.6; break end
+					if cur and mx then low = cur < mx*0.5; veryLow = cur < mx*0.25; break end
 				end
 			end
 		end)
+		if veryLow then fakeEat() end   -- only replay the captured bite when actually starving, never over your manual eat
 		if CFG.AutoEatFood and low then
 			-- food is low -> eat the NEAREST plant/corpse FOR REAL: fire its prompt AND briefly hold E (the real
 			-- eat that always registers server-side AND captures the food id so fakeEat can replay it after).
