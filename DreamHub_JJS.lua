@@ -4,15 +4,15 @@
       No emojis. Toggle the menu with RightShift. Press E to trigger the BF chain manually.   ]]
 
 -- ═══════════════════════════════════════════════════════════
--- JUJUTSU SHENANIGANS BYPASS (SAFE - NO RUBBERBAND, NO HOOKS)
--- We do NOT hook __namecall (JJS 267-kicks for that) and we do NOT disable the anti-cheat LocalScripts
--- (disabling them stops the client heartbeat, which is what makes the server rubberband you back). We
--- leave them running and beat the teleport check with a STEPPED lerp teleport (see safeTeleport) that
--- moves under the server's per-frame distance limit, so it reads as a fast dash, not a teleport.
+-- JUJUTSU SHENANIGANS BYPASS (ZERO-LAG)
+-- We do NOT hook __namecall (JJS 267-kicks for that). Instead we take away the server's ability to reject a
+-- teleport: destroy the anti-cheat RE/RF remotes (leaving harmless dummies so other scripts do not crash on
+-- WaitForChild) and disable the anti/detect scripts once. With no channel to report a bad position, a single
+-- PivotTo teleport just sticks — no per-frame stepping, no rubberband, no lag. See safeTeleport below.
 -- ═══════════════════════════════════════════════════════════
 if not _G.VX_AC_HOOKED then
 	_G.VX_AC_HOOKED = true
-	print("[JJS Bypass] Loaded: anti-cheat left intact (prevents rubberband); stepped teleport used instead.")
+	print("[JJS Bypass] Loaded: anti-cheat remotes destroyed; instant teleport, no rubberband.")
 end
 
 -- (LOADING SCREEN REMOVED per request — the hub builds straight away, no splash.)
@@ -927,10 +927,59 @@ task.spawn(function()
 		end
 	end
 end)
--- TELEPORT = your exact safeTeleport (simple CFrame write + a short Heartbeat lock). No SetNetworkOwner,
--- no per-frame whitelist spam, no anchor - all of which were kick/detection risks. The BYPASS at the top
--- blocks the anti-cheat set-back report, so a plain CFrame write just stays. vxGlide / vxTeleportHard are
--- kept as thin wrappers so every existing call site (locations, players, saved slots) routes through this.
+-- TELEPORT = zero-lag bypass. Instead of stepping under a per-frame limit, we take the server's ability to
+-- reject the move away: destroy the anti-cheat RE/RF remotes (leaving harmless dummies so other scripts do
+-- not crash on WaitForChild) and disable the anti/detect scripts once. With no channel to report a bad
+-- position, a single PivotTo sticks. A single throttled Heartbeat lock re-pins you if the server nudges you.
+-- vxGlide / vxTeleportHard stay as thin wrappers so every call site (locations, players, slots) routes here.
+local function vxDestroyACRemotes()
+	pcall(function()
+		local rs = game:GetService("ReplicatedStorage")
+		local knit = rs:FindFirstChild("Knit"); knit = (knit and knit:FindFirstChild("Knit")) or knit
+		if not knit then return end
+		for _, svc in ipairs(knit:GetDescendants()) do
+			if svc.Name:lower():find("anti") then
+				for _, folderName in ipairs({ "RE", "RF" }) do
+					local folder = svc:FindFirstChild(folderName)
+					if folder then
+						for _, v in ipairs(folder:GetChildren()) do
+							if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+								local dummy = Instance.new(v.ClassName)   -- keep WaitForChild happy
+								dummy.Name = v.Name; dummy.Parent = folder
+								pcall(function() v:Destroy() end)
+							end
+						end
+					end
+				end
+			end
+		end
+	end)
+end
+local function vxDisableACScripts()
+	local function process(parent)
+		if not parent then return end
+		for _, v in ipairs(parent:GetDescendants()) do
+			if v:IsA("LocalScript") or v:IsA("ModuleScript") then
+				local name = v.Name:lower()
+				if name:find("anti") or name:find("cheat") or name:find("detect") or name:find("namecall") then
+					pcall(function() v.Disabled = true end)
+				end
+			end
+		end
+	end
+	local LP = game:GetService("Players").LocalPlayer
+	pcall(process, LP:FindFirstChild("PlayerScripts"))
+	if LP.Character then pcall(process, LP.Character) end
+end
+_G.VX_DESTROY_AC = vxDestroyACRemotes
+vxDestroyACRemotes(); vxDisableACScripts()
+-- re-apply after a respawn (the game re-adds AC scripts/remotes to the fresh character)
+pcall(function()
+	game:GetService("Players").LocalPlayer.CharacterAdded:Connect(function()
+		task.wait(1); vxDestroyACRemotes(); vxDisableACScripts()
+	end)
+end)
+
 local vxTeleportLock = false
 local vxCurrentTargetCF = nil
 game:GetService("RunService").Heartbeat:Connect(function()
@@ -940,18 +989,16 @@ game:GetService("RunService").Heartbeat:Connect(function()
 		local char = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
 		if char then
 			local hrp = char:FindFirstChild("HumanoidRootPart")
-			if hrp then
-				hrp.CFrame = vxCurrentTargetCF
+			if hrp and (hrp.Position - vxCurrentTargetCF.Position).Magnitude > 2 then   -- only re-pin if the server nudged you (no per-frame write = no lag)
+				pcall(function() char:PivotTo(vxCurrentTargetCF) end)
 				hrp.AssemblyLinearVelocity = Vector3.new(0,0,0)
-				hrp.AssemblyAngularVelocity = Vector3.new(0,0,0)
 			end
 		end
 	end
 end)
--- STEPPED LERP TELEPORT: instead of an instant CFrame snap (which JJS detects and snaps back), move to
--- the target in ~60-stud-per-frame steps. Each step is under the server's per-frame distance limit, so it
--- reads as a very fast dash, not a teleport = no rubberband. We DO NOT disable the anti-cheat, so the
--- heartbeat keeps flowing.
+-- ZERO-LAG TELEPORT: the anti-cheat remotes are already destroyed above, so the server has no channel to
+-- report a bad position — a single PivotTo just sticks. No per-frame stepping, no PlatformStand freeze. The
+-- shared Heartbeat lock only re-pins you (and only if you drift >2 studs) for a short hold so you settle.
 local isTeleporting = false
 local function safeTeleport(targetCFrame, holdTime)
 	local LP = game:GetService("Players").LocalPlayer
@@ -959,53 +1006,19 @@ local function safeTeleport(targetCFrame, holdTime)
 	local char = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
 	if not char then return false end
 	local hrp = char:FindFirstChild("HumanoidRootPart")
-	local hum = char:FindFirstChildOfClass("Humanoid")
 	if not hrp then return false end
 	-- clean up any body movers that would drag you back
-	for _, v in ipairs(hrp:GetChildren()) do
-		if v:IsA("AlignPosition") or v:IsA("AlignOrientation") or v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("BodyGyro") then pcall(function() v:Destroy() end) end
-	end
-	local startPos = hrp.Position
-	local targetPos = targetCFrame.Position
-	local dist = (startPos - targetPos).Magnitude
-	if dist < 15 then   -- already close: just snap
-		pcall(function() hrp.CFrame = targetCFrame; hrp.AssemblyLinearVelocity = Vector3.new(0,0,0) end)
-		return true
+	for _, v in ipairs(char:GetDescendants()) do
+		if v:IsA("AlignPosition") or v:IsA("AlignOrientation") or v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("BodyGyro") or v:IsA("BodyAngularVelocity") or v:IsA("VectorForce") or v:IsA("LinearVelocity") then
+			pcall(function() v:Destroy() end)
+		end
 	end
 	isTeleporting = true
-	if hum then pcall(function() hum.PlatformStand = true end) end
-	pcall(function() hrp.AssemblyLinearVelocity = Vector3.new(0,0,0) end)
-	-- Acknowledge the move on the game's OWN anti-cheat remote as we go. The server tracks a legit teleport
-	-- through this; firing it per step is what keeps a fast lerp from reading as a bad jump and getting set back.
-	local function acAck()
-		pcall(function()
-			local k = game:GetService("ReplicatedStorage"):FindFirstChild("Knit")
-			k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
-			local svc = k and k:FindFirstChild("AntiCheatService")
-			local re = svc and svc:FindFirstChild("RE"); re = re and re:FindFirstChild("Teleport")
-			if re then re:FireServer(workspace:GetServerTimeNow()) end
-		end)
-	end
-	acAck()
-	local myHrp = function() local cc = (workspace:FindFirstChild("Characters") and workspace.Characters:FindFirstChild(LP.Name)) or LP.Character; return cc and cc:FindFirstChild("HumanoidRootPart") end
-	local perFrame = math.clamp(tonumber(VX_TP_SPEED) or 60, 15, 150)   -- the TP Step slider: lower it if a server still sets you back
-	local steps = math.ceil(dist / perFrame)   -- capped studs per frame = under the server limit, feels instant
-	for i = 1, steps do
-		local h = myHrp(); if not h then break end
-		local currentPos = startPos:Lerp(targetPos, i / steps)
-		pcall(function() h.CFrame = CFrame.new(currentPos, targetPos); h.AssemblyLinearVelocity = Vector3.new(0,0,0) end)
-		acAck()
-		game:GetService("RunService").Heartbeat:Wait()
-	end
-	local h = myHrp()
-	if h then pcall(function() h.CFrame = targetCFrame; h.AssemblyLinearVelocity = Vector3.new(0,0,0) end) end
-	acAck()
-	-- brief hold so we settle exactly on target, then release PlatformStand so you can move
+	pcall(function() hrp.AssemblyLinearVelocity = Vector3.new(0,0,0); hrp.AssemblyAngularVelocity = Vector3.new(0,0,0) end)
 	vxCurrentTargetCF = targetCFrame; vxTeleportLock = true
-	task.delay(holdTime or 0.4, function()
+	pcall(function() char:PivotTo(targetCFrame) end)
+	task.delay(holdTime or 0.5, function()
 		vxTeleportLock = false; vxCurrentTargetCF = nil
-		local hh = myHrp() and char:FindFirstChildOfClass("Humanoid")
-		if hum then pcall(function() hum.PlatformStand = false end) end
 		isTeleporting = false
 	end)
 	return true
@@ -9799,7 +9812,6 @@ do
     local locSec = tpSub:Section({ Name = "Locations", Side = 1 })
     if TPApi and TPApi.spotNames then for _, n in ipairs(TPApi.spotNames()) do locSec:Button({ Name = n, Callback = function() if TPApi then TPApi.spot(n) end end }) end end
     local quickSec = tpSub:Section({ Name = "Quick", Side = 2 })
-    quickSec:Slider({ Name = "TP Step (lower if set back)", Min = 15, Max = 120, Default = 60, Decimals = 0, Callback = function(v) if TPApi then TPApi.setSpeed(v) end end })
     quickSec:Button({ Name = "Print TP Remote", Callback = function()
         local RS = game:GetService("ReplicatedStorage"); local found = 0
         for _, d in ipairs(RS:GetDescendants()) do

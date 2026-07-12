@@ -10,13 +10,13 @@
 _G.JJS_FREE = true   -- switches the shared hub to the FREE tier (red/black + trimmed features + FREE badge)
 
 -- ═══════════════════════════════════════════════════════════
--- JUJUTSU SHENANIGANS BYPASS (SAFE - NO RUBBERBAND, NO HOOKS)
--- We do NOT hook __namecall (JJS 267-kicks for that) and we do NOT disable the anti-cheat scripts
--- (disabling them stops the heartbeat = rubberband). The teleport uses a stepped lerp instead.
+-- JUJUTSU SHENANIGANS BYPASS (ZERO-LAG)
+-- We do NOT hook __namecall (JJS 267-kicks for that). The main script destroys the anti-cheat remotes and
+-- disables the anti/detect scripts, so a single PivotTo teleport sticks with no rubberband and no lag.
 -- ═══════════════════════════════════════════════════════════
 if not _G.VX_AC_HOOKED then
 	_G.VX_AC_HOOKED = true
-	print("[JJS Bypass] Loaded: anti-cheat left intact (prevents rubberband).")
+	print("[JJS Bypass] Loaded: anti-cheat remotes destroyed by the hub; instant teleport.")
 end
 
 local URLS = {

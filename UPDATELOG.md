@@ -41,11 +41,11 @@ JUJUTSU SHENANIGANS - FREE  (finally out after a long wait)
   - Auto Black Flash now uses the same universal M1 detection as M1 BF, so
     it fires on every character's M1 windup instead of only a few known
     animations.
-  - Teleport now acknowledges each step on the game's own anti-cheat
-    channel, so a fast teleport is far less likely to be set back.
-  - The TP Step slider is now actually wired to the teleport (it was a
-    dead control before) — lower it if a server still sets you back. The
-    dead "TP Method" dropdown was removed.
+  - Teleport rebuilt as a zero-lag bypass: the anti-cheat remotes are
+    destroyed (dummies left so nothing crashes) and the anti/detect
+    scripts disabled, so a single instant teleport sticks with no
+    rubberband and no per-frame stepping lag. Re-applied after respawn.
+    The old TP Step / TP Method controls were removed (no longer needed).
   - Method hints removed from labels and source.
 
 note: next update will bring Paid / Plus Jujutsu Shenanigans. just wait.
