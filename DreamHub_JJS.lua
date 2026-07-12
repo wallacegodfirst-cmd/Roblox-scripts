@@ -43,6 +43,19 @@ if not _G.VX_AC_HOOKED then
 		mt.__namecall = newcclosure(function(self, ...)
 			local method = getnamecallmethod()
 
+			-- READ-ONLY M1 DETECTION (never blocks, never alters - moves are safe): your M1 fires
+			-- <Char>Service.RE.Activated. When we see it, ping _G.VX_ON_M1 so M1 BF triggers even though the
+			-- game SINKS the click (which is why InputBegan/Button1Down do not catch your M1).
+			if (method == "FireServer" or method == "fireServer") and _G.VX_ON_M1 then
+				local okn, nm = pcall(function() return self.Name end)
+				if okn and nm == "Activated" then
+					local okf, full = pcall(function() return self:GetFullName() end)
+					if okf and type(full) == "string" and full:find("Service") and full:find("%.RE") then
+						task.spawn(_G.VX_ON_M1)
+					end
+				end
+			end
+
 			-- Intercept and block any kick attempts (Prevents Error 267)
 			if method == "Kick" and self == LP then
 				return nil
@@ -5278,8 +5291,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "5.4"
-local VX_BUILD = "B54"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "5.5"
+local VX_BUILD = "B55"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
@@ -9497,6 +9510,7 @@ do
                 task.delay(math.max(0, 0.12 + bfClickOffset), press3)
             end
         end
+        _G.VX_ON_M1 = onClick   -- the bypass __namecall hook pings this when your M1 remote (...Service.RE.Activated) fires
         UISbf.InputBegan:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 and not UISbf:GetFocusedTextBox() then onClick() end
         end)
