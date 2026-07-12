@@ -61,7 +61,7 @@ local CFG = {
 	InfFood=false, InfWater=false, InfStam=false, InfOxygen=false,
 	AntiDrown=true, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false, HeadDmgReduce=90,
 	SaveDino=false, SaveHP=30, NoSleep=true, AutoHealBlood=false,
-	AutoFarmPlayer=false, FarmPlayerRange=120, AutoFarmFossil=false, FarmFossilRange=1000000,
+	AutoFarmPlayer=false, FarmPlayerRange=120, AutoFarmFossil=false, FarmFossilRange=1000000, FossilSlow=1.2,
 	ESPPlayers=false, ESPCorpses=false, FoodESP=false, FishESP=false, GemESP=false, ESPRange=900, ESPColor="Default",
 	RemoveTrees=false, Radar=false, RadarRange=450, RadarDeath=true,
 	AlertEnabled=false, AlertDino="", AlertRange=350, CarnMeatTP=false,
@@ -1538,6 +1538,7 @@ do local p=Pages["Auto Farm"]
 	mkToggle(f,"Auto Farm Fossil","AutoFarmFossil",1)
 	mkToggle(f,"Auto Farm Gemstone","AutoFarmGem",2)
 	mkToggle(f,"Teleport Farm","FarmTeleport",3)
+	mkSlider(f,"Fossil Collect Delay","FossilSlow",0,4,4,0.1)   -- seconds between each fossil (slow it down)
 	mkBtn(f,"Teleport to Nearest Gemstone", function()
 		local me=hrp(); if not me then return end
 		local best,bd
@@ -3170,7 +3171,7 @@ local function gatherNodes(kind, range)
 			if d:IsA("ProximityPrompt") then
 				local part=d.Parent
 				if part and part:IsA("BasePart") and not kindMismatch(kind, d) then addNode(part.Parent, part) end   -- skip the OTHER resource's prompts (mixed containers)
-			elseif d:IsA("BasePart") and ((kind=="gem" and d.Name=="MineralBase") or (kind=="fossil" and d.Name=="FossilS") or kwHit(d.Name, FARM_CKW[kind])) then
+			elseif d:IsA("BasePart") and ((kind=="gem" and d.Name=="MineralBase") or (kind=="fossil" and (d.Name=="FossilS" or d.Name=="FossilM" or d.Name=="FossilL" or d.Name=="Fossil")) or kwHit(d.Name, FARM_CKW[kind])) then
 				addNode(d.Parent, d)   -- kind-SPECIFIC part names: MineralBase is a GEM part - counting it for fossils collected gems
 			end
 		end
@@ -3258,7 +3259,9 @@ local function runFarm(enabledKey, kind, rangeKey)
 						if prompt and fireprox then pcall(function() fireprox(prompt) end) end   -- backup: complete it now
 						pcall(function() if bp then bp:Destroy() end end)
 						if done or not (part and part.Parent) then FARM.count[kind]=(FARM.count[kind] or 0)+1; FARM.tried[holder]=nil end
-						task.wait(0.2)
+						-- SLOW cadence for fossils (you asked for it): pause between each fossil so it collects one at a
+						-- calm pace instead of blinking node-to-node. Gems keep the quick pace.
+						task.wait((kind=="fossil") and (tonumber(CFG.FossilSlow) or 1.2) or 0.2)
 					else task.wait(0.6) end
 				else
 					-- STAND-STILL mode (zero movement = the anti-cheat never sees you move): fire prompts remotely, 6/pass.
