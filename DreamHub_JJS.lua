@@ -985,14 +985,13 @@ local vxCurrentTargetCF = nil
 game:GetService("RunService").Heartbeat:Connect(function()
 	if vxTeleportLock and vxCurrentTargetCF then
 		local LP = game:GetService("Players").LocalPlayer
-		local chs = workspace:FindFirstChild("Characters")
-		local char = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
-		if char then
-			local hrp = char:FindFirstChild("HumanoidRootPart")
-			if hrp and (hrp.Position - vxCurrentTargetCF.Position).Magnitude > 2 then   -- only re-pin if the server nudged you (no per-frame write = no lag)
+		local char = LP.Character or (workspace:FindFirstChild("Characters") and workspace.Characters:FindFirstChild(LP.Name))
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if hrp then
+			if (hrp.Position - vxCurrentTargetCF.Position).Magnitude > 2 then   -- only re-pin if the server nudged you (no per-frame write = no lag)
 				pcall(function() char:PivotTo(vxCurrentTargetCF) end)
-				hrp.AssemblyLinearVelocity = Vector3.new(0,0,0)
 			end
+			hrp.AssemblyLinearVelocity = Vector3.new(0,0,0)
 		end
 	end
 end)
@@ -1002,8 +1001,7 @@ end)
 local isTeleporting = false
 local function safeTeleport(targetCFrame, holdTime)
 	local LP = game:GetService("Players").LocalPlayer
-	local chs = workspace:FindFirstChild("Characters")
-	local char = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+	local char = LP.Character or (workspace:FindFirstChild("Characters") and workspace.Characters:FindFirstChild(LP.Name))
 	if not char then return false end
 	local hrp = char:FindFirstChild("HumanoidRootPart")
 	if not hrp then return false end
@@ -1013,12 +1011,15 @@ local function safeTeleport(targetCFrame, holdTime)
 			pcall(function() v:Destroy() end)
 		end
 	end
+	hrp.AssemblyLinearVelocity = Vector3.new(0,0,0)
+	hrp.AssemblyAngularVelocity = Vector3.new(0,0,0)
 	isTeleporting = true
-	pcall(function() hrp.AssemblyLinearVelocity = Vector3.new(0,0,0); hrp.AssemblyAngularVelocity = Vector3.new(0,0,0) end)
-	vxCurrentTargetCF = targetCFrame; vxTeleportLock = true
+	vxCurrentTargetCF = targetCFrame
+	vxTeleportLock = true
 	pcall(function() char:PivotTo(targetCFrame) end)
-	task.delay(holdTime or 0.5, function()
-		vxTeleportLock = false; vxCurrentTargetCF = nil
+	task.delay(holdTime or 1, function()
+		vxTeleportLock = false
+		vxCurrentTargetCF = nil
 		isTeleporting = false
 	end)
 	return true
@@ -1026,7 +1027,7 @@ end
 -- wrappers: everything in the hub that used to glide now just safe-teleports (the bypass makes it stick)
 local function vxGlide(target, onArrive, holdTime)
 	local hrp
-	do local LP = game:GetService("Players").LocalPlayer; local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character; hrp = c and c:FindFirstChild("HumanoidRootPart") end
+	do local LP = game:GetService("Players").LocalPlayer; local c = LP.Character or (workspace:FindFirstChild("Characters") and workspace.Characters:FindFirstChild(LP.Name)); hrp = c and c:FindFirstChild("HumanoidRootPart") end
 	local cf = (typeof(target) == "CFrame") and target or (hrp and (CFrame.new(target) * hrp.CFrame.Rotation)) or CFrame.new(target)
 	safeTeleport(cf, holdTime or 0.5)
 	if onArrive then task.delay((holdTime or 0.5) + 0.05, function() pcall(onArrive) end) end
@@ -1034,7 +1035,7 @@ end
 local function vxTeleportHard(dest, holdTime)
 	if typeof(dest) == "CFrame" then safeTeleport(dest, holdTime or 0.6); return end
 	local hrp
-	do local LP = game:GetService("Players").LocalPlayer; local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character; hrp = c and c:FindFirstChild("HumanoidRootPart") end
+	do local LP = game:GetService("Players").LocalPlayer; local c = LP.Character or (workspace:FindFirstChild("Characters") and workspace.Characters:FindFirstChild(LP.Name)); hrp = c and c:FindFirstChild("HumanoidRootPart") end
 	local cf = hrp and (CFrame.new(dest) * hrp.CFrame.Rotation) or CFrame.new(dest)
 	safeTeleport(cf, holdTime or 0.6)
 end
