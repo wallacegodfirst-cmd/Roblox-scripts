@@ -2602,6 +2602,136 @@ local function serverHop()
 end
 
 -- ============================================================
+-- COMBAT PRO  (Legit Auto Play / Auto Dodge / Instant 1v1 Win / strong Aura M1)
+-- Enemy-M1 detector + the four toggles. Uses the hub's helpers. No fling.
+-- ============================================================
+do
+    local VIMp = game:GetService("VirtualInputManager")
+    -- held-key manager (for Legit Auto Play holding W)
+    local heldKeys = {}
+    local function holdKey(kc, isHolding)
+        if isHolding and not heldKeys[kc] then VIMp:SendKeyEvent(true, kc, false, game); heldKeys[kc] = true
+        elseif not isHolding and heldKeys[kc] then VIMp:SendKeyEvent(false, kc, false, game); heldKeys[kc] = false end
+    end
+    local function releaseAllKeys() for kc in pairs(heldKeys) do pcall(function() VIMp:SendKeyEvent(false, kc, false, game) end) end heldKeys = {} end
+    _G.AA_RELEASEKEYS = releaseAllKeys
+
+    -- ── ENEMY M1 DETECTOR (velocity of their arm + their attack anims, facing you) ──
+    local EnemyAttacked = false
+    local trackedHumans = setmetatable({}, { __mode = "k" })
+    RunService.Heartbeat:Connect(function()
+        local myRoot = getRoot(); if not myRoot then return end
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LP and p.Character then
+                local tr = p.Character:FindFirstChild("HumanoidRootPart") or charPart(p.Character)
+                if tr then
+                    if (tr.Position - myRoot.Position).Magnitude < 25 then
+                        local rArm = p.Character:FindFirstChild("Right Arm") or p.Character:FindFirstChild("RightHand")
+                        if rArm and rArm.AssemblyLinearVelocity.Magnitude > 30 then
+                            local dirToMe = (myRoot.Position - tr.Position)
+                            if dirToMe.Magnitude > 0 and tr.CFrame.LookVector:Dot(dirToMe.Unit) > 0.3 then
+                                EnemyAttacked = true; task.delay(0.4, function() EnemyAttacked = false end)
+                            end
+                        end
+                    end
+                    local hum = p.Character:FindFirstChildOfClass("Humanoid")
+                    if hum and not trackedHumans[hum] then
+                        trackedHumans[hum] = true
+                        local anim = hum:FindFirstChildOfClass("Animator")
+                        if anim then
+                            anim.AnimationPlayed:Connect(function()
+                                if not (S.ProAutoDodge or S.LegitAutoPlay) then return end
+                                local myR = getRoot(); if not myR then return end
+                                local tr2 = p.Character and (p.Character:FindFirstChild("HumanoidRootPart") or charPart(p.Character))
+                                if tr2 and (tr2.Position - myR.Position).Magnitude < 35 then
+                                    local d = (myR.Position - tr2.Position)
+                                    if d.Magnitude > 0 and tr2.CFrame.LookVector:Dot(d.Unit) > 0.1 then
+                                        EnemyAttacked = true; task.delay(0.4, function() EnemyAttacked = false end)
+                                    end
+                                end
+                            end)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    -- ── AUTO DODGE: on an enemy M1, jump left/right a few studs ──
+    local dodgeBusy = false
+    RunService.Heartbeat:Connect(function()
+        if not S.ProAutoDodge or dodgeBusy then return end
+        if EnemyAttacked then
+            dodgeBusy = true; EnemyAttacked = false
+            task.spawn(function()
+                local root = getRoot()
+                if root then
+                    local dir = ((tick() * 1000) % 2 < 1) and 1 or -1
+                    pcall(function() root.CFrame = root.CFrame * CFrame.new(dir * 12, 0, 0); root.AssemblyLinearVelocity = Vector3.zero end)
+                end
+                task.wait(0.2); dodgeBusy = false
+            end)
+        end
+    end)
+
+    -- ── AURA M1 (strong): face nearest, M1 + E/R/T spam ──
+    task.spawn(function()
+        while true do
+            if S.AuraM1Pro then
+                local root = getRoot(); local target = nearestPlayer(S.AuraRange or 60)
+                local tr = target and target.Character and (target.Character:FindFirstChild("HumanoidRootPart") or charPart(target.Character))
+                if root and tr then
+                    pcall(function() root.CFrame = CFrame.lookAt(root.Position, tr.Position) end)
+                    clickM1(true); tapKey(Enum.KeyCode.E); tapKey(Enum.KeyCode.R); tapKey(Enum.KeyCode.T)
+                end
+            end
+            task.wait(0.03)
+        end
+    end)
+
+    -- ── INSTANT 1v1 WIN: warp front/back + M1 + abilities ──
+    task.spawn(function()
+        while true do
+            if S.Win1v1 then
+                local root = getRoot(); local target = nearestPlayer(50)
+                local tr = target and target.Character and (target.Character:FindFirstChild("HumanoidRootPart") or charPart(target.Character))
+                if root and tr then
+                    local offset = (S.Win1v1Pos == "Front") and -3 or 3
+                    local goal = tr.CFrame * CFrame.new(0, 0, offset)
+                    pcall(function() root.CFrame = CFrame.lookAt(goal.Position, tr.Position); root.AssemblyLinearVelocity = Vector3.zero end)
+                    clickM1(true); tapKey(Enum.KeyCode.E); tapKey(Enum.KeyCode.R); tapKey(Enum.KeyCode.T)
+                end
+            end
+            task.wait(0.03)
+        end
+    end)
+
+    -- ── LEGIT AUTO PLAY: hold W toward nearest, dash back (Q) on their M1, M1 in range ──
+    local isDodging = false
+    task.spawn(function()
+        while true do
+            if S.LegitAutoPlay then
+                local root = getRoot(); local hum = getHum(); local target = nearestPlayer(60)
+                local tr = target and target.Character and (target.Character:FindFirstChild("HumanoidRootPart") or charPart(target.Character))
+                if root and hum and tr then
+                    local dist = (tr.Position - root.Position).Magnitude
+                    if EnemyAttacked and not isDodging then
+                        isDodging = true; releaseAllKeys()
+                        task.spawn(function() tapKey(Enum.KeyCode.Q); task.wait(0.3); isDodging = false end)
+                    end
+                    if not isDodging then
+                        pcall(function() root.CFrame = CFrame.lookAt(root.Position, tr.Position) end)
+                        if dist > 12 then holdKey(Enum.KeyCode.W, true)
+                        else holdKey(Enum.KeyCode.W, false); clickM1(true); tapKey(Enum.KeyCode.E); tapKey(Enum.KeyCode.T) end
+                    end
+                else releaseAllKeys() end
+            else releaseAllKeys() end
+            task.wait(0.03)
+        end
+    end)
+end
+
+-- ============================================================
 -- GUI
 -- ============================================================
 local Window = Rayfield:CreateWindow({
@@ -2733,21 +2863,11 @@ CombatTab:CreateToggle({Name="God Mode (turn ON while in the LOBBY - TPs you to 
     end)
 end})
 
-CombatTab:CreateSection("Hitboxes")
--- (M1 Expand Hitbox REMOVED from the menu per request — M1 Warp below is its replacement. The arm/hitbox
--- grow engine itself stays: Auto Farm / Auto Play still rely on it to land their hits.)
-CombatTab:CreateToggle({Name="Ability Hitbox Expander (pulses bigger on E)", CurrentValue=false, Flag="HitboxAbility", Callback=function(v)
-    S.HitboxAbility=v
-    if not v then destroyAbilityHb(); restoreHitboxes() end
-end})
-CombatTab:CreateSlider({Name="Ability Hitbox Size", Range={1,300}, Increment=1, Suffix="studs", CurrentValue=40, Flag="HitboxAbilitySize", Callback=function(v) S.HitboxAbilitySize=v end})
--- ("Expand Whole Body" removed: growing the visible body parts made every enemy an invisible giant.)
-CombatTab:CreateToggle({Name="Show Hitbox (cyan box - off = invisible)", CurrentValue=true, Flag="HitboxVisible", Callback=function(v) S.HitboxVisible=v end})
-
-CombatTab:CreateSection("One Punch")
-CombatTab:CreateToggle({Name="One Punch (M1 casts the game's One Punch ability)", CurrentValue=false, Flag="OnePunch", Callback=function(v) S.OnePunch=v end})
-CombatTab:CreateSlider({Name="One Punch Hits (validated M1s @0.35s)", Range={1,12}, Increment=1, Suffix="hits", CurrentValue=5, Flag="OnePunchHits", Callback=function(v) S.OnePunchHits=v end})
-CombatTab:CreateInput({Name="Ability Name (default: One Punch - change if the game renamed it)", PlaceholderText="One Punch", Callback=function(v) v=tostring(v or ""):gsub("^%s+",""):gsub("%s+$",""); S.OnePunchGuid=v end})
+CombatTab:CreateSection("Combat Pro")
+CombatTab:CreateToggle({Name="Legit Auto Play (holds W + dodges M1s + fights)", CurrentValue=false, Flag="LegitAutoPlay", Callback=function(v) S.LegitAutoPlay=v; if not v and _G.AA_RELEASEKEYS then _G.AA_RELEASEKEYS() end end})
+CombatTab:CreateToggle({Name="Auto Dodge (teleports left/right off enemy M1s)", CurrentValue=false, Flag="ProAutoDodge", Callback=function(v) S.ProAutoDodge=v end})
+CombatTab:CreateToggle({Name="Instant 1v1 Win (front/back combo)", CurrentValue=false, Flag="Win1v1", Callback=function(v) S.Win1v1=v end})
+CombatTab:CreateDropdown({Name="1v1 Win Position", Options={"Back","Front"}, CurrentOption={"Back"}, Flag="Win1v1Pos", Callback=function(o) S.Win1v1Pos=(type(o)=="table" and o[1]) or o end})
 CombatTab:CreateToggle({Name="Fling Punch (M1 spin-flings the nearest enemy)", CurrentValue=false, Flag="FlingPunch", Callback=function(v) S.FlingPunch=v end})
 CombatTab:CreateSlider({Name="Fling Range", Range={10,120}, Increment=5, Suffix="studs", CurrentValue=40, Flag="FlingRange", Callback=function(v) S.FlingRange=v end})
 CombatTab:CreateSlider({Name="Fling Power (higher = flung farther)", Range={200,3000}, Increment=50, Suffix="", CurrentValue=850, Flag="FlingPower", Callback=function(v) S.FlingPower=v end})
@@ -2758,7 +2878,7 @@ CombatTab:CreateSlider({Name="M1 Warp Range", Range={10,200}, Increment=5, Suffi
 CombatTab:CreateToggle({Name="Warp Back After Swing", CurrentValue=true, Flag="M1WarpReturn", Callback=function(v) S.M1WarpReturn=v end})
 
 CombatTab:CreateSection("Auto")
-CombatTab:CreateToggle({Name="Aura M1 (auto M1 when someone is near)", CurrentValue=false, Flag="AutoM1", Callback=function(v) S.AutoM1=v end})
+CombatTab:CreateToggle({Name="Aura M1 (strong: face + M1 + E/R/T spam when near)", CurrentValue=false, Flag="AuraM1Pro", Callback=function(v) S.AuraM1Pro=v end})
 CombatTab:CreateSlider({Name="Aura M1 Range", Range={5,120}, Increment=5, Suffix="studs", CurrentValue=60, Flag="AuraRange", Callback=function(v) S.AuraRange=v end})
 CombatTab:CreateToggle({Name="Auto Ability", CurrentValue=false, Flag="AutoAbility", Callback=function(v) S.AutoAbility=v end})
 CombatTab:CreateSlider({Name="Auto Ability Range", Range={5,80}, Increment=1, Suffix="studs", CurrentValue=25, Flag="AutoAbilityRange", Callback=function(v) S.AutoAbilityRange=v end})
