@@ -2224,12 +2224,17 @@ local function nearbyFood(range)
 	local me=hrp(); local out={}; local seen={}
 	if me then
 		local cnt=0
-		-- 1) Investigate prompts = real PE corpses (red ESP + E to consume). This is the authoritative carnivore food.
+		-- edible-plant / herb name list (this game's flora) so INF Food eats ANY plant type around you, not just corpses
+		local PLKW={"plant","sapling","tree","fern","berry","berries","pine","needle","leaf","leaves","frond","conifer","cycad","mushroom","fungus","grass","moss","bush","shrub","flower","seed","cone","horsetail","redwood","ginkgo","sequoia","equisetum","woodwardia","blechn","gleichenia","osmunda","zingiber","dicksonia","williamsonia","dryophyll","sabalite","marmarthia","coniopteris","wielandiella","hermanophyton","anthill","herb","foliage","trunk","paleoaster","sabalit"}
+		local function isPlantN(n) for _,k in ipairs(PLKW) do if n:find(k,1,true) then return true end end return false end
+		-- 1) prompts: corpses (investigate/eat/consume) AND plants (graze/forage/feed/pick/harvest/eat). Fire ANY of them.
 		for _,d in ipairs(WS:GetDescendants()) do
-			cnt+=1; if cnt>3500 then break end
+			cnt+=1; if cnt>6000 then break end
 			if d:IsA("ProximityPrompt") then
-				local at=(d.ActionText or ""):lower(); local nm=(d.Name or ""):lower()
-				if at:find("investigate") or at:find("eat") or at:find("consume") or nm:find("investigate") then
+				local at=(d.ActionText or ""):lower(); local nm=(d.Name or ""):lower(); local ot=(d.ObjectText or ""):lower()
+				if at:find("investigate") or at:find("eat") or at:find("consume") or at:find("graze") or at:find("forage")
+				 or at:find("feed") or at:find("pick") or at:find("harvest") or at:find("herb") or at:find("plant")
+				 or nm:find("investigate") or nm:find("eat") or nm:find("food") or isPlantN(ot) then
 					local p=d.Parent
 					local part=(p and p:IsA("BasePart") and p) or (p and p:FindFirstChildWhichIsA("BasePart"))
 					local m=(p and p:IsA("Model")) and p or (part and part:FindFirstAncestorWhichIsA("Model")) or p
@@ -2237,8 +2242,10 @@ local function nearbyFood(range)
 				end
 			elseif d:IsA("Model") and d~=getMyModel() and not Players:GetPlayerFromCharacter(d) and not seen[d] then
 				local n=d.Name:lower()
-				if isFoodName(n) or n:find("corpse") or n:find("carcass") or n:find("remains") then
-					local r=rootOf(d); if r then local dd=dist(me.Position,r.Position); if dd<=range then seen[d]=true; out[#out+1]={d,r,dd} end end
+				if isFoodName(n) or n:find("corpse") or n:find("carcass") or n:find("remains") or isPlantN(n) then
+					-- a plant model only counts as food if it actually has an eat prompt (skip decorative scenery)
+					local pr=d:FindFirstChildWhichIsA("ProximityPrompt",true)
+					local r=rootOf(d); if r and (pr or isFoodName(n) or n:find("corpse")) then local dd=dist(me.Position,r.Position); if dd<=range then seen[d]=true; out[#out+1]={d,r,dd, prompt=pr} end end
 				end
 			end
 		end
