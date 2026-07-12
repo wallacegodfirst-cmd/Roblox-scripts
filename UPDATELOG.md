@@ -10,8 +10,10 @@ JUJUTSU SHENANIGANS - FREE  (finally out after a long wait)
 + Features (15+ and more inside):
   - M1 Black Flash: on your M1 it presses 3 for you = the flash.
   - Auto Black Flash: presses 3 on the Black Flash windup automatically.
-  - Auto Earthquake: near a player or dummy it presses 3, holds 2 seconds,
-    then releases. Quake Hold and Quake Range sliders.
+  - Auto Earthquake (Free): it never presses 3 on its own. You press 3,
+    and it holds 3 for you for the full charge (Quake Hold slider, 2s
+    default), then releases the shockwave. The key is re-asserted the
+    whole time so lifting your finger early can not drop the charge.
   - Gojo TP Back: Q Dash or After N M1s, locks the back then R, R and teleport.
   - Auto Rika Down Slam near a player or dummy.
   - Auto Slam / Uppercut, Auto Air, Auto Domain Adapt.
@@ -32,6 +34,8 @@ JUJUTSU SHENANIGANS - FREE  (finally out after a long wait)
   - Teleport now sticks in public servers.
   - M1 detection: the game sinks the M1 click, so M1 is now detected by the
     game remote instead. It fires even when the click is consumed.
+  - Earthquake trigger fires on your key press (not release), so there is
+    no lag between pressing 3 and the hold starting.
   - Method hints removed from labels and source.
 
 note: next update will bring Paid / Plus Jujutsu Shenanigans. just wait.

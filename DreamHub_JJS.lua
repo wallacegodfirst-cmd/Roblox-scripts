@@ -3869,51 +3869,52 @@ do
 			if dummies then for _, m in ipairs(dummies:GetChildren()) do if chk(m) then return true end end end
 			return false
 		end
-		-- ONE quake: press 3, HOLD it for the charge, release. Also fire the move's own remote in parallel so it
-		-- lands even if key injection is weak on this executor. Cooldown so a nearby enemy doesn't spam it.
+		-- One charged quake. You tap 3; from that instant the key is kept down for the full charge time and
+		-- re-asserted every 80ms, so even if your finger lifts early the charge never drops. One clean release
+		-- fires the shockwave, and the move's own service is fired in parallel as a backup.
 		local function doQuake()
 			if holding then return end
 			holding = true
 			task.spawn(function()
 				local hold = tonumber(_G.VX_QUAKE_HOLD) or 2
 				local began = tick()
-				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + hold + 0.3
+				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + hold + 0.4
 				pcall(function()
-					VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)   -- 3 DOWN
-					task.wait(hold)                                            -- HOLD for the charge (2s default)
-					VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)  -- LET GO -> shockwave
+					local t0 = tick()
+					VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)     -- 3 down
+					while tick() - t0 < hold do
+						_G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.4
+						VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)  -- keep it held for you
+						task.wait(0.08)
+					end
+					VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)     -- let go -> shockwave
 				end)
-				task.wait(0.3)
-				if quakeAnimSeen < began then pcall(fireQuake) end   -- key hold didn't start it -> fire the remote directly
+				task.wait(0.25)
+				if quakeAnimSeen < began then pcall(fireQuake) end
 				holding = false
 			end)
 		end
-		-- AUTO LOOP: while enabled, whenever a player/dummy is near, do the full 3-hold-release quake, then wait
-		-- out its cooldown before the next one.
-		task.spawn(function()
-			while true do
-				task.wait(0.3)
-				if quakeOn and not holding and enemyNear(tonumber(_G.VX_QUAKE_RANGE) or 60) then
-					doQuake()
-					task.wait((tonumber(_G.VX_QUAKE_HOLD) or 2) + 2.5)   -- charge + real cooldown before the next auto quake
+		-- Free build: no auto-pressing. The move only starts when YOU tap 3 — then it is held 2s for you.
+		-- Non-free (future Plus): keep the near-enemy auto loop.
+		if not _G.JJS_FREE then
+			task.spawn(function()
+				while true do
+					task.wait(0.3)
+					if quakeOn and not holding and enemyNear(tonumber(_G.VX_QUAKE_RANGE) or 60) then
+						doQuake()
+						task.wait((tonumber(_G.VX_QUAKE_HOLD) or 2) + 2.5)
+					end
 				end
-			end
-		end)
-		-- MANUAL: you can also still trigger it yourself by tapping 3.
-		local threeDownAt = 0
-		UISq.InputBegan:Connect(function(input, _)
-			if input.KeyCode == Enum.KeyCode.Three then
-				local injK = _G.VX_INJ_KEYS
-				if not (injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three]) then threeDownAt = tick() end
-			end
-		end)
-		UISq.InputEnded:Connect(function(input, _)
+			end)
+		end
+		-- The trigger: your own tap on 3. On the press we take over and hold it for the charge length.
+		-- (No gameProcessedEvent check — the game sinks the ability key, which would otherwise swallow the trigger.)
+		UISq.InputBegan:Connect(function(input)
+			if input.KeyCode ~= Enum.KeyCode.Three then return end
 			if not quakeOn then return end
 			if UISq:GetFocusedTextBox() then return end
-			if input.KeyCode ~= Enum.KeyCode.Three then return end
 			local injK = _G.VX_INJ_KEYS
-			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end   -- our own injected release
-			if (tick() - threeDownAt) >= (tonumber(_G.VX_QUAKE_HOLD) or 2) then return end   -- you already held it long enough yourself
+			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end   -- our own injected press
 			doQuake()
 		end)
 	end
@@ -9596,8 +9597,9 @@ do
     if tier("premium") then acSec:Toggle({ Name = "Auto Adapt", Callback = function(b) if AutoAdaptApi then AutoAdaptApi.set(b) end end }) end   -- FREE: no Auto Adapt (Auto Domain Adapt below is kept)
     acSec:Toggle({ Name = "Auto Domain Adapt", Callback = function(b) if AutoDomainAdaptApi then AutoDomainAdaptApi.set(b) end end })
     acSec:Toggle({ Name = "Auto Earthquake", Callback = function(b) if AutoQuakeApi then AutoQuakeApi.set(b) end end })
+    if _G.JJS_FREE then pcall(function() acSec:Label("Earthquake: turn on, then press 3 — it is held for you") end) end
     acSec:Slider({ Name = "Quake Hold", Min = 0.3, Max = 3, Default = 2, Decimals = 0.01, Suffix = "s", Callback = function(v) _G.VX_QUAKE_HOLD = tonumber(v) or 2 end })
-    acSec:Slider({ Name = "Quake Range", Min = 15, Max = 150, Default = 60, Decimals = 1, Suffix = "st", Callback = function(v) _G.VX_QUAKE_RANGE = tonumber(v) or 60 end })
+    if not _G.JJS_FREE then acSec:Slider({ Name = "Quake Range", Min = 15, Max = 150, Default = 60, Decimals = 1, Suffix = "st", Callback = function(v) _G.VX_QUAKE_RANGE = tonumber(v) or 60 end }) end
     acSec:Toggle({ Name = "Auto Kill Emote", Callback = function(b) if KillEmoteApi then KillEmoteApi.set(b) end end })
     local keItems = {}   -- slot list with REAL emote names read from PlayerGui.Emotes.Emote.Page1/Page2 (the 'nan' slider is gone)
     for i = 1, 16 do
