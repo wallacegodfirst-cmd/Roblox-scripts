@@ -15,6 +15,62 @@ if not _G.VX_AC_HOOKED then
 	print("[JJS Bypass] Loaded: anti-cheat remotes destroyed; instant teleport, no rubberband.")
 end
 
+-- ── ISOLATED ANTI-CHEAT BYPASS (runs FIRST, before any hub code) ─────────────────────────────────────────
+-- Destroy the anti-cheat RE/RF remotes with :Destroy() (not Parent=nil — the AC VM already cached the remote,
+-- so re-parenting doesn't stop it; :Destroy() nukes its connections so FireServer silently fails). Leave a
+-- same-named dummy so other scripts' WaitForChild doesn't freeze. Then disable the local anti/detect scripts.
+do
+	local Players = game:GetService("Players")
+	local LP = Players.LocalPlayer
+	local function destroyACRemotes()
+		local rs = game:GetService("ReplicatedStorage")
+		local knit = rs:FindFirstChild("Knit"); knit = (knit and knit:FindFirstChild("Knit")) or knit
+		if not knit then return end
+		for _, svc in ipairs(knit:GetDescendants()) do
+			if svc.Name:lower():find("anti") then
+				for _, folderName in ipairs({ "RE", "RF" }) do
+					local folder = svc:FindFirstChild(folderName)
+					if folder then
+						for _, v in ipairs(folder:GetChildren()) do
+							if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+								local dummy = Instance.new(v.ClassName)
+								dummy.Name = v.Name
+								dummy.Parent = folder
+								pcall(function() v:Destroy() end)
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	local function disableACScripts()
+		local function process(parent)
+			if not parent then return end
+			for _, v in ipairs(parent:GetDescendants()) do
+				if v:IsA("LocalScript") or v:IsA("ModuleScript") then
+					local name = v.Name:lower()
+					if name:find("anti") or name:find("cheat") or name:find("detect") or name:find("namecall") then
+						pcall(function() v.Disabled = true end)
+					end
+				end
+			end
+		end
+		pcall(process, LP:FindFirstChild("PlayerScripts"))
+		if LP.Character then pcall(process, LP.Character) end
+	end
+	_G.VX_DESTROY_AC = function() pcall(destroyACRemotes); pcall(disableACScripts) end
+	pcall(destroyACRemotes)
+	pcall(disableACScripts)
+	pcall(function()
+		LP.CharacterAdded:Connect(function()
+			task.wait(1)
+			pcall(destroyACRemotes)
+			pcall(disableACScripts)
+		end)
+	end)
+end
+
 -- (LOADING SCREEN REMOVED per request — the hub builds straight away, no splash.)
 _G.VX_HUB_READY = false
 
@@ -927,58 +983,10 @@ task.spawn(function()
 		end
 	end
 end)
--- TELEPORT = zero-lag bypass. Instead of stepping under a per-frame limit, we take the server's ability to
--- reject the move away: destroy the anti-cheat RE/RF remotes (leaving harmless dummies so other scripts do
--- not crash on WaitForChild) and disable the anti/detect scripts once. With no channel to report a bad
--- position, a single PivotTo sticks. A single throttled Heartbeat lock re-pins you if the server nudges you.
+-- TELEPORT = zero-lag bypass. The isolated anti-cheat bypass at the TOP of this file already destroyed the AC
+-- remotes and disabled the anti/detect scripts (and re-applies on respawn), so the server has no channel to
+-- reject a move: a single PivotTo just sticks. A throttled Heartbeat lock re-pins you if the server nudges you.
 -- vxGlide / vxTeleportHard stay as thin wrappers so every call site (locations, players, slots) routes here.
-local function vxDestroyACRemotes()
-	pcall(function()
-		local rs = game:GetService("ReplicatedStorage")
-		local knit = rs:FindFirstChild("Knit"); knit = (knit and knit:FindFirstChild("Knit")) or knit
-		if not knit then return end
-		for _, svc in ipairs(knit:GetDescendants()) do
-			if svc.Name:lower():find("anti") then
-				for _, folderName in ipairs({ "RE", "RF" }) do
-					local folder = svc:FindFirstChild(folderName)
-					if folder then
-						for _, v in ipairs(folder:GetChildren()) do
-							if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
-								local dummy = Instance.new(v.ClassName)   -- keep WaitForChild happy
-								dummy.Name = v.Name; dummy.Parent = folder
-								pcall(function() v:Destroy() end)
-							end
-						end
-					end
-				end
-			end
-		end
-	end)
-end
-local function vxDisableACScripts()
-	local function process(parent)
-		if not parent then return end
-		for _, v in ipairs(parent:GetDescendants()) do
-			if v:IsA("LocalScript") or v:IsA("ModuleScript") then
-				local name = v.Name:lower()
-				if name:find("anti") or name:find("cheat") or name:find("detect") or name:find("namecall") then
-					pcall(function() v.Disabled = true end)
-				end
-			end
-		end
-	end
-	local LP = game:GetService("Players").LocalPlayer
-	pcall(process, LP:FindFirstChild("PlayerScripts"))
-	if LP.Character then pcall(process, LP.Character) end
-end
-_G.VX_DESTROY_AC = vxDestroyACRemotes
-vxDestroyACRemotes(); vxDisableACScripts()
--- re-apply after a respawn (the game re-adds AC scripts/remotes to the fresh character)
-pcall(function()
-	game:GetService("Players").LocalPlayer.CharacterAdded:Connect(function()
-		task.wait(1); vxDestroyACRemotes(); vxDisableACScripts()
-	end)
-end)
 
 local vxTeleportLock = false
 local vxCurrentTargetCF = nil
