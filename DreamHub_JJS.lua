@@ -5278,8 +5278,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "5.3"
-local VX_BUILD = "B53"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "5.4"
+local VX_BUILD = "B54"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
@@ -9500,8 +9500,21 @@ do
         UISbf.InputBegan:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 and not UISbf:GetFocusedTextBox() then onClick() end
         end)
-        -- second path: some executors don't fire InputBegan for M1 while the game sinks clicks; the mouse hook does
         pcall(function() LP:GetMouse().Button1Down:Connect(onClick) end)
+        -- THIRD path (the real fix): the game SINKS the M1 click, so InputBegan/Button1Down don't fire for it
+        -- (they fire for GUI/empty clicks, which is why "it works when I click the GUI but not when I M1"). Poll
+        -- the raw mouse-button state every frame and catch the rising edge - this sees the click even when the
+        -- game consumes it.
+        do
+            local RS_bf = game:GetService("RunService")
+            local wasDown = false
+            RS_bf.RenderStepped:Connect(function()
+                if not bfM1On then wasDown = false; return end
+                local down = UISbf:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+                if down and not wasDown and not UISbf:GetFocusedTextBox() then onClick() end
+                wasDown = down
+            end)
+        end
     end
     -- M1 BF AND Auto BF both run your verbatim AutoBlackFlash engine (the anim watcher that presses 3 on the
     -- BF windup anims) — so M1 BF = your exact script running on your character's M1 + the click press below.
