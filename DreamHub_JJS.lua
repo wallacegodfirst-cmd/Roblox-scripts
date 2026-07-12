@@ -86,7 +86,8 @@ do
 	-- UNIVERSAL M1 DETECTION: fire on a known BF windup id OR on ANY Action-priority attack anim that plays
 	-- right after your click. This works on every character (no need for the exact anim id to be listed) and
 	-- the click gate (your mouse poll updates _G.VX_LAST_CLICK) stops random anims from firing it.
-	local lastFire = 0
+	-- BF After (M1s): only flash after _G.VX_BF_AFTER swings (the dropdown), so you pick how many M1s first.
+	local lastFire, swingCount, lastSwing = 0, 0, 0
 	local function onAnim(track)
 		if not enabled then return end
 		local ok, id = pcall(function() return track.Animation.AnimationId end)
@@ -99,8 +100,14 @@ do
             if isAction and clickedRecently then delayTime = 0.19 end
 		end
 		if delayTime then
-			if tick() - lastFire < 0.25 then return end   -- one press per swing
+			if tick() - lastFire < 0.25 then return end   -- one count per swing
 			lastFire = tick()
+			if tick() - lastSwing > 2.5 then swingCount = 0 end   -- new combo
+			lastSwing = tick()
+			swingCount = swingCount + 1
+			local need = tonumber(_G.VX_BF_AFTER) or 1
+			if swingCount < need then return end   -- wait until your chosen number of M1s
+			swingCount = 0
 			task.delay(math.max(0, delayTime + offset), function()
 				if enabled then pressKey(Enum.KeyCode.Three) end
 			end)
@@ -970,8 +977,8 @@ local function safeTeleport(targetCFrame, holdTime)
 	for _, v in ipairs(hrp:GetChildren()) do
 		if v:IsA("AlignPosition") or v:IsA("AlignOrientation") or v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("BodyGyro") then pcall(function() v:Destroy() end) end
 	end
-	-- FIRE the AntiCheat Teleport remote (updates the server safe-zone) BEFORE moving, instead of blocking it.
-	-- Blocking it made the server think you glitched and snap you back; firing it is the legit way.
+	-- FIRE the AntiCheat Teleport remote (updates the server safe-zone) instead of blocking it. Blocking made
+	-- the server think you glitched and snap you back; firing it is the legit way.
 	local re = vxResolveAC()
 	if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end
 	hrp.AssemblyLinearVelocity = Vector3.new(0,0,0)
@@ -979,8 +986,15 @@ local function safeTeleport(targetCFrame, holdTime)
 	vxCurrentTargetCF = targetCFrame
 	vxTeleportLock = true
 	hrp.CFrame = targetCFrame
-	task.spawn(function() task.wait(0.1); if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end end)  -- fire again right after = server stays in sync
-	task.delay(holdTime or 1.2, function()
+	-- keep firing the remote through the whole hold: every ~0.15s the safe-zone is re-confirmed, so a set-back
+	-- that would land a beat later has nothing to revert to. The Heartbeat lock re-asserts the CFrame meanwhile.
+	local hold = holdTime or 1.2
+	task.spawn(function()
+		local t0 = tick()
+		while tick() - t0 < hold do
+			if re then pcall(function() re:FireServer(workspace:GetServerTimeNow()) end) end
+			task.wait(0.15)
+		end
 		vxTeleportLock = false
 		vxCurrentTargetCF = nil
 	end)
@@ -5253,8 +5267,8 @@ end
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
 local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
-local VX_VERSION = "5.6"
-local VX_BUILD = "B56"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
+local VX_VERSION = "5.7"
+local VX_BUILD = "B57"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
 if getgenv and getgenv().Library then
     pcall(function() getgenv().Library:Unload() end)
@@ -9461,18 +9475,11 @@ do
         end
         local m1s, lastM1, lastCount = 0, 0, 0
         local function onClick()
-            _G.VX_LAST_CLICK = tick()   -- stamp EVERY detected click (incl. the sunk-click poll) so the BF anim gate sees it
-            if not bfM1On then return end
-            if tick() - lastCount < 0.06 then return end   -- both detection paths may fire for one click; debounce
-            lastCount = tick()
-            if tick() - lastM1 > 2.5 then m1s = 0 end       -- new combo if you stopped clicking
-            lastM1 = tick()
-            m1s = m1s + 1
-            if m1s >= bfCount then
-                m1s = 0
-                task.delay(math.max(0, 0.12 + bfClickOffset), press3)
-            end
+            -- ONLY stamp the click now. The Black Flash engine does the actual press (gated by BF After (M1s))
+            -- off your M1 animation, so this no longer double-presses or ignores the count.
+            _G.VX_LAST_CLICK = tick()
         end
+        local _ = press3   -- kept for reference; the engine handles the press now
         _G.VX_ON_M1 = onClick   -- the bypass __namecall hook pings this when your M1 remote (...Service.RE.Activated) fires
         UISbf.InputBegan:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 and not UISbf:GetFocusedTextBox() then onClick() end
@@ -9504,7 +9511,8 @@ do
         elseif m == "M1 Chain" then _G.VXBF2.setBFM1(false); _G.VXBF2.setMode("M1"); _G.VXBF2.setEnabled(true)
         else _G.VXBF2.setBFM1(false); _G.VXBF2.setMode(m); _G.VXBF2.setEnabled(true) end
     end })
-    bfSec:Dropdown({ Name = "BF After (M1s)", Items = { "1", "2", "3" }, Default = "1", Callback = function(v) v = (type(v) == "table") and v[1] or v; bfCount = tonumber(v) or 1 end })
+    _G.VX_BF_AFTER = 1
+    bfSec:Dropdown({ Name = "BF After (M1s)", Items = { "1", "2", "3" }, Default = "1", Callback = function(v) v = (type(v) == "table") and v[1] or v; bfCount = tonumber(v) or 1; _G.VX_BF_AFTER = bfCount end })
     bfSec:Toggle({ Name = "Auto Black Flash", Default = false, Callback = function(b)
         bfAutoOn = (b == true); bfSync()
         if _G.VXBF2 then _G.VXBF2.setAutoBF(false) end   -- avoid the weaker VXBF2 path double-pressing
