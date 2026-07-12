@@ -2831,13 +2831,15 @@ CombatTab:CreateSlider({Name="Save Health: sky height", Range={100,2000}, Increm
 -- LOBBY, flip this ON, and it teleports you straight to the fight. You cannot be hurt. The known trade-off
 -- of the trick itself: you also cannot M1 in that state (the game never armed your combat), so pair it with
 -- One Punch / abilities, or flip it while spectating to troll safely.
-CombatTab:CreateToggle({Name="God Mode (turn ON while in the LOBBY - TPs you to the fight, no M1)", CurrentValue=false, Flag="GodModeLobby", Callback=function(v)
+-- GOD MODE: PLUS only. The free tier never even builds the toggle. AbilityArena_PLUS.lua sets _G.AA_PLUS.
+if _G.AA_PLUS then
+CombatTab:CreateToggle({Name="God Mode", CurrentValue=false, Flag="GodModeLobby", Callback=function(v)
     S.GodMode=v
     if not v then return end
+    pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "God Mode", Text = "Must be in the LOBBY. Reset first, then turn this on.", Duration = 5 }) end)
     task.spawn(function()
         local root = getRoot(); if not root then return end
         local dest
-        -- PRIMARY: teleport onto a GameMap.Spawns part (this is what arms you into the fight)
         pcall(function()
             local gm = Workspace:FindFirstChild("GameMap")
             local sp = gm and gm:FindFirstChild("Spawns")
@@ -2851,7 +2853,6 @@ CombatTab:CreateToggle({Name="God Mode (turn ON while in the LOBBY - TPs you to 
                 end
             end
         end)
-        -- FALLBACK: no GameMap yet -> land next to the nearest player
         if not dest then
             local p = nearestPlayer(math.huge)
             local tr = p and p.Character and charPart(p.Character)
@@ -2862,23 +2863,21 @@ CombatTab:CreateToggle({Name="God Mode (turn ON while in the LOBBY - TPs you to 
         end
     end)
 end})
+end
 
 CombatTab:CreateSection("Combat Pro")
-CombatTab:CreateToggle({Name="Legit Auto Play (holds W + dodges M1s + fights)", CurrentValue=false, Flag="LegitAutoPlay", Callback=function(v) S.LegitAutoPlay=v; if not v and _G.AA_RELEASEKEYS then _G.AA_RELEASEKEYS() end end})
-CombatTab:CreateToggle({Name="Auto Dodge (teleports left/right off enemy M1s)", CurrentValue=false, Flag="ProAutoDodge", Callback=function(v) S.ProAutoDodge=v end})
-CombatTab:CreateToggle({Name="Instant 1v1 Win (front/back combo)", CurrentValue=false, Flag="Win1v1", Callback=function(v) S.Win1v1=v end})
+CombatTab:CreateToggle({Name="Legit Auto Play", CurrentValue=false, Flag="LegitAutoPlay", Callback=function(v) S.LegitAutoPlay=v; if not v and _G.AA_RELEASEKEYS then _G.AA_RELEASEKEYS() end end})
+CombatTab:CreateToggle({Name="Auto Dodge", CurrentValue=false, Flag="ProAutoDodge", Callback=function(v) S.ProAutoDodge=v end})
+CombatTab:CreateToggle({Name="Instant 1v1 Win", CurrentValue=false, Flag="Win1v1", Callback=function(v) S.Win1v1=v end})
 CombatTab:CreateDropdown({Name="1v1 Win Position", Options={"Back","Front"}, CurrentOption={"Back"}, Flag="Win1v1Pos", Callback=function(o) S.Win1v1Pos=(type(o)=="table" and o[1]) or o end})
-CombatTab:CreateToggle({Name="Fling Punch (M1 spin-flings the nearest enemy)", CurrentValue=false, Flag="FlingPunch", Callback=function(v) S.FlingPunch=v end})
-CombatTab:CreateSlider({Name="Fling Range", Range={10,120}, Increment=5, Suffix="studs", CurrentValue=40, Flag="FlingRange", Callback=function(v) S.FlingRange=v end})
-CombatTab:CreateSlider({Name="Fling Power (higher = flung farther)", Range={200,3000}, Increment=50, Suffix="", CurrentValue=850, Flag="FlingPower", Callback=function(v) S.FlingPower=v end})
 
 CombatTab:CreateSection("M1 Warp")
-CombatTab:CreateToggle({Name="M1 Warp (M1 snaps you behind the nearest enemy)", CurrentValue=false, Flag="M1Warp", Callback=function(v) S.M1Warp=v end})
+CombatTab:CreateToggle({Name="M1 Warp", CurrentValue=false, Flag="M1Warp", Callback=function(v) S.M1Warp=v end})
 CombatTab:CreateSlider({Name="M1 Warp Range", Range={10,200}, Increment=5, Suffix="studs", CurrentValue=60, Flag="M1WarpRange", Callback=function(v) S.M1WarpRange=v end})
 CombatTab:CreateToggle({Name="Warp Back After Swing", CurrentValue=true, Flag="M1WarpReturn", Callback=function(v) S.M1WarpReturn=v end})
 
 CombatTab:CreateSection("Auto")
-CombatTab:CreateToggle({Name="Aura M1 (strong: face + M1 + E/R/T spam when near)", CurrentValue=false, Flag="AuraM1Pro", Callback=function(v) S.AuraM1Pro=v end})
+CombatTab:CreateToggle({Name="Aura M1", CurrentValue=false, Flag="AuraM1Pro", Callback=function(v) S.AuraM1Pro=v end})
 CombatTab:CreateSlider({Name="Aura M1 Range", Range={5,120}, Increment=5, Suffix="studs", CurrentValue=60, Flag="AuraRange", Callback=function(v) S.AuraRange=v end})
 CombatTab:CreateToggle({Name="Auto Ability", CurrentValue=false, Flag="AutoAbility", Callback=function(v) S.AutoAbility=v end})
 CombatTab:CreateSlider({Name="Auto Ability Range", Range={5,80}, Increment=1, Suffix="studs", CurrentValue=25, Flag="AutoAbilityRange", Callback=function(v) S.AutoAbilityRange=v end})
@@ -2886,18 +2885,18 @@ CombatTab:CreateToggle({Name="Cast E", CurrentValue=true,  Flag="CastE", Callbac
 CombatTab:CreateToggle({Name="Cast Q", CurrentValue=false, Flag="CastQ", Callback=function(v) S.CastQ=v end})
 CombatTab:CreateToggle({Name="Cast R", CurrentValue=false, Flag="CastR", Callback=function(v) S.CastR=v end})
 CombatTab:CreateToggle({Name="Cast T", CurrentValue=false, Flag="CastT", Callback=function(v) S.CastT=v end})
-CombatTab:CreateToggle({Name="Dash Behind On Hit (M1 -> snap behind + dash)", CurrentValue=false, Flag="DashBehind", Callback=function(v) S.DashBehind=v end})
+CombatTab:CreateToggle({Name="Dash Behind On Hit", CurrentValue=false, Flag="DashBehind", Callback=function(v) S.DashBehind=v end})
 CombatTab:CreateSlider({Name="Dash Behind Range", Range={10,80}, Increment=1, Suffix="studs", CurrentValue=45, Flag="DashRange", Callback=function(v) S.DashRange=v end})
-CombatTab:CreateToggle({Name="Auto Dash (spam dash, no shift-lock)", CurrentValue=false, Flag="AutoDash", Callback=function(v) S.AutoDash=v end})
+CombatTab:CreateToggle({Name="Auto Dash", CurrentValue=false, Flag="AutoDash", Callback=function(v) S.AutoDash=v end})
 CombatTab:CreateDropdown({Name="Dash Key (whatever key dashes in-game)", Options={"Q","E","F","R","X","C","V","Left Shift"}, CurrentOption={"Q"}, Flag="AutoDashKey", Callback=function(o) S.AutoDashKey=(type(o)=="table" and o[1]) or o end})
 CombatTab:CreateSlider({Name="Auto Dash Speed (lower = faster)", Range={1,20}, Increment=1, Suffix="x0.1s", CurrentValue=6, Flag="AutoDashTenths", Callback=function(v) S.AutoDashDelay=v/10 end})
 
 CombatTab:CreateSection("Aim")
-CombatTab:CreateToggle({Name="Camera Lock (nearest)", CurrentValue=false, Flag="CamLock", Callback=function(v) S.CamLock=v end})
+CombatTab:CreateToggle({Name="Camera Lock", CurrentValue=false, Flag="CamLock", Callback=function(v) S.CamLock=v end})
 CombatTab:CreateSlider({Name="Cam Lock Range", Range={20,300}, Increment=5, Suffix="studs", CurrentValue=120, Flag="CamLockRange", Callback=function(v) S.CamLockRange=v end})
-CombatTab:CreateToggle({Name="Ability Aim Assist (face enemy on skill cast)", CurrentValue=false, Flag="AimAssist", Callback=function(v) S.AimAssist=v end})
-CombatTab:CreateToggle({Name="Strong Aim (hold on target every frame)", CurrentValue=false, Flag="AimStrong", Callback=function(v) S.AimStrong=v end})
-CombatTab:CreateToggle({Name="Aim on M1 (snap to enemy on left-click)", CurrentValue=true, Flag="AimOnM1", Callback=function(v) S.AimOnM1=v end})
+CombatTab:CreateToggle({Name="Ability Aim Assist", CurrentValue=false, Flag="AimAssist", Callback=function(v) S.AimAssist=v end})
+CombatTab:CreateToggle({Name="Strong Aim", CurrentValue=false, Flag="AimStrong", Callback=function(v) S.AimStrong=v end})
+CombatTab:CreateToggle({Name="Aim on M1", CurrentValue=true, Flag="AimOnM1", Callback=function(v) S.AimOnM1=v end})
 CombatTab:CreateSlider({Name="Aim Smoothness (lower = smoother)", Range={5,100}, Increment=5, Suffix="%", CurrentValue=35, Flag="AimSmooth100", Callback=function(v) S.AimSmooth=v/100 end})
 CombatTab:CreateSlider({Name="Aim Assist Range", Range={20,400}, Increment=10, Suffix="studs", CurrentValue=140, Flag="AimAssistRange", Callback=function(v) S.AimAssistRange=v end})
 CombatTab:CreateSlider({Name="Aim Assist Lead (prediction)", Range={0,50}, Increment=1, Suffix="x0.01s", CurrentValue=12, Flag="AimAssistLead100", Callback=function(v) S.AimAssistLead=v/100 end})
