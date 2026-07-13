@@ -995,15 +995,35 @@ FARM = {tried={}, nodeCache={}, food={t=0,list={}}, dig=nil, digSearched=false, 
 local function getHitbox(model)
 	model = model or getMyModel()
 	if not model then return nil end
-	-- Priority the user confirmed: Hitbox (lowercase b) FIRST, then HitBox (capital B) — they're DIFFERENT
-	-- parts in the model (FindFirstChild is case-sensitive) — then TurningAnimation.Body, PrimaryPart, any part.
+	-- Priority the user confirmed: Hitbox (lowercase b) FIRST, then HitBox (capital B). NOTE: Hitbox may be a
+	-- BasePart OR a CONTAINER (per the screenshot: model.Hitbox.Head.Head is a Part). Handle both — if it is a
+	-- part use it, if it is a folder/model descend to a real BasePart inside (prefer Head, then any part).
 	for _,n in ipairs({"Hitbox","HitBox","HitboxPart","Hit"}) do
-		local hb=model:FindFirstChild(n); if hb and hb:IsA("BasePart") then return hb end
+		local hb=model:FindFirstChild(n)
+		if hb then
+			if hb:IsA("BasePart") then return hb end
+			-- container: prefer a Head part, else the first BasePart anywhere inside
+			local head=hb:FindFirstChild("Head", true); if head and head:IsA("BasePart") then return head end
+			local any=hb:FindFirstChildWhichIsA("BasePart", true); if any then return any end
+		end
 	end
 	local ta=model:FindFirstChild("TurningAnimation"); if ta then local b=ta:FindFirstChild("Body"); if b and b:IsA("BasePart") then return b end end
 	if model.PrimaryPart then return model.PrimaryPart end
 	return rootOf(model)
 end
+-- EVERY model that is a live / left character or wild dino. Per the Explorer screenshot, dinos (incl. the ones
+-- you fight and eat) live under workspace.CharacterIgnore.LeftCharacters — NOT only workspace.Characters. Combat,
+-- targeting, the bot and the protectors all missed them before. This one list is the fix. Exposed globally.
+local function charModels()
+	local out={}
+	local function add(f) if f then for _,m in ipairs(f:GetChildren()) do if m:IsA("Model") then out[#out+1]=m end end end end
+	add(WS:FindFirstChild("Characters"))
+	local ci=WS:FindFirstChild("CharacterIgnore")
+	if ci then add(ci:FindFirstChild("LeftCharacters")); add(ci) end
+	for _,nm in ipairs({"Sandbox","Dinos","Creatures","NPCs","Entities","Mobs","Animals","DynamicCharacters"}) do add(WS:FindFirstChild(nm)) end
+	return out
+end
+_G.MH_charModels = charModels
 -- "Always hit the Spine/Head": if CFG.AimPart names a bone (Head/Spine/Neck/...), aim at that bone (found in
 -- the dino's MeshModel bone hierarchy); else aim at the Hitbox. Returns an Instance (BasePart/Bone/Attachment).
 -- Spine/Head/etc. are BONE rigs under MeshModel>RootPart (Spine.002, Spine.001, ...), not BaseParts — search
@@ -3027,10 +3047,7 @@ conn(UIS.InputBegan:Connect(function(input, gp)
 			if n>=8 or not (m and m:IsA("Model") and m~=mine) or seen[m] then return end
 			local hb=getHitbox(m); if hb and dist(me.Position,hb.Position)<=rng then seen[m]=true; fireAttack(m, true); n+=1 end
 		end
-		local chars=WS:FindFirstChild("Characters"); if chars then for _,m in ipairs(chars:GetChildren()) do hit(m) end end
-		for _,nm in ipairs({"Sandbox","Dinos","Creatures","NPCs","Entities","Mobs","Animals","DynamicCharacters"}) do
-			if n>=8 then break end local f=WS:FindFirstChild(nm); if f then for _,m in ipairs(f:GetChildren()) do hit(m) end end
-		end
+		for _,m in ipairs(charModels()) do if n>=8 then break end hit(m) end   -- includes CharacterIgnore.LeftCharacters
 	end)
 end)) end
 task.spawn(function() while RUNNING do task.wait(0.5); local terrain=WS:FindFirstChildOfClass("Terrain"); if CFG.WaterClear and terrain then if not SAVED.water then SAVED.water={terrain.WaterTransparency,terrain.WaterReflectance,terrain.WaterWaveSize} end pcall(function() terrain.WaterTransparency=0.92; terrain.WaterReflectance=0; terrain.WaterWaveSize=0 end) elseif SAVED.water and terrain then pcall(function() terrain.WaterTransparency=SAVED.water[1]; terrain.WaterReflectance=SAVED.water[2]; terrain.WaterWaveSize=SAVED.water[3] end); SAVED.water=nil end end end)
@@ -3225,8 +3242,7 @@ task.spawn(function()
 					local ang=math.deg(math.acos(math.clamp(Cam.CFrame.LookVector:Dot(dir.Unit),-1,1))); if ang>55 then return end
 					if not bestScore or ang<bestScore then best,bestRoot,bestScore=m,rb,ang end
 				end
-				local chars=WS:FindFirstChild("Characters"); if chars then for _,m in ipairs(chars:GetChildren()) do consider(m) end end
-				if not best then for _,nm in ipairs({"Sandbox","Dinos","Creatures","NPCs","Entities","Mobs","Animals","DynamicCharacters"}) do local f=WS:FindFirstChild(nm); if f then for _,m in ipairs(f:GetChildren()) do consider(m) end end end end
+				for _,m in ipairs(charModels()) do consider(m) end   -- includes CharacterIgnore.LeftCharacters (where dinos live)
 				aimTarget=best; aimRoot=bestRoot; aimPart=best and getAimPart(best) or nil
 			end
 			if aimTarget and (not aimPart or not aimPart.Parent) then aimPart=getAimPart(aimTarget) end
@@ -3630,8 +3646,7 @@ local function botNearestThreat()
 	local mine=getMyModel()
 	local myStage=mine and stageRank(mine); local myBulk=mine and modelBulk(mine)
 	local best,broot,bd=nil,nil,tonumber(CFG.BotFleeRange) or 240
-	local chars=WS:FindFirstChild("Characters")
-	if chars then for _,m in ipairs(chars:GetChildren()) do
+	for _,m in ipairs(charModels()) do
 		if m:IsA("Model") and m~=mine then
 			local r=getHitbox(m) or rootOf(m)
 			if r then
@@ -3649,7 +3664,7 @@ local function botNearestThreat()
 				end
 			end
 		end
-	end end
+	end
 	return best,broot,bd
 end
 -- PVP TARGET: nearest OTHER dino within combat range that is NOT bigger than you (so it is safe to fight, not flee).
@@ -3659,8 +3674,7 @@ local function botNearestEnemy(range)
 	local mine=getMyModel()
 	local myStage=mine and stageRank(mine); local myBulk=mine and modelBulk(mine)
 	local best,broot,bd=nil,nil,range or 32
-	local chars=WS:FindFirstChild("Characters")
-	if chars then for _,m in ipairs(chars:GetChildren()) do
+	for _,m in ipairs(charModels()) do
 		if m:IsA("Model") and m~=mine then
 			local r=getHitbox(m) or rootOf(m)
 			if r then
@@ -3673,7 +3687,7 @@ local function botNearestEnemy(range)
 				end
 			end
 		end
-	end end
+	end
 	return best,broot,bd
 end
 -- PVP COMBAT ACTION: face the target and throw your basic attacks — LEFT click (M1) + RIGHT click (M2) via the
