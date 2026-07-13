@@ -413,18 +413,25 @@ local function installHook()
 						-- them to the server. While your antis are on, we SWALLOW any report that would tell the server
 						-- you fractured / bled / broke a bone — the injury never lands server-side. THIS is what makes
 						-- Anti Fractured + Bone Protection actually stick (the local sweep alone only hid it client-side).
+						-- Broadened region keywords so a HEAD/skull break (SkullFracture/HeadTrauma/Concussion/JawBreak) is
+						-- caught by Anti Break Head too, not only Anti Fractured. Same for neck/leg/tail/torso protectors.
+						local function injHit(lp)
+							local anyPhys = CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso
+							if (CFG.AntiFracture or CFG.BoneProtect) and (lp:find("fractur",1,true) or lp:find("concuss",1,true)) then return true end
+							if CFG.AntiBleed and (lp:find("bleed",1,true) or lp:find("hemorrhage",1,true) or lp:find("wound",1,true)) then return true end
+							if anyPhys and (lp:find("brok",1,true) or lp:find("break",1,true) or lp:find("sever",1,true) or lp:find("dislocat",1,true) or lp:find("limp",1,true) or lp:find("fractur",1,true) or lp:find("crush",1,true) or lp:find("blunt",1,true) or lp:find("trauma",1,true)) then return true end
+							if CFG.AntiBreakHead and (lp:find("head",1,true) or lp:find("skull",1,true) or lp:find("crani",1,true) or lp:find("jaw",1,true) or lp:find("concuss",1,true)) then return true end
+							if CFG.AntiBreakNeck and (lp:find("neck",1,true) or lp:find("spine",1,true) or lp:find("cervic",1,true)) then return true end
+							if CFG.AntiBreakLeg  and (lp:find("leg",1,true) or lp:find("foot",1,true) or lp:find("limb",1,true) or lp:find("knee",1,true)) then return true end
+							if CFG.AntiBreakTail and lp:find("tail",1,true) then return true end
+							if CFG.AntiBreakTorso and (lp:find("torso",1,true) or lp:find("rib",1,true) or lp:find("chest",1,true) or lp:find("hip",1,true)) then return true end
+							return false
+						end
 						if action=="SetProperty" and typeof(a[3])=="string" then local lp=a[3]:lower()
-							local blockInj=false
-							if (CFG.AntiFracture or CFG.BoneProtect) and (lp:find("fractur",1,true) or lp:find("concuss",1,true)) then blockInj=true end
-							if CFG.AntiBleed and (lp:find("bleed",1,true) or lp:find("hemorrhage",1,true) or lp:find("wound",1,true)) then blockInj=true end
-							if (CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso)
-							and (lp:find("brok",1,true) or lp:find("break",1,true) or lp:find("sever",1,true) or lp:find("dislocat",1,true) or lp:find("limp",1,true)) then blockInj=true end
-							if blockInj then local v=a[4]; if v==true or (typeof(v)=="number" and v~=0) or typeof(v)=="table" then return end end
+							if injHit(lp) then local v=a[4]; if v==true or (typeof(v)=="number" and v~=0) or typeof(v)=="table" then return end end
 						end
 						if action=="SetAction" and typeof(a[3])=="string" and a[4]==true then local lp=a[3]:lower()
-							if (CFG.AntiBleed and lp:find("bleed",1,true))
-							or ((CFG.AntiFracture or CFG.BoneProtect) and (lp:find("fractur",1,true) or lp:find("concuss",1,true)))
-							or ((CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso) and (lp:find("brok",1,true) or lp:find("limp",1,true) or lp:find("sever",1,true))) then return end
+							if injHit(lp) then return end
 						end
 						do local la=action:lower()
 							if (CFG.AntiFracture or CFG.AntiBleed or CFG.BoneProtect) and (la:find("fractur",1,true) or la:find("bleed",1,true) or la:find("injur",1,true)) then return end
