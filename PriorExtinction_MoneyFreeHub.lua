@@ -353,6 +353,13 @@ local function installHook()
 				if typeof(id)=="number" then
 					if action=="Sip" or action=="Bite" or action=="Eat" or action=="Consume" then
 						if not seenSet[id] then seenSet[id]=true; seenIds[#seenIds+1]=id end if action=="Bite" and a.n>=3 then __gg.MH_eat={id=id,buf=a[3]}; __gg.MH_foodIds=__gg.MH_foodIds or {}; if id~=myReplicaId then __gg.MH_foodIds[id]=true; __gg.MH_eatBuf=a[3] end end   -- collect EVERY food id you bite (multi-id) so INF Food replays them all
+						-- FULL-CALL CAPTURE (for the INF Food spam loop): record the ENTIRE eat call verbatim — the exact
+						-- id + action + every argument the game sent when YOU ate — so we can replay it byte-for-byte, fast,
+						-- forever. This is what makes "eat once, then it spams it infinitely" reliable on any land.
+						if action=="Bite" or action=="Eat" or action=="Consume" then
+							local snap={n=a.n} for i=1,a.n do snap[i]=a[i] end
+							__gg.MH_lastEatCall=snap; __gg.MH_lastEatT=tick()
+						end
 					else
 						noteReplicaId(id)  -- self action = our dino id
 					end
@@ -386,13 +393,14 @@ local function installHook()
 						-- Previously this swallowed the call entirely, which also blocked our own
 						-- refill fires at line ~1615 → server never got told stam was full = no drain fix.
 						if CFG.InfStam and action=="SetProperty" and typeof(a[3])=="string" then local lp=a[3]:lower()
-							if lp:find("stam",1,true) or lp=="energy" or lp=="endurance" or lp:find("endur",1,true) then
+							if lp:find("stam",1,true) or lp=="energy" or lp=="endurance" or lp:find("endur",1,true) or lp:find("vigor",1,true) then
 								if typeof(a[4])=="number" then
 									-- track the highest seen value per property name (= the real max when bar is full)
 									__gg.MH_max = __gg.MH_max or {}
 									local pk = a[3]
 									if a[4] > 0 and (not __gg.MH_max[pk] or a[4] > __gg.MH_max[pk]) then __gg.MH_max[pk] = a[4] end
 									a[4] = __gg.MH_max[pk] or 100   -- rewrite the drop to the tracked max
+										local snap={n=a.n} for i=1,a.n do snap[i]=a[i] end; snap[4]=__gg.MH_max[pk] or 100; __gg.MH_stamCall=snap   -- capture the exact full-stamina call to replay verbatim
 								end
 								return oldNC(self, table.unpack(a, 1, a.n))   -- fire with max value (not swallowed)
 							end
@@ -638,6 +646,12 @@ local function fakeEat()
 	local cap = __gg.MH_eat
 	local buf = (type(cap)=="table" and cap.buf~=nil) and cap.buf or __gg.MH_eatBuf or EAT_BUFFER
 	if type(buf)=="string" and buffer and buffer.fromstring then pcall(function() buf = buffer.fromstring(buf) end) end
+	-- VERBATIM REPLAY (strongest): if we captured your exact eat call, replay it byte-for-byte a few times. This is
+	-- the "capture the remote when you eat, then spam it" path — it always lands because it IS the game's own call.
+	local ec = __gg.MH_lastEatCall
+	if type(ec)=="table" and ec.n and ec.n>=2 then
+		for _=1,3 do pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end) end
+	end
 	if type(cap)=="table" and cap.id then pcall(function() rs:FireServer(cap.id, "Bite", cap.buf or buf) end) end
 	-- MULTI-ID REPLAY (eat once -> it does the rest): re-fire Bite to EVERY food id you've bitten this session,
 	-- FoodEatSpeed times each, so a single plant keeps the bar topped up across the whole map. Capped so it never bursts.
@@ -783,6 +797,7 @@ local function fireAttack(targetModel, skipSound, clickedPart)
 		[6]=group }
 	return pcall(function() rs:FireServer(table.unpack(args, 1, 6)) end)
 end
+_G.MH_attack = fireAttack   -- exposed so the Auto Play Bot's PvP combat can land real bone-targeted bites
 
 -- ═══ SKIN CHANGER (working standalone — SurfaceAppearance swap on MeshModel) ═══
 STAGE_SK = {"Hatchling","Juvenile","Teen","Adolescent","SubAdult","Sub-Adult","Adult","Elder","Monster"}
@@ -1852,6 +1867,12 @@ task.spawn(function() while RUNNING do
 			local v = (__gg.MH_max and __gg.MH_max[k]) or mx
 			pcall(function() replicaFire("SetProperty", k, v) end)
 		end
+		-- VERBATIM REPLAY (strongest): if we captured the game's OWN full-stamina report, replay it byte-for-byte.
+		-- This lands even if PE tracks stamina under a name/shape our key list above doesn't match.
+		local sc=__gg.MH_stamCall
+		if type(sc)=="table" and sc.n and sc.n>=2 then
+			local rs=getReplicaSignal(); if rs then pcall(function() rs:FireServer(table.unpack(sc,1,sc.n)) end) end
+		end
 		-- RE-ASSERT SPRINT: once you HAVE chosen to sprint (the hook stamps MH_wantRun when the game fires
 		-- Run=true), keep re-firing Run=true while you move so the server's exhaustion logic can never clear it
 		-- and drop you to walk speed. Gated on MH_wantRun so a deliberate walk is left alone. Same SetAction
@@ -2851,6 +2872,21 @@ task.spawn(function() while RUNNING do
 		task.wait(0.5)
 	else task.wait(0.4) end
 end end)
+-- INF FOOD — INFINITE SPAM of your captured eat remote: once you have eaten ONCE (the hook captured your exact
+-- Bite/Eat call), this replays that exact call on a fast loop so the bar stays pinned full with no walking, no key
+-- press, and no diet worries (it is literally re-sending the food you already ate). Yields to your manual E-hold.
+task.spawn(function() while RUNNING do
+	if CFG.InfFood and alive() and __gg.MH_lastEatCall then
+		local held=false; pcall(function() held=UIS:IsKeyDown(Enum.KeyCode.E) end)
+		if not held then
+			local rs=getReplicaSignal(); local ec=__gg.MH_lastEatCall
+			if rs and type(ec)=="table" and ec.n and ec.n>=2 then
+				for _=1,4 do pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end); task.wait(0.05) end
+			end
+		end
+		task.wait(0.2)
+	else task.wait(0.4) end
+end end)
 task.spawn(function() while RUNNING do
 	if CFG.InfWater and alive() then
 		fakeDrink()                       -- the captured "Sip" action (works at a water source)
@@ -3522,12 +3558,31 @@ end
 -- Exposed for the INF Food loop (defined earlier in the file): true only if THIS food matches your dino's diet.
 -- Resolved at call time, so the loop that references _G.MH_edible always gets the real gate once this line runs.
 _G.MH_edible = function(m, prompt) return edibleFor(myDiet(), isCorpseFood(m, prompt)) end
--- find the nearest PREDATOR: another PLAYER's dino inside BotFleeRange whose species eats meat (or is unknown —
--- assume the worst). Wild/AI dinos count too if they're carnivores. Returns model, root, distance.
+-- SIZE / STAGE helpers so the bot flees anything BIGGER than you (per request: use the ESP stage/size).
+local STAGE_RANK = {Hatchling=1,Baby=1,Juvenile=2,Child=2,Adolescent=3,SubAdult=4,["Sub Adult"]=4,["Sub-Adult"]=4,Adult=5,Elder=6}
+local function stageRank(m)
+	local s; pcall(function() s = m:GetAttribute("Stage") or m:GetAttribute("GrowthStage") end)
+	if not s then pcall(function() local rr=csReplica(); if rr and rr.Data and m==getMyModel() then s=rr.Data.GrowthStage or rr.Data.Stage or (rr.Data.Growth and rr.Data.Growth.Stage) end end) end
+	return s and STAGE_RANK[tostring(s)] or nil
+end
+local function modelBulk(m)   -- physical size = bounding-box volume; a good stand-in for "how big is that dino"
+	local ok,sz = pcall(function() local _,s = m:GetBoundingBox(); return s end)
+	if ok and sz then return sz.X*sz.Y*sz.Z end
+	return nil
+end
+-- is the OTHER dino bigger than us? Prefer growth stage (Adult>SubAdult>…); fall back to physical bulk (+15% margin).
+local function biggerThanMe(other, myStage, myBulk)
+	local os=stageRank(other); if os and myStage then if os>myStage then return true elseif os<myStage then return false end end
+	local ob=modelBulk(other); if ob and myBulk and myBulk>0 then return ob > myBulk*1.15 end
+	return false
+end
+-- find the nearest THREAT: another dino inside BotFleeRange that is BIGGER than you (any diet), OR a
+-- carnivore/omnivore/unknown predator. Bigger-than-you is the primary flee trigger. Returns model, root, distance.
 local function botNearestThreat()
 	if not CFG.BotFlee then return nil end
 	local me=hrp(); if not me then return nil end
 	local mine=getMyModel()
+	local myStage=mine and stageRank(mine); local myBulk=mine and modelBulk(mine)
 	local best,broot,bd=nil,nil,tonumber(CFG.BotFleeRange) or 240
 	local chars=WS:FindFirstChild("Characters")
 	if chars then for _,m in ipairs(chars:GetChildren()) do
@@ -3536,17 +3591,55 @@ local function botNearestThreat()
 			if r then
 				local d=dist(me.Position,r.Position)
 				if d<bd then
-					local sp=detectDinoModel(m) or m:GetAttribute("Type") or m:GetAttribute("Character")
-					local diet=speciesDiet(sp and tostring(sp))
-					if diet~="Herbivore" then   -- carnivore/omnivore/UNKNOWN = treat as a predator
-						local h=m:FindFirstChildOfClass("Humanoid")
-						if (not h) or h.Health>0 then best,broot,bd=m,r,d end
+					local h=m:FindFirstChildOfClass("Humanoid")
+					if (not h) or h.Health>0 then
+						local sp=detectDinoModel(m) or m:GetAttribute("Type") or m:GetAttribute("Character")
+						local diet=speciesDiet(sp and tostring(sp))
+						local big=biggerThanMe(m, myStage, myBulk)
+						if big or diet~="Herbivore" then   -- BIGGER than you, or a meat-eater/unknown = flee it
+							best,broot,bd=m,r,d
+						end
 					end
 				end
 			end
 		end
 	end end
 	return best,broot,bd
+end
+-- PVP TARGET: nearest OTHER dino within combat range that is NOT bigger than you (so it is safe to fight, not flee).
+-- Prefers real players. Returns model, root, distance.
+local function botNearestEnemy(range)
+	local me=hrp(); if not me then return nil end
+	local mine=getMyModel()
+	local myStage=mine and stageRank(mine); local myBulk=mine and modelBulk(mine)
+	local best,broot,bd=nil,nil,range or 32
+	local chars=WS:FindFirstChild("Characters")
+	if chars then for _,m in ipairs(chars:GetChildren()) do
+		if m:IsA("Model") and m~=mine then
+			local r=getHitbox(m) or rootOf(m)
+			if r then
+				local d=dist(me.Position,r.Position)
+				if d<bd then
+					local h=m:FindFirstChildOfClass("Humanoid")
+					if (not h) or h.Health>0 then
+						if not biggerThanMe(m, myStage, myBulk) then best,broot,bd=m,r,d end   -- only fight things NOT bigger than you
+					end
+				end
+			end
+		end
+	end end
+	return best,broot,bd
+end
+-- PVP COMBAT ACTION: face the target and throw your basic attacks — LEFT click (M1) + RIGHT click (M2) via the
+-- mouse, plus the captured Attack remote so damage lands server-side. Cooldowned so it is a real combo, not a blur.
+local function botCombat(target, troot)
+	if not (target and troot) then return end
+	if tick()-(BOT.atkCd or 0) < 0.5 then return end
+	BOT.atkCd=tick()
+	local me=hrp(); if me then pcall(function() local look=Vector3.new(troot.Position.X, me.Position.Y, troot.Position.Z); getMyModel():PivotTo(CFrame.new(me.Position, look)) end) end
+	pcall(function() VIM:SendMouseButtonEvent(0,0,0,true,game,0); task.wait(0.03); VIM:SendMouseButtonEvent(0,0,0,false,game,0) end)   -- LEFT click = M1
+	pcall(function() VIM:SendMouseButtonEvent(0,0,1,true,game,0); task.wait(0.03); VIM:SendMouseButtonEvent(0,0,1,false,game,0) end)   -- RIGHT click = M2
+	if _G.MH_attack then pcall(function() _G.MH_attack(target) end) end   -- the real captured Attack (bone-targeted damage)
 end
 -- nearest DIET-LEGAL food within a generous range. Returns model, part, prompt, distance.
 local function botNearestFood()
@@ -3681,6 +3774,16 @@ task.spawn(function()
 					if BOT.lastState~="flee" then BOT.lastState="flee"
 						local sp=detectDinoModel(threat) or threat.Name
 						botSay("PREDATOR — "..tostring(sp).." nearby! Running away.")
+					end
+				-- ── 1.5 PVP COMBAT ───────────────────────────────────────────────────────
+				-- No bigger dino to flee, but a fightable enemy (NOT bigger than you) is close → attack it:
+				-- face it, LEFT click + RIGHT click, and land the real bite. Also uses Always Damage if you have it on.
+				elseif (CFG.BotPvP ~= false) and botNearestEnemy(30) then
+					local enemy,eroot=botNearestEnemy(30)
+					if enemy and eroot then
+						BOT.sleeping=false; BOT.state="pvp"; BOT.goal=nil   -- stand and fight (don't walk off)
+						botCombat(enemy, eroot)
+						if BOT.lastState~="pvp" then BOT.lastState="pvp"; botSay("PvP — fighting "..tostring(detectDinoModel(enemy) or enemy.Name).." (M1 + M2).") end
 					end
 				-- ── 2. DRINK ─────────────────────────────────────────────────────────────
 				elseif waterF and waterF<drinkAt then
