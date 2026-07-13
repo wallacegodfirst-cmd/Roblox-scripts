@@ -60,7 +60,7 @@ local CFG = {
 	InfJump=false, BypassTP=true,
 	InfFood=false, InfWater=false, InfStam=false, InfOxygen=false,
 	AntiDrown=true, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false, HeadDmgReduce=90,
-	SaveDino=false, SaveHP=30, NoSleep=true, AutoHealBlood=false,
+	SaveDino=false, SaveHP=30, NoSleep=true, AutoHealBlood=false, AfkEat=false, BotPvP=true,
 	AutoFarmPlayer=false, FarmPlayerRange=120, AutoFarmFossil=false, FarmFossilRange=1000000, FossilSlow=1.2,
 	ESPPlayers=false, ESPCorpses=false, FoodESP=false, FishESP=false, GemESP=false, ESPRange=900, ESPColor="Default",
 	RemoveTrees=false, Radar=false, RadarRange=450, RadarDeath=true,
@@ -353,10 +353,10 @@ local function installHook()
 				if typeof(id)=="number" then
 					if action=="Sip" or action=="Bite" or action=="Eat" or action=="Consume" then
 						if not seenSet[id] then seenSet[id]=true; seenIds[#seenIds+1]=id end if action=="Bite" and a.n>=3 then __gg.MH_eat={id=id,buf=a[3]}; __gg.MH_foodIds=__gg.MH_foodIds or {}; if id~=myReplicaId then __gg.MH_foodIds[id]=true; __gg.MH_eatBuf=a[3] end end   -- collect EVERY food id you bite (multi-id) so INF Food replays them all
-						-- FULL-CALL CAPTURE (for the INF Food spam loop): record the ENTIRE eat call verbatim — the exact
-						-- id + action + every argument the game sent when YOU ate — so we can replay it byte-for-byte, fast,
-						-- forever. This is what makes "eat once, then it spams it infinitely" reliable on any land.
-						if action=="Bite" or action=="Eat" or action=="Consume" then
+						-- BITE-ONLY CAPTURE (for the INF Food spam loop): record the ENTIRE Bite call verbatim — the exact
+						-- id + "Bite" + every argument the game sent when YOU bit food — so we can replay it byte-for-byte,
+						-- fast, forever. Bite is the one that actually fills the bar, so this is all INF Food needs.
+						if action=="Bite" then
 							local snap={n=a.n} for i=1,a.n do snap[i]=a[i] end
 							__gg.MH_lastEatCall=snap; __gg.MH_lastEatT=tick()
 						end
@@ -1500,6 +1500,10 @@ do local p=Pages["Survival"]
 	mkSlider(sv,"Save at HP %","SaveHP",5,90,2,5)
 	mkToggle(sv,"Auto Heal Blood","AutoHealBlood",3)
 	mkLabel(sv,"Keeps your blood + health topped up.")
+	if not _G.PE_HIDE_LITE then
+		mkToggle(sv,"AFK Eat","AfkEat",5)
+		mkLabel(sv,"Lifts you high up out of reach and keeps you fed so you AFK grow safely.")
+	end
 	local _,pg=mkSec(p,"Progress",5)
 	mkBtn(pg,"Progress Restore",function() progressRestore() end,1)
 	-- SAVED SLOTS — auto-named dropdown ("<n>: Species - Stage"). Save banks your CURRENT dino into the next free slot
@@ -2834,13 +2838,11 @@ do
 	end end)
 end
 task.spawn(function() while RUNNING do
-	if CFG.InfFood and alive() then
-		-- SMART DIET-AWARE INF FOOD (Wellbeing fix): eat ONLY what your dino's diet allows — herbivores eat plants,
-		-- carnivores eat meat/corpses, omnivores eat both. Eating the WRONG food tanks the game's hidden Comfort
-		-- stat, which the server turns into a big stamina-drain multiplier — that is exactly what made INF Stam
-		-- "break" whenever INF Food was on. We scan the WHOLE map (not just nearby) and fire the correct-diet eat
-		-- prompt remotely, so you eat the right food from anywhere without moving.
-		-- BACK OFF while YOU hold your interact key so your manual hold-to-eat is never cancelled.
+	-- ONLY runs UNTIL you have bitten once. After that, __gg.MH_lastEatCall is set and the pure Bite-spam loop
+	-- below takes over — so INF Food stops firing prompts entirely, which is what was interfering with your manual
+	-- E-hold. This block exists only to get that FIRST real bite (to capture the Bite remote) if you never eat yourself.
+	if CFG.InfFood and alive() and not __gg.MH_lastEatCall then
+		-- Get the first correct-diet bite so we can capture the Bite remote (herbivore→plants, carnivore→meat).
 		local eHeld = false; pcall(function() eHeld = UIS:IsKeyDown(Enum.KeyCode.E) end)
 		if not eHeld then
 			fakeEat()   -- replay your last captured bite (fills bar); harmless, presses no keys
@@ -2872,19 +2874,17 @@ task.spawn(function() while RUNNING do
 		task.wait(0.5)
 	else task.wait(0.4) end
 end end)
--- INF FOOD — INFINITE SPAM of your captured eat remote: once you have eaten ONCE (the hook captured your exact
--- Bite/Eat call), this replays that exact call on a fast loop so the bar stays pinned full with no walking, no key
--- press, and no diet worries (it is literally re-sending the food you already ate). Yields to your manual E-hold.
+-- INF FOOD — INFINITE BITE SPAM: once you have bitten ONCE (the hook captured your exact "Bite" call), this replays
+-- that exact Bite remote on a fast loop, forever, so the bar stays pinned full with no walking and no key press. It
+-- fires ONLY the Bite remote — it never touches E, never fires a prompt, never toggles Consuming — so it can NEVER
+-- interfere with your manual E-hold-to-eat. This is the whole INF Food after the first bite.
 task.spawn(function() while RUNNING do
 	if CFG.InfFood and alive() and __gg.MH_lastEatCall then
-		local held=false; pcall(function() held=UIS:IsKeyDown(Enum.KeyCode.E) end)
-		if not held then
-			local rs=getReplicaSignal(); local ec=__gg.MH_lastEatCall
-			if rs and type(ec)=="table" and ec.n and ec.n>=2 then
-				for _=1,4 do pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end); task.wait(0.05) end
-			end
+		local rs=getReplicaSignal(); local ec=__gg.MH_lastEatCall
+		if rs and type(ec)=="table" and ec.n and ec.n>=2 then
+			for _=1,6 do pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end); task.wait(0.04) end
 		end
-		task.wait(0.2)
+		task.wait(0.12)
 	else task.wait(0.4) end
 end end)
 task.spawn(function() while RUNNING do
@@ -3042,6 +3042,19 @@ task.spawn(function() while RUNNING do task.wait(0.25); if CFG.SaveDino and aliv
 end end end)
 -- AUTO CLEAN: fire the captured (myDinoId,"CleanlinessStart") so the dino self-cleans (cleanliness never drops).
 task.spawn(function() while RUNNING do if CFG.AutoClean and alive() then pcall(function() replicaFire("CleanlinessStart") end); task.wait(2.5) else task.wait(0.5) end end end)
+-- AFK EAT (PLUS): lift you HIGH up — out of reach of every dino, so nothing can touch you — and hold you there while
+-- INF Food's Bite spam keeps you fed, so you AFK GROW safely. It turns INF Food on for you (the growth food source),
+-- anchors you ~450 studs up (once), and pins you there. Plus build only. Toggle off = you drop back down.
+if not _G.PE_HIDE_LITE then
+	local afkAnchor
+	conn(RunService.Heartbeat:Connect(function()
+		if not (CFG.AfkEat and alive()) then afkAnchor=nil; return end
+		CFG.InfFood = true   -- the Bite spam is your food/growth source while AFK
+		local r=hrp(); if not r then return end
+		if not afkAnchor then afkAnchor = r.Position + Vector3.new(0, 450, 0) end   -- lift once, straight up
+		pcall(function() r.CFrame = CFrame.new(afkAnchor); r.AssemblyLinearVelocity = Vector3.new(0,0,0); r.AssemblyAngularVelocity = Vector3.new(0,0,0) end)
+	end))
+end
 
 -- HITBOX EXPANDER (enemy creatures + players ONLY — same targeting as the proven standalone test build:
 -- workspace.Characters children, skip YOUR model, both "HitBox"/"Hitbox" spellings, same property set)
