@@ -705,7 +705,16 @@ ATK_GROUPS = {
 -- LegIK.L, Head…). Look there FIRST (real .Position), then MeshModel bones, then a recursive find as last resort.
 local function _findIn(model, name)
 	if not model then return nil end
-	local hb=model:FindFirstChild("Hitbox"); if hb then local p=hb:FindFirstChild(name); if p then return p end end
+	-- Hitbox is a CONTAINER (Hitbox.Head.Head is the real Part). A shallow FindFirstChild returned the FOLDER, whose
+	-- position can't be read, so bone-aim / Always Damage never landed. Search the container RECURSIVELY for the
+	-- actual BasePart/Bone with this name first.
+	local hb=model:FindFirstChild("Hitbox") or model:FindFirstChild("HitBox")
+	if hb then
+		for _,d in ipairs(hb:GetDescendants()) do
+			if d.Name==name and (d:IsA("BasePart") or d:IsA("Bone")) then return d end
+		end
+		local p=hb:FindFirstChild(name, true); if p then return p end   -- any descendant with this name as a last resort
+	end
 	local mm=model:FindFirstChild("MeshModel"); if mm then local b=mm:FindFirstChild(name, true); if b then return b end end
 	return model:FindFirstChild(name, true)
 end
@@ -775,7 +784,10 @@ local function fireAttack(targetModel, skipSound, clickedPart)
 	end
 	if not targetPos then
 		local hb=targetModel:FindFirstChild("Hitbox") or targetModel:FindFirstChild("HitBox")
-		if hb and hb:IsA("BasePart") then group, boneName, targetPos = "Body","Hitbox",hb.Position end
+		if hb then
+			local part = (hb:IsA("BasePart") and hb) or hb:FindFirstChildWhichIsA("BasePart", true)   -- descend the container (Hitbox.Head.Head)
+			if part then group, boneName, targetPos = boneGroupFor(part.Name), part.Name, part.Position end
+		end
 	end
 	if not targetPos then return false end
 	-- ALWAYS HIT the chosen part: report the GROUP as the selected region so "Always Damage = Neck" registers as a Neck
