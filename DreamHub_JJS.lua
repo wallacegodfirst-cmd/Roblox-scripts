@@ -9319,7 +9319,21 @@ do
     -- (Library is left untouched), so the menu can never end up bricked.
     do
         local FluLib
-        pcall(function() FluLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mc4121ban/Fluriore-UI/main/source.lua"))() end)
+        -- Load the external UI lib DEFENSIVELY. If the third-party repo returns broken/mangled source, a raw
+        -- loadstring(...)() throws a scary ":1: Expected identifier..." compile error. Here we fetch, then
+        -- COMPILE-CHECK (loadstring returns nil+err on bad source instead of throwing), and only call it when it
+        -- compiled to a function. Any failure just leaves FluLib nil, so the hub silently uses its built-in GUI.
+        pcall(function()
+            local src
+            pcall(function() src = game:HttpGet("https://raw.githubusercontent.com/Mc4121ban/Fluriore-UI/main/source.lua") end)
+            if type(src) == "string" and #src > 100 and src:sub(1, 1) ~= "<" then   -- guard against HTML/404 pages
+                local fn = loadstring(src)                                          -- nil,err on a syntax error (no throw)
+                if type(fn) == "function" then
+                    local ok, lib = pcall(fn)
+                    if ok then FluLib = lib end
+                end
+            end
+        end)
         if type(FluLib) == "table" and type(FluLib.MakeGui) == "function" then
             local RED = Color3.fromRGB(220, 30, 40)   -- Ability Arena accent: deeper blood red on near-black
             local function arr(t) local o = {}; if type(t) == "table" then for _, v in ipairs(t) do o[#o + 1] = v end elseif t ~= nil then o[1] = t end return o end

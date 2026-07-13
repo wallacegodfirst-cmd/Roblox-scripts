@@ -46,6 +46,9 @@ JUJUTSU SHENANIGANS - FREE  (finally out after a long wait)
     scripts disabled, so a single instant teleport sticks with no
     rubberband and no per-frame stepping lag. Re-applied after respawn.
     The old TP Step / TP Method controls were removed (no longer needed).
+  - The external menu library is now loaded defensively: if that
+    third-party source is broken it fails silently to the built-in menu
+    instead of printing a ":1:" compile error.
   - Method hints removed from labels and source.
 
 note: next update will bring Paid / Plus Jujutsu Shenanigans. just wait.
@@ -55,14 +58,19 @@ PRIOR EXTINCTION - PLUS
 ===================================================================
 
 ~ Fixes (this update):
-  - INF Stamina is now separate from any speed boost. It only keeps the
-    stamina bar full and stops the drain — the old sprint speed-keeper
-    that glitched movement and "prevented progress" is gone. Use Speed
-    Hack if you want extra speed.
-  - INF Food no longer glues the food bar to max, which was hiding the
-    eat prompt so you could not hold E to eat. It now uses the original
-    herb method: it fires the eat for you to keep food high while leaving
-    the prompt available, so you can hold E to eat any time.
+  - INF Food is now diet-aware. It reads your dino's diet (herbivore,
+    carnivore or omnivore) and only eats the food that matches. Eating the
+    wrong food was tanking the hidden Comfort stat, which the game turns
+    into a big stamina drain — that is why INF Stamina "broke" whenever
+    INF Food was on. It also scans the whole map and eats the right food
+    from anywhere, so you keep growing without moving.
+  - INF Stamina now also pins the Wellbeing stats (Comfort, Activity,
+    nutrition, immunity; Toxins to zero) that gate the stamina drain, so
+    it holds even with INF Food on. It stays fully separate from any speed
+    boost — real sprint speed only, no glitching. Use Speed Hack for extra
+    speed.
+  - INF Food keeps the bar up whether you eat or not, and never pins it to
+    max, so the eat prompt stays visible and you can still hold E to eat.
   - Every place that touched a food prompt now restores its hold time and
     range afterward, and the gem/fossil farm no longer sends an E release
     that cancelled a manual eat.

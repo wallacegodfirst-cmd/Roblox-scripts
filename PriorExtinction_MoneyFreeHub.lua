@@ -1899,6 +1899,36 @@ task.spawn(function() while RUNNING do
 	else task.wait(0.4) end
 end end)
 
+-- WELLBEING PIN (the "INF Stam breaks with INF Food" fix): PE hides a stamina-drain MULTIPLIER behind the
+-- Wellbeing stats — WellbeingData says "High activity makes your stamina drain less" and "Comfort goes down… eating
+-- bad food". When those drop (e.g. from eating the wrong diet) stamina drains faster than any pin can refill, so
+-- INF Stam looks broken. These stats live in Replica.Data.SavableStats.Stats (not Data.Stats). We hard-pin Comfort,
+-- Activity, nutrition and immunity to full and zero Toxins, so the drain penalty is removed and INF Stam holds even
+-- with INF Food on. Runs whenever INF Stam / INF Food / God Mode is on.
+do
+	local WB_MAX = {"Comfort","Activity","Cleanliness","Immunity","Proteins","Fats","Calcium","Fiber","Carbohydrates","Nutrition","Wellbeing"}
+	local WB_ZERO = {"Toxins","Toxin","Toxicity"}
+	task.spawn(function() while RUNNING do
+		if (CFG.InfStam or CFG.InfFood or CFG.GodMode) and alive() then
+			pcall(function()
+				local r=csReplica()
+				local ss = r and r.Data and r.Data.SavableStats and r.Data.SavableStats.Stats
+				if ss then
+					for _,k in ipairs(WB_MAX)  do if type(ss[k])=="number" then ss[k]=100 end end
+					for _,k in ipairs(WB_ZERO) do if type(ss[k])=="number" then ss[k]=0   end end
+				end
+				-- some builds also mirror these on the top-level Stats table — pin the two that gate stamina there too
+				local stats=csStats()
+				if stats then for _,k in ipairs({"Comfort","Activity"}) do if type(stats[k])=="number" then stats[k]=100 end end end
+			end)
+			-- report the stamina-gating ones to the server on the client-authoritative path as well
+			pcall(function() replicaFire("SetProperty","Comfort",100) end)
+			pcall(function() replicaFire("SetProperty","Activity",100) end)
+			task.wait(0.4)
+		else task.wait(0.6) end
+	end end)
+end
+
 -- ═══ AUTO HEAL BLOOD (no sleep needed) — in PE "blood damage" only recovers by sleeping/waiting. This keeps the
 -- blood + health pool topped and clears the bleed/wound accumulators (the things that force the sleep), through the
 -- SAME replica-stats path GodMode/INF-Food already use, plus the Humanoid + model attributes as a fallback.
@@ -2784,41 +2814,44 @@ do
 end
 task.spawn(function() while RUNNING do
 	if CFG.InfFood and alive() then
-		-- ORIGINAL METHOD (your fix): auto-eat = DIRECTLY FIRE the nearest plant/corpse ProximityPrompt.
-		-- No E key press at all (so your manual E is never blocked), and NO food-bar pin (so the game never
-		-- thinks you're full and blocks growth). Scans the whole map for the plant list + any eat prompt.
-		-- BACK OFF while YOU are holding E to eat: firing fakeEat (SetAction Consuming=false) or re-firing the
-		-- prompt mid-hold cancels YOUR manual eat. If E is down, do nothing this pass so your hold completes.
+		-- SMART DIET-AWARE INF FOOD (Wellbeing fix): eat ONLY what your dino's diet allows — herbivores eat plants,
+		-- carnivores eat meat/corpses, omnivores eat both. Eating the WRONG food tanks the game's hidden Comfort
+		-- stat, which the server turns into a big stamina-drain multiplier — that is exactly what made INF Stam
+		-- "break" whenever INF Food was on. We scan the WHOLE map (not just nearby) and fire the correct-diet eat
+		-- prompt remotely, so you eat the right food from anywhere without moving.
+		-- BACK OFF while YOU hold your interact key so your manual hold-to-eat is never cancelled.
 		local eHeld = false; pcall(function() eHeld = UIS:IsKeyDown(Enum.KeyCode.E) end)
 		if not eHeld then
-			fakeEat()   -- replay a captured bite (fills bar); harmless, presses no keys
-			local me=hrp(); local list=nearbyFood(CFG.FoodEatRange)
+			fakeEat()   -- replay your last captured bite (fills bar); harmless, presses no keys
+			local me=hrp(); local list=nearbyFood(1e9)   -- whole-map scan = eat from anywhere
+			local edible = _G.MH_edible                  -- diet gate (set once the diet helpers load); nil-safe
 			if me then for _,fd in ipairs(list) do
 				local m,r,prompt=fd[1],fd[2],fd.prompt
 				if not prompt and m then prompt=m:FindFirstChildWhichIsA("ProximityPrompt",true) end
-				if prompt and r and r.Parent and dist(me.Position,r.Position)<=math.min(CFG.FoodEatRange,60) then
+				-- DIET FILTER: skip anything your dino should not eat (this is what keeps Comfort — and INF Stam — healthy)
+				local dietOk = true
+				if edible and m then local okc,res=pcall(function() return edible(m, prompt) end); if okc then dietOk=(res==true) end end
+				if dietOk and prompt and r and r.Parent then
+					-- nearest DIET-CORRECT food: eat it, then stop for this pass
 					local kk="food_"..tostring(prompt); local last=FARM.tried[kk]
 					if not last or tick()-last>2 then
 						FARM.tried[kk]=tick()
-						-- RE-CHECK the hold RIGHT before firing: fakeEat() above yields ~0.36s, so if you started
-						-- holding your interact key during it, this prompt must NOT be fired out from under you. Also
-						-- honor a rebound interact key (not just E) so non-default keybinds are covered too.
+						-- RE-CHECK the hold RIGHT before firing (fakeEat above yields ~0.36s); honor a rebound interact key too.
 						local stillHold=false
 						pcall(function() stillHold = UIS:IsKeyDown(Enum.KeyCode.E)
 							or (prompt.KeyboardKeyCode and prompt.KeyboardKeyCode~=Enum.KeyCode.Unknown and UIS:IsKeyDown(prompt.KeyboardKeyCode)) end)
 						if not stillHold then
-							-- SAVE + RESTORE HoldDuration (leaving it at 0 permanently broke your manual hold-to-eat).
-							local oh=prompt.HoldDuration; local od=prompt.MaxActivationDistance
-							pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=9999; prompt.HoldDuration=0 end)
-							if fireprox then pcall(function() fireprox(prompt) end) end   -- fire the prompt = one clean eat, no E press
-							pcall(function() prompt.HoldDuration=oh; prompt.MaxActivationDistance=od end)   -- restore BOTH so your hold-to-eat still works
+							local oh=prompt.HoldDuration; local od=prompt.MaxActivationDistance; local ol=prompt.RequiresLineOfSight
+							pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.huge; prompt.HoldDuration=0 end)
+							if fireprox then pcall(function() fireprox(prompt) end) end   -- remote eat: fire from anywhere, no key press
+							pcall(function() prompt.HoldDuration=oh; prompt.MaxActivationDistance=od; prompt.RequiresLineOfSight=ol end)   -- restore so your hold-to-eat still works
 						end
 					end
-					break  -- nearest only
+					break  -- one diet-correct eat per pass (no lag / no anti-cheat spam)
 				end
 			end end
 		end
-		task.wait(0.4)
+		task.wait(0.5)
 	else task.wait(0.4) end
 end end)
 task.spawn(function() while RUNNING do
@@ -3489,6 +3522,9 @@ local function edibleFor(diet, corpse)
 	elseif diet=="Carnivore" then return corpse and true or false
 	else return true end
 end
+-- Exposed for the INF Food loop (defined earlier in the file): true only if THIS food matches your dino's diet.
+-- Resolved at call time, so the loop that references _G.MH_edible always gets the real gate once this line runs.
+_G.MH_edible = function(m, prompt) return edibleFor(myDiet(), isCorpseFood(m, prompt)) end
 -- find the nearest PREDATOR: another PLAYER's dino inside BotFleeRange whose species eats meat (or is unknown —
 -- assume the worst). Wild/AI dinos count too if they're carnivores. Returns model, root, distance.
 local function botNearestThreat()
