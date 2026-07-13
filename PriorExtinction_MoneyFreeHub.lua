@@ -355,10 +355,15 @@ local function installHook()
 						if not seenSet[id] then seenSet[id]=true; seenIds[#seenIds+1]=id end if action=="Bite" and a.n>=3 then __gg.MH_eat={id=id,buf=a[3]}; __gg.MH_foodIds=__gg.MH_foodIds or {}; if id~=myReplicaId then __gg.MH_foodIds[id]=true; __gg.MH_eatBuf=a[3] end end   -- collect EVERY food id you bite (multi-id) so INF Food replays them all
 						-- BITE-ONLY CAPTURE (for the INF Food spam loop): record the ENTIRE Bite call verbatim — the exact
 						-- id + "Bite" + every argument the game sent when YOU bit food — so we can replay it byte-for-byte,
-						-- fast, forever. Bite is the one that actually fills the bar, so this is all INF Food needs.
+						-- fast, forever. We keep a LIST of the last several DIFFERENT bites, so the more different things you
+						-- eat, the more Bite calls the spam loop fires per pass = faster growth. Bite is the one that fills the bar.
 						if action=="Bite" then
 							local snap={n=a.n} for i=1,a.n do snap[i]=a[i] end
 							__gg.MH_lastEatCall=snap; __gg.MH_lastEatT=tick()
+							__gg.MH_biteCalls = __gg.MH_biteCalls or {}
+							local key=tostring(id).."|"..tostring(a[3])   -- dedupe by source id + buffer so we keep DIFFERENT foods
+							local dup=false; for _,c in ipairs(__gg.MH_biteCalls) do if c.key==key then dup=true; break end end
+							if not dup then snap.key=key; table.insert(__gg.MH_biteCalls, snap); if #__gg.MH_biteCalls>16 then table.remove(__gg.MH_biteCalls,1) end end
 						end
 					else
 						noteReplicaId(id)  -- self action = our dino id
@@ -1550,6 +1555,7 @@ do local p=Pages["Growth"]
 		local _,fw=mkSec(p,"Food & Water",2)
 		mkToggle(fw,"INF Food","InfFood",1)
 		mkLabel(fw,"Herbivore: turn on, then eat one plant once.")
+		mkLabel(fw,"You can eat more if you want, and if you do it will grow faster. Just make sure you have INF Food on, eat 4 things, then watch the magic.")
 		mkSlider(fw,"INF Food grow speed","FoodEatSpeed",1,10,3,1)
 		mkToggle(fw,"INF Water","InfWater",4)
 		mkToggle(fw,"Carnivore Meat TP","CarnMeatTP",5)
@@ -2880,9 +2886,20 @@ end end)
 -- interfere with your manual E-hold-to-eat. This is the whole INF Food after the first bite.
 task.spawn(function() while RUNNING do
 	if CFG.InfFood and alive() and __gg.MH_lastEatCall then
-		local rs=getReplicaSignal(); local ec=__gg.MH_lastEatCall
-		if rs and type(ec)=="table" and ec.n and ec.n>=2 then
-			for _=1,6 do pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end); task.wait(0.04) end
+		local rs=getReplicaSignal()
+		if rs then
+			-- Fire EVERY different Bite you have eaten this session. More foods eaten = more Bite calls per pass =
+			-- faster growth. Falls back to the single last bite if the list is empty.
+			local list=__gg.MH_biteCalls
+			if type(list)=="table" and #list>0 then
+				for _=1,3 do
+					for _,ec in ipairs(list) do if type(ec)=="table" and ec.n and ec.n>=2 then pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end) end end
+					task.wait(0.04)
+				end
+			else
+				local ec=__gg.MH_lastEatCall
+				if type(ec)=="table" and ec.n and ec.n>=2 then for _=1,6 do pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end); task.wait(0.04) end end
+			end
 		end
 		task.wait(0.12)
 	else task.wait(0.4) end
