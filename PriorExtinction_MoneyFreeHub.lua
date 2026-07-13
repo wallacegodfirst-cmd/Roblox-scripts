@@ -1834,10 +1834,12 @@ conn(RunService.RenderStepped:Connect(function()
 	end)
 end))
 
--- INF STAM (server-side refill — THE FIX): the game reports its stamina to the server via ReplicaSignal
--- SetProperty — the hook above swallows the DROP reports, and THIS loop reports it FULL the exact same way the
--- game itself does, so the server-side value refills and never drains. Real max only (inflated values made the
--- server fight back = the old snapback). This is what makes INF Stamina actually hold while you sprint/M2.
+-- INF STAM (server-side refill — THE FIX): PE reports stamina to the server through the SAME ReplicaSignal
+-- (ReplicatedStorage.RemoteEvents.ReplicaSignal, id = your replica id) that fires SetAction "Run" true/false.
+-- Because it is client-reported, we just keep telling the server "stamina = full" faster than it can drain, so
+-- the bar never reaches the exhaust threshold and the game never forces you down to walk speed. Run PASSES
+-- THROUGH untouched, so you keep the game's real sprint speed — this is fully DECOUPLED from Speed Hack (no
+-- BodyVelocity, no boosted speed). Refill is fast (0.12s) so a fast drain never accumulates.
 task.spawn(function() while RUNNING do
 	if CFG.InfStam and alive() then
 		local mx
@@ -1850,7 +1852,50 @@ task.spawn(function() while RUNNING do
 			local v = (__gg.MH_max and __gg.MH_max[k]) or mx
 			pcall(function() replicaFire("SetProperty", k, v) end)
 		end
-		task.wait(0.35)
+		-- RE-ASSERT SPRINT: once you HAVE chosen to sprint (the hook stamps MH_wantRun when the game fires
+		-- Run=true), keep re-firing Run=true while you move so the server's exhaustion logic can never clear it
+		-- and drop you to walk speed. Gated on MH_wantRun so a deliberate walk is left alone. Same SetAction
+		-- Run signal PE itself uses — no speed boost, real sprint speed only.
+		pcall(function()
+			local h = hum()
+			local recentlyRan = __gg.MH_wantRun and (tick() - __gg.MH_wantRun < 3)
+			if recentlyRan and h and h.MoveDirection and h.MoveDirection.Magnitude > 0.1 then
+				replicaFire("SetAction", "Run", true)
+				__gg.MH_wantRun = tick()   -- keep the intent alive as long as you keep moving
+			end
+		end)
+		task.wait(0.12)
+	else task.wait(0.4) end
+end end)
+
+-- INF FOOD — FLOOR KEEPER (keep the bar UP whether you eat or not, WITHOUT hiding the eat prompt): the food bar
+-- is only topped up when it falls BELOW ~60% of max, and only raised to ~80% — never to 100%. So:
+--   · you never starve / go low (the bar always stays high), and
+--   · because it is never pinned to full, the eat ProximityPrompt keeps showing, so you can still hold E to eat
+--     for growth. Eating pushes you toward 100%; this keeper never pulls you back down (it only fires when low).
+-- Reports through the SAME ReplicaSignal SetProperty the game uses, plus a client write so the HUD matches.
+task.spawn(function() while RUNNING do
+	if CFG.InfFood and alive() then
+		pcall(function()
+			local stats, maxs = csStats()
+			local foodKey, mx, cur
+			if stats then
+				for _,k in ipairs({"Food","Hunger","Nutrition","Fullness","Satiation"}) do
+					if type(stats[k])=="number" then foodKey=k; cur=stats[k]; break end
+				end
+				if foodKey then
+					mx = (maxs and (maxs[foodKey] or maxs.Food)) or (__gg.MH_maxFood) or 100
+					if cur and cur > 0 then __gg.MH_maxFood = math.max(__gg.MH_maxFood or 0, cur, mx) ; mx = __gg.MH_maxFood end
+					local floor = mx * 0.60
+					if cur and cur < floor then
+						local target = mx * 0.80
+						pcall(function() replicaFire("SetProperty", foodKey, target) end)   -- tell the server (authoritative)
+						pcall(function() stats[foodKey] = target end)                        -- match the local HUD
+					end
+				end
+			end
+		end)
+		task.wait(0.25)
 	else task.wait(0.4) end
 end end)
 

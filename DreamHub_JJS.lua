@@ -32,9 +32,10 @@ do
 					local folder = svc:FindFirstChild(folderName)
 					if folder then
 						for _, v in ipairs(folder:GetChildren()) do
-							if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+							if (v:IsA("RemoteEvent") or v:IsA("RemoteFunction")) and not v:GetAttribute("VX_Dummy") then
 								local dummy = Instance.new(v.ClassName)
 								dummy.Name = v.Name
+								dummy:SetAttribute("VX_Dummy", true)   -- tag it so the re-run loop skips our own dummy (no churn)
 								dummy.Parent = folder
 								pcall(function() v:Destroy() end)
 							end
@@ -68,6 +69,17 @@ do
 			pcall(destroyACRemotes)
 			pcall(disableACScripts)
 		end)
+	end)
+	-- KEEP RE-DESTROYING: Knit lazy-loads its services, so the load-time pass can run BEFORE AntiCheatService
+	-- has replicated in (then it finds nothing and the AC remote survives = you still get set back). Re-run for
+	-- a while so it catches the remote the moment Knit finishes loading it, and re-nukes any the game recreates.
+	-- The VX_Dummy tag makes this a no-op once everything is already destroyed, so there is no churn or lag.
+	task.spawn(function()
+		for _ = 1, 60 do            -- ~30s of coverage right after load (services can appear seconds late)
+			task.wait(0.5)
+			pcall(destroyACRemotes)
+		end
+		while true do task.wait(5); pcall(destroyACRemotes) end   -- then a slow watchdog for any recreation
 	end)
 end
 
