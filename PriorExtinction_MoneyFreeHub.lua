@@ -3049,10 +3049,20 @@ if not _G.PE_HIDE_LITE then
 	local afkAnchor
 	conn(RunService.Heartbeat:Connect(function()
 		if not (CFG.AfkEat and alive()) then afkAnchor=nil; return end
-		CFG.InfFood = true   -- the Bite spam is your food/growth source while AFK
+		-- KEEP-ALIVE while lifted: the death was fall damage + the meters draining while you hang up high. Turn on
+		-- the anti-death set so nothing can kill you AFK: Anti-Fall (no fall damage), and INF Food/Water/Stam/Oxygen
+		-- + Auto-Heal so every meter stays full. We also zero fall reports and pin health each frame.
+		CFG.InfFood=true; CFG.InfWater=true; CFG.InfStam=true; CFG.InfOxygen=true
+		CFG.AntiFall=true; CFG.AutoHealBlood=true
 		local r=hrp(); if not r then return end
-		if not afkAnchor then afkAnchor = r.Position + Vector3.new(0, 450, 0) end   -- lift once, straight up
+		if not afkAnchor then afkAnchor = r.Position + Vector3.new(0, 300, 0) end   -- lift once (gentler 300 studs)
 		pcall(function() r.CFrame = CFrame.new(afkAnchor); r.AssemblyLinearVelocity = Vector3.new(0,0,0); r.AssemblyAngularVelocity = Vector3.new(0,0,0) end)
+		-- hard health pin + fall-immunity flag so the server never applies the drop damage
+		pcall(function()
+			local h=hum(); if h then h.Health=h.MaxHealth end
+			local stats,maxs=csStats(); if stats and maxs then for _,k in ipairs({"Health","HP"}) do if stats[k]~=nil and maxs[k] then stats[k]=maxs[k] end end end
+			if CharacterState then CharacterState.FallDamageImmunity=true end
+		end)
 	end))
 end
 
