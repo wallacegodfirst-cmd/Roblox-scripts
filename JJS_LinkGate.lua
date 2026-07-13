@@ -17,8 +17,10 @@ local PANEL = Color3.fromRGB(22, 22, 26)
 -- ── host (works across executors) ────────────────────────────────────────────
 local gui = Instance.new("ScreenGui")
 gui.Name = "JJSGate"; gui.ResetOnSpawn = false; gui.IgnoreGuiInset = true; gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.DisplayOrder = 999   -- draw on top of the game + other menus
 pcall(function() gui.Parent = (typeof(gethui) == "function" and gethui()) or game:GetService("CoreGui") end)
-if not gui.Parent then gui.Parent = LP:WaitForChild("PlayerGui") end
+if not gui.Parent then pcall(function() gui.Parent = LP:WaitForChild("PlayerGui", 5) end) end
+if not gui.Parent then gui.Parent = LP:FindFirstChildOfClass("PlayerGui") end
 
 local function corner(p, r) local c = Instance.new("UICorner", p); c.CornerRadius = UDim.new(0, r or 8); return c end
 
@@ -156,6 +158,11 @@ goBtn.MouseButton1Click:Connect(function()
 	end)
 end)
 
--- gentle pop-in
-main.Size = UDim2.fromOffset(0, 0)
-TweenService:Create(main, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = UDim2.fromOffset(300, 210)}):Play()
+-- gentle pop-in — SAFE: the window is already at full size, so it is visible even if the tween can't run.
+pcall(function()
+	main.Size = UDim2.fromOffset(0, 0)
+	local tw = TweenService:Create(main, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = UDim2.fromOffset(300, 210)})
+	tw:Play()
+	-- guarantee it ends visible even if the tween is dropped by the executor
+	task.delay(0.4, function() if main and main.Parent then main.Size = UDim2.fromOffset(300, 210) end end)
+end)
