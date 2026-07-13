@@ -2832,20 +2832,17 @@ task.spawn(function() while RUNNING do
 				local dietOk = true
 				if edible and m then local okc,res=pcall(function() return edible(m, prompt) end); if okc then dietOk=(res==true) end end
 				if dietOk and prompt and r and r.Parent then
-					-- nearest DIET-CORRECT food: eat it, then stop for this pass
-					local kk="food_"..tostring(prompt); local last=FARM.tried[kk]
-					if not last or tick()-last>2 then
-						FARM.tried[kk]=tick()
-						-- RE-CHECK the hold RIGHT before firing (fakeEat above yields ~0.36s); honor a rebound interact key too.
-						local stillHold=false
-						pcall(function() stillHold = UIS:IsKeyDown(Enum.KeyCode.E)
-							or (prompt.KeyboardKeyCode and prompt.KeyboardKeyCode~=Enum.KeyCode.Unknown and UIS:IsKeyDown(prompt.KeyboardKeyCode)) end)
-						if not stillHold then
-							local oh=prompt.HoldDuration; local od=prompt.MaxActivationDistance; local ol=prompt.RequiresLineOfSight
-							pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.huge; prompt.HoldDuration=0 end)
-							if fireprox then pcall(function() fireprox(prompt) end) end   -- remote eat: fire from anywhere, no key press
-							pcall(function() prompt.HoldDuration=oh; prompt.MaxActivationDistance=od; prompt.RequiresLineOfSight=ol end)   -- restore so your hold-to-eat still works
-						end
+					-- nearest DIET-CORRECT food: eat it, then stop for this pass. NO "eat once then remember the id"
+					-- cooldown (removed per request) — it just fires the correct food every pass so the bar keeps
+					-- topping up. RE-CHECK the hold RIGHT before firing (fakeEat above yields ~0.36s); honor a rebound key.
+					local stillHold=false
+					pcall(function() stillHold = UIS:IsKeyDown(Enum.KeyCode.E)
+						or (prompt.KeyboardKeyCode and prompt.KeyboardKeyCode~=Enum.KeyCode.Unknown and UIS:IsKeyDown(prompt.KeyboardKeyCode)) end)
+					if not stillHold then
+						local oh=prompt.HoldDuration; local od=prompt.MaxActivationDistance; local ol=prompt.RequiresLineOfSight
+						pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.huge; prompt.HoldDuration=0 end)
+						if fireprox then pcall(function() fireprox(prompt) end) end   -- remote eat: fire from anywhere, no key press
+						pcall(function() prompt.HoldDuration=oh; prompt.MaxActivationDistance=od; prompt.RequiresLineOfSight=ol end)   -- restore so your hold-to-eat still works
 					end
 					break  -- one diet-correct eat per pass (no lag / no anti-cheat spam)
 				end
