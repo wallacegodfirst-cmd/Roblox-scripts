@@ -381,10 +381,9 @@ local function installHook()
 							a[3]=0.1; if a[5]~=nil then a[5]=a[4] end
 							return oldNC(self, table.unpack(a, 1, a.n))
 						end
-						-- INF Stam: drop the secondary-attack / right-click registration that drains stamina.
-						if CFG.InfStam and action=="RegisterAttack" and typeof(a[3])=="string" and string.find(a[3],"Secondary",1,true) then
-							return
-						end
+						-- (REMOVED: this used to swallow the Secondary/right-click RegisterAttack while INF Stam was on,
+						--  which meant your dino's SECOND ATTACK dealt NO DAMAGE. INF Stam already refills the bar, so
+						--  there is no reason to block the attack — M2 now passes through and hits normally.)
 						-- ═══ INF STAM — the user's CONFIRMED-WORKING approach (do NOT swallow Run) ═══ Run=true PASSES
 						-- THROUGH so you keep the game's real full sprint speed (swallowing it made you "very slow"). The
 						-- bar is held full instead by the HARD stamina PINS every frame (RenderStepped/Stepped/Heartbeat pin
