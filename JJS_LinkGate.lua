@@ -6,7 +6,7 @@ local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local LP = Players.LocalPlayer
 
-local LINK = "https://rekonise.com/best-ability-arena-script-buy-right-now-8dr9r"
+local LINK = "https://rekonise.com/jjs-free-script-jpqps"
 local SCRIPT_URL = "https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/claude/improve-ai-system-tUhhn/DreamHub_JJS_Free.lua"
 
 local RED   = Color3.fromRGB(220, 30, 40)
