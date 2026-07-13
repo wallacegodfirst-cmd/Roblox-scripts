@@ -1,142 +1,99 @@
---[[  Dream Hub · JJS — Link Gate  (black / red Dream Hub theme, small)
-      Copy the link, open it in your browser and complete it, then press the red button to load the hub.
-      Load: loadstring(game:HttpGet("<this url>"))()  ]]
-
-local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
-local LP = Players.LocalPlayer
+--[[  Dream Hub · JJS — Link Gate (your black GUI base). Copy the link, complete it in your browser,
+      then press Get Script. Load: loadstring(game:HttpGet("<this url>"))()  ]]
 
 local LINK = "https://rekonise.com/jjs-free-script-jpqps"
 local SCRIPT_URL = "https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/claude/improve-ai-system-tUhhn/DreamHub_JJS_Free.lua"
 
-local RED   = Color3.fromRGB(220, 30, 40)
-local RED_D = Color3.fromRGB(150, 18, 26)
-local BG    = Color3.fromRGB(14, 14, 16)
-local PANEL = Color3.fromRGB(22, 22, 26)
+-- Create the main ScreenGui container
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "CustomDraggableGui"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.DisplayOrder = 999
+ScreenGui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
 
--- ── host (works across executors) ────────────────────────────────────────────
-local gui = Instance.new("ScreenGui")
-gui.Name = "JJSGate"; gui.ResetOnSpawn = false; gui.IgnoreGuiInset = true; gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-gui.DisplayOrder = 999   -- draw on top of the game + other menus
-pcall(function() gui.Parent = (typeof(gethui) == "function" and gethui()) or game:GetService("CoreGui") end)
-if not gui.Parent then pcall(function() gui.Parent = LP:WaitForChild("PlayerGui", 5) end) end
-if not gui.Parent then gui.Parent = LP:FindFirstChildOfClass("PlayerGui") end
+-- Create the Main Frame (Small & Black/Dark Charcoal)
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0, 260, 0, 200)
+MainFrame.Position = UDim2.new(0.5, -130, 0.5, -100) -- centered
+MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Parent = ScreenGui
 
-local function corner(p, r) local c = Instance.new("UICorner", p); c.CornerRadius = UDim.new(0, r or 8); return c end
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 9)
+UICorner.Parent = MainFrame
 
--- ── window ───────────────────────────────────────────────────────────────────
-local main = Instance.new("Frame")
-main.Size = UDim2.fromOffset(300, 210)
-main.Position = UDim2.new(0.5, -150, 0.5, -105)
-main.BackgroundColor3 = BG
-main.BorderSizePixel = 0
-main.Active = true; main.Draggable = true
-main.Parent = gui
-corner(main, 12)
--- soft red glow / shadow behind the window
-local glow = Instance.new("ImageLabel")
-glow.BackgroundTransparency = 1
-glow.Image = "rbxassetid://5028857084"; glow.ImageColor3 = RED; glow.ImageTransparency = 0.55
-glow.ScaleType = Enum.ScaleType.Slice; glow.SliceCenter = Rect.new(24, 24, 276, 276)
-glow.Size = UDim2.new(1, 40, 1, 40); glow.Position = UDim2.fromOffset(-20, -20)
-glow.ZIndex = 0
-glow.Parent = main
-local stroke = Instance.new("UIStroke", main); stroke.Color = RED; stroke.Thickness = 1.5; stroke.Transparency = 0.15
--- subtle vertical gradient on the body
-local bgGrad = Instance.new("UIGradient", main)
-bgGrad.Rotation = 90
-bgGrad.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.fromRGB(20,20,24)), ColorSequenceKeypoint.new(1, Color3.fromRGB(10,10,12)) })
+local UIStroke = Instance.new("UIStroke")
+UIStroke.Color = Color3.fromRGB(50, 50, 50)
+UIStroke.Thickness = 1.5
+UIStroke.Parent = MainFrame
 
--- ── header ───────────────────────────────────────────────────────────────────
-local header = Instance.new("Frame")
-header.Size = UDim2.new(1, 0, 0, 40)
-header.BackgroundColor3 = Color3.fromRGB(18, 18, 20)
-header.BorderSizePixel = 0
-header.Parent = main
-corner(header, 12)
-local hFix = Instance.new("Frame")   -- square off the bottom of the header
-hFix.Size = UDim2.new(1, 0, 0, 12); hFix.Position = UDim2.new(0, 0, 1, -12)
-hFix.BackgroundColor3 = Color3.fromRGB(18, 18, 20); hFix.BorderSizePixel = 0; hFix.Parent = header
-local hGrad = Instance.new("UIGradient", header)
-hGrad.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.fromRGB(28,20,21)), ColorSequenceKeypoint.new(1, Color3.fromRGB(18,18,20)) })
--- red accent bar under the header
-local accent = Instance.new("Frame")
-accent.Size = UDim2.new(1, -20, 0, 2); accent.Position = UDim2.new(0, 10, 1, -1)
-accent.BackgroundColor3 = RED; accent.BorderSizePixel = 0; accent.Parent = header
-corner(accent, 2)
--- little red dot logo
-local dot = Instance.new("Frame")
-dot.Size = UDim2.fromOffset(10, 10); dot.Position = UDim2.fromOffset(14, 15)
-dot.BackgroundColor3 = RED; dot.BorderSizePixel = 0; dot.Parent = header
-corner(dot, 5)
+-- Logo ABOVE the frame (Dream logo)
+local Logo = Instance.new("ImageLabel")
+Logo.Name = "TopLogo"
+Logo.Size = UDim2.new(0, 65, 0, 65)
+Logo.Position = UDim2.new(0.5, -32.5, 0, -75)
+Logo.BackgroundTransparency = 1
+Logo.Image = "rbxassetid://82151574125055"
+Logo.Parent = MainFrame
 
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -40, 1, 0); title.Position = UDim2.fromOffset(32, 0)
-title.BackgroundTransparency = 1
-title.Text = "DREAM HUB  ·  GET JJS"
-title.TextColor3 = Color3.fromRGB(255, 255, 255)
-title.Font = Enum.Font.GothamBold; title.TextSize = 14
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.Parent = header
+-- Title
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, -20, 0, 26); Title.Position = UDim2.new(0, 10, 0, 10)
+Title.BackgroundTransparency = 1
+Title.Text = "GET JJS FREE"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.Font = Enum.Font.GothamBold; Title.TextSize = 16
+Title.Parent = MainFrame
 
--- ── body ─────────────────────────────────────────────────────────────────────
-local info = Instance.new("TextLabel")
-info.Size = UDim2.new(1, -24, 0, 32); info.Position = UDim2.fromOffset(12, 48)
-info.BackgroundTransparency = 1
-info.Text = "Open the link below in your browser and complete it, then press the red button."
-info.TextColor3 = Color3.fromRGB(185, 185, 190)
-info.Font = Enum.Font.Gotham; info.TextSize = 12; info.TextWrapped = true
-info.TextXAlignment = Enum.TextXAlignment.Left; info.TextYAlignment = Enum.TextYAlignment.Top
-info.Parent = main
+-- Instruction
+local Info = Instance.new("TextLabel")
+Info.Size = UDim2.new(1, -20, 0, 28); Info.Position = UDim2.new(0, 10, 0, 36)
+Info.BackgroundTransparency = 1
+Info.Text = "Copy the link, open it in your browser and complete it, then press Get Script."
+Info.TextColor3 = Color3.fromRGB(180, 180, 180)
+Info.Font = Enum.Font.Gotham; Info.TextSize = 11; Info.TextWrapped = true
+Info.Parent = MainFrame
 
-local linkBox = Instance.new("TextBox")
-linkBox.Size = UDim2.new(1, -24, 0, 30); linkBox.Position = UDim2.fromOffset(12, 86)
-linkBox.BackgroundColor3 = PANEL
-linkBox.Text = LINK
-linkBox.TextColor3 = Color3.fromRGB(120, 200, 255)
-linkBox.Font = Enum.Font.Code; linkBox.TextSize = 11
-linkBox.ClearTextOnFocus = false; linkBox.TextEditable = false
-linkBox.TextXAlignment = Enum.TextXAlignment.Left; linkBox.TextTruncate = Enum.TextTruncate.AtEnd
-linkBox.Parent = main
-corner(linkBox, 6)
-local lStroke = Instance.new("UIStroke", linkBox); lStroke.Color = Color3.fromRGB(45,45,52); lStroke.Thickness = 1
-local lpad = Instance.new("UIPadding", linkBox); lpad.PaddingLeft = UDim.new(0, 8); lpad.PaddingRight = UDim.new(0, 8)
+-- Link box (selectable)
+local LinkBox = Instance.new("TextBox")
+LinkBox.Size = UDim2.new(1, -20, 0, 28); LinkBox.Position = UDim2.new(0, 10, 0, 70)
+LinkBox.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+LinkBox.Text = LINK
+LinkBox.TextColor3 = Color3.fromRGB(120, 200, 255)
+LinkBox.Font = Enum.Font.Code; LinkBox.TextSize = 10
+LinkBox.ClearTextOnFocus = false; LinkBox.TextEditable = false
+LinkBox.TextTruncate = Enum.TextTruncate.AtEnd
+LinkBox.Parent = MainFrame
+local lc = Instance.new("UICorner"); lc.CornerRadius = UDim.new(0, 6); lc.Parent = LinkBox
 
-local function mkBtn(text, y, base, accented)
+local function mkBtn(text, y, bg)
 	local b = Instance.new("TextButton")
-	b.Size = UDim2.new(1, -24, 0, 32); b.Position = UDim2.fromOffset(12, y)
-	b.BackgroundColor3 = base
+	b.Size = UDim2.new(1, -20, 0, 30); b.Position = UDim2.new(0, 10, 0, y)
+	b.BackgroundColor3 = bg
 	b.TextColor3 = Color3.fromRGB(255, 255, 255)
 	b.Font = Enum.Font.GothamMedium; b.TextSize = 13
-	b.Text = text; b.AutoButtonColor = false
-	b.Parent = main
-	corner(b, 6)
-	if accented then
-		local g = Instance.new("UIGradient", b)
-		g.Rotation = 90
-		g.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, RED), ColorSequenceKeypoint.new(1, RED_D) })
-	else
-		local st = Instance.new("UIStroke", b); st.Color = Color3.fromRGB(50,50,58); st.Thickness = 1
-	end
-	-- hover feedback
-	b.MouseEnter:Connect(function() TweenService:Create(b, TweenInfo.new(0.12), {BackgroundColor3 = accented and Color3.fromRGB(235,45,55) or Color3.fromRGB(40,40,48)}):Play() end)
-	b.MouseLeave:Connect(function() TweenService:Create(b, TweenInfo.new(0.12), {BackgroundColor3 = base}):Play() end)
+	b.Text = text
+	b.Parent = MainFrame
+	local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 6); c.Parent = b
 	return b
 end
 
-local copyBtn = mkBtn("Copy Link", 126, Color3.fromRGB(30, 30, 36), false)
-local goBtn   = mkBtn("I Did It  —  Get Script", 164, RED, true)
+local CopyBtn = mkBtn("Copy Link", 106, Color3.fromRGB(40, 40, 40))
+local GetBtn  = mkBtn("Get Script", 142, Color3.fromRGB(200, 25, 35))
 
-copyBtn.MouseButton1Click:Connect(function()
+CopyBtn.MouseButton1Click:Connect(function()
 	local ok = false
 	pcall(function() if setclipboard then setclipboard(LINK); ok = true elseif toclipboard then toclipboard(LINK); ok = true end end)
-	pcall(function() linkBox:CaptureFocus() end)
-	copyBtn.Text = ok and "Copied!  Open it in your browser" or "Select the link above and Ctrl+C"
-	task.delay(2.5, function() if copyBtn and copyBtn.Parent then copyBtn.Text = "Copy Link" end end)
+	pcall(function() LinkBox:CaptureFocus() end)
+	CopyBtn.Text = ok and "Copied!" or "Select link + Ctrl+C"
+	task.delay(2, function() if CopyBtn and CopyBtn.Parent then CopyBtn.Text = "Copy Link" end end)
 end)
 
-goBtn.MouseButton1Click:Connect(function()
-	goBtn.Text = "Loading JJS..."
+GetBtn.MouseButton1Click:Connect(function()
+	GetBtn.Text = "Loading..."
 	task.spawn(function()
 		local src
 		for _ = 1, 4 do
@@ -146,23 +103,41 @@ goBtn.MouseButton1Click:Connect(function()
 		end
 		if type(src) == "string" and #src > 100000 then
 			local fn = loadstring(src)
-			if type(fn) == "function" then
-				gui:Destroy()
-				local ok, err = pcall(fn)
-				if not ok then warn("[JJS Gate] script error: " .. tostring(err)) end
-				return
-			end
+			if type(fn) == "function" then ScreenGui:Destroy(); pcall(fn); return end
 		end
-		goBtn.Text = "Fetch failed — try again"
-		task.delay(2, function() if goBtn and goBtn.Parent then goBtn.Text = "I Did It  —  Get Script" end end)
+		GetBtn.Text = "Failed — try again"
+		task.delay(2, function() if GetBtn and GetBtn.Parent then GetBtn.Text = "Get Script" end end)
 	end)
 end)
 
--- gentle pop-in — SAFE: the window is already at full size, so it is visible even if the tween can't run.
-pcall(function()
-	main.Size = UDim2.fromOffset(0, 0)
-	local tw = TweenService:Create(main, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = UDim2.fromOffset(300, 210)})
-	tw:Play()
-	-- guarantee it ends visible even if the tween is dropped by the executor
-	task.delay(0.4, function() if main and main.Parent then main.Size = UDim2.fromOffset(300, 210) end end)
+-- ==========================================
+-- SMOOTH DRAGGING SYSTEM
+-- ==========================================
+local UserInputService = game:GetService("UserInputService")
+local dragging, dragInput, dragStart, startPos
+
+local function update(input)
+	local delta = input.Position - dragStart
+	MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+end
+
+MainFrame.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = MainFrame.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then dragging = false end
+		end)
+	end
+end)
+
+MainFrame.InputChanged:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+		dragInput = input
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if input == dragInput and dragging then update(input) end
 end)
