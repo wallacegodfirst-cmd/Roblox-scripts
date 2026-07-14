@@ -9755,7 +9755,7 @@ do
     auSec:Slider({ Name = "Click Delay", Min = 0, Max = 100, Default = 0, Decimals = 1, Callback = function(v) if AutoQTEApi then AutoQTEApi.setDelay(v) end end })
     auSec:Slider({ Name = "QTE Speed (presses/sec)", Min = 5, Max = 120, Default = 45, Decimals = 1, Callback = function(v) if AutoQTEApi then AutoQTEApi.setSpeed(v) end end })
     auSec:Slider({ Name = "QTE Click Gap (ms)", Min = 0, Max = 100, Default = 20, Decimals = 1, Callback = function(v) if AutoQTEApi then AutoQTEApi.setTapGap(v) end end })
-    auSec:Toggle({ Name = "Anti Final Judgment (dash away)", Callback = function(b) if AutoQTEApi_setAnti then AutoQTEApi_setAnti(b) end end })
+    auSec:Toggle({ Name = "Anti Final Judgment", Callback = function(b) if AutoQTEApi_setAnti then AutoQTEApi_setAnti(b) end end })
     auSec:Toggle({ Name = "Auto Grab", Callback = function(b) if ItemsApi then ItemsApi.setGrab(b) end end })
     local grabDD = auSec:Dropdown({ Name = "Grab Filter", Items = ((ItemsApi and ItemsApi.names()) or { "Any" }), Default = "Any", Callback = function(v) if ItemsApi then ItemsApi.setFilter(v) end end })
     auSec:Button({ Name = "Refresh Items", Callback = function() if grabDD and ItemsApi then grabDD:Refresh(ItemsApi.names()) end end })
