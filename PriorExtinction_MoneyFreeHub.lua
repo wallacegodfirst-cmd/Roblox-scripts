@@ -1359,8 +1359,7 @@ local function detectDinoModel(model)
 end
 -- Deep stat pinner: walks the WHOLE CharacterState replica and forces matching numeric stats to max.
 STAT_GROUPS = {
-	-- InfFood deliberately absent: pinning the food bar to max hid the eat prompt (you couldn't hold E). Auto-eat
-	-- keeps food up instead. Starvation is still prevented via the STAT_ZERO "starv/hungry" entry below.
+	{cfg="InfFood",   keys={"food","hunger","nutrition","fullness","satiation"}},   -- SEVEN STRONG: pin food to full
 	{cfg="InfWater",  keys={"water","thirst","hydrat","drink","liquid"}},
 	{cfg="InfStam",   keys={"stamina","stam","energy","endur"}},
 	{cfg="InfOxygen", keys={"oxygen","air","breath","o2","lung"}},
@@ -1952,28 +1951,43 @@ end end)
 --   · because it is never pinned to full, the eat ProximityPrompt keeps showing, so you can still hold E to eat
 --     for growth. Eating pushes you toward 100%; this keeper never pulls you back down (it only fires when low).
 -- Reports through the SAME ReplicaSignal SetProperty the game uses, plus a client write so the HUD matches.
+-- ═══ INF FOOD — SEVEN STRONG (force 100% + Bite spam) ═══ Forces the food bar to FULL and re-fires your captured
+-- Bite remotes so the server keeps registering you eating (= growth). Backs off only while YOU hold E, so a manual
+-- hold-to-eat still works. Bite fires are capped per pass so this stays strong WITHOUT re-introducing the lag.
 task.spawn(function() while RUNNING do
 	if CFG.InfFood and alive() then
-		pcall(function()
-			local stats, maxs = csStats()
-			local foodKey, mx, cur
-			if stats then
-				for _,k in ipairs({"Food","Hunger","Nutrition","Fullness","Satiation"}) do
-					if type(stats[k])=="number" then foodKey=k; cur=stats[k]; break end
+		local eHeld=false; pcall(function() eHeld=UIS:IsKeyDown(Enum.KeyCode.E) end)
+		if not eHeld then
+			pcall(function()
+				local stats, maxs = csStats()
+				local foodKey, mx, cur
+				if stats then
+					for _,k in ipairs({"Food","Hunger","Nutrition","Fullness","Satiation"}) do
+						if type(stats[k])=="number" then foodKey=k; cur=stats[k]; break end
+					end
+					if foodKey then
+						mx = (maxs and (maxs[foodKey] or maxs.Food)) or (__gg.MH_maxFood) or 100
+						if cur and cur > 0 then __gg.MH_maxFood = math.max(__gg.MH_maxFood or 0, cur, mx); mx = __gg.MH_maxFood end
+						if cur and cur < mx then   -- FORCE TO 100%
+							pcall(function() replicaFire("SetProperty", foodKey, mx) end)
+							pcall(function() stats[foodKey] = mx end)
+						end
+					end
 				end
-				if foodKey then
-					mx = (maxs and (maxs[foodKey] or maxs.Food)) or (__gg.MH_maxFood) or 100
-					if cur and cur > 0 then __gg.MH_maxFood = math.max(__gg.MH_maxFood or 0, cur, mx) ; mx = __gg.MH_maxFood end
-					local floor = mx * 0.60
-					if cur and cur < floor then
-						local target = mx * 0.80
-						pcall(function() replicaFire("SetProperty", foodKey, target) end)   -- tell the server (authoritative)
-						pcall(function() stats[foodKey] = target end)                        -- match the local HUD
+			end)
+			-- Bite spam (growth), capped at ~10 fires per pass so it can't lag like the old x3-of-all loop
+			if __gg.MH_lastEatCall then
+				local rs=getReplicaSignal()
+				if rs then
+					local list=__gg.MH_biteCalls; if type(list)~="table" or #list==0 then list={__gg.MH_lastEatCall} end
+					local fired=0
+					for _,ec in ipairs(list) do
+						if type(ec)=="table" and ec.n and ec.n>=2 then pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end); fired=fired+1; if fired>=10 then break end end
 					end
 				end
 			end
-		end)
-		task.wait(0.25)
+		end
+		task.wait(0.12)
 	else task.wait(0.4) end
 end end)
 
@@ -2125,6 +2139,58 @@ conn(RunService.Heartbeat:Connect(function()
 			__gg.MH_lastHP = newHP
 		else __gg.MH_lastHP = math.min(hp, mx) end
 	end)
+end))
+-- ═══ ANTI HEAD / BONE PROTECTION — AGGRESSIVE DAMAGE BLOCK (ANTI 1K DAMAGE) ═══
+-- Incoming damage is dealt SERVER-side (the attacker's client reports the bite; the server drops your HP), so we
+-- can't refuse it. Instead: the instant HP drops, heal straight back to max, block the Dead state, and report full.
+conn(RunService.Heartbeat:Connect(function()
+	if not ((CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso) and alive()) then __gg.MH_lastHP=nil; return end
+	pcall(function()
+		local h=hum(); local stats,maxs=csStats()
+		local hp, mx
+		if stats then for _,k in ipairs({"Health","HP","Hp","Hitpoints","HitPoints"}) do if tonumber(stats[k]) then hp=tonumber(stats[k]); break end end end
+		if maxs then for _,k in ipairs({"Health","HP","MaxHealth","Hitpoints"}) do if tonumber(maxs[k]) then mx=tonumber(maxs[k]); break end end end
+		if not hp and h then hp=h.Health end
+		if not mx and h then mx=h.MaxHealth end
+		if not hp and CharacterState then pcall(function() hp=tonumber(CharacterState.Health) end) end
+		if not mx and CharacterState then pcall(function() mx=tonumber(CharacterState.MaxHealth) end) end
+		if not hp or not mx or mx<=0 then return end
+		local last = __gg.MH_lastHP or hp
+		if hp < last - 5 then   -- took real damage (even a 1k headshot) → heal it straight back + block death
+			local newHP = mx
+			if stats then for _,k in ipairs({"Health","HP","Hp","Hitpoints","HitPoints"}) do if stats[k]~=nil then stats[k]=newHP end end end
+			if h then pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Dead, false) end); pcall(function() h.Health=newHP end) end
+			if CharacterState then for _,k in ipairs({"Health","HP"}) do if type(CharacterState[k])=="number" then CharacterState[k]=newHP end end end
+			pcall(function() local m=getMyModel(); if m then for _,k in ipairs({"Health","HP"}) do if m:GetAttribute(k)~=nil then m:SetAttribute(k,newHP) end end end end)
+			pcall(function() setReplicaProp("Health", newHP) end)
+			__gg.MH_lastHP = newHP
+		else __gg.MH_lastHP = math.min(hp, mx) end
+		if CharacterState and type(CharacterState.Fractures)=="table" then for k in pairs(CharacterState.Fractures) do CharacterState.Fractures[k]=false end end
+	end)
+end))
+-- AGGRESSIVE BONE PROTECTION every FRAME: clear fractures + un-ragdoll/un-stun so a break never slows/stuns you.
+conn(RunService.RenderStepped:Connect(function()
+	if not ((CFG.BoneProtect or CFG.AntiFracture or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso) and alive()) then return end
+	pcall(function()
+		if CharacterState and type(CharacterState.Fractures)=="table" then for k in pairs(CharacterState.Fractures) do CharacterState.Fractures[k]=false end end
+		local h=hum()
+		if h then
+			if h.PlatformStand then h.PlatformStand=false end
+			local st=h:GetState()
+			if st==Enum.HumanoidStateType.Ragdoll or st==Enum.HumanoidStateType.FallingDown or st==Enum.HumanoidStateType.PlatformStanding then
+				pcall(function() h:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+			end
+		end
+	end)
+end))
+-- Instant revive if the server ever forces the Dead state while a protector is on.
+conn(LP.CharacterAdded:Connect(function(char)
+	local h = char:WaitForChild("Humanoid", 5)
+	if h then h.StateChanged:Connect(function(_, new)
+		if new==Enum.HumanoidStateType.Dead and (CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead) then
+			pcall(function() h:ChangeState(Enum.HumanoidStateType.GettingUp); h.Health=h.MaxHealth end)
+		end
+	end) end
 end))
 task.spawn(function() while RUNNING do
 	if (CFG.AntiBleed or CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso) and alive() then
@@ -3316,7 +3382,15 @@ end)
 -- UNLOCK MOUSE + CAMERA: free the cursor (so you can click/move freely) and keep it visible. Re-applied because the
 -- game re-locks it. Works the same in Sandbox + Survival (pure client UIS).
 task.spawn(function() while RUNNING do
-	if CFG.UnlockMouse then pcall(function() UIS.MouseBehavior=Enum.MouseBehavior.Default; UIS.MouseIconEnabled=true end); task.wait(0.1)
+	if CFG.UnlockMouse then
+		pcall(function()
+			-- CLICK/ATTACK FIX: PE needs the mouse LOCKED (right-click held) to register a bite. Only unlock when
+			-- you are NOT holding right-click, so Unlock Mouse never silently cancels your attacks.
+			if not UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+				UIS.MouseBehavior=Enum.MouseBehavior.Default; UIS.MouseIconEnabled=true
+			end
+		end)
+		task.wait(0.1)
 	else task.wait(0.4) end
 end end)
 -- (Auto Farm Player removed per request.)
