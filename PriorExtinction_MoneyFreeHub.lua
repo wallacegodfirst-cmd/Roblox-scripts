@@ -327,6 +327,20 @@ local function noteReplicaId(id)
 	if typeof(id)=="number" and not seenSet[id] then seenSet[id]=true; seenIds[#seenIds+1]=id end
 	myReplicaId = id
 end
+-- Injury-report gate (defined ONCE at module level, not per-namecall — a closure alloc on every FireServer was
+-- churning GC and dropping FPS). True when THIS SetProperty/SetAction is an injury your active protectors block.
+local function injHit(lp)
+	local anyPhys = CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso
+	if (CFG.AntiFracture or CFG.BoneProtect) and (lp:find("fractur",1,true) or lp:find("concuss",1,true)) then return true end
+	if CFG.AntiBleed and (lp:find("bleed",1,true) or lp:find("hemorrhage",1,true) or lp:find("wound",1,true)) then return true end
+	if anyPhys and (lp:find("brok",1,true) or lp:find("break",1,true) or lp:find("sever",1,true) or lp:find("dislocat",1,true) or lp:find("limp",1,true) or lp:find("fractur",1,true) or lp:find("crush",1,true) or lp:find("blunt",1,true) or lp:find("trauma",1,true)) then return true end
+	if CFG.AntiBreakHead and (lp:find("head",1,true) or lp:find("skull",1,true) or lp:find("crani",1,true) or lp:find("jaw",1,true) or lp:find("concuss",1,true)) then return true end
+	if CFG.AntiBreakNeck and (lp:find("neck",1,true) or lp:find("spine",1,true) or lp:find("cervic",1,true)) then return true end
+	if CFG.AntiBreakLeg  and (lp:find("leg",1,true) or lp:find("foot",1,true) or lp:find("limb",1,true) or lp:find("knee",1,true)) then return true end
+	if CFG.AntiBreakTail and lp:find("tail",1,true) then return true end
+	if CFG.AntiBreakTorso and (lp:find("torso",1,true) or lp:find("rib",1,true) or lp:find("chest",1,true) or lp:find("hip",1,true)) then return true end
+	return false
+end
 hookInstalled=false
 local function installHook()
 	if hookInstalled or not hookmeta then return end
@@ -415,18 +429,6 @@ local function installHook()
 						-- Anti Fractured + Bone Protection actually stick (the local sweep alone only hid it client-side).
 						-- Broadened region keywords so a HEAD/skull break (SkullFracture/HeadTrauma/Concussion/JawBreak) is
 						-- caught by Anti Break Head too, not only Anti Fractured. Same for neck/leg/tail/torso protectors.
-						local function injHit(lp)
-							local anyPhys = CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso
-							if (CFG.AntiFracture or CFG.BoneProtect) and (lp:find("fractur",1,true) or lp:find("concuss",1,true)) then return true end
-							if CFG.AntiBleed and (lp:find("bleed",1,true) or lp:find("hemorrhage",1,true) or lp:find("wound",1,true)) then return true end
-							if anyPhys and (lp:find("brok",1,true) or lp:find("break",1,true) or lp:find("sever",1,true) or lp:find("dislocat",1,true) or lp:find("limp",1,true) or lp:find("fractur",1,true) or lp:find("crush",1,true) or lp:find("blunt",1,true) or lp:find("trauma",1,true)) then return true end
-							if CFG.AntiBreakHead and (lp:find("head",1,true) or lp:find("skull",1,true) or lp:find("crani",1,true) or lp:find("jaw",1,true) or lp:find("concuss",1,true)) then return true end
-							if CFG.AntiBreakNeck and (lp:find("neck",1,true) or lp:find("spine",1,true) or lp:find("cervic",1,true)) then return true end
-							if CFG.AntiBreakLeg  and (lp:find("leg",1,true) or lp:find("foot",1,true) or lp:find("limb",1,true) or lp:find("knee",1,true)) then return true end
-							if CFG.AntiBreakTail and lp:find("tail",1,true) then return true end
-							if CFG.AntiBreakTorso and (lp:find("torso",1,true) or lp:find("rib",1,true) or lp:find("chest",1,true) or lp:find("hip",1,true)) then return true end
-							return false
-						end
 						if action=="SetProperty" and typeof(a[3])=="string" then local lp=a[3]:lower()
 							if injHit(lp) then local v=a[4]; if v==true or (typeof(v)=="number" and v~=0) or typeof(v)=="table" then return end end
 						end
@@ -1871,6 +1873,13 @@ conn(RunService.RenderStepped:Connect(function()
 		if stats then
 			if CFG.InfStam   then pin({"Stamina","Stam","Energy","Endurance"}); zero({"Exhaustion","Fatigue","Tired","Exhausted"}) end
 			if CFG.InfOxygen then pin({"Oxygen","Air","Breath","O2","Lung"}) end
+			-- BONE PROTECTORS = HEALTH KEEP: the injury REPORT is swallowed in the hook, but the raw HP damage (your
+			-- 1k head hit) is dealt server-side and can't be refused — so while any bone protector is on we also PIN
+			-- your health + the Humanoid back to max, so a big bite is instantly refilled instead of dropping you.
+			if CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso then
+				pin({"Health","HP","Hitpoints"})
+				pcall(function() local h=hum(); if h and h.MaxHealth>0 then h.Health=h.MaxHealth end end)
+			end
 			-- (food is NOT pinned here — pinning it to max hid the eat prompt so you couldn't hold E. Auto-eat refills it.)
 			if CFG.InfWater  then pin({"Water","Thirst","Hydration"}) end
 			-- (Anti bleed/fracture/break handled by the dedicated PATH-AWARE antiInjurySweep loop below — more thorough.)
@@ -2926,20 +2935,17 @@ task.spawn(function() while RUNNING do
 	if CFG.InfFood and alive() and __gg.MH_lastEatCall then
 		local rs=getReplicaSignal()
 		if rs then
-			-- Fire EVERY different Bite you have eaten this session. More foods eaten = more Bite calls per pass =
-			-- faster growth. Falls back to the single last bite if the list is empty.
+			-- Fire EVERY different Bite you have eaten this session ONCE per pass. More foods eaten = more Bite calls =
+			-- faster growth. (Was firing the whole list x3 per pass = ~200 remotes/sec = network lag / FPS drop.)
 			local list=__gg.MH_biteCalls
 			if type(list)=="table" and #list>0 then
-				for _=1,3 do
-					for _,ec in ipairs(list) do if type(ec)=="table" and ec.n and ec.n>=2 then pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end) end end
-					task.wait(0.04)
-				end
+				for _,ec in ipairs(list) do if type(ec)=="table" and ec.n and ec.n>=2 then pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end) end end
 			else
 				local ec=__gg.MH_lastEatCall
-				if type(ec)=="table" and ec.n and ec.n>=2 then for _=1,6 do pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end); task.wait(0.04) end end
+				if type(ec)=="table" and ec.n and ec.n>=2 then pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end) end
 			end
 		end
-		task.wait(0.12)
+		task.wait(0.3)
 	else task.wait(0.4) end
 end end)
 task.spawn(function() while RUNNING do
