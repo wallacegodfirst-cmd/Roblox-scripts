@@ -1511,10 +1511,11 @@ end
 MS("4 menu ready ("..(USE_FLUENT and "Fluent" or "built-in")..") - building tabs")
 -- ═══ TABS / PAGES ═══
 -- Tier gate: paid loaders set _G.PE_PLUS / _G.PE_PREM before the loadstring. Premium counts as Plus.
-local PE_PLUS = (_G.PE_PLUS==true) or (_G.PE_PREM==true) or (_G.PE_PREMIUM==true)
-local PE_PREM = (_G.PE_PREM==true) or (_G.PE_PREMIUM==true)
+-- Stored on __gg (NOT new locals) — the main chunk is at Luau's 200-local cap and two more broke loading.
+__gg.PE_PLUS = (_G.PE_PLUS==true) or (_G.PE_PREM==true) or (_G.PE_PREMIUM==true)
+__gg.PE_PREM = (_G.PE_PREM==true) or (_G.PE_PREMIUM==true)
 mkTab("Combat",1); mkTab("PvP",2); mkTab("Movement",3); mkTab("Survival",4); mkTab("Growth",5); mkTab("Auto Farm",6); mkTab("Teleport",7)
-if PE_PLUS then mkTab("Target",7.5) end   -- Target tab is Plus-only
+if __gg.PE_PLUS then mkTab("Target",7.5) end   -- Target tab is Plus-only
 mkTab("Visuals",8); mkTab("Skins",9); mkTab("Misc",10); mkTab("Settings",11); mkTab("Info",12)
 
 do local p=Pages["Combat"]
@@ -1747,7 +1748,7 @@ if Pages["Target"] then local p=Pages["Target"]
 		if _G.MH_attack then pcall(function() _G.MH_attack(__gg.MH_Target.model) end); notify("Target","Hit "..__gg.MH_Target.plr.Name..".")
 		else notify("Target","Attack unavailable.") end
 	end,5)
-	if PE_PLUS then   -- Auto Farm Player = Plus + Premium
+	if __gg.PE_PLUS then   -- Auto Farm Player = Plus + Premium
 		local _,af=mkSec(p,"Auto Farm Player",3)
 		mkToggle(af,"Auto Farm Player","AutoFarmPlayer",1)
 		mkLabel(af,"Keeps hitting the loaded player, teleporting to them if they run.")
