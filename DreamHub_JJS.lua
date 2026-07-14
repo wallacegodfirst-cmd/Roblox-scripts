@@ -1057,15 +1057,16 @@ local function safeTeleport(targetCFrame, holdTime)
 		end
 	end
 	isTeleporting = true
+	-- Make sure the PivotTo settle-lock is OFF — that snap is what the anti-cheat reads as a teleport and SENDS
+	-- YOU BACK. The glide moves you legitimately via velocity, so no lock / no CFrame write is needed.
+	vxTeleportLock = false; vxCurrentTargetCF = nil
 	task.spawn(function()
 		vxGlideTo(hrp.Position + Vector3.new(0, 60, 0))          -- small up-hop first: clears floors/low ceilings
 		vxGlideTo(targetCFrame.Position)                         -- glide (noclip) to the target
 		vxToggleCollide(true)                                    -- re-enable collision on arrival
 		local h = vxMyChar(); h = h and h:FindFirstChild("HumanoidRootPart")
-		if h then pcall(function() h.AssemblyLinearVelocity = Vector3.new(0,0,0) end) end
-		-- brief settle-lock so you land exactly on target
-		vxCurrentTargetCF = targetCFrame; vxTeleportLock = true
-		task.delay(holdTime or 0.4, function() vxTeleportLock = false; vxCurrentTargetCF = nil; isTeleporting = false end)
+		if h then pcall(function() h.AssemblyLinearVelocity = Vector3.new(0,0,0) end) end   -- stop; no PivotTo, no lock
+		isTeleporting = false
 	end)
 	return true
 end
