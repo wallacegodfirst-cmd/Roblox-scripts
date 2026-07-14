@@ -4534,7 +4534,46 @@ do
 		end)
 	end
 	task.spawn(function() while true do if on then hookSelf() end task.wait(0.7) end end)
-	GokuApi = { set = function(v) on = v == true end }
+	-- ── GOKU DODGE ── blink LEFT or RIGHT the instant a NEARBY ENEMY plays an M1 animation, so their swing
+	-- whiffs. Alternates side each dodge. Grounded sidestep (~13 studs) via the same AC-pass write as the blink.
+	local dodgeOn, lastDodge, dodgeSide = false, 0, 1
+	local dHooked = setmetatable({}, { __mode = "k" })
+	local function sidestep()
+		local hrp = myHRP(); if not hrp then return end
+		dodgeSide = -dodgeSide
+		local right = hrp.CFrame.RightVector; local flat = Vector3.new(right.X, 0, right.Z)
+		local dir = flat.Magnitude > 0.01 and flat.Unit or Vector3.new(1, 0, 0)
+		local dest = hrp.Position + dir * (13 * dodgeSide)
+		local rp = RaycastParams.new(); rp.FilterType = Enum.RaycastFilterType.Exclude; rp.FilterDescendantsInstances = { myModel() }
+		local hit = workspace:Raycast(dest + Vector3.new(0, 6, 0), Vector3.new(0, -24, 0), rp)
+		if hit then dest = Vector3.new(dest.X, hit.Position.Y + 3, dest.Z) end
+		acPass()
+		pcall(function() hrp.CFrame = CFrame.new(dest, dest + hrp.CFrame.LookVector); hrp.AssemblyLinearVelocity = Vector3.zero end)
+	end
+	local function hookEnemyAnimsForDodge()
+		local hrp = myHRP(); if not hrp then return end
+		local chs = workspace:FindFirstChild("Characters"); if not chs then return end
+		for _, m in ipairs(chs:GetChildren()) do
+			if m.Name ~= LP.Name and m ~= LP.Character then
+				local er = m:FindFirstChild("HumanoidRootPart")
+				if er and (er.Position - hrp.Position).Magnitude <= 30 then
+					local h = m:FindFirstChildOfClass("Humanoid") or m:FindFirstChildOfClass("AnimationController")
+					local a = h and h:FindFirstChildOfClass("Animator")
+					if a and not dHooked[a] then
+						dHooked[a] = a.AnimationPlayed:Connect(function(track)
+							if not dodgeOn then return end
+							if _G.VX_IS_M1 and _G.VX_IS_M1(track) and tick() - lastDodge > 0.5 then
+								local mh = myHRP(); local eh = m:FindFirstChild("HumanoidRootPart")
+								if mh and eh and (eh.Position - mh.Position).Magnitude <= 22 then lastDodge = tick(); sidestep() end
+							end
+						end)
+					end
+				end
+			end
+		end
+	end
+	task.spawn(function() while true do if dodgeOn then pcall(hookEnemyAnimsForDodge) end task.wait(0.5) end end)
+	GokuApi = { set = function(v) on = v == true end, setDodge = function(v) dodgeOn = v == true end }
 end
 
 -- ============================================================
@@ -4623,13 +4662,34 @@ do
 		for _, c in ipairs(bodies) do
 			pcall(function()
 				local h = c:FindFirstChildOfClass("Humanoid")
-				if h then h.Health = 0; h:TakeDamage(1e9) end
+				if h then
+					h:SetStateEnabled(Enum.HumanoidStateType.Dead, true)   -- JJS often DISABLES the Dead state so Health=0 is ignored; re-enable it first
+					h.Health = 0; h.MaxHealth = 0
+					h:TakeDamage(1e9)
+					h:ChangeState(Enum.HumanoidStateType.Dead)             -- force the death state directly
+				end
 				c:SetAttribute("Health", 0)
 				local hv = c:FindFirstChild("Health")
 				if hv and hv:IsA("ValueBase") then hv.Value = 0 end
 			end)
 		end
-		-- the game's own reset button (many games bind character-reset to this)
+		-- try the game's OWN reset/respawn remote (Knit services) - the path the game itself uses
+		pcall(function()
+			local RS = game:GetService("ReplicatedStorage")
+			local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
+			if k then for _, svc in ipairs(k:GetChildren()) do
+				local re = svc:FindFirstChild("RE")
+				if re then for _, nm in ipairs({ "Reset", "Respawn", "Die", "Kill", "Suicide" }) do
+					local r = re:FindFirstChild(nm); if r and r:IsA("RemoteEvent") then pcall(function() r:FireServer() end) end
+				end end
+			end end
+		end)
+		-- the built-in reset button, fired programmatically via a BindableEvent (works when the game keeps default reset)
+		pcall(function()
+			local ev = Instance.new("BindableEvent")
+			game:GetService("StarterGui"):SetCore("ResetButtonCallback", ev)
+			ev:Fire()
+		end)
 		pcall(function() game:GetService("StarterGui"):SetCore("ResetButtonCallback", true) end)
 		-- guaranteed fallback: break the rig so you die for sure
 		for _, c in ipairs(bodies) do pcall(function() c:BreakJoints() end) end
@@ -9712,6 +9772,7 @@ do
     ultSec:Slider({ Name = "Hei Ult Timing", Min = 0.05, Max = 0.6, Default = 0.26, Decimals = 0.01, Suffix = "s", Callback = function(v) if HeadUltApi and HeadUltApi.setLead then HeadUltApi.setLead(v) end end })
     if tier("premium") then ultSec:Toggle({ Name = "Rika Love Sword", Callback = function(b) if RikaSwordApi then RikaSwordApi.set(b) end end }) end   -- FREE: no auto Rika sword
     ultSec:Toggle({ Name = "Goku M1", Callback = function(b) if GokuApi then GokuApi.set(b) end end })
+    ultSec:Toggle({ Name = "Goku Dodge", Callback = function(b) if GokuApi then GokuApi.setDodge(b) end end })   -- blink L/R when a nearby enemy M1s
     ultSec:Label("Goku M1: it might work, if it dont i will fix it later 😭")
     ultSec:Toggle({ Name = "Hollow Nuke", Callback = function(b) if HollowApi then HollowApi.set(b) end end })
 
