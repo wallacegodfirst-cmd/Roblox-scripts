@@ -3978,7 +3978,7 @@ do
 					while tick() - t0 < hold do
 						_G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.4
 						VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game)  -- keep it held for you
-						task.wait(0.08)
+						task.wait(0.04)
 					end
 					VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)     -- let go -> shockwave
 				end)
@@ -4009,6 +4009,13 @@ do
 			local injK = _G.VX_INJ_KEYS
 			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end   -- our own injected press
 			doQuake()
+		end)
+		-- If you TAP (finger lifts right after), that physical key-up would end the charge early on a
+		-- hold-to-charge move. While we hold it for you, re-press the instant your release is seen.
+		UISq.InputEnded:Connect(function(input)
+			if input.KeyCode ~= Enum.KeyCode.Three then return end
+			if not (quakeOn and holding) then return end
+			pcall(function() VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game) end)
 		end)
 	end
 	KillEmoteApi = { set = function(v) killEmoteOn = v == true end, setSlot = function(n) killEmoteSlot = tonumber(n) or 1 end }
