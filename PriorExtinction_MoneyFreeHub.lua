@@ -402,17 +402,14 @@ local function installHook()
 						-- (REMOVED: this used to swallow the Secondary/right-click RegisterAttack while INF Stam was on,
 						--  which meant your dino's SECOND ATTACK dealt NO DAMAGE. INF Stam already refills the bar, so
 						--  there is no reason to block the attack — M2 now passes through and hits normally.)
-						-- ═══ INF STAM — the REAL mechanic (from the live capture) ═══ Sprint is reported as
-						-- ReplicaSignal(id, "SetAction", "Run", true/false) and there is NO separate drain call —
-						-- the SERVER computes stamina drain from its own Run state. So the fix is simple: never tell
-						-- the server you are running. We REWRITE the outgoing Run=true to Run=false — the server thinks
-						-- you walk (zero drain, bar never moves) while your character still sprints at full speed
-						-- locally (PE trusts the client-reported CFrame for position, so your speed is yours). The
-						-- speed keeper below pins your WalkSpeed so nothing can slow you down.
+						-- ═══ INF STAM — Run PASSES THROUGH (real sprint speed) ═══ Sprint is reported as
+						-- ReplicaSignal(id,"SetAction","Run",true/false). Rewriting Run=true to false made the SERVER
+						-- drop you to WALK speed (the "inf stam makes me slow" bug) because the server drives your
+						-- speed from the Run flag. So we DO NOT touch Run — it replicates and you keep full sprint
+						-- speed. The stamina bar is instead held full by the hard pins (SetProperty rewrite below +
+						-- the refill loop), so the server never reaches the exhaust threshold that would slow you.
 						if CFG.InfStam and action=="SetAction" and a[3]=="Run" and a[4]==true then
-							__gg.MH_wantRun = tick()   -- remember you WANT to sprint (speed keeper uses this)
-							a[4] = false               -- server hears "walking" = it never drains stamina
-							return oldNC(self, table.unpack(a, 1, a.n))
+							__gg.MH_wantRun = tick()   -- note we're sprinting (pins keep the bar full; no speed change)
 						end
 						-- (stamina DRAIN report is blocked below so it never drops while you sprint.)
 						-- REWRITE stamina SetProperty to max so the server always sees a full bar.
@@ -2044,17 +2041,8 @@ task.spawn(function() while RUNNING do
 		if type(sc)=="table" and sc.n and sc.n>=2 then
 			local rs=getReplicaSignal(); if rs then pcall(function() rs:FireServer(table.unpack(sc,1,sc.n)) end) end
 		end
-		-- KEEP THE SERVER'S RUN STATE OFF: drain is computed from the server-side Run flag (the capture shows
-		-- no separate drain call), and the hook already rewrites your outgoing Run=true to false. This slow
-		-- re-assert keeps it false even if a Run=true slipped through before the toggle went on. Your real
-		-- sprint speed is local (client-reported position) — the speed keeper below holds it.
-		pcall(function()
-			local recentlyRan = __gg.MH_wantRun and (tick() - __gg.MH_wantRun < 3)
-			if recentlyRan and (tick()-(__gg.MH_runOff or 0) > 1) then
-				__gg.MH_runOff = tick()
-				replicaFire("SetAction", "Run", false)
-			end
-		end)
+		-- (No Run re-assert here — firing Run=false would drop you to WALK speed. Run passes through so you
+		-- keep real sprint speed; the stamina PINS above/below are what stop the drain from ever showing.)
 		task.wait(0.12)
 	else task.wait(0.4) end
 end end)
@@ -2935,6 +2923,10 @@ end
 -- go to the NEXT corpse in the list, wrapping, SKIPPING void/out-of-map spots (tpToCorpse returns false for those)
 -- until one actually lands you in the map; then ask YES/NO.
 local function doNextCorpse()
+	-- CLEAR THE HOLD LOCK FIRST (the premature-"no corpse" fix): the previous TP keeps carnBusy=true for ~2s,
+	-- so a fast No-press made every tpToCorpse below bail instantly and the loop wrongly reported "none found".
+	-- A deliberate next-corpse press cancels the old hold and always gets a fresh try.
+	carnBusy=false; __gg.MH_corpseHoldGoal=nil
 	corpseList=collectCorpses()   -- LIVE: re-scan the folder every press so the count is always current
 	if #corpseList==0 then pcall(function() carnGui.Enabled=false end); notify("Corpse TP","No corpse / meat / bone found on the map right now."); return end
 	if not carnOrigin then local r=hrp(); if r then carnOrigin=r.Position end end   -- remember where you were (for Teleport Back)
@@ -2943,8 +2935,10 @@ local function doNextCorpse()
 		corpseIdx = corpseIdx % #corpseList + 1; tries=tries+1
 		local part=corpseList[corpseIdx]
 		if part and part.Parent then ok = (tpToCorpse(part)==true) end   -- false = void/out-of-map → try the next one
+		if not ok then carnBusy=false end   -- a failed try must not leave the lock set for the next corpse in the loop
 	until ok or tries>#corpseList
-	if not ok then corpseList={}; pcall(function() carnGui.Enabled=false end); notify("Corpse TP","No in-map corpse found right now — will rescan next time."); return end
+	-- Only after EVERY corpse number has been tried and none landed do we say so.
+	if not ok then corpseList={}; pcall(function() carnGui.Enabled=false end); notify("Corpse TP","Tried all "..tostring(tries).." corpse spots — none are in the map right now. Rescanning next press."); return end
 	pcall(function() carnLabel.Text="Teleported to corpse "..corpseIdx.." / "..#corpseList.." - did it work?"; carnGui.Enabled=true end)
 end
 yesBtn.MouseButton1Click:Connect(function()   -- YES = stay + AUTO-START Pro Food (the full growth loop takes over from here)
@@ -3582,7 +3576,7 @@ FARM_CKW = { fossil = {"fossil"}, gem = {"gem","mineral","gemstone","crystal"} }
 FARM_PKW = { fossil = {"fossil","excavat","dig","unearth"}, gem = {"gem","mineral","gemstone","crystal","topaz","quartz","ruby","emerald","amethyst","sapphire","diamond","harvest","mine"} }
 -- EXCLUSION keywords: a node matching the OTHER kind must be skipped. Gem prompts also say "Dig"/"Excavate",
 -- so fossil mode's keyword fallback was classifying every gemstone as a fossil ("collecting gems, not fossils").
-FARM_XKW = { fossil = {"gem","mineral","gemstone","crystal","topaz","quartz","ruby","emerald","amethyst","sapphire","diamond"}, gem = {"fossil"} }
+FARM_XKW = { fossil = {"gem","mineral","gemstone","crystal","topaz","quartz","ruby","emerald","amethyst","sapphire","diamond","opal","jade","garnet","onyx","pearl","agate","obsidian","citrine","peridot","turquoise"}, gem = {"fossil"} }
 local function kwHit(name, list) if not name then return false end name=name:lower(); for _,k in ipairs(list) do if name:find(k,1,true) then return true end end return false end
 local function kindMismatch(kind, prompt)   -- does this prompt/its part chain belong to the OTHER resource?
 	local x = FARM_XKW[kind]; if not x then return false end
@@ -3619,20 +3613,26 @@ local function gatherNodes(kind, range)
 		local d=dist(me.Position, part.Position); if d<=range then seen[part]=true; out[#out+1]={holder or part.Parent or part, part, d} end
 	end
 	local scanned=0
+	local matchedContainer=false
 	for _,folder in ipairs(farmContainers(kind)) do
+		matchedContainer=true
+		-- a fossil container (SpawnedFossils/FossilSpawns) holds ONLY fossils, so for fossils we take ANY
+		-- BasePart in it. This is why it used to teleport to opals: the exact-name check missed this rig's
+		-- fossil parts, #out stayed 0, and the keyword last-resort then matched gem "Dig" prompts.
+		local takeAny = (kind=="fossil")
 		for _,d in ipairs(folder:GetDescendants()) do
 			scanned+=1; if scanned>10000 or #out>=250 then break end
 			if d:IsA("ProximityPrompt") then
 				local part=d.Parent
 				if part and part:IsA("BasePart") and not kindMismatch(kind, d) then addNode(part.Parent, part) end   -- skip the OTHER resource's prompts (mixed containers)
-			elseif d:IsA("BasePart") and ((kind=="gem" and d.Name=="MineralBase") or (kind=="fossil" and (d.Name=="FossilS" or d.Name=="FossilM" or d.Name=="FossilL" or d.Name=="Fossil")) or kwHit(d.Name, FARM_CKW[kind])) then
-				addNode(d.Parent, d)   -- kind-SPECIFIC part names: MineralBase is a GEM part - counting it for fossils collected gems
+			elseif d:IsA("BasePart") and (takeAny or (kind=="gem" and d.Name=="MineralBase") or (kind=="fossil" and (d.Name=="FossilS" or d.Name=="FossilM" or d.Name=="FossilL" or d.Name=="Fossil")) or kwHit(d.Name, FARM_CKW[kind])) then
+				addNode(d.Parent, d)
 			end
 		end
 		if scanned>10000 or #out>=250 then break end
 	end
-	-- LAST RESORT: no container matched -> classify prompts across the whole map by keyword (high cap).
-	if #out==0 then
+	-- LAST RESORT: run ONLY when NO real container matched (never when fossils exist -> can't grab opals).
+	if not matchedContainer and #out==0 then
 		local sc2=0
 		for _,d in ipairs(WS:GetDescendants()) do
 			sc2+=1; if sc2>25000 or #out>=250 then break end
