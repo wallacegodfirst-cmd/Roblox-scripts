@@ -2055,33 +2055,24 @@ end end)
 -- moving, we drive your velocity in your move direction at the dino's REAL running speed — the WalkSpeed the game
 -- gave you while sprinting (MH_runSpeed, learned in the hook). If we haven't learned it yet, we fall back to the
 -- highest WalkSpeed we can see, or ~1.6x the current walk speed. Speed Hack / Fly take over if you turn those on.
+-- The dino lives at workspace.Characters[name] (LP.Character is often nil for PE dinos), and its Humanoid's
+-- WalkSpeed is what the game cuts when stamina hits 0 = the "slow". So we pin WalkSpeed on THAT model.
+local function charHumanoid()
+	local m = (WS:FindFirstChild("Characters") and WS.Characters:FindFirstChild(LP.Name)) or char()
+	return m and m:FindFirstChildOfClass("Humanoid")
+end
 task.spawn(function() while RUNNING do
 	if CFG.InfStam and alive() and not CFG.SpeedHack and not CFG.Fly then
-		local sprinting = __gg.MH_wantRun and (tick()-__gg.MH_wantRun < 0.6)   -- Run/Sprint fire repeatedly while held
+		-- LIGHT: just learn + pin WalkSpeed on the real dino model. No per-frame velocity drive (that was a
+		-- lag/FPS source) — pinning WalkSpeed is what actually stops the exhaustion slow, and it's cheap.
 		pcall(function()
-			local h=hum(); local r=hrp()
+			local h = charHumanoid()
 			if h and h.WalkSpeed and h.WalkSpeed>0 then
-				-- learn the REAL running speed (highest WalkSpeed the game ever set = run/sprint speed)
-				__gg.MH_runSpeed=math.max(__gg.MH_runSpeed or 0, h.WalkSpeed)
-				-- RESTORE it if the game cut your WalkSpeed (this is the actual "exhaustion slow"): pin it back
-				-- to the learned run speed. This fixes "makes me slow" even if stamina still drains server-side.
-				if __gg.MH_runSpeed>0 and h.WalkSpeed < __gg.MH_runSpeed then h.WalkSpeed=__gg.MH_runSpeed end
-			end
-			if sprinting and h and r then
-				local spd = __gg.MH_runSpeed
-				if not spd or spd<=0 then spd = math.max((h.WalkSpeed or 16)*1.6, 24) end   -- fallback if never learned
-				local dir = h.MoveDirection
-				if dir and dir.Magnitude>0.1 then
-					dir = Vector3.new(dir.X,0,dir.Z).Unit*spd
-					local cur = r.AssemblyLinearVelocity
-					-- only ADD speed if we're moving slower than the run speed (don't fight the game when it's already fast)
-					if Vector3.new(cur.X,0,cur.Z).Magnitude < spd-1 then
-						r.AssemblyLinearVelocity = Vector3.new(dir.X, cur.Y, dir.Z)
-					end
-				end
+				__gg.MH_runSpeed = math.max(__gg.MH_runSpeed or 0, h.WalkSpeed)   -- learn real run speed
+				if __gg.MH_runSpeed>0 and h.WalkSpeed < __gg.MH_runSpeed then h.WalkSpeed = __gg.MH_runSpeed end
 			end
 		end)
-		task.wait()   -- every frame so the sprint velocity is smooth
+		task.wait(0.1)
 	else task.wait(0.4) end
 end end)
 
