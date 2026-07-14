@@ -157,6 +157,7 @@ do
 			local need = tonumber(_G.VX_BF_AFTER) or 1
 			if swingCount < need then return end   -- wait until your chosen number of M1s
 			swingCount = 0
+			if _G.VX_BF_DEBUG then pcall(function() print(string.format("[BF] windup id=%s  ->  firing flash (M1 tap + key 3) in %.2fs", tostring(id), math.max(0, delayTime + offset))) end) end
 			task.delay(math.max(0, delayTime + offset), function()
 				if not enabled then return end
 				-- Black Flash lands on a PERFECTLY-TIMED input on the M1 windup. Cover both ways it can be bound so it
@@ -9647,6 +9648,7 @@ do
         bfAutoOn = (b == true); bfSync()
         if _G.VXBF2 then _G.VXBF2.setAutoBF(false) end   -- avoid the weaker VXBF2 path double-pressing
     end })
+    bfSec:Toggle({ Name = "BF Debug (print)", Default = false, Callback = function(b) _G.VX_BF_DEBUG = (b == true) end })   -- prints one line per detected flash so you can confirm detection is happening
     bfSec:Slider({ Name = "BF Cooldown", Min = 0.1, Max = 2, Default = 0.5, Decimals = 0.05, Suffix = "s", Callback = function(v) if _G.VXBF2 then _G.VXBF2.setCooldown(v) end end })
     -- BF Timing: nudge the flash input earlier(-)/later(+) to hit the exact flash frame for YOUR character.
     bfSec:Slider({ Name = "BF Timing", Min = -0.12, Max = 0.4, Default = 0, Decimals = 0.01, Suffix = "s", Callback = function(v) v = tonumber(v) or 0; bfClickOffset = v; if BFApi then BFApi.SetTimingOffset(v) end end })
