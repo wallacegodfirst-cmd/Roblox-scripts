@@ -402,14 +402,17 @@ local function installHook()
 						-- (REMOVED: this used to swallow the Secondary/right-click RegisterAttack while INF Stam was on,
 						--  which meant your dino's SECOND ATTACK dealt NO DAMAGE. INF Stam already refills the bar, so
 						--  there is no reason to block the attack — M2 now passes through and hits normally.)
-						-- ═══ INF STAM — Run PASSES THROUGH (real sprint speed) ═══ Sprint is reported as
-						-- ReplicaSignal(id,"SetAction","Run",true/false). Rewriting Run=true to false made the SERVER
-						-- drop you to WALK speed (the "inf stam makes me slow" bug) because the server drives your
-						-- speed from the Run flag. So we DO NOT touch Run — it replicates and you keep full sprint
-						-- speed. The stamina bar is instead held full by the hard pins (SetProperty rewrite below +
-						-- the refill loop), so the server never reaches the exhaust threshold that would slow you.
+						-- ═══ INF STAM — SWALLOW Run + drive real sprint speed locally (your idea) ═══ Sprint is
+						-- reported as ReplicaSignal(id,"SetAction","Run",true) and the server drains stamina FROM that
+						-- report. So we SWALLOW it — the server never hears you running, so it never drains. But the
+						-- server also drives your speed from Run, so on its own that would leave you at walk speed;
+						-- the speed keeper below instead moves you at the dino's REAL running speed (the WalkSpeed the
+						-- game gave you while sprinting, learned here) via a velocity drive. Result: full sprint speed,
+						-- zero drain. We also learn the sprint speed from the current Humanoid before swallowing.
 						if CFG.InfStam and action=="SetAction" and a[3]=="Run" and a[4]==true then
-							__gg.MH_wantRun = tick()   -- note we're sprinting (pins keep the bar full; no speed change)
+							__gg.MH_wantRun = tick()
+							pcall(function() local h=hum(); if h and h.WalkSpeed and h.WalkSpeed>0 then __gg.MH_runSpeed=math.max(__gg.MH_runSpeed or 0, h.WalkSpeed) end end)
+							return   -- swallow: server never sees Run=true = it never drains your stamina
 						end
 						-- (stamina DRAIN report is blocked below so it never drops while you sprint.)
 						-- REWRITE stamina SetProperty to max so the server always sees a full bar.
@@ -2047,21 +2050,32 @@ task.spawn(function() while RUNNING do
 	else task.wait(0.4) end
 end end)
 
--- INF STAM — SPEED KEEPER (what you actually feel): PE is server-authoritative on stamina, so even when it drains
--- the real symptom is the EXHAUSTION SLOW (the game cuts your WalkSpeed / makes you "very slow"). We track the peak
--- WalkSpeed you have had and pin it back every pass, so an empty bar can never slow you down — you keep full sprint
--- speed with INF Stam on. (Best-effort + pcall: harmless if the game doesn't drive movement through WalkSpeed.)
+-- INF STAM — REAL SPRINT SPEED DRIVE: because we swallow the Run report (so the server can't drain stamina), the
+-- server would otherwise hold you at walk speed. So while you're sprinting (you pressed run recently) and actually
+-- moving, we drive your velocity in your move direction at the dino's REAL running speed — the WalkSpeed the game
+-- gave you while sprinting (MH_runSpeed, learned in the hook). If we haven't learned it yet, we fall back to the
+-- highest WalkSpeed we can see, or ~1.6x the current walk speed. Speed Hack / Fly take over if you turn those on.
 task.spawn(function() while RUNNING do
-	if CFG.InfStam and alive() then
+	if CFG.InfStam and alive() and not CFG.SpeedHack and not CFG.Fly then
+		local sprinting = __gg.MH_wantRun and (tick()-__gg.MH_wantRun < 0.6)   -- Run fires repeatedly while you hold it
 		pcall(function()
-			local h=hum()
+			local h=hum(); local r=hrp()
 			if h then
-				if h.WalkSpeed and h.WalkSpeed>0 then __gg.MH_wsPeak=math.max(__gg.MH_wsPeak or 0, h.WalkSpeed) end
-				if __gg.MH_wsPeak and __gg.MH_wsPeak>0 and h.WalkSpeed < __gg.MH_wsPeak then h.WalkSpeed=__gg.MH_wsPeak end
+				-- keep learning the real sprint speed whenever WalkSpeed is high (some rigs raise it client-side)
+				if h.WalkSpeed and h.WalkSpeed>0 then __gg.MH_runSpeed=math.max(__gg.MH_runSpeed or 0, h.WalkSpeed) end
+			end
+			if sprinting and h and r then
+				local spd = __gg.MH_runSpeed
+				if not spd or spd<=0 then spd = math.max((h.WalkSpeed or 16)*1.6, 24) end   -- fallback if never learned
+				local dir = h.MoveDirection
+				if dir and dir.Magnitude>0.1 then
+					dir = Vector3.new(dir.X,0,dir.Z).Unit*spd
+					r.AssemblyLinearVelocity = Vector3.new(dir.X, r.AssemblyLinearVelocity.Y, dir.Z)
+				end
 			end
 		end)
-		task.wait(0.15)
-	else task.wait(0.5) end
+		task.wait()   -- every frame so the sprint velocity is smooth
+	else task.wait(0.4) end
 end end)
 
 -- INF FOOD — FLOOR KEEPER (keep the bar UP whether you eat or not, WITHOUT hiding the eat prompt): the food bar
