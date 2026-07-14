@@ -3984,7 +3984,9 @@ do
 					VIMq:SendKeyEvent(false, Enum.KeyCode.Three, false, game)     -- let go -> shockwave
 				end)
 				task.wait(0.25)
-				if quakeAnimSeen < began then pcall(fireQuake) end
+				local sawAnim = quakeAnimSeen >= began
+				if not sawAnim then pcall(fireQuake) end
+				if _G.VX_QUAKE_DEBUG then pcall(function() print(string.format("[QUAKE] held 3 for %.1fs | windup anim seen=%s | service backup fired=%s", hold, tostring(sawAnim), tostring(not sawAnim))) end) end
 				holding = false
 			end)
 		end
@@ -9733,6 +9735,7 @@ do
     acSec:Toggle({ Name = "Auto Earthquake", Callback = function(b) if AutoQuakeApi then AutoQuakeApi.set(b) end end })
     if _G.JJS_FREE then pcall(function() acSec:Label("Earthquake: turn on, then press 3 — it is held for you") end) end
     acSec:Slider({ Name = "Quake Hold", Min = 0.3, Max = 3, Default = 2, Decimals = 0.01, Suffix = "s", Callback = function(v) _G.VX_QUAKE_HOLD = tonumber(v) or 2 end })
+    acSec:Toggle({ Name = "Quake Debug (print)", Default = false, Callback = function(b) _G.VX_QUAKE_DEBUG = (b == true) end })   -- prints one line per tap so you can confirm the hold + whether the windup was seen
     if not _G.JJS_FREE then acSec:Slider({ Name = "Quake Range", Min = 15, Max = 150, Default = 60, Decimals = 1, Suffix = "st", Callback = function(v) _G.VX_QUAKE_RANGE = tonumber(v) or 60 end }) end
     acSec:Toggle({ Name = "Auto Kill Emote", Callback = function(b) if KillEmoteApi then KillEmoteApi.set(b) end end })
     local keItems = {}   -- slot list with REAL emote names read from PlayerGui.Emotes.Emote.Page1/Page2 (the 'nan' slider is gone)
