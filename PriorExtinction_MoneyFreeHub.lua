@@ -59,7 +59,7 @@ local CFG = {
 	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=17, Noclip=false, Invis=false,
 	InfJump=false, BypassTP=true,
 	InfFood=false, InfWater=false, InfStam=false, InfOxygen=false,
-	AntiDrown=true, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false, HeadDmgReduce=90,
+	AntiDrown=true, AntiDrownRise=14, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false, HeadDmgReduce=90,
 	SaveDino=false, SaveHP=30, NoSleep=true, AutoHealBlood=false, AfkEat=false, BotPvP=true,
 	AutoFarmPlayer=false, FarmPlayerRange=120, AutoFarmFossil=false, FarmFossilRange=1000000, FossilSlow=1.2,
 	ESPPlayers=false, ESPCorpses=false, FoodESP=false, FishESP=false, GemESP=false, ESPRange=900, ESPColor="Default",
@@ -715,17 +715,28 @@ ATK_GROUPS = {
 local function _findIn(model, name)
 	if not model then return nil end
 	-- Hitbox is a CONTAINER (Hitbox.Head.Head is the real Part). A shallow FindFirstChild returned the FOLDER, whose
-	-- position can't be read, so bone-aim / Always Damage never landed. Search the container RECURSIVELY for the
-	-- actual BasePart/Bone with this name first.
-	local hb=model:FindFirstChild("Hitbox") or model:FindFirstChild("HitBox")
-	if hb then
-		for _,d in ipairs(hb:GetDescendants()) do
-			if d.Name==name and (d:IsA("BasePart") or d:IsA("Bone")) then return d end
+	-- position can't be read, so bone-aim / Always Damage never landed. Search the container RECURSIVELY first.
+	-- MATCHING IS FUZZY NOW (why Always Damage was inconsistent): the real rig bones carry suffixed / different-case
+	-- names ("Spine.002", "NECK"), so an exact case-sensitive compare missed them and the hit got a dummy position
+	-- the server rejected. Exact (case-insensitive) name wins; else a prefix match ("Spine" -> "Spine.002").
+	local want=tostring(name):lower()
+	local best
+	local function scan(root)
+		for _,d in ipairs(root:GetDescendants()) do
+			if (d:IsA("BasePart") or d:IsA("Bone")) then
+				local dn=d.Name:lower()
+				if dn==want then return d end
+				if not best and dn:sub(1,#want)==want then best=d end
+			end
 		end
-		local p=hb:FindFirstChild(name, true); if p then return p end   -- any descendant with this name as a last resort
+		return nil
 	end
-	local mm=model:FindFirstChild("MeshModel"); if mm then local b=mm:FindFirstChild(name, true); if b then return b end end
-	return model:FindFirstChild(name, true)
+	local hb=model:FindFirstChild("Hitbox") or model:FindFirstChild("HitBox")
+	if hb then local e=scan(hb); if e then return e end end
+	if best then return best end   -- a Hitbox prefix match beats searching other containers (real hit parts live there)
+	local mm=model:FindFirstChild("MeshModel"); if mm then local e=scan(mm); if e then return e end end
+	local e=scan(model); if e then return e end
+	return best
 end
 local function _bonePos(b)
 	if not b then return nil end
@@ -772,7 +783,10 @@ local function fireAttack(targetModel, skipSound, clickedPart)
 	local list = (want and want~="" and want~="Auto" and ATK_GROUPS[want]) or ATK_GROUPS.Auto
 	if not targetPos then for _,b in ipairs(list) do
 		local bn=_findIn(targetModel, b.n); local p=_bonePos(bn)
-		if p then group, boneName, targetPos = b.g, b.n, p; break end
+		-- report the FOUND part's REAL name: fuzzy find of "Spine" can return "Spine.002", and the server checks
+		-- that the NAME matches the POSITION on the target's rig — a canonical name with the real part's position
+		-- is a mismatch it rejects. Real name + real position = the hit registers every time.
+		if p then group, boneName, targetPos = b.g, bn.Name, p; break end
 	end end
 	-- KEYWORD FALLBACK — makes "Always hit part = Leg/Head/…" work on EVERY dino: if the exact bone names above didn't
 	-- resolve on THIS dino's rig, search its parts/bones for ANY name in the selected region, reporting that real name
@@ -789,7 +803,7 @@ local function fireAttack(targetModel, skipSound, clickedPart)
 		end
 	end
 	if not targetPos and list~=ATK_GROUPS.Auto then
-		for _,b in ipairs(ATK_GROUPS.Auto) do local bn=_findIn(targetModel,b.n); local p=_bonePos(bn); if p then group,boneName,targetPos=b.g,b.n,p; break end end
+		for _,b in ipairs(ATK_GROUPS.Auto) do local bn=_findIn(targetModel,b.n); local p=_bonePos(bn); if p then group,boneName,targetPos=b.g,bn.Name,p; break end end
 	end
 	if not targetPos then
 		local hb=targetModel:FindFirstChild("Hitbox") or targetModel:FindFirstChild("HitBox")
@@ -1537,6 +1551,8 @@ do local p=Pages["Survival"]
 	-- INF Stamina is pure now: it only keeps the bar full, no speed boost attached (use Speed Hack for speed).
 	local _,pr=mkSec(p,"Protection",2)
 	mkToggle(pr,"Anti Drown","AntiDrown",1)
+	mkSlider(pr,"Anti Drown Rise","AntiDrownRise",2,30,1,1)
+	mkLabel(pr,"How fast Anti Drown lifts you to the surface. Lower = smoother on weak devices.")
 	mkToggle(pr,"Walk on Water","WalkWater",2)
 	mkToggle(pr,"Auto Clean","AutoClean",3)
 	mkToggle(pr,"Anti Head","AntiFracture",4)
@@ -1672,16 +1688,12 @@ do local p=Pages["Teleport"]
 	end
 	local function tpTo(pos)
 		if not pos then notify("Teleport","That biome isn't loaded near you yet — move closer or pick another."); return end
-		local cc=char(); local goal=CFrame.new(pos+Vector3.new(0,6,0))
-		-- LEGIT MOVE (no send-back): fire the game's OWN move remote — ReplicaSignalUnreliable("CFrame", goal) with
-		-- your replica id — exactly how PE moves your dino. The server accepts it, so it sticks. CFrame write below is a backup.
-		pcall(function()
-			local re = RS:FindFirstChild("RemoteEvents"); re = re and re:FindFirstChild("ReplicaSignalUnreliable")
-			local id = myReplicaId or (seenIds and seenIds[1])
-			if re and id then re:FireServer(id, "CFrame", goal) end
-		end)
-		pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end end)
-		local r0=hrp(); if r0 then pcall(function() r0.AssemblyLinearVelocity=Vector3.zero end) end
+		local target=pos+Vector3.new(0,6,0)
+		-- MICRO-STEP LEGIT MOVE (no send-back): one giant jump reads as impossible speed and the server rejects it.
+		-- The hop-mover walks the server there in 20-stud believable hops on the game's OWN move remote (3x per hop,
+		-- since the unreliable channel drops packets), moving you locally in step. ~400 studs/sec, sticks on arrival.
+		if __gg.MH_hopMove then __gg.MH_hopMove(target)
+		else local cc=char(); pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(CFrame.new(target)) else local r=hrp(); if r then r.CFrame=CFrame.new(target) end end end) end
 		-- ANTI-FALL on landing: the server can reset FallDamageImmunity, so we re-assert it + clear any fall status +
 		-- damp a hard drop for ~4s after the teleport. This stops the "I die once in a while" on teleport.
 		task.spawn(function() for _=1,40 do
@@ -2373,7 +2385,7 @@ while RUNNING do
 			local surf
 			pcall(function() local rp=RaycastParams.new(); rp.IgnoreWater=false; rp.FilterType=Enum.RaycastFilterType.Exclude; rp.FilterDescendantsInstances={getMyModel()}; local res=WS:Raycast(r.Position+Vector3.new(0,60,0), Vector3.new(0,-130,0), rp); if res and res.Material==Enum.Material.Water then surf=res.Position.Y end end)
 			if not surf then
-				if tick()-wT > 3 then wParts={}; wT=tick(); local c=0
+				if tick()-wT > 10 then wParts={}; wT=tick(); local c=0
 					-- AUTHORITATIVE (user's Explorer): all water lives in workspace.Water (ArkoseRiver / GarnetRiver /
 					-- Karst River / WaterFlow / Waterfalls / Pond / WetCave). Scan its BaseParts DIRECTLY first — this is
 					-- the real water, so Anti-Drown + Walk-on-Water now work on EVERY river/pond regardless of part name.
@@ -2381,11 +2393,15 @@ while RUNNING do
 					if waterFolder then for _,d in ipairs(waterFolder:GetDescendants()) do
 						if d:IsA("BasePart") and (d.Size.X*d.Size.Z)>15 then wParts[#wParts+1]=d end   -- lower threshold: river segments are thin
 					end end
-					-- fallback: name-matched big water parts anywhere else on the map
+					-- fallback: name-matched big water parts anywhere else — ONLY when the Water folder gave nothing.
+					-- (This whole-workspace sweep every few seconds was the Anti-Drown FPS hitch; now it's skipped on
+					-- maps that have the real Water folder, and the cache lasts 10s instead of 3s.)
+					if #wParts==0 then
 					for _,d in ipairs(WS:GetDescendants()) do c+=1; if c>9000 then break end
 						if d:IsA("BasePart") then local n=d.Name:lower()
 							if (n:find("water") or n:find("lake") or n:find("wave") or n:find("ocean") or n:find("pond") or n:find("lagoon") or n:find("sea") or n:find("swamp") or n:find("river") or n:find("waterfall")) and (d.Size.X*d.Size.Z)>200 then wParts[#wParts+1]=d end
 						end
+					end
 					end
 				end
 				local band = CFG.WalkWater and 6 or 2   -- wider detect band while standing ON the water (no bobbing)
@@ -2410,15 +2426,20 @@ while RUNNING do
 			local hold=false
 			if surf then hold = r.Position.Y < surf + (CFG.WalkWater and 3.2 or 1.2) end
 			if hold then
-				pcall(function() setReplicaProp("State","Land") end)
-				pcall(function() replicaAction("SetAction","Drowning",false) end)
-				pcall(function() replicaAction("Mode","Walk") end)
-				if CharacterState then for _,k in ipairs({"IsInWater","Submerged","Underwater","Swimming","Drowning"}) do pcall(function() if CharacterState[k]~=nil then CharacterState[k]=false end end) end end
-				local stats,maxs=csStats(); if stats then for _,k in ipairs({"Oxygen","Air","Breath","O2"}) do if stats[k]~=nil then stats[k]=(maxs and maxs[k]) or math.max(tonumber(stats[k]) or 0,100) end end end
+				-- LAG FIX: these remote/state writes used to fire EVERY pass (20x/sec) while you were in water — that
+				-- was the other half of the Anti-Drown FPS drop. The DrownY report is already swallowed in the hook,
+				-- so these only need a slow heartbeat now (every 0.4s). The lift force below still updates every pass.
+				if tick()-(__gg.MH_adRep or 0) > 0.4 then __gg.MH_adRep=tick()
+					pcall(function() setReplicaProp("State","Land") end)
+					pcall(function() replicaAction("SetAction","Drowning",false) end)
+					pcall(function() replicaAction("Mode","Walk") end)
+					if CharacterState then for _,k in ipairs({"IsInWater","Submerged","Underwater","Swimming","Drowning"}) do pcall(function() if CharacterState[k]~=nil then CharacterState[k]=false end end) end end
+					local stats,maxs=csStats(); if stats then for _,k in ipairs({"Oxygen","Air","Breath","O2"}) do if stats[k]~=nil then stats[k]=(maxs and maxs[k]) or math.max(tonumber(stats[k]) or 0,100) end end end
+				end
 				-- Y-only BodyVelocity HOLD (the fix): eases to the target height and STAYS there. X/Z untouched = walk freely.
 				if not (wbv and wbv.Parent==r) then pcall(function() if wbv then wbv:Destroy() end end); wbv=Instance.new("BodyVelocity"); wbv.Name="MH_Water"; wbv.MaxForce=Vector3.new(0,9e9,0); wbv.P=9e4; wbv.Velocity=Vector3.zero; wbv.Parent=r end
 				local target = CFG.WalkWater and (surf+2.6) or (surf+0.8)
-				local vy = math.clamp((target - r.Position.Y)*5, -6, 14)
+				local vy = math.clamp((target - r.Position.Y)*5, -6, tonumber(CFG.AntiDrownRise) or 14)   -- Anti Drown Rise slider = max climb speed
 				if UIS:IsKeyDown(Enum.KeyCode.Space) then vy=18 elseif UIS:IsKeyDown(Enum.KeyCode.LeftControl) then vy=-14 end
 				pcall(function() wbv.Velocity=Vector3.new(0,vy,0) end)
 			elseif wbv then pcall(function() wbv:Destroy() end); wbv=nil end
@@ -2734,6 +2755,37 @@ Instance.new("UICorner",yesBtn).CornerRadius=UDim.new(0,6)
 noBtn=Instance.new("TextButton"); noBtn.Size=UDim2.new(0.5,-12,0,34); noBtn.Position=UDim2.new(0.5,4,0,58); noBtn.BackgroundColor3=Color3.fromRGB(205,72,72); noBtn.Text="NO - next corpse"; noBtn.TextColor3=Color3.new(1,1,1); noBtn.TextSize=13; noBtn.Font=Enum.Font.GothamBold; noBtn.BorderSizePixel=0; noBtn.AutoButtonColor=true; noBtn.Parent=carnFrame
 Instance.new("UICorner",noBtn).CornerRadius=UDim.new(0,6)
 -- teleport onto a corpse part (noclip + hold so it can't rubber-band; eat prompt fired)
+-- MICRO-STEP LEGIT MOVE: the server validates position DELTAS -- one giant CFrame jump reads as impossible
+-- speed and gets rejected (that is the rubberband). So we walk the server there in 20-stud hops: every hop is
+-- a believable move, fired on the game's OWN unreliable move remote 3x per hop (that channel DROPS packets --
+-- the repeats make sure one lands), with the local write alongside so your screen keeps up. localWrite=false
+-- sends the server path only (used by the corpse TP, which snaps you locally first and holds).
+local function MH_hopFire(goalCF)
+	pcall(function()
+		local re=RS:FindFirstChild("RemoteEvents"); re=re and re:FindFirstChild("ReplicaSignalUnreliable")
+		local id=myReplicaId or (seenIds and seenIds[1])
+		if re and id then for _=1,3 do re:FireServer(id, "CFrame", goalCF) end end
+	end)
+end
+__gg.MH_hopMove=function(targetPos, localWrite)
+	task.spawn(function()
+		local r=hrp(); if not r then return end
+		local from=r.Position
+		local dist=(targetPos-from).Magnitude
+		local hops=math.clamp(math.ceil(dist/20),1,400)
+		for i=1,hops do
+			local cf=CFrame.new(from:Lerp(targetPos, i/hops))
+			MH_hopFire(cf)
+			if localWrite~=false then
+				local cc=getMyModel()
+				pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(cf) else local rr=hrp(); if rr then rr.CFrame=cf end end end)
+				local rr=hrp(); if rr then pcall(function() rr.AssemblyLinearVelocity=Vector3.zero end) end
+			end
+			task.wait(0.05)
+		end
+		for _=1,6 do MH_hopFire(CFrame.new(targetPos)); task.wait(0.08) end   -- settle: keep re-telling the server the final spot
+	end)
+end
 local function tpToCorpse(part)
 	if not (part and part.Parent) or carnBusy then return end
 	carnBusy=true
@@ -2762,12 +2814,9 @@ local function tpToCorpse(part)
 	-- When the ray misses but the corpse is at a normal height, we just teleport to the corpse's own Y.
 	if not foundGround and np.Y < -400 then carnBusy=false; return false end
 	local cc=getMyModel(); local goal=CFrame.new(np.X, landY, np.Z)
-		-- LEGIT MOVE first (game own ReplicaSignalUnreliable "CFrame" remote) so the server accepts it = no send-back
-		pcall(function()
-			local re = RS:FindFirstChild("RemoteEvents"); re = re and re:FindFirstChild("ReplicaSignalUnreliable")
-			local id = myReplicaId or (seenIds and seenIds[1])
-			if re and id then re:FireServer(id, "CFrame", goal) end
-		end)
+		-- LEGIT MOVE: send the server a believable 20-stud-hop path to the corpse (remote-only -- you snap there
+		-- locally below and the hold keeps you put while the server's copy walks over and accepts the position).
+		if __gg.MH_hopMove then __gg.MH_hopMove(goal.Position, false) end
 	local noclip={}; if cc then pcall(function() for _,dd in ipairs(cc:GetDescendants()) do if dd:IsA("BasePart") and dd.CanCollide then dd.CanCollide=false; noclip[#noclip+1]=dd end end end) end
 	pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end end)
 	local r=hrp(); if r then pcall(function() r.AssemblyLinearVelocity=Vector3.zero; r.AssemblyAngularVelocity=Vector3.zero end) end
