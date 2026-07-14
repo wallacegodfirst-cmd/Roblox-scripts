@@ -2674,20 +2674,20 @@ do
         end
     end)
 
-    -- ── AURA M1 (strong): face nearest, GROW your arms so the swing reaches, then real M1 (+ ability spam) ──
-    -- The swing only lands via the game's own client-side arm detection, so we force the arm-grow burst
-    -- (the documented working damage path) while Aura M1 is on — otherwise a ranged swing whiffs = "doesn't work".
+    -- ── AURA M1 (close-range auto attack): NO hitbox/arm grow. When an enemy is CLOSE, face them and throw a
+    -- real M1 (+ ability spam). You close the distance (or use M1 Warp), then this clicks/attacks for you. This is
+    -- the legit swing the game registers itself — no arm expander, so no giant hitboxes.
     task.spawn(function()
         while true do
             if S.AuraM1Pro then
                 local root = getRoot(); local target = nearestPlayer(S.AuraRange or 60)
                 local tr = target and target.Character and (target.Character:FindFirstChild("HumanoidRootPart") or charPart(target.Character))
                 if root and tr then
-                    S.M1HitboxSize = math.max(tonumber(S.M1HitboxSize) or 0, (S.AuraRange or 60) + 20)   -- reach past the target
-                    punchGrowUntil = tick() + 0.3   -- grow YOUR arms so the game's detector reaches the enemy
-                    pcall(function() root.CFrame = CFrame.lookAt(root.Position, tr.Position) end)
-                    clearMyHitLog()   -- so repeated swings keep landing on the same target
-                    clickM1(true); tapKey(Enum.KeyCode.E); tapKey(Enum.KeyCode.R); tapKey(Enum.KeyCode.T)
+                    local close = (root.Position - tr.Position).Magnitude <= (tonumber(S.AuraHit) or 14)   -- only swing when you're in melee range
+                    if close then
+                        pcall(function() root.CFrame = CFrame.lookAt(root.Position, tr.Position) end)
+                        clickM1(true); tapKey(Enum.KeyCode.E); tapKey(Enum.KeyCode.R); tapKey(Enum.KeyCode.T)
+                    end
                 end
             end
             task.wait(0.05)
