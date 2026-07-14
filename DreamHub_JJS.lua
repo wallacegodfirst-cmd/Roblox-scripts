@@ -1055,16 +1055,32 @@ local function safeTeleport(targetCFrame, holdTime)
 	if _G.VX_DESTROY_AC then pcall(_G.VX_DESTROY_AC) end   -- method 1: kill the AC report channel
 	vxACAck()                                             -- method 2: acknowledge the move
 	vxHardWrite(char, hrp, targetCFrame)                  -- methods 3A + 3B: HRP CFrame + model PivotTo
-	-- method 4: brief lock so any server nudge is re-pinned back to target (undoes a set-back)
+	-- method 4: LONG aggressive hold — the send-back comes AFTER a short hold, so we re-pin your position, re-kill
+	-- the AC remotes and re-ack EVERY frame for ~2.5s. Any server nudge is instantly undone; once you stop drifting
+	-- (server accepted the position) we can stop early. This is what makes the teleport actually STICK.
 	vxCurrentTargetCF = targetCFrame; vxTeleportLock = true
 	task.spawn(function()
-		for _ = 1, 8 do   -- ~0.5s of active holding, re-writing + re-acking each frame
+		local RS_t = game:GetService("RunService")
+		local hold = tonumber(holdTime) or 2.5
+		local t0 = tick(); local settled = 0
+		while tick() - t0 < hold do
 			local c = vxMyChar(); local h = c and c:FindFirstChild("HumanoidRootPart")
-			if h then vxHardWrite(c, h, targetCFrame) end
-			vxACAck()
-			game:GetService("RunService").Heartbeat:Wait()
+			if h then
+				local drift = (h.Position - targetCFrame.Position).Magnitude
+				if drift > 3 then                       -- server nudged you: slam back + re-ack + re-kill AC
+					vxHardWrite(c, h, targetCFrame)
+					vxACAck()
+					if _G.VX_DESTROY_AC then pcall(_G.VX_DESTROY_AC) end
+					settled = 0
+				else
+					h.AssemblyLinearVelocity = Vector3.new(0,0,0)
+					settled = settled + 1
+					if settled > 30 then break end        -- ~0.5s with no set-back = the server accepted it; done
+				end
+			end
+			RS_t.Heartbeat:Wait()
 		end
-		task.delay(holdTime or 0.4, function() vxTeleportLock = false; vxCurrentTargetCF = nil; isTeleporting = false end)
+		vxTeleportLock = false; vxCurrentTargetCF = nil; isTeleporting = false
 	end)
 	return true
 end
