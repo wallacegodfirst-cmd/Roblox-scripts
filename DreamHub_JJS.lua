@@ -157,6 +157,7 @@ do
 			local need = tonumber(_G.VX_BF_AFTER) or 1
 			if swingCount < need then return end   -- wait until your chosen number of M1s
 			swingCount = 0
+			_G.VX_BF_LAST_FIRE = tick()
 			if _G.VX_BF_DEBUG then pcall(function() print(string.format("[BF] windup id=%s  ->  firing flash (M1 tap + key 3) in %.2fs", tostring(id), math.max(0, delayTime + offset))) end) end
 			task.delay(math.max(0, delayTime + offset), function()
 				if not enabled then return end
@@ -9599,6 +9600,14 @@ do
             -- ONLY stamp the click now. The Black Flash engine does the actual press (gated by BF After (M1s))
             -- off your M1 animation, so this no longer double-presses or ignores the count.
             _G.VX_LAST_CLICK = tick()
+            if _G.VX_BF_DEBUG then
+                local at = _G.VX_LAST_CLICK
+                task.delay(0.7, function()   -- if no flash fired after this click, the M1 windup anim was never caught
+                    if _G.VX_BF_DEBUG and (_G.VX_BF_LAST_FIRE or 0) < at then
+                        pcall(function() print("[BF] click seen but NO windup anim detected in 0.7s -> the engine can't see your M1 animation (send me this)") end)
+                    end
+                end)
+            end
         end
         local _ = press3   -- kept for reference; the engine handles the press now
         _G.VX_ON_M1 = onClick   -- the bypass __namecall hook pings this when your M1 remote (...Service.RE.Activated) fires
