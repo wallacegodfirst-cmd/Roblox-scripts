@@ -1018,29 +1018,54 @@ end)
 -- ZERO-LAG TELEPORT: the anti-cheat remotes are already destroyed above, so the server has no channel to
 -- report a bad position — a single PivotTo just sticks. No per-frame stepping, no PlatformStand freeze. The
 -- shared Heartbeat lock only re-pins you (and only if you drift >2 studs) for a short hold so you settle.
+-- GLIDE TELEPORT (velocity + noclip): drive the HRP toward the target by setting its Velocity each frame, with
+-- collision OFF the whole way so you pass THROUGH buildings/walls. A short up-hop first clears low ceilings/floors,
+-- then it glides to the target and re-enables collision on arrival. No CFrame snap = the anti-cheat reads a fast
+-- dash, not a teleport. speed is studs/sec.
 local isTeleporting = false
-local function safeTeleport(targetCFrame, holdTime)
+local VX_GLIDE_SPEED = 140
+local function vxMyChar()
 	local LP = game:GetService("Players").LocalPlayer
-	local char = LP.Character or (workspace:FindFirstChild("Characters") and workspace.Characters:FindFirstChild(LP.Name))
-	if not char then return false end
-	local hrp = char:FindFirstChild("HumanoidRootPart")
-	if not hrp then return false end
+	return LP.Character or (workspace:FindFirstChild("Characters") and workspace.Characters:FindFirstChild(LP.Name))
+end
+local function vxToggleCollide(bool)
+	local char = vxMyChar(); if not char then return end
+	for _, v in ipairs(char:GetDescendants()) do
+		if v:IsA("BasePart") and v.CanCollide ~= bool then pcall(function() v.CanCollide = bool end) end
+	end
+end
+local function vxGlideTo(pos)   -- pos = Vector3 target; glides there via velocity, noclip on
+	local RS_g = game:GetService("RunService")
+	local t0 = tick()
+	repeat
+		local char = vxMyChar(); local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if not hrp then break end
+		vxToggleCollide(false)                                   -- noclip so you pass through buildings
+		local dist = pos - hrp.Position
+		local val = (dist.Magnitude > 0.01) and (dist.Unit * VX_GLIDE_SPEED) or Vector3.zero
+		pcall(function() hrp.AssemblyLinearVelocity = val end)
+		RS_g.Heartbeat:Wait()
+	until (function() local c=vxMyChar(); local h=c and c:FindFirstChild("HumanoidRootPart"); return (not h) or (h.Position - pos).Magnitude < 3 or (tick()-t0) > 6 end)()
+end
+local function safeTeleport(targetCFrame, holdTime)
+	local char = vxMyChar(); if not char then return false end
+	local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return false end
 	-- clean up any body movers that would drag you back
 	for _, v in ipairs(char:GetDescendants()) do
 		if v:IsA("AlignPosition") or v:IsA("AlignOrientation") or v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("BodyGyro") or v:IsA("BodyAngularVelocity") or v:IsA("VectorForce") or v:IsA("LinearVelocity") then
 			pcall(function() v:Destroy() end)
 		end
 	end
-	hrp.AssemblyLinearVelocity = Vector3.new(0,0,0)
-	hrp.AssemblyAngularVelocity = Vector3.new(0,0,0)
 	isTeleporting = true
-	vxCurrentTargetCF = targetCFrame
-	vxTeleportLock = true
-	pcall(function() char:PivotTo(targetCFrame) end)
-	task.delay(holdTime or 1, function()
-		vxTeleportLock = false
-		vxCurrentTargetCF = nil
-		isTeleporting = false
+	task.spawn(function()
+		vxGlideTo(hrp.Position + Vector3.new(0, 60, 0))          -- small up-hop first: clears floors/low ceilings
+		vxGlideTo(targetCFrame.Position)                         -- glide (noclip) to the target
+		vxToggleCollide(true)                                    -- re-enable collision on arrival
+		local h = vxMyChar(); h = h and h:FindFirstChild("HumanoidRootPart")
+		if h then pcall(function() h.AssemblyLinearVelocity = Vector3.new(0,0,0) end) end
+		-- brief settle-lock so you land exactly on target
+		vxCurrentTargetCF = targetCFrame; vxTeleportLock = true
+		task.delay(holdTime or 0.4, function() vxTeleportLock = false; vxCurrentTargetCF = nil; isTeleporting = false end)
 	end)
 	return true
 end
