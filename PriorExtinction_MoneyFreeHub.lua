@@ -1666,6 +1666,13 @@ do local p=Pages["Teleport"]
 	local function tpTo(pos)
 		if not pos then notify("Teleport","That biome isn't loaded near you yet — move closer or pick another."); return end
 		local cc=char(); local goal=CFrame.new(pos+Vector3.new(0,6,0))
+		-- LEGIT MOVE (no send-back): fire the game's OWN move remote — ReplicaSignalUnreliable("CFrame", goal) with
+		-- your replica id — exactly how PE moves your dino. The server accepts it, so it sticks. CFrame write below is a backup.
+		pcall(function()
+			local re = RS:FindFirstChild("RemoteEvents"); re = re and re:FindFirstChild("ReplicaSignalUnreliable")
+			local id = myReplicaId or (seenIds and seenIds[1])
+			if re and id then re:FireServer(id, "CFrame", goal) end
+		end)
 		pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end end)
 		local r0=hrp(); if r0 then pcall(function() r0.AssemblyLinearVelocity=Vector3.zero end) end
 		-- ANTI-FALL on landing: the server can reset FallDamageImmunity, so we re-assert it + clear any fall status +
@@ -2748,6 +2755,12 @@ local function tpToCorpse(part)
 	-- When the ray misses but the corpse is at a normal height, we just teleport to the corpse's own Y.
 	if not foundGround and np.Y < -400 then carnBusy=false; return false end
 	local cc=getMyModel(); local goal=CFrame.new(np.X, landY, np.Z)
+		-- LEGIT MOVE first (game own ReplicaSignalUnreliable "CFrame" remote) so the server accepts it = no send-back
+		pcall(function()
+			local re = RS:FindFirstChild("RemoteEvents"); re = re and re:FindFirstChild("ReplicaSignalUnreliable")
+			local id = myReplicaId or (seenIds and seenIds[1])
+			if re and id then re:FireServer(id, "CFrame", goal) end
+		end)
 	local noclip={}; if cc then pcall(function() for _,dd in ipairs(cc:GetDescendants()) do if dd:IsA("BasePart") and dd.CanCollide then dd.CanCollide=false; noclip[#noclip+1]=dd end end end) end
 	pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end end)
 	local r=hrp(); if r then pcall(function() r.AssemblyLinearVelocity=Vector3.zero; r.AssemblyAngularVelocity=Vector3.zero end) end
