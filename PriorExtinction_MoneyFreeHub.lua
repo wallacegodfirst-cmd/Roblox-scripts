@@ -1945,6 +1945,23 @@ task.spawn(function() while RUNNING do
 	else task.wait(0.4) end
 end end)
 
+-- INF STAM — SPEED KEEPER (what you actually feel): PE is server-authoritative on stamina, so even when it drains
+-- the real symptom is the EXHAUSTION SLOW (the game cuts your WalkSpeed / makes you "very slow"). We track the peak
+-- WalkSpeed you have had and pin it back every pass, so an empty bar can never slow you down — you keep full sprint
+-- speed with INF Stam on. (Best-effort + pcall: harmless if the game doesn't drive movement through WalkSpeed.)
+task.spawn(function() while RUNNING do
+	if CFG.InfStam and alive() then
+		pcall(function()
+			local h=hum()
+			if h then
+				if h.WalkSpeed and h.WalkSpeed>0 then __gg.MH_wsPeak=math.max(__gg.MH_wsPeak or 0, h.WalkSpeed) end
+				if __gg.MH_wsPeak and __gg.MH_wsPeak>0 and h.WalkSpeed < __gg.MH_wsPeak then h.WalkSpeed=__gg.MH_wsPeak end
+			end
+		end)
+		task.wait(0.15)
+	else task.wait(0.5) end
+end end)
+
 -- INF FOOD — FLOOR KEEPER (keep the bar UP whether you eat or not, WITHOUT hiding the eat prompt): the food bar
 -- is only topped up when it falls BELOW ~60% of max, and only raised to ~80% — never to 100%. So:
 --   · you never starve / go low (the bar always stays high), and
@@ -3384,13 +3401,17 @@ end)
 task.spawn(function() while RUNNING do
 	if CFG.UnlockMouse then
 		pcall(function()
-			-- CLICK/ATTACK FIX: PE needs the mouse LOCKED (right-click held) to register a bite. Only unlock when
-			-- you are NOT holding right-click, so Unlock Mouse never silently cancels your attacks.
-			if not UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+			-- CLICK/ATTACK FIX: PE needs the mouse LOCKED to register a bite. So only free the cursor when you are
+			-- NOT clicking at all (neither left nor right button). The instant you hold a button to attack, we STOP
+			-- unlocking and LOCK it to center, so Unlock Mouse can never cancel your bite/attack.
+			local clicking = UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) or UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+			if clicking then
+				UIS.MouseBehavior=Enum.MouseBehavior.LockCenter
+			else
 				UIS.MouseBehavior=Enum.MouseBehavior.Default; UIS.MouseIconEnabled=true
 			end
 		end)
-		task.wait(0.1)
+		task.wait(0.05)
 	else task.wait(0.4) end
 end end)
 -- (Auto Farm Player removed per request.)
