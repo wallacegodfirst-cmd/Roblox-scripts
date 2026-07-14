@@ -401,13 +401,17 @@ local function installHook()
 						-- (REMOVED: this used to swallow the Secondary/right-click RegisterAttack while INF Stam was on,
 						--  which meant your dino's SECOND ATTACK dealt NO DAMAGE. INF Stam already refills the bar, so
 						--  there is no reason to block the attack — M2 now passes through and hits normally.)
-						-- ═══ INF STAM — the user's CONFIRMED-WORKING approach (do NOT swallow Run) ═══ Run=true PASSES
-						-- THROUGH so you keep the game's real full sprint speed (swallowing it made you "very slow"). The
-						-- bar is held full instead by the HARD stamina PINS every frame (RenderStepped/Stepped/Heartbeat pin
-						-- the value back to max) + the velocity keeper — so the server's drain never shows on the bar.
+						-- ═══ INF STAM — the REAL mechanic (from the live capture) ═══ Sprint is reported as
+						-- ReplicaSignal(id, "SetAction", "Run", true/false) and there is NO separate drain call —
+						-- the SERVER computes stamina drain from its own Run state. So the fix is simple: never tell
+						-- the server you are running. We REWRITE the outgoing Run=true to Run=false — the server thinks
+						-- you walk (zero drain, bar never moves) while your character still sprints at full speed
+						-- locally (PE trusts the client-reported CFrame for position, so your speed is yours). The
+						-- speed keeper below pins your WalkSpeed so nothing can slow you down.
 						if CFG.InfStam and action=="SetAction" and a[3]=="Run" and a[4]==true then
-							__gg.MH_wantRun = tick()   -- note we're sprinting (the keeper only tops you up if you're BELOW target)
-							-- (no swallow — Run replicates so you move at real sprint speed; the pins keep the bar full)
+							__gg.MH_wantRun = tick()   -- remember you WANT to sprint (speed keeper uses this)
+							a[4] = false               -- server hears "walking" = it never drains stamina
+							return oldNC(self, table.unpack(a, 1, a.n))
 						end
 						-- (stamina DRAIN report is blocked below so it never drops while you sprint.)
 						-- REWRITE stamina SetProperty to max so the server always sees a full bar.
@@ -1955,16 +1959,15 @@ task.spawn(function() while RUNNING do
 		if type(sc)=="table" and sc.n and sc.n>=2 then
 			local rs=getReplicaSignal(); if rs then pcall(function() rs:FireServer(table.unpack(sc,1,sc.n)) end) end
 		end
-		-- RE-ASSERT SPRINT: once you HAVE chosen to sprint (the hook stamps MH_wantRun when the game fires
-		-- Run=true), keep re-firing Run=true while you move so the server's exhaustion logic can never clear it
-		-- and drop you to walk speed. Gated on MH_wantRun so a deliberate walk is left alone. Same SetAction
-		-- Run signal PE itself uses — no speed boost, real sprint speed only.
+		-- KEEP THE SERVER'S RUN STATE OFF: drain is computed from the server-side Run flag (the capture shows
+		-- no separate drain call), and the hook already rewrites your outgoing Run=true to false. This slow
+		-- re-assert keeps it false even if a Run=true slipped through before the toggle went on. Your real
+		-- sprint speed is local (client-reported position) — the speed keeper below holds it.
 		pcall(function()
-			local h = hum()
 			local recentlyRan = __gg.MH_wantRun and (tick() - __gg.MH_wantRun < 3)
-			if recentlyRan and h and h.MoveDirection and h.MoveDirection.Magnitude > 0.1 then
-				replicaFire("SetAction", "Run", true)
-				__gg.MH_wantRun = tick()   -- keep the intent alive as long as you keep moving
+			if recentlyRan and (tick()-(__gg.MH_runOff or 0) > 1) then
+				__gg.MH_runOff = tick()
+				replicaFire("SetAction", "Run", false)
 			end
 		end)
 		task.wait(0.12)

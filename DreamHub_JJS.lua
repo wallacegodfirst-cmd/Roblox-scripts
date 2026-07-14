@@ -1010,93 +1010,78 @@ end)
 
 local vxTeleportLock = false
 local vxCurrentTargetCF = nil
+-- SINGLE position lock (the rubberband fix): this Heartbeat is now the ONLY thing holding you after a
+-- teleport. The old version ALSO ran a second while-loop inside safeTeleport doing the same job -- the two
+-- fought over your CFrame/velocity every frame and the physics engine ping-ponged you between the target
+-- and where the server thought you were. And it zeroed your velocity EVERY frame for the whole hold, which
+-- froze you in place if you tried to walk/dash right after landing. Now: re-pin ONLY when the server shoves
+-- you (>3 studs), never touch velocity per-frame.
 game:GetService("RunService").Heartbeat:Connect(function()
 	if vxTeleportLock and vxCurrentTargetCF then
 		local LP = game:GetService("Players").LocalPlayer
 		local char = LP.Character or (workspace:FindFirstChild("Characters") and workspace.Characters:FindFirstChild(LP.Name))
 		local hrp = char and char:FindFirstChild("HumanoidRootPart")
 		if hrp then
-			if (hrp.Position - vxCurrentTargetCF.Position).Magnitude > 2 then   -- only re-pin if the server nudged you (no per-frame write = no lag)
-				pcall(function() char:PivotTo(vxCurrentTargetCF) end)
+			if (hrp.Position - vxCurrentTargetCF.Position).Magnitude > 3 then
+				vxHardWrite(char, hrp, vxCurrentTargetCF)
 			end
-			hrp.AssemblyLinearVelocity = Vector3.new(0,0,0)
 		end
 	end
 end)
--- ZERO-LAG TELEPORT: the anti-cheat remotes are already destroyed above, so the server has no channel to
--- report a bad position — a single PivotTo just sticks. No per-frame stepping, no PlatformStand freeze. The
--- shared Heartbeat lock only re-pins you (and only if you drift >2 studs) for a short hold so you settle.
--- TELEPORT — ALL METHODS AT ONCE (per request). Fires every approach so at least one lands and holds:
---   1) re-destroy the anti-cheat remotes (no channel to report a bad position),
---   2) fire the AC teleport-acknowledge remote (tells the server the move is legit),
---   3) CFrame snap on the HRP AND PivotTo the whole model (some rigs only follow one),
---   4) zero velocity + a brief Heartbeat lock that re-pins you if the server nudges you, so a set-back is undone.
 local isTeleporting = false
 local function vxMyChar()
 	local LP = game:GetService("Players").LocalPlayer
 	return LP.Character or (workspace:FindFirstChild("Characters") and workspace.Characters:FindFirstChild(LP.Name))
 end
+-- AC acknowledge: only fire the REAL remote. The bypass at the top of the file replaces the AC remotes with
+-- dummies tagged VX_Dummy -- the old version happily fired the dummy, which does nothing, so the server never
+-- got the acknowledgement.
 local function vxACAck()
 	pcall(function()
 		local k = game:GetService("ReplicatedStorage"):FindFirstChild("Knit")
 		k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
 		local svc = k and k:FindFirstChild("AntiCheatService")
 		local re = svc and svc:FindFirstChild("RE"); re = re and re:FindFirstChild("Teleport")
-		if re then re:FireServer(workspace:GetServerTimeNow()) end
+		if re and not re:GetAttribute("VX_Dummy") then
+			re:FireServer(workspace:GetServerTimeNow())
+		end
 	end)
 end
-local function vxHardWrite(char, hrp, cf)
-	-- If you are SEATED, ANCHORED or PlatformStood, a CFrame write is overridden and you never move at all.
-	-- Free you first so the write actually takes. All harmless if you were already free.
+-- Hard write: PivotTo ONLY (the fling fix). Setting hrp.CFrame first snapped the joints, then PivotTo moved
+-- the whole model AGAIN -- the double write made constraints spasm and flung/jittered you. One PivotTo moves
+-- everything coherently. Unseat/unanchor first so the write can't be silently overridden.
+function vxHardWrite(char, hrp, cf)
 	pcall(function()
 		local hum = char:FindFirstChildOfClass("Humanoid")
 		if hum then hum.Sit = false; hum.PlatformStand = false; hum:ChangeState(Enum.HumanoidStateType.GettingUp) end
 		local seatWeld = hrp:FindFirstChild("SeatWeld"); if seatWeld then seatWeld:Destroy() end
 		hrp.Anchored = false
+		char:PivotTo(cf)
+		hrp.AssemblyLinearVelocity = Vector3.new(0,0,0)
+		hrp.AssemblyAngularVelocity = Vector3.new(0,0,0)
 	end)
-	pcall(function() hrp.CFrame = cf end)                 -- method A: HRP CFrame
-	pcall(function() char:PivotTo(cf) end)               -- method B: whole-model PivotTo
-	pcall(function() hrp.AssemblyLinearVelocity = Vector3.new(0,0,0); hrp.AssemblyAngularVelocity = Vector3.new(0,0,0) end)
 end
+-- Teleport: one clean write + the single global lock. No inner hold-loop (it fought the Heartbeat lock --
+-- THAT was the send-back), no per-frame velocity freeze (you can walk/dash the moment you land).
 local function safeTeleport(targetCFrame, holdTime)
 	local char = vxMyChar(); if not char then return false end
 	local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return false end
-	-- clean up any body movers that would drag you back
 	for _, v in ipairs(char:GetDescendants()) do
 		if v:IsA("AlignPosition") or v:IsA("AlignOrientation") or v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("BodyGyro") or v:IsA("BodyAngularVelocity") or v:IsA("VectorForce") or v:IsA("LinearVelocity") then
 			pcall(function() v:Destroy() end)
 		end
 	end
 	isTeleporting = true
-	if _G.VX_DESTROY_AC then pcall(_G.VX_DESTROY_AC) end   -- method 1: kill the AC report channel
-	vxACAck()                                             -- method 2: acknowledge the move
-	vxHardWrite(char, hrp, targetCFrame)                  -- methods 3A + 3B: HRP CFrame + model PivotTo
-	-- method 4: LONG aggressive hold — the send-back comes AFTER a short hold, so we re-pin your position, re-kill
-	-- the AC remotes and re-ack EVERY frame for ~2.5s. Any server nudge is instantly undone; once you stop drifting
-	-- (server accepted the position) we can stop early. This is what makes the teleport actually STICK.
-	vxCurrentTargetCF = targetCFrame; vxTeleportLock = true
-	task.spawn(function()
-		local RS_t = game:GetService("RunService")
-		local hold = tonumber(holdTime) or 2.5
-		local t0 = tick(); local settled = 0
-		while tick() - t0 < hold do
-			local c = vxMyChar(); local h = c and c:FindFirstChild("HumanoidRootPart")
-			if h then
-				local drift = (h.Position - targetCFrame.Position).Magnitude
-				if drift > 3 then                       -- server nudged you: slam back + re-ack + re-kill AC
-					vxHardWrite(c, h, targetCFrame)
-					vxACAck()
-					if _G.VX_DESTROY_AC then pcall(_G.VX_DESTROY_AC) end
-					settled = 0
-				else
-					h.AssemblyLinearVelocity = Vector3.new(0,0,0)
-					settled = settled + 1
-					if settled > 30 then break end        -- ~0.5s with no set-back = the server accepted it; done
-				end
-			end
-			RS_t.Heartbeat:Wait()
-		end
-		vxTeleportLock = false; vxCurrentTargetCF = nil; isTeleporting = false
+	if _G.VX_DESTROY_AC then pcall(_G.VX_DESTROY_AC) end
+	vxACAck()
+	vxHardWrite(char, hrp, targetCFrame)
+	vxCurrentTargetCF = targetCFrame
+	vxTeleportLock = true
+	local hold = tonumber(holdTime) or 0.5
+	task.delay(hold, function()
+		vxTeleportLock = false
+		vxCurrentTargetCF = nil
+		isTeleporting = false
 	end)
 	return true
 end
