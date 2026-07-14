@@ -1044,6 +1044,14 @@ local function vxACAck()
 	end)
 end
 local function vxHardWrite(char, hrp, cf)
+	-- If you are SEATED, ANCHORED or PlatformStood, a CFrame write is overridden and you never move at all.
+	-- Free you first so the write actually takes. All harmless if you were already free.
+	pcall(function()
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if hum then hum.Sit = false; hum.PlatformStand = false; hum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+		local seatWeld = hrp:FindFirstChild("SeatWeld"); if seatWeld then seatWeld:Destroy() end
+		hrp.Anchored = false
+	end)
 	pcall(function() hrp.CFrame = cf end)                 -- method A: HRP CFrame
 	pcall(function() char:PivotTo(cf) end)               -- method B: whole-model PivotTo
 	pcall(function() hrp.AssemblyLinearVelocity = Vector3.new(0,0,0); hrp.AssemblyAngularVelocity = Vector3.new(0,0,0) end)
