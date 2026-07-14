@@ -157,7 +157,7 @@ do
 			local need = tonumber(_G.VX_BF_AFTER) or 1
 			if swingCount < need then return end   -- wait until your chosen number of M1s
 			swingCount = 0
-			_G.VX_BF_LAST_FIRE = tick()
+			_G.VX_BF_LAST_FIRE = tick(); _G.VX_BF_LASTMSG = "flash fired (M1 tap + key 3)"
 			if _G.VX_BF_DEBUG then pcall(function() print(string.format("[BF] windup id=%s  ->  firing flash (M1 tap + key 3) in %.2fs", tostring(id), math.max(0, delayTime + offset))) end) end
 			task.delay(math.max(0, delayTime + offset), function()
 				if not enabled then return end
@@ -3986,6 +3986,7 @@ do
 				task.wait(0.25)
 				local sawAnim = quakeAnimSeen >= began
 				if not sawAnim then pcall(fireQuake) end
+				_G.VX_QUAKE_LAST = tick(); _G.VX_QUAKE_LASTMSG = string.format("held 3 for %.1fs | windup seen=%s", hold, tostring(sawAnim))
 				if _G.VX_QUAKE_DEBUG then pcall(function() print(string.format("[QUAKE] held 3 for %.1fs | windup anim seen=%s | service backup fired=%s", hold, tostring(sawAnim), tostring(not sawAnim))) end) end
 				holding = false
 			end)
@@ -9645,6 +9646,7 @@ do
         if _G.VXBF2 then _G.VXBF2.setAutoBF(false) end   -- avoid the weaker VXBF2 path double-pressing
     end })
     bfSec:Toggle({ Name = "BF Debug (print)", Default = false, Callback = function(b) _G.VX_BF_DEBUG = (b == true) end })   -- prints one line per detected flash so you can confirm detection is happening
+    bfSec:Toggle({ Name = "Debug On Screen", Default = false, Callback = function(b) _G.VX_DEBUG_HUD = (b == true) end })   -- shows the BF + Quake status on screen so you don't need the F9 console
     bfSec:Slider({ Name = "BF Cooldown", Min = 0.1, Max = 2, Default = 0.5, Decimals = 0.05, Suffix = "s", Callback = function(v) if _G.VXBF2 then _G.VXBF2.setCooldown(v) end end })
     -- BF Timing: nudge the flash input earlier(-)/later(+) to hit the exact flash frame for YOUR character.
     bfSec:Slider({ Name = "BF Timing", Min = -0.12, Max = 0.4, Default = 0, Decimals = 0.01, Suffix = "s", Callback = function(v) v = tonumber(v) or 0; bfClickOffset = v; if BFApi then BFApi.SetTimingOffset(v) end end })
@@ -11603,3 +11605,39 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 end
+
+-- ON-SCREEN DEBUG HUD (opt-in via "Debug On Screen"): a tiny corner readout so you can confirm BF + Quake
+-- fired without opening the F9 console. Shows the last flash + last quake with how long ago they happened.
+task.spawn(function()
+	local sg, lbl
+	local function ensure()
+		if sg and sg.Parent then return end
+		sg = Instance.new("ScreenGui"); sg.Name = "\0"; sg.ResetOnSpawn = false; sg.IgnoreGuiInset = true; sg.DisplayOrder = 9600
+		pcall(function() sg.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
+		if not sg.Parent then sg.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui") end
+		local f = Instance.new("Frame"); f.Size = UDim2.fromOffset(250, 56); f.Position = UDim2.new(0, 12, 0.5, -28)
+		f.BackgroundColor3 = Color3.fromRGB(18,18,18); f.BackgroundTransparency = 0.25; f.BorderSizePixel = 0; f.Parent = sg
+		local uc = Instance.new("UICorner"); uc.CornerRadius = UDim.new(0,8); uc.Parent = f
+		local us = Instance.new("UIStroke"); us.Color = Color3.fromRGB(226,46,58); us.Thickness = 1.2; us.Parent = f
+		lbl = Instance.new("TextLabel"); lbl.Size = UDim2.new(1,-12,1,-8); lbl.Position = UDim2.fromOffset(6,4)
+		lbl.BackgroundTransparency = 1; lbl.TextColor3 = Color3.fromRGB(240,240,240); lbl.Font = Enum.Font.Code
+		lbl.TextSize = 12; lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.TextYAlignment = Enum.TextYAlignment.Top
+		lbl.RichText = true; lbl.Parent = f
+	end
+	local function ago(t) if not t then return "never" end local d = tick()-t; if d < 1 then return "just now" end return string.format("%.0fs ago", d) end
+	while true do
+		if _G.VX_DEBUG_HUD then
+			ensure()
+			if lbl then
+				local bf = _G.VX_BF_LAST_FIRE and (ago(_G.VX_BF_LAST_FIRE).." — ".._G.VX_BF_LASTMSG) or "no flash yet — M1 to test"
+				local qk = _G.VX_QUAKE_LAST and (ago(_G.VX_QUAKE_LAST).." — ".._G.VX_QUAKE_LASTMSG) or "no quake yet — tap 3 to test"
+				lbl.Text = "<b>BF:</b> "..bf.."\n<b>Quake:</b> "..qk
+			end
+			if sg then sg.Enabled = true end
+			task.wait(0.2)
+		else
+			if sg then sg.Enabled = false end
+			task.wait(0.4)
+		end
+	end
+end)
