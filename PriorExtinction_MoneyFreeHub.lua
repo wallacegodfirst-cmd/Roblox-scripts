@@ -395,6 +395,9 @@ local function installHook()
 							a[3]=0.1; if a[5]~=nil then a[5]=a[4] end
 							return oldNC(self, table.unpack(a, 1, a.n))
 						end
+						-- Anti-Drown: the client REPORTS being underwater via the DrownY action; swallow it so
+						-- the server never applies drowning damage. No value to rewrite — just don't report it.
+						if action=="DrownY" and CFG.AntiDrown then return end
 						-- (REMOVED: this used to swallow the Secondary/right-click RegisterAttack while INF Stam was on,
 						--  which meant your dino's SECOND ATTACK dealt NO DAMAGE. INF Stam already refills the bar, so
 						--  there is no reason to block the attack — M2 now passes through and hits normally.)
@@ -411,11 +414,12 @@ local function installHook()
 						-- Previously this swallowed the call entirely, which also blocked our own
 						-- refill fires at line ~1615 → server never got told stam was full = no drain fix.
 						if CFG.InfStam and action=="SetProperty" and typeof(a[3])=="string" then local lp=a[3]:lower()
-							if lp:find("stam",1,true) or lp=="energy" or lp=="endurance" or lp:find("endur",1,true) or lp:find("vigor",1,true) then
+								if lp:find("stam",1,true) or lp=="energy" or lp=="sp" or lp=="endurance" or lp:find("endur",1,true) or lp:find("vigor",1,true) or lp:find("fatigue",1,true) or lp:find("exertion",1,true) then
 								if typeof(a[4])=="number" then
 									-- track the highest seen value per property name (= the real max when bar is full)
 									__gg.MH_max = __gg.MH_max or {}
 									local pk = a[3]
+										if not __gg.MH_max[pk] then __gg.MH_max[pk] = 100 end
 									if a[4] > 0 and (not __gg.MH_max[pk] or a[4] > __gg.MH_max[pk]) then __gg.MH_max[pk] = a[4] end
 									a[4] = __gg.MH_max[pk] or 100   -- rewrite the drop to the tracked max
 										local snap={n=a.n} for i=1,a.n do snap[i]=a[i] end; snap[4]=__gg.MH_max[pk] or 100; __gg.MH_stamCall=snap   -- capture the exact full-stamina call to replay verbatim
@@ -423,6 +427,9 @@ local function installHook()
 								return oldNC(self, table.unpack(a, 1, a.n))   -- fire with max value (not swallowed)
 							end
 						end
+						-- Some stamina drains do NOT come through SetProperty — the client reports them with their own
+						-- action name (StaminaDrain / Exhaust / FatigueTick). Swallow those outright while INF Stam is on.
+						if CFG.InfStam and (action=="StaminaDrain" or action=="Exhaust" or action=="FatigueTick") then return end
 						-- ANTI-INJURY (report-block): injuries replicate the same way stamina does — the CLIENT reports
 						-- them to the server. While your antis are on, we SWALLOW any report that would tell the server
 						-- you fractured / bled / broke a bone — the injury never lands server-side. THIS is what makes
