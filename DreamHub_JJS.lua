@@ -158,7 +158,13 @@ do
 			if swingCount < need then return end   -- wait until your chosen number of M1s
 			swingCount = 0
 			task.delay(math.max(0, delayTime + offset), function()
-				if enabled then pressKey(Enum.KeyCode.Three) end
+				if not enabled then return end
+				-- Black Flash lands on a PERFECTLY-TIMED input on the M1 windup. Cover both ways it can be bound so it
+				-- works no matter your character/keybind: a left-click re-tap at the flash frame -- the real timing
+				-- mechanic on most characters -- plus the ability key. A stray unbound key does nothing; the extra
+				-- click is harmless mid-M1. This is a synthetic input, NOT a raw remote packet, so it does not kick.
+				pcall(function() VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0); task.wait(0.02); VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0) end)
+				pressKey(Enum.KeyCode.Three)
 			end)
 		end
 	end
