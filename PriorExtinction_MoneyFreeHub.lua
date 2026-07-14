@@ -62,6 +62,7 @@ local CFG = {
 	AntiDrown=true, AntiDrownRise=14, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false, HeadDmgReduce=90,
 	SaveDino=false, SaveHP=30, NoSleep=true, AutoHealBlood=false, AfkEat=false, BotPvP=true,
 	AutoFarmPlayer=false, FarmPlayerRange=120, AutoFarmFossil=false, FarmFossilRange=1000000, FossilSlow=1.2,
+	TargetUser="", TargetTrack=false,
 	ESPPlayers=false, ESPCorpses=false, FoodESP=false, FishESP=false, GemESP=false, ESPRange=900, ESPColor="Default",
 	RemoveTrees=false, Radar=false, RadarRange=450, RadarDeath=true,
 	AlertEnabled=false, AlertDino="", AlertRange=350, CarnMeatTP=false,
@@ -1510,7 +1511,11 @@ end
 
 MS("4 menu ready ("..(USE_FLUENT and "Fluent" or "built-in")..") - building tabs")
 -- ═══ TABS / PAGES ═══
+-- Tier gate: paid loaders set _G.PE_PLUS / _G.PE_PREM before the loadstring. Premium counts as Plus.
+local PE_PLUS = (_G.PE_PLUS==true) or (_G.PE_PREM==true) or (_G.PE_PREMIUM==true)
+local PE_PREM = (_G.PE_PREM==true) or (_G.PE_PREMIUM==true)
 mkTab("Combat",1); mkTab("PvP",2); mkTab("Movement",3); mkTab("Survival",4); mkTab("Growth",5); mkTab("Auto Farm",6); mkTab("Teleport",7)
+if PE_PLUS then mkTab("Target",7.5) end   -- Target tab is Plus-only
 mkTab("Visuals",8); mkTab("Skins",9); mkTab("Misc",10); mkTab("Settings",11); mkTab("Info",12)
 
 do local p=Pages["Combat"]
@@ -1672,6 +1677,86 @@ do local p=Pages["Auto Farm"]
 		mkToggle(b,"Announce what the bot is doing","BotAnnounce",10)
 	end
 end
+if Pages["Target"] then local p=Pages["Target"]
+	local _,ld=mkSec(p,"Load Player",1)
+	mkTextbox(ld,"Username","TargetUser",1,false)
+	-- status rows filled by Load
+	local sUser  = mkStatus(ld,"User",3)
+	local sDino  = mkStatus(ld,"Dino",4)
+	local sStage = mkStatus(ld,"Stage",5)
+	local sHP    = mkStatus(ld,"Health",6)
+	local sFood  = mkStatus(ld,"Food",7)
+	local sWater = mkStatus(ld,"Water",8)
+	local sStam  = mkStatus(ld,"Stamina",9)
+	local sDist  = mkStatus(ld,"Distance",10)
+	local function fmtStat(v, mx)
+		if type(v)~="number" then return "--" end
+		if type(mx)=="number" and mx>0 then return math.floor(v).." / "..math.floor(mx) end
+		return tostring(math.floor(v))
+	end
+	local function refreshTarget()
+		local info = _G.MH_targetInfo and _G.MH_targetInfo() or {}
+		sUser.Text  = info.user and (info.display and info.display~=info.user and (info.display.." (@"..info.user..")") or info.user) or "not found"
+		sDino.Text  = info.species and tostring(info.species) or "--"
+		sStage.Text = info.stage and tostring(info.stage) or "--"
+		sHP.Text    = fmtStat(info.hp, info.hpMax)
+		sFood.Text  = fmtStat(info.food)
+		sWater.Text = fmtStat(info.water)
+		sStam.Text  = fmtStat(info.stam)
+		sDist.Text  = type(info.dist)=="number" and (info.dist.."m") or "--"
+	end
+	mkBtn(ld,"Load Player",function()
+		local pl = (function()
+			local txt=tostring(CFG.TargetUser or ""):gsub("^%s+",""):gsub("%s+$","")
+			if txt=="" then return nil end
+			local low=txt:lower(); local exact,ci,pre
+			for _,q in ipairs(Players:GetPlayers()) do if q~=LP then
+				if q.Name==txt or q.DisplayName==txt then exact=exact or q end
+				if q.Name:lower()==low or q.DisplayName:lower()==low then ci=ci or q end
+				if q.Name:lower():sub(1,#low)==low or q.DisplayName:lower():sub(1,#low)==low then pre=pre or q end
+			end end
+			return exact or ci or pre
+		end)()
+		if not pl then notify("Target","No player in this server matches \""..tostring(CFG.TargetUser).."\"."); refreshTarget(); return end
+		__gg.MH_Target.plr = pl
+		local ch=WS:FindFirstChild("Characters"); __gg.MH_Target.model=(ch and ch:FindFirstChild(pl.Name)) or pl.Character
+		notify("Target","Loaded "..pl.Name..".")
+		refreshTarget()
+	end,2)
+	-- keep the readout live (distance/health tick) while the tab is used
+	task.spawn(function() while RUNNING do if __gg.MH_Target and __gg.MH_Target.plr then pcall(refreshTarget) end task.wait(1) end end)
+
+	local _,ac=mkSec(p,"Actions",2)
+	mkBtn(ac,"View Player (spectate)",function()
+		if not (__gg.MH_Target and __gg.MH_Target.plr) then notify("Target","Load a player first."); return end
+		__gg.MH_Target.viewing = not __gg.MH_Target.viewing
+		notify("Target", __gg.MH_Target.viewing and "Now spectating "..__gg.MH_Target.plr.Name.."." or "Stopped spectating.")
+	end,1)
+	mkToggle(ac,"Track Player","TargetTrack",2)
+	mkLabel(ac,"Track keeps a marker + distance on them.")
+	mkBtn(ac,"Teleport to Player",function()
+		if not (__gg.MH_Target and __gg.MH_Target.model and __gg.MH_Target.model.Parent) then notify("Target","Load a player first."); return end
+		local T=__gg.MH_Target; local r=getHitbox(T.model) or rootOf(T.model)
+		if not r then notify("Target","Can't find their position."); return end
+		local goal=r.Position+Vector3.new(0,6,0)
+		if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
+		if __gg.MH_hopMove then __gg.MH_hopMove(goal) else local cc=getMyModel(); pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(CFrame.new(goal)) else local h=hrp(); if h then h.CFrame=CFrame.new(goal) end end end) end
+		notify("Target","Teleported to "..T.plr.Name..".")
+	end,4)
+	mkBtn(ac,"Attack Player Once",function()
+		if not (__gg.MH_Target and __gg.MH_Target.model and __gg.MH_Target.model.Parent) then notify("Target","Load a player first."); return end
+		if _G.MH_attack then pcall(function() _G.MH_attack(__gg.MH_Target.model) end); notify("Target","Hit "..__gg.MH_Target.plr.Name..".")
+		else notify("Target","Attack unavailable.") end
+	end,5)
+	if PE_PLUS then   -- Auto Farm Player = Plus + Premium
+		local _,af=mkSec(p,"Auto Farm Player",3)
+		mkToggle(af,"Auto Farm Player","AutoFarmPlayer",1)
+		mkLabel(af,"Keeps hitting the loaded player, teleporting to them if they run.")
+		mkSlider(af,"Farm Range","FarmPlayerRange",30,400,3,10)
+		mkSlider(af,"Hits / sec","DamageRate",1,15,4,1)
+	end
+end
+
 do local p=Pages["Teleport"]
 	-- Scans Workspace.Biomes (the ecosystems loaded around you) and lets you teleport to any one. Auto-detects the
 	-- biomes for whatever LAND you're in (Cretaceous Lowland's Caves/Sandy Shores/Scrubland, Archipelago's Seashore, etc.).
@@ -4126,6 +4211,141 @@ task.spawn(function() while RUNNING do
 		task.wait(0.06)
 	else task.wait(0.25) end
 end end)
+
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════
+-- TARGET SYSTEM (Plus): pick a player by name → read who they are + their dino/stats, then View /
+-- Track / Teleport to / Attack once / Auto Farm them. A player's dino lives in workspace.Characters
+-- [player.Name]; species/stage come from its MeshModel attributes, health from the Humanoid. Food /
+-- Water / Stamina are in each player's PRIVATE replica (not readable for other players), so we show
+-- whatever the model exposes as attributes and "--" otherwise — never a fake number.
+__gg.MH_Target = { plr=nil, model=nil, viewing=false }
+-- Resolve a player from a typed name: exact, then case-insensitive on Name / DisplayName, then prefix.
+local function targetResolvePlayer(txt)
+	txt = tostring(txt or ""):gsub("^%s+",""):gsub("%s+$","")
+	if txt=="" then return nil end
+	local low = txt:lower()
+	local exact, ci, pre
+	for _,pl in ipairs(Players:GetPlayers()) do
+		if pl~=LP then
+			if pl.Name==txt or pl.DisplayName==txt then exact=exact or pl end
+			if pl.Name:lower()==low or pl.DisplayName:lower()==low then ci=ci or pl end
+			if pl.Name:lower():sub(1,#low)==low or pl.DisplayName:lower():sub(1,#low)==low then pre=pre or pl end
+		end
+	end
+	return exact or ci or pre
+end
+-- The player's dino model (Characters[name], then their .Character, then LeftCharacters).
+local function targetModelFor(pl)
+	if not pl then return nil end
+	local ch = WS:FindFirstChild("Characters")
+	local m = ch and ch:FindFirstChild(pl.Name)
+	if m and m.Parent then return m end
+	if pl.Character and pl.Character.Parent then return pl.Character end
+	local ci = WS:FindFirstChild("CharacterIgnore"); ci = ci and ci:FindFirstChild("LeftCharacters")
+	if ci then local lm=ci:FindFirstChild(pl.Name); if lm then return lm end end
+	return nil
+end
+-- Read a stat off a model/MeshModel by trying several attribute names; returns number or nil.
+local function targetAttrNum(model, names)
+	if not model then return nil end
+	local mm = model:FindFirstChild("MeshModel")
+	for _,src in ipairs({model, mm}) do
+		if src then for _,nm in ipairs(names) do
+			local ok,v = pcall(function() return src:GetAttribute(nm) end)
+			if ok and type(v)=="number" then return v end
+		end end
+	end
+	return nil
+end
+-- Pull everything we can show for the current target. Missing values come back as nil = show "--".
+local function targetReadInfo()
+	local T = __gg.MH_Target
+	local pl, model = T.plr, T.model
+	if pl and (not model or not model.Parent) then model = targetModelFor(pl); T.model = model end
+	local info = { user=pl and pl.Name, display=pl and pl.DisplayName, userId=pl and pl.UserId }
+	if model then
+		info.species = detectDinoModel(model) or (model:FindFirstChild("MeshModel") and model.MeshModel:GetAttribute("Type")) or model:GetAttribute("Type") or model:GetAttribute("DinoType")
+		info.stage = (model:FindFirstChild("MeshModel") and model.MeshModel:GetAttribute("Stage")) or model:GetAttribute("Stage") or model:GetAttribute("GrowthStage") or model:GetAttribute("Age")
+		local h = model:FindFirstChildOfClass("Humanoid")
+		if h and h.MaxHealth>0 then info.hp = math.floor(h.Health+0.5); info.hpMax = math.floor(h.MaxHealth+0.5) end
+		info.food = targetAttrNum(model, {"Food","Hunger","Nutrition","Fullness"})
+		info.water = targetAttrNum(model, {"Water","Thirst","Hydration"})
+		info.stam = targetAttrNum(model, {"Stamina","Stam","Energy","Endurance"})
+		local r = getHitbox(model) or rootOf(model)
+		local me = hrp()
+		if r and me then info.dist = math.floor(dist(me.Position, r.Position)) end
+	end
+	return info
+end
+_G.MH_targetInfo = targetReadInfo
+-- Teleport to the current target (uses the hop-mover if present, else a direct PivotTo).
+local function targetTeleport()
+	local T = __gg.MH_Target; local model = T.model
+	if not (model and model.Parent) then return false end
+	local r = getHitbox(model) or rootOf(model); if not r then return false end
+	local goal = r.Position + Vector3.new(0, 6, 0)
+	if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
+	if __gg.MH_hopMove then __gg.MH_hopMove(goal) else
+		local cc=getMyModel(); pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(CFrame.new(goal)) else local h=hrp(); if h then h.CFrame=CFrame.new(goal) end end end)
+	end
+	return true
+end
+-- Spectate camera: point the camera at the target's dino; restore on toggle-off / target loss.
+task.spawn(function() while RUNNING do
+	local T = __gg.MH_Target
+	if T.viewing and T.model and T.model.Parent then
+		local subj = T.model:FindFirstChildOfClass("Humanoid") or getHitbox(T.model) or rootOf(T.model)
+		if subj and Cam then pcall(function() Cam.CameraSubject = subj end) end
+		task.wait(0.2)
+	else
+		if T.viewing and (not T.model or not T.model.Parent) then
+			-- target gone: fall back to your own camera
+			local mine=getMyModel(); local h=mine and mine:FindFirstChildOfClass("Humanoid")
+			if h and Cam then pcall(function() Cam.CameraSubject=h end) end
+		end
+		task.wait(0.4)
+	end
+end end)
+-- Track: a Highlight on the loaded player's dino while CFG.TargetTrack is on (clears when off / gone).
+task.spawn(function() local hl
+	while RUNNING do
+		local T = __gg.MH_Target
+		if CFG.TargetTrack and T.model and T.model.Parent then
+			if not (hl and hl.Parent==T.model) then
+				if hl then pcall(function() hl:Destroy() end) end
+				hl = Instance.new("Highlight")
+				hl.FillColor = Color3.fromRGB(255,60,60); hl.OutlineColor = Color3.fromRGB(255,255,255)
+				hl.FillTransparency = 0.5; hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+				pcall(function() hl.Parent = T.model; hl.Adornee = T.model end)
+			end
+			task.wait(0.3)
+		else
+			if hl then pcall(function() hl:Destroy() end); hl=nil end
+			task.wait(0.4)
+		end
+	end
+end)
+-- AUTO FARM PLAYER (Plus + Premium): while on and a target is set, keep near their dino and land the
+-- captured bone-targeted Attack at your Hits/sec. This is the loop AutoFarmPlayer never actually had.
+task.spawn(function() while RUNNING do
+	if CFG.AutoFarmPlayer and alive() then
+		local T = __gg.MH_Target
+		local model = T.model
+		if model and (not model.Parent) then model=targetModelFor(T.plr); T.model=model end
+		local h = model and model:FindFirstChildOfClass("Humanoid")
+		if model and model.Parent and ((not h) or h.Health>0) then
+			local r = getHitbox(model) or rootOf(model)
+			local me = hrp()
+			if r and me then
+				local d = dist(me.Position, r.Position)
+				if d > (tonumber(CFG.FarmPlayerRange) or 120) then targetTeleport() end
+				if _G.MH_attack then pcall(function() _G.MH_attack(model) end) end
+			end
+			task.wait(1/math.max(1, tonumber(CFG.DamageRate) or 6))
+		else task.wait(0.4) end
+	else task.wait(0.3) end
+end end)
+
 
 -- ESP (own ScreenGui so it shows regardless of the menu being open/closed or which GUI is active)
 local ESP={}  -- gui/folder/objs/dbg in one table (Luau 200-local-cap mgmt)
