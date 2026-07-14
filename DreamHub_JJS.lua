@@ -1074,7 +1074,28 @@ local function safeTeleport(targetCFrame, holdTime)
 	isTeleporting = true
 	if _G.VX_DESTROY_AC then pcall(_G.VX_DESTROY_AC) end
 	vxACAck()
-	vxHardWrite(char, hrp, targetCFrame)
+	-- STEP the teleport (Bug D fix): a single 500-stud jump reads as impossible speed and the AC sets you back.
+	-- If the AC remotes are gone this is instant anyway, but stepping in VX_TP_SPEED (default 60) stud hops per
+	-- frame makes each move believable so it sticks even when the AC is alive. Short hops just teleport directly.
+	local step = tonumber(_G.VX_TP_SPEED) or 60
+	local from = hrp.Position
+	local dist = (targetCFrame.Position - from).Magnitude
+	if dist > step * 1.5 then
+		task.spawn(function()
+			local hops = math.min(math.ceil(dist / step), 120)
+			for i = 1, hops do
+				local c = vxMyChar(); local h = c and c:FindFirstChild("HumanoidRootPart")
+				if not h then break end
+				local cf = CFrame.new(from:Lerp(targetCFrame.Position, i / hops)) * targetCFrame.Rotation
+				vxHardWrite(c, h, cf)
+				game:GetService("RunService").Heartbeat:Wait()
+			end
+			local c = vxMyChar(); local h = c and c:FindFirstChild("HumanoidRootPart")
+			if c and h then vxHardWrite(c, h, targetCFrame) end
+		end)
+	else
+		vxHardWrite(char, hrp, targetCFrame)
+	end
 	vxCurrentTargetCF = targetCFrame
 	vxTeleportLock = true
 	local hold = tonumber(holdTime) or 0.5

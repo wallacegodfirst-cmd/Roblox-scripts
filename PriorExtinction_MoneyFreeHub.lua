@@ -402,17 +402,16 @@ local function installHook()
 						-- (REMOVED: this used to swallow the Secondary/right-click RegisterAttack while INF Stam was on,
 						--  which meant your dino's SECOND ATTACK dealt NO DAMAGE. INF Stam already refills the bar, so
 						--  there is no reason to block the attack — M2 now passes through and hits normally.)
-						-- ═══ INF STAM — SWALLOW Run + drive real sprint speed locally (your idea) ═══ Sprint is
-						-- reported as ReplicaSignal(id,"SetAction","Run",true) and the server drains stamina FROM that
-						-- report. So we SWALLOW it — the server never hears you running, so it never drains. But the
-						-- server also drives your speed from Run, so on its own that would leave you at walk speed;
-						-- the speed keeper below instead moves you at the dino's REAL running speed (the WalkSpeed the
-						-- game gave you while sprinting, learned here) via a velocity drive. Result: full sprint speed,
-						-- zero drain. We also learn the sprint speed from the current Humanoid before swallowing.
-						if CFG.InfStam and action=="SetAction" and a[3]=="Run" and a[4]==true then
+						-- ═══ INF STAM — Run/Sprint PASS THROUGH; never let the bar hit 0 (from the wiki) ═══ PE has
+						-- Walk/Trot/Run(Shift, slow drain)/Sprint(Tab, FAST drain), and you are ONLY forced to slow
+						-- WHEN STAMINA REACHES 0. So the fix is NOT to swallow the action (that dropped you to walk
+						-- speed = "makes me slow") — Run AND Sprint pass through so you get the game's real running
+						-- speed, and we keep the bar pinned to max (below + the refill loop) so it never reaches 0
+						-- and the game never forces you down. The WalkSpeed keeper restores speed if it ever cuts it.
+						if CFG.InfStam and action=="SetAction" and (a[3]=="Run" or a[3]=="Sprint") and a[4]==true then
 							__gg.MH_wantRun = tick()
 							pcall(function() local h=hum(); if h and h.WalkSpeed and h.WalkSpeed>0 then __gg.MH_runSpeed=math.max(__gg.MH_runSpeed or 0, h.WalkSpeed) end end)
-							return   -- swallow: server never sees Run=true = it never drains your stamina
+							-- no swallow: the action replicates so you keep real run/sprint speed; the pins hold the bar
 						end
 						-- (stamina DRAIN report is blocked below so it never drops while you sprint.)
 						-- REWRITE stamina SetProperty to max so the server always sees a full bar.
@@ -2057,12 +2056,15 @@ end end)
 -- highest WalkSpeed we can see, or ~1.6x the current walk speed. Speed Hack / Fly take over if you turn those on.
 task.spawn(function() while RUNNING do
 	if CFG.InfStam and alive() and not CFG.SpeedHack and not CFG.Fly then
-		local sprinting = __gg.MH_wantRun and (tick()-__gg.MH_wantRun < 0.6)   -- Run fires repeatedly while you hold it
+		local sprinting = __gg.MH_wantRun and (tick()-__gg.MH_wantRun < 0.6)   -- Run/Sprint fire repeatedly while held
 		pcall(function()
 			local h=hum(); local r=hrp()
-			if h then
-				-- keep learning the real sprint speed whenever WalkSpeed is high (some rigs raise it client-side)
-				if h.WalkSpeed and h.WalkSpeed>0 then __gg.MH_runSpeed=math.max(__gg.MH_runSpeed or 0, h.WalkSpeed) end
+			if h and h.WalkSpeed and h.WalkSpeed>0 then
+				-- learn the REAL running speed (highest WalkSpeed the game ever set = run/sprint speed)
+				__gg.MH_runSpeed=math.max(__gg.MH_runSpeed or 0, h.WalkSpeed)
+				-- RESTORE it if the game cut your WalkSpeed (this is the actual "exhaustion slow"): pin it back
+				-- to the learned run speed. This fixes "makes me slow" even if stamina still drains server-side.
+				if __gg.MH_runSpeed>0 and h.WalkSpeed < __gg.MH_runSpeed then h.WalkSpeed=__gg.MH_runSpeed end
 			end
 			if sprinting and h and r then
 				local spd = __gg.MH_runSpeed
@@ -2070,7 +2072,11 @@ task.spawn(function() while RUNNING do
 				local dir = h.MoveDirection
 				if dir and dir.Magnitude>0.1 then
 					dir = Vector3.new(dir.X,0,dir.Z).Unit*spd
-					r.AssemblyLinearVelocity = Vector3.new(dir.X, r.AssemblyLinearVelocity.Y, dir.Z)
+					local cur = r.AssemblyLinearVelocity
+					-- only ADD speed if we're moving slower than the run speed (don't fight the game when it's already fast)
+					if Vector3.new(cur.X,0,cur.Z).Magnitude < spd-1 then
+						r.AssemblyLinearVelocity = Vector3.new(dir.X, cur.Y, dir.Z)
+					end
 				end
 			end
 		end)
