@@ -21,11 +21,28 @@ local function toast(msg, dur)
 	print("[Speed Finder] "..tostring(msg))
 end
 
--- PE dinos live under workspace.Characters[name]; LP.Character is often nil
-local function hrp()
+-- PE dinos live under workspace.Characters[name] and are NOT Humanoid rigs — there is no HumanoidRootPart
+-- (that's why v1 read 0.0 forever). The real steer/physics part is TurningAnimation.Body; we use the hub's
+-- exact lookup chain and, if every named part misses, fall back to the model pivot (that can never miss).
+local trackedName = "?"
+local function myModel()
 	local chs = workspace:FindFirstChild("Characters")
-	local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
-	return c and c:FindFirstChild("HumanoidRootPart")
+	return (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+end
+local function trackPos()
+	local c = myModel()
+	if not c then trackedName = "no dino (spawn in)"; return nil end
+	local ta = c:FindFirstChild("TurningAnimation")
+	local body = ta and ta:FindFirstChild("Body")
+	if body and body:IsA("BasePart") then trackedName = "TurningAnimation.Body"; return body.Position end
+	for _, nm in ipairs({"HumanoidRootPart","Root","RootPart","Torso","UpperTorso","Body","Main","MainPart","Hitbox"}) do
+		local p = c:FindFirstChild(nm)
+		if p and p:IsA("BasePart") then trackedName = nm; return p.Position end
+	end
+	if c.PrimaryPart then trackedName = "PrimaryPart"; return c.PrimaryPart.Position end
+	local ok, pv = pcall(function() return c:GetPivot().Position end)
+	if ok then trackedName = "model pivot"; return pv end
+	trackedName = "no part found"; return nil
 end
 
 -- ═══ HUD ═══
@@ -73,11 +90,11 @@ local function pushLog(line)
 end
 
 RunService.RenderStepped:Connect(function()
-	local r = hrp(); local now = tick()
-	if not r then lastPos = nil; return end
+	local pos = trackPos(); local now = tick()
+	if not pos then lastPos = nil; lSpeed.Text = "-- studs/s"; lInfo.Text = "tracking: "..trackedName; return end
 	if lastPos and lastT and now > lastT then
 		local dt = now - lastT
-		local dp = r.Position - lastPos
+		local dp = pos - lastPos
 		local flatJump = Vector3.new(dp.X, 0, dp.Z).Magnitude
 		if dt < 0.2 and flatJump / math.max(dt, 1/240) > 80 and flatJump > 10 then
 			-- position jumped way faster than any run = the server yanked you (or you teleported).
@@ -94,9 +111,10 @@ RunService.RenderStepped:Connect(function()
 			if #samples > 600 then table.remove(samples, 1) end
 		end
 	end
-	lastPos, lastT = r.Position, now
+	lastPos, lastT = pos, now
 	local avg1 = select(1, windowStats(1))
 	lSpeed.Text = ("%.1f studs/s   (1s avg %.1f)"):format(curSpeed, avg1)
+	lInfo.Text = "SHIFT = record · tracking: "..trackedName
 end)
 
 UIS.InputBegan:Connect(function(input, gp)
@@ -104,7 +122,7 @@ UIS.InputBegan:Connect(function(input, gp)
 	if input.KeyCode ~= Enum.KeyCode.LeftShift and input.KeyCode ~= Enum.KeyCode.RightShift then return end
 	local avg1 = select(1, windowStats(1))
 	local mx3 = select(2, windowStats(3))
-	pushLog(("RECORD  now %.1f · 1s avg %.1f · 3s max %.1f studs/s"):format(curSpeed, avg1, mx3))
+	pushLog(("RECORD  now %.1f | 1s avg %.1f | 3s max %.1f studs/s"):format(curSpeed, avg1, mx3))
 	toast(("Recorded %.1f studs/s (copied to clipboard, %d lines)"):format(avg1, #LOG), 4)
 end)
 
