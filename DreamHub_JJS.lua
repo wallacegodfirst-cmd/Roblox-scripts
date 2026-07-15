@@ -966,7 +966,9 @@ _G.VX_CLAIMOWN = vxClaimOwnership
 -- maxSpeed*dt, so instead of one big jump we step to the target in capped per-frame hops that stay under
 -- that limit. VX_TP_SPEED is the studs-per-frame step and safeTeleport reads it directly, so lowering the
 -- TP Step slider genuinely makes the teleport gentler if a server still sets you back.
-local VX_TP_SPEED = 60   -- studs PER FRAME (was a dead 'studs/sec' value the stepped teleport ignored). 60 feels instant and clears the per-frame check on public servers; drop it if you still get set back.
+local VX_TP_SPEED = 60   -- studs PER FRAME (back-compat local; the LIVE value the glide reads is _G.VX_TP_SPEED)
+_G.VX_TP_SPEED  = tonumber(_G.VX_TP_SPEED) or 60      -- studs/frame the glide steps in (lower = gentler if a server still sets you back)
+_G.VX_TP_METHOD = _G.VX_TP_METHOD or "Glide"          -- "Glide" (default: anti-setback stepping + AC pass each hop) | "Instant" (single snap) | "Auto" (snap short, glide long)
 -- game updates -> teleports set back). Try the known path first, else search for any RemoteEvent named
 local vxACRemote = nil
 local vxACStamp = 0
@@ -1061,8 +1063,13 @@ function vxHardWrite(char, hrp, cf)
 		hrp.AssemblyAngularVelocity = Vector3.new(0,0,0)
 	end)
 end
--- Teleport: one clean write + the single global lock. No inner hold-loop (it fought the Heartbeat lock --
--- THAT was the send-back), no per-frame velocity freeze (you can walk/dash the moment you land).
+-- Teleport = THE GLIDE METHOD (default). Instead of one impossible-speed snap, we walk the server to the target
+-- in small believable hops and fire the anti-cheat "I teleported legitimately" pass on each hop -- the SAME
+-- trick that makes it stick even when a server's AC is still alive. Two things made the old stepping useless and
+-- are fixed here: (1) the Heartbeat lock re-pinned you to the FINAL target every frame, so it snapped instead of
+-- gliding -- now the lock target MOVES WITH the glide (it reinforces each hop instead of fighting it); (2) no AC
+-- pass was fired during the move -- now every few hops we fire it so the server accepts the motion. VX_TP_METHOD
+-- picks Glide (default) / Instant / Auto; VX_TP_SPEED is the hop size (lower = gentler if a server still resists).
 local function safeTeleport(targetCFrame, holdTime)
 	local char = vxMyChar(); if not char then return false end
 	local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return false end
@@ -1074,32 +1081,46 @@ local function safeTeleport(targetCFrame, holdTime)
 	isTeleporting = true
 	if _G.VX_DESTROY_AC then pcall(_G.VX_DESTROY_AC) end
 	vxACAck()
-	-- STEP the teleport (Bug D fix): a single 500-stud jump reads as impossible speed and the AC sets you back.
-	-- If the AC remotes are gone this is instant anyway, but stepping in VX_TP_SPEED (default 60) stud hops per
-	-- frame makes each move believable so it sticks even when the AC is alive. Short hops just teleport directly.
+	vxACPass()
+	vxTeleGen = vxTeleGen + 1
+	local myGen = vxTeleGen        -- overlap guard: a newer teleport supersedes this one's hops + lock
+	local method = _G.VX_TP_METHOD or "Glide"
 	local step = tonumber(_G.VX_TP_SPEED) or 60
 	local from = hrp.Position
 	local dist = (targetCFrame.Position - from).Magnitude
-	if dist > step * 1.5 then
+	local hold = tonumber(holdTime) or 0.5
+	-- engage the lock anchored to WHERE WE ARE, so the Heartbeat can't yank us to the final spot mid-glide
+	vxCurrentTargetCF = CFrame.new(from) * targetCFrame.Rotation
+	vxTeleportLock = true
+	local instant = (method == "Instant") or (method == "Auto" and dist <= step * 1.5)
+	local glideSecs = 0
+	if instant or dist < 1 then
+		vxHardWrite(char, hrp, targetCFrame)
+		vxACPass()
+		vxCurrentTargetCF = targetCFrame
+	else
+		-- GLIDE: >=3 hops even for short jumps, so a short teleport still passes the AC each step
+		local hops = math.max(3, math.min(math.ceil(dist / step), 240))
+		glideSecs = hops / 60
 		task.spawn(function()
-			local hops = math.min(math.ceil(dist / step), 120)
 			for i = 1, hops do
+				if myGen ~= vxTeleGen then return end                 -- superseded by a newer teleport
 				local c = vxMyChar(); local h = c and c:FindFirstChild("HumanoidRootPart")
 				if not h then break end
 				local cf = CFrame.new(from:Lerp(targetCFrame.Position, i / hops)) * targetCFrame.Rotation
 				vxHardWrite(c, h, cf)
+				vxCurrentTargetCF = cf                                 -- lock target follows the glide (no snap-to-end)
+				if i == 1 or i % 3 == 0 then vxACPass() end            -- believable-move pass, throttled ~20/s
 				game:GetService("RunService").Heartbeat:Wait()
 			end
+			if myGen ~= vxTeleGen then return end
 			local c = vxMyChar(); local h = c and c:FindFirstChild("HumanoidRootPart")
-			if c and h then vxHardWrite(c, h, targetCFrame) end
+			if c and h then vxHardWrite(c, h, targetCFrame); vxACPass() end
+			vxCurrentTargetCF = targetCFrame
 		end)
-	else
-		vxHardWrite(char, hrp, targetCFrame)
 	end
-	vxCurrentTargetCF = targetCFrame
-	vxTeleportLock = true
-	local hold = tonumber(holdTime) or 0.5
-	task.delay(hold, function()
+	task.delay(glideSecs + hold, function()
+		if myGen ~= vxTeleGen then return end                         -- don't clear a newer teleport's lock
 		vxTeleportLock = false
 		vxCurrentTargetCF = nil
 		isTeleporting = false
@@ -2351,8 +2372,8 @@ do
 		return nil
 	end
 	TPApi = {
-		setSpeed = function(v) if type(v) == "number" then VX_TP_SPEED = v end end,
-		setMethod = function(m) if type(m) == "table" then m = m[1] end VX_TP_METHOD = (m == "Instant" or m == "Glide") and m or "Auto" end,
+		setSpeed = function(v) if type(v) == "number" then _G.VX_TP_SPEED = v end end,
+		setMethod = function(m) if type(m) == "table" then m = m[1] end _G.VX_TP_METHOD = (m == "Instant" or m == "Glide") and m or "Auto" end,
 		up = function() local r = hrp(); if r then vxTeleportHard(r.Position + Vector3.new(0, 120, 0), 3) end end,
 		spawn = function() local sp = workspace:FindFirstChildOfClass("SpawnLocation"); if sp then vxTeleportHard(sp.Position + Vector3.new(0, 4, 0), 3) end end,
 		nearest = function()

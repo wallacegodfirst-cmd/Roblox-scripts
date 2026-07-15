@@ -1,6 +1,34 @@
 DREAM HUB - UPDATE LOG
 
 ===================================================================
+TELEPORT + INF STAM FIX PASS  (latest)
+===================================================================
+
+JUJUTSU SHENANIGANS
+~ Every teleport now uses the GLIDE method (default). One instant snap
+  read as impossible speed and got you set back — so regular teleports,
+  Teleport to Player, Nearest/Up/Spawn, saved slots, Auto Grab item TP,
+  and the Target teleport all now walk you to the spot in small
+  believable hops and fire the anti-cheat "legit teleport" pass on every
+  hop, so it sticks. All of these route through one engine, so the fix
+  covers every teleport in the hub at once.
+  · Fixed the hidden bug where the position-lock snapped you straight to
+    the end of the glide (it now follows the glide instead of fighting it).
+  · Method is Glide by default; Instant / Auto still selectable in code.
+
+PRIOR EXTINCTION
+~ INF Stamina no longer makes you slow. Pinning WalkSpeed did nothing
+  (the server reverts it), so exhaustion kept holding you at walk speed.
+  It now drives your real run speed while you move — same proven method as
+  Speed Hack, just at your running speed, never below the game's own
+  sprint. New "Run Speed" slider under INF Stamina (Survival tab).
+~ Auto Farm Fossil now teleports to EVERY fossil. The instant snap was
+  getting rubber-banded, so you never actually landed on the fossil and it
+  got skipped — it now glides onto each one (anti-snapback) and waits to
+  arrive before collecting, so every fossil gets picked up. Applies to the
+  No-Food build too.
+
+===================================================================
 JUJUTSU SHENANIGANS - FREE  (finally out after a long wait)
 ===================================================================
 

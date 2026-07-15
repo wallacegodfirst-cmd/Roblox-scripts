@@ -1557,7 +1557,9 @@ do local p=Pages["Survival"]
 	-- (INF Food / INF Water / Carnivore Meat TP / Teleport Back moved to the Growth tab.) Stamina stays here.
 	local _,f=mkSec(p,"Stamina",1)
 	mkToggle(f,"INF Stamina","InfStam",1)
-	-- INF Stamina is pure now: it only keeps the bar full, no speed boost attached (use Speed Hack for speed).
+	-- INF Stamina keeps the bar full AND holds your real run speed so exhaustion never slows you. Run Speed sets how
+	-- fast you move while it's on (it's never slower than the game's own sprint). Want a big boost? Use Speed Hack.
+	mkSlider(f,"Run Speed","RunSpeed",16,90,2,1)
 	local _,pr=mkSec(p,"Protection",2)
 	mkToggle(pr,"Anti Drown","AntiDrown",1)
 	mkSlider(pr,"Anti Drown Rise","AntiDrownRise",2,30,1,1)
@@ -2061,20 +2063,30 @@ local function charHumanoid()
 	local m = (WS:FindFirstChild("Characters") and WS.Characters:FindFirstChild(LP.Name)) or char()
 	return m and m:FindFirstChildOfClass("Humanoid")
 end
-task.spawn(function() while RUNNING do
-	if CFG.InfStam and alive() and not CFG.SpeedHack and not CFG.Fly then
-		-- LIGHT: just learn + pin WalkSpeed on the real dino model. No per-frame velocity drive (that was a
-		-- lag/FPS source) — pinning WalkSpeed is what actually stops the exhaustion slow, and it's cheap.
-		pcall(function()
-			local h = charHumanoid()
-			if h and h.WalkSpeed and h.WalkSpeed>0 then
-				__gg.MH_runSpeed = math.max(__gg.MH_runSpeed or 0, h.WalkSpeed)   -- learn real run speed
-				if __gg.MH_runSpeed>0 and h.WalkSpeed < __gg.MH_runSpeed then h.WalkSpeed = __gg.MH_runSpeed end
-			end
-		end)
-		task.wait(0.1)
-	else task.wait(0.4) end
-end end)
+-- INF STAM — REAL RUN SPEED (the "makes me slow" fix): pinning WalkSpeed did NOTHING here because PE's movement is
+-- server-authoritative — the server reverts a WalkSpeed write, so the exhaustion walk-speed held you slow no matter
+-- what we set. So instead we drive your horizontal velocity at your real run speed while you MOVE, using the exact
+-- per-frame write the Speed Hack uses (proven to stick on this game's movement) — just at your run speed, never a
+-- boosted one. We keep it never-slower-than the game's own sprint by learning the highest WalkSpeed it ever hands
+-- us. Runs only while you're actually moving (a key/thumbstick is down), so it costs nothing idle and never fights
+-- teleports or standing still. Speed Hack / Fly take over when either is on. Tune it with the Run Speed slider.
+conn(RunService.Heartbeat:Connect(function()
+	if not (CFG.InfStam and alive()) or CFG.SpeedHack or CFG.Fly then return end
+	local r=hrp(); if not r then return end
+	pcall(function() local h=charHumanoid(); if h and h.WalkSpeed and h.WalkSpeed>0 then __gg.MH_runSpeed=math.max(__gg.MH_runSpeed or 0, h.WalkSpeed) end end)  -- learn the game's real run speed
+	local dir=Vector3.zero
+	local cf=(workspace.CurrentCamera and workspace.CurrentCamera.CFrame) or CFrame.new()
+	if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end
+	if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end
+	if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end
+	if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end
+	if dir.Magnitude<=0 then local h=charHumanoid(); local md=h and h.MoveDirection; if md and md.Magnitude>0 then dir=md end end   -- mobile thumbstick / click-to-move (use the real dino humanoid; LP.Character is often nil in PE)
+	if dir.Magnitude>0 then
+		local spd=math.max(tonumber(CFG.RunSpeed) or 17, __gg.MH_runSpeed or 0)   -- never slower than the game's own sprint
+		dir=Vector3.new(dir.X,0,dir.Z).Unit*spd
+		pcall(function() r.AssemblyLinearVelocity=Vector3.new(dir.X, r.AssemblyLinearVelocity.Y, dir.Z) end)
+	end
+end))
 
 -- INF FOOD — FLOOR KEEPER (keep the bar UP whether you eat or not, WITHOUT hiding the eat prompt): the food bar
 -- is only topped up when it falls BELOW ~60% of max, and only raised to ~80% — never to 100%. So:
@@ -3696,14 +3708,24 @@ local function runFarm(enabledKey, kind, rangeKey)
 					if nd then
 						local holder,part=nd[1],nd[2]
 						FARM.tried[part]=tick()
-						pcall(function()
-							-- INSTANT TELEPORT (user: "it glides me, I need it to TP me") — one snap, landing right ON
-							-- the node (low +1.5 offset = no high arc/pop that would trip the kick), velocity zeroed.
-							local cc=getMyModel(); local goal=CFrame.new(part.Position+Vector3.new(0,1.5,0))
-							if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end
-						end)
+						do
+							-- GLIDE to the fossil (anti-snapback) so you TP to EVERY one. A single instant snap reads as
+							-- impossible speed and the server rubber-bands you back — you never actually land on the fossil,
+							-- so it collects nothing and the node gets skipped. The micro-step glide (the game's own move
+							-- remote, 20-stud believable hops — the SAME "glide method" the teleports use) lands you ON each
+							-- fossil so every one collects. We wait for arrival (2.2s cap) before firing the prompt so it can
+							-- never fire from the old spot. Falls back to a direct snap if the hop-mover isn't available.
+							local goalPos=part.Position+Vector3.new(0,1.5,0)
+							if __gg.MH_hopMove then
+								__gg.MH_hopMove(goalPos, true)
+								local t0=tick()
+								while tick()-t0<2.2 do local r=hrp(); if r and (r.Position-goalPos).Magnitude<8 then break end; task.wait(0.05) end
+							else
+								pcall(function() local cc=getMyModel(); if cc and cc.PrimaryPart then cc:PivotTo(CFrame.new(goalPos)) else local r=hrp(); if r then r.CFrame=CFrame.new(goalPos) end end end)
+							end
+						end
 						local r0=hrp(); if r0 then pcall(function() r0.AssemblyLinearVelocity=Vector3.zero; r0.AssemblyAngularVelocity=Vector3.zero end) end
-						task.wait(0.2)
+						task.wait(0.15)
 						local prompt=part:FindFirstChildWhichIsA("ProximityPrompt")
 						if not prompt then for _,d in ipairs(holder:GetDescendants()) do if d:IsA("ProximityPrompt") then prompt=d; break end end end
 						pending[part]=holder
