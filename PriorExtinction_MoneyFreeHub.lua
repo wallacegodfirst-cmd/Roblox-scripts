@@ -3681,7 +3681,7 @@ local function runFarm(enabledKey, kind, rangeKey)
 		while RUNNING do
 			if CFG[enabledKey] and alive() then
 				if not wasOn then wasOn=true; local r0=hrp(); origin=r0 and r0.CFrame end
-				for holder,part in pairs(pending) do if not (part and part.Parent and holder and holder.Parent) then FARM.count[kind]=(FARM.count[kind] or 0)+1; pending[holder]=nil end end
+				for part,holder in pairs(pending) do if not (part and part.Parent) then FARM.count[kind]=(FARM.count[kind] or 0)+1; pending[part]=nil end end
 				if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
 				-- dig remote: search ONCE (negative-cached) — this was the lag.
 				if not FARM.digSearched then FARM.digSearched=true; FARM.dig=findRemote({"collectfossil","collectgem","startcollection","excavat","harvest"}) end
@@ -3691,11 +3691,11 @@ local function runFarm(enabledKey, kind, rangeKey)
 					local nd
 					for _,cand in ipairs(list) do
 						local holder,part=cand[1],cand[2]
-						if part and part.Parent then local t=FARM.tried[holder]; if not t or tick()-t>15 then nd=cand; break end end
+						if part and part.Parent then local t=FARM.tried[part]; if not t or tick()-t>15 then nd=cand; break end end
 					end
 					if nd then
 						local holder,part=nd[1],nd[2]
-						FARM.tried[holder]=tick()
+						FARM.tried[part]=tick()
 						pcall(function()
 							-- INSTANT TELEPORT (user: "it glides me, I need it to TP me") — one snap, landing right ON
 							-- the node (low +1.5 offset = no high arc/pop that would trip the kick), velocity zeroed.
@@ -3706,7 +3706,7 @@ local function runFarm(enabledKey, kind, rangeKey)
 						task.wait(0.2)
 						local prompt=part:FindFirstChildWhichIsA("ProximityPrompt")
 						if not prompt then for _,d in ipairs(holder:GetDescendants()) do if d:IsA("ProximityPrompt") then prompt=d; break end end end
-						pending[holder]=part
+						pending[part]=holder
 						-- HOLD for the node's REAL duration (gems channel ~12s, fossils ~3s). The old 2.5s cap gave up
 						-- before a gem finished = "auto farm doesn't collect". Keep planted with a BodyPosition (no fall),
 						-- fire the prompt ONCE (it auto-holds), AND hold the real E key + listen for Triggered = done.
@@ -3729,7 +3729,7 @@ local function runFarm(enabledKey, kind, rangeKey)
 						if prompt and fireprox then pcall(function() fireprox(prompt) end) end   -- backup: complete it now
 						if prompt then pcall(function() prompt.MaxActivationDistance=od; prompt.RequiresLineOfSight=ol; prompt.KeyboardKeyCode=okc; prompt.Enabled=oen end) end   -- restore native prompt state
 						pcall(function() if bp then bp:Destroy() end end)
-						if done or not (part and part.Parent) then FARM.count[kind]=(FARM.count[kind] or 0)+1; FARM.tried[holder]=nil end
+						if done or not (part and part.Parent) then FARM.count[kind]=(FARM.count[kind] or 0)+1; FARM.tried[part]=nil end
 						-- SLOW cadence for fossils (you asked for it): pause between each fossil so it collects one at a
 						-- calm pace instead of blinking node-to-node. Gems keep the quick pace.
 						task.wait((kind=="fossil") and (tonumber(CFG.FossilSlow) or 1.2) or 0.2)
@@ -3741,9 +3741,9 @@ local function runFarm(enabledKey, kind, rangeKey)
 						if not CFG[enabledKey] then break end
 						local holder,part=nd[1],nd[2]
 						if part and part.Parent then
-							local t=FARM.tried[holder]
+							local t=FARM.tried[part]
 							if not t or tick()-t>12 then
-								FARM.tried[holder]=tick()
+								FARM.tried[part]=tick()
 								local prompt=part:FindFirstChildWhichIsA("ProximityPrompt")
 								if not prompt then for _,d in ipairs(holder:GetDescendants()) do if d:IsA("ProximityPrompt") then prompt=d; break end end end
 								if prompt and fireprox then
@@ -3751,7 +3751,7 @@ local function runFarm(enabledKey, kind, rangeKey)
 									pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=1e9; prompt.HoldDuration=0 end)
 									pcall(function() fireprox(prompt) end)
 									pcall(function() prompt.MaxActivationDistance=od; prompt.RequiresLineOfSight=ol; prompt.HoldDuration=oh end)
-									pending[holder]=part
+									pending[part]=holder
 								end
 								if FARM.dig and FARM.dig.Parent then pcall(function() fireRemoteMulti(FARM.dig, holder) end) end
 								n+=1; if n>=6 then break end
