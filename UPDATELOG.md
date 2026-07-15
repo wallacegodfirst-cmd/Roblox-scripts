@@ -1,7 +1,37 @@
 DREAM HUB - UPDATE LOG
 
 ===================================================================
-TELEPORT + INF STAM FIX PASS  (latest)
+GLIDE ROUTING + SPEED BAND + FOSSIL INSTANT TP  (latest)
+===================================================================
+
+JUJUTSU SHENANIGANS
+~ Glide teleports now route AROUND buildings. A straight glide into a
+  building ground you along the wall — the glide now raycasts the path
+  first and, if something solid is in the way, bends the route like a
+  real player would move: via a known location from the Teleports tab
+  list (those coordinates double as safe waypoints), or a left/right
+  sidestep, or up-and-over at rising heights, with a high cruise + drop
+  as the last resort. Works for every teleport in the hub (one engine).
+
+PRIOR EXTINCTION
++ TWO BUILDS, TWO LINKS: PE Plus (PE_Plus_Loader.lua) and PE Premium
+  (PE_Premium_Loader.lua). Plus = Target tab + Auto Farm Player;
+  Premium = everything in Plus plus the Premium-only features.
+~ INF Stam speed no longer sends you back. Two causes fixed: (1) 16 was
+  still above what the server tolerates, so the Run Speed slider is now
+  the safe 12-15 band (14 default; old saved values outside the band are
+  reset to 14) and the drive never goes a stud above the slider; (2) while
+  it drives you it now reports your position ~10x/s through the game's
+  own move remote (the same CFrame channel the teleports use), so the
+  server's copy of you follows along instead of yanking you back.
+~ Auto Farm Fossil is INSTANT again — teleport, not glide. It snaps you
+  straight onto each fossil and beats the rubber-band by feeding the
+  server the goal on its own move remote for ~1.2s (re-asserting only if
+  you get shoved), so there is no slow walk between fossils. Gems keep
+  the glide (their long channel doesn't care and it's proven to stick).
+
+===================================================================
+TELEPORT + INF STAM FIX PASS
 ===================================================================
 
 JUJUTSU SHENANIGANS

@@ -56,7 +56,7 @@ local CFG = {
 	BotFlee=true, BotFleeRange=240, BotRoam=true, BotRoamRadius=350, BotEatAt=80, BotDrinkAt=80, BotSleepHeal=true, BotSpeed=18, BotAnnounce=true,
 	BoneProtect=false, ProtectBone="All",
 	TurnHack=false, TurnSpeed=30,
-	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=17, Noclip=false, Invis=false,
+	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=14, Noclip=false, Invis=false,
 	InfJump=false, BypassTP=true,
 	InfFood=false, InfWater=false, InfStam=false, InfOxygen=false,
 	AntiDrown=true, AntiDrownRise=14, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false, HeadDmgReduce=90,
@@ -93,10 +93,10 @@ local function loadCfg()
 	end)
 end
 loadCfg()
--- MIGRATE + CLAMP the INF-Stam run speed on load: the old 30 default was above what the server tolerates = "it
--- keeps sending me back". Any saved value ABOVE the safe band gets reset to 20 (the sweet spot: clearly faster
--- than walking, low enough the server doesn't snap you); values you set inside 14-28 are kept as-is.
-do local rs = tonumber(CFG.RunSpeed) or 19; CFG.RunSpeed = (rs < 12) and 19 or rs end   -- only floor at 12; do NOT reset high values (that reset the slider so you couldnt go faster)
+-- MIGRATE + CLAMP the INF-Stam run speed on load: 16 was STILL above what the server tolerates ("16 speed makes
+-- u snap back"), so the safe band is now 12-15 with 14 the default. Any saved value outside 12-15 (old 16-90
+-- configs included) is reset to 14 so nobody keeps a snapping speed from an old save.
+do local rs = tonumber(CFG.RunSpeed) or 14; CFG.RunSpeed = (rs >= 12 and rs <= 15) and rs or 14 end
 MS("1 config ok")
 CFG.Keybinds = CFG.Keybinds or {}
 CFG.Keybinds.UIKey = CFG.Keybinds.UIKey or CFG.UIKey
@@ -1558,8 +1558,9 @@ do local p=Pages["Survival"]
 	local _,f=mkSec(p,"Stamina",1)
 	mkToggle(f,"INF Stamina","InfStam",1)
 	-- INF Stamina keeps the bar full AND holds your real run speed so exhaustion never slows you. Run Speed sets how
-	-- fast you move while it's on (it's never slower than the game's own sprint). Want a big boost? Use Speed Hack.
-	mkSlider(f,"Run Speed","RunSpeed",16,90,2,1)
+	-- fast you move while it's on. 16+ made the server snap you back, so the slider is now the safe 12-15 band
+	-- (14 default) and the drive tells the server where you are through the game's own move remote so it sticks.
+	mkSlider(f,"Run Speed","RunSpeed",12,15,2,1)
 	local _,pr=mkSec(p,"Protection",2)
 	mkToggle(pr,"Anti Drown","AntiDrown",1)
 	mkSlider(pr,"Anti Drown Rise","AntiDrownRise",2,30,1,1)
@@ -2052,28 +2053,28 @@ task.spawn(function() while RUNNING do
 	else task.wait(0.4) end
 end end)
 
--- INF STAM — REAL SPRINT SPEED DRIVE: because we swallow the Run report (so the server can't drain stamina), the
--- server would otherwise hold you at walk speed. So while you're sprinting (you pressed run recently) and actually
--- moving, we drive your velocity in your move direction at the dino's REAL running speed — the WalkSpeed the game
--- gave you while sprinting (MH_runSpeed, learned in the hook). If we haven't learned it yet, we fall back to the
--- highest WalkSpeed we can see, or ~1.6x the current walk speed. Speed Hack / Fly take over if you turn those on.
--- The dino lives at workspace.Characters[name] (LP.Character is often nil for PE dinos), and its Humanoid's
--- WalkSpeed is what the game cuts when stamina hits 0 = the "slow". So we pin WalkSpeed on THAT model.
+-- INF STAM — RUN SPEED DRIVE: because we swallow the Run report (so the server can't drain stamina), the
+-- server would otherwise hold you at walk speed. So while you're moving we drive your velocity in your move
+-- direction at the Run Speed slider value (safe 12-15 band). Speed Hack / Fly take over if you turn those on.
+-- The dino lives at workspace.Characters[name] (LP.Character is often nil for PE dinos).
 local function charHumanoid()
 	local m = (WS:FindFirstChild("Characters") and WS.Characters:FindFirstChild(LP.Name)) or char()
 	return m and m:FindFirstChildOfClass("Humanoid")
 end
 -- INF STAM — REAL RUN SPEED (the "makes me slow" fix): pinning WalkSpeed did NOTHING here because PE's movement is
 -- server-authoritative — the server reverts a WalkSpeed write, so the exhaustion walk-speed held you slow no matter
--- what we set. So instead we drive your horizontal velocity at your real run speed while you MOVE, using the exact
--- per-frame write the Speed Hack uses (proven to stick on this game's movement) — just at your run speed, never a
--- boosted one. We keep it never-slower-than the game's own sprint by learning the highest WalkSpeed it ever hands
--- us. Runs only while you're actually moving (a key/thumbstick is down), so it costs nothing idle and never fights
+-- what we set. So instead we drive your horizontal velocity at your run speed while you MOVE, using the exact
+-- per-frame write the Speed Hack uses. THE SNAP-BACK FIX ("it keeps sending me back / 16 speed makes u snap back"):
+--   1) the speed is EXACTLY the slider value, clamped to the safe 12-15 band — the old code took the max of the
+--      slider and the highest WalkSpeed ever seen, which could push you back over 16 and snap you; and
+--   2) while we drive you, we keep telling the server where you are through the game's OWN move remote
+--      (ReplicaSignalUnreliable "CFrame" — the same channel the teleports use), ~10x/s. The server's copy of you
+--      follows along instead of deciding you moved impossibly and yanking you back.
+-- Runs only while you're actually moving (a key/thumbstick is down), so it costs nothing idle and never fights
 -- teleports or standing still. Speed Hack / Fly take over when either is on. Tune it with the Run Speed slider.
 conn(RunService.Heartbeat:Connect(function()
 	if not (CFG.InfStam and alive()) or CFG.SpeedHack or CFG.Fly then return end
 	local r=hrp(); if not r then return end
-	pcall(function() local h=charHumanoid(); if h and h.WalkSpeed and h.WalkSpeed>0 then __gg.MH_runSpeed=math.max(__gg.MH_runSpeed or 0, h.WalkSpeed) end end)  -- learn the game's real run speed
 	local dir=Vector3.zero
 	local cf=(workspace.CurrentCamera and workspace.CurrentCamera.CFrame) or CFrame.new()
 	if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end
@@ -2082,9 +2083,11 @@ conn(RunService.Heartbeat:Connect(function()
 	if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end
 	if dir.Magnitude<=0 then local h=charHumanoid(); local md=h and h.MoveDirection; if md and md.Magnitude>0 then dir=md end end   -- mobile thumbstick / click-to-move (use the real dino humanoid; LP.Character is often nil in PE)
 	if dir.Magnitude>0 then
-		local spd=math.max(tonumber(CFG.RunSpeed) or 17, __gg.MH_runSpeed or 0)   -- never slower than the game's own sprint
+		local spd=math.clamp(tonumber(CFG.RunSpeed) or 14, 12, 15)   -- the slider value and NOTHING above it (16+ = snap back)
 		dir=Vector3.new(dir.X,0,dir.Z).Unit*spd
 		pcall(function() r.AssemblyLinearVelocity=Vector3.new(dir.X, r.AssemblyLinearVelocity.Y, dir.Z) end)
+		-- ANTI-SNAPBACK: report our position on the game's own move remote (throttled ~10/s) so the server accepts it
+		if __gg.MH_hopFire and tick()-(__gg.MH_stamCfT or 0)>0.1 then __gg.MH_stamCfT=tick(); __gg.MH_hopFire(r.CFrame) end
 	end
 end))
 
@@ -2865,6 +2868,25 @@ local function MH_hopFire(goalCF)
 		local re=RS:FindFirstChild("RemoteEvents"); re=re and re:FindFirstChild("ReplicaSignalUnreliable")
 		local id=myReplicaId or (seenIds and seenIds[1])
 		if re and id then for _=1,3 do re:FireServer(id, "CFrame", goalCF) end end
+	end)
+end
+__gg.MH_hopFire=MH_hopFire   -- shared: the INF-Stam speed drive reports its position through this so the server never snaps you back
+-- INSTANT TP (the fossil farm asked for teleport, NOT glide): snap there NOW, then beat the rubber-band by
+-- (a) feeding the server the goal on its own move remote for ~1.2s and (b) re-asserting the goal locally only
+-- if the server shoves you more than 6 studs (so it never freezes you when you're already there).
+__gg.MH_snapTo=function(targetPos)
+	local goal=CFrame.new(targetPos)
+	local cc=getMyModel()
+	pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end end)
+	local r=hrp(); if r then pcall(function() r.AssemblyLinearVelocity=Vector3.zero; r.AssemblyAngularVelocity=Vector3.zero end) end
+	task.spawn(function()
+		local t0=tick()
+		while tick()-t0<1.2 do
+			MH_hopFire(goal)
+			local rr=hrp()
+			if rr and (rr.Position-targetPos).Magnitude>6 then pcall(function() rr.CFrame=goal; rr.AssemblyLinearVelocity=Vector3.zero end) end
+			task.wait(0.06)
+		end
 	end)
 end
 __gg.MH_hopMove=function(targetPos, localWrite)
@@ -3709,14 +3731,15 @@ local function runFarm(enabledKey, kind, rangeKey)
 						local holder,part=nd[1],nd[2]
 						FARM.tried[part]=tick()
 						do
-							-- GLIDE to the fossil (anti-snapback) so you TP to EVERY one. A single instant snap reads as
-							-- impossible speed and the server rubber-bands you back — you never actually land on the fossil,
-							-- so it collects nothing and the node gets skipped. The micro-step glide (the game's own move
-							-- remote, 20-stud believable hops — the SAME "glide method" the teleports use) lands you ON each
-							-- fossil so every one collects. We wait for arrival (2.2s cap) before firing the prompt so it can
-							-- never fire from the old spot. Falls back to a direct snap if the hop-mover isn't available.
+							-- FOSSILS = INSTANT TELEPORT (you asked: "it needs to teleport, not glide"). MH_snapTo snaps you
+							-- straight onto the node and beats the rubber-band by feeding the server the goal on its own move
+							-- remote + re-asserting only if you get shoved — no slow walk between fossils. GEMS keep the glide
+							-- (their 12s channel doesn't care about a slower approach, and it's proven to stick).
 							local goalPos=part.Position+Vector3.new(0,1.5,0)
-							if __gg.MH_hopMove then
+							if kind=="fossil" and __gg.MH_snapTo then
+								__gg.MH_snapTo(goalPos)
+								task.wait(0.1)
+							elseif __gg.MH_hopMove then
 								__gg.MH_hopMove(goalPos, true)
 								local t0=tick()
 								while tick()-t0<2.2 do local r=hrp(); if r and (r.Position-goalPos).Magnitude<8 then break end; task.wait(0.05) end

@@ -1,12 +1,12 @@
---[[  Dream Hub · Prior Extinction PLUS — hardened loader
+--[[  Dream Hub · Prior Extinction PREMIUM — hardened loader
       Some executors' HttpGet proxy returns corrupted/cached junk instead of the real script
       (the console then shows `[string "Luraph "]... attempt to call a nil value` = you ran
       someone else's obfuscated garbage, not Dream Hub). This loader VALIDATES every download
       is really Prior Ex Plus, retries through several fetch methods to route around a bad
       proxy, and tells you in plain words what happened.  ]]
 
-_G.PE_PLUS = true   -- tier flag: the hub reads this BEFORE loading. PLUS tier = Target tab + Auto Farm Player.
-_G.PE_PREM = false  -- Premium features stay off in this build — use PE_Premium_Loader.lua for the Premium tier.
+_G.PE_PLUS = true   -- tier flags: the hub reads these BEFORE loading. Premium counts as Plus,
+_G.PE_PREM = true   -- so Premium gets every Plus feature PLUS the Premium-only ones.
 
 -- TWO mirrors of the same file: if an executor proxy has poisoned its cache for one host,
 -- the other host path fetches clean.
@@ -19,7 +19,7 @@ local function toast(msg, dur)
 	pcall(function() StarterGui:SetCore("SendNotification", {Title="Dream Hub loader", Text=msg, Duration=dur or 6}) end)
 	print("[Dream Hub loader] "..tostring(msg))
 end
-toast("loader running - fetching Prior Ex Plus...")
+toast("loader running - fetching Prior Ex Premium...")
 
 -- the real script is ~290KB, starts with a --[[ comment, and contains our banner
 local function valid(src)

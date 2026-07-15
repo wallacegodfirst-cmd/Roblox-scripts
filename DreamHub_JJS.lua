@@ -1063,6 +1063,54 @@ function vxHardWrite(char, hrp, cf)
 		hrp.AssemblyAngularVelocity = Vector3.new(0,0,0)
 	end)
 end
+-- GLIDE ROUTING (obstacle avoidance): a straight glide INTO a building just grinds you along the wall until the
+-- hold ends. Before gliding we raycast the path; if something solid blocks it we route AROUND the blocker the way
+-- a real player would move — first via a known location from the Teleports tab list (those coordinates double as
+-- safe waypoints), then a LEFT/RIGHT sidestep, then UP-and-over at rising heights, and as a last resort a high
+-- cruise straight over everything with a drop down onto the target.
+local function vxRouteClear(a, b)
+	local d = b - a
+	if d.Magnitude < 1 then return true end
+	local ok, hit = pcall(function()
+		local rp = RaycastParams.new()
+		rp.FilterType = Enum.RaycastFilterType.Exclude
+		local ig = { workspace.CurrentCamera }
+		local c = vxMyChar(); if c then ig[#ig + 1] = c end
+		local chars = workspace:FindFirstChild("Characters"); if chars then ig[#ig + 1] = chars end
+		rp.FilterDescendantsInstances = ig
+		rp.RespectCanCollide = true
+		return workspace:Raycast(a, d, rp)
+	end)
+	return ok and hit == nil
+end
+local function vxBuildRoute(from, to)
+	if vxRouteClear(from, to) then return { to } end
+	local direct = (to - from).Magnitude
+	-- 1) known locations as waypoints: the smallest detour whose both legs are clear wins
+	local best, bestD
+	for _, s in ipairs(_G.VX_TP_SPOTS or {}) do
+		local p = s[2] + Vector3.new(0, 4, 0)
+		local d = (p - from).Magnitude + (to - p).Magnitude
+		if d < direct * 1.4 and (not bestD or d < bestD) and vxRouteClear(from, p) and vxRouteClear(p, to) then best, bestD = p, d end
+	end
+	if best then return { best, to } end
+	-- 2) sidestep LEFT / RIGHT around the blocker
+	local flat = Vector3.new(to.X - from.X, 0, to.Z - from.Z)
+	local right = (flat.Magnitude > 0.1) and flat.Unit:Cross(Vector3.new(0, 1, 0)) or Vector3.new(1, 0, 0)
+	for _, off in ipairs({ right * 20, -right * 20, right * 45, -right * 45 }) do
+		local mid = (from + to) * 0.5 + off
+		if vxRouteClear(from, mid) and vxRouteClear(mid, to) then return { mid, to } end
+	end
+	-- 3) UP and over, trying higher each time
+	for _, rise in ipairs({ 30, 60, 100, 160 }) do
+		local a = from + Vector3.new(0, rise, 0)
+		local b = Vector3.new(to.X, math.max(to.Y + 6, a.Y), to.Z)
+		if vxRouteClear(from, a) and vxRouteClear(a, b) and vxRouteClear(b, to) then return { a, b, to } end
+	end
+	-- 4) last resort: cruise high above everything, then drop straight down onto the target
+	local cruise = math.max(from.Y, to.Y) + 220
+	return { Vector3.new(from.X, cruise, from.Z), Vector3.new(to.X, cruise, to.Z), to }
+end
 -- Teleport = THE GLIDE METHOD (default). Instead of one impossible-speed snap, we walk the server to the target
 -- in small believable hops and fire the anti-cheat "I teleported legitimately" pass on each hop -- the SAME
 -- trick that makes it stick even when a server's AC is still alive. Two things made the old stepping useless and
@@ -1099,19 +1147,30 @@ local function safeTeleport(targetCFrame, holdTime)
 		vxACPass()
 		vxCurrentTargetCF = targetCFrame
 	else
-		-- GLIDE: >=3 hops even for short jumps, so a short teleport still passes the AC each step
-		local hops = math.max(3, math.min(math.ceil(dist / step), 240))
+		-- GLIDE along a ROUTE: if a building (or anything solid) blocks the straight line, vxBuildRoute bends the
+		-- path around it — up, left, right, or via a known location waypoint — and we glide leg by leg. >=3 hops
+		-- total even for short jumps, so a short teleport still passes the AC each step.
+		local route = vxBuildRoute(from, targetCFrame.Position)
+		local totalDist = 0
+		do local prev = from; for _, wp in ipairs(route) do totalDist = totalDist + (wp - prev).Magnitude; prev = wp end end
+		local hops = math.max(3, math.min(math.ceil(totalDist / step), 300))
 		glideSecs = hops / 60
 		task.spawn(function()
-			for i = 1, hops do
-				if myGen ~= vxTeleGen then return end                 -- superseded by a newer teleport
-				local c = vxMyChar(); local h = c and c:FindFirstChild("HumanoidRootPart")
-				if not h then break end
-				local cf = CFrame.new(from:Lerp(targetCFrame.Position, i / hops)) * targetCFrame.Rotation
-				vxHardWrite(c, h, cf)
-				vxCurrentTargetCF = cf                                 -- lock target follows the glide (no snap-to-end)
-				if i == 1 or i % 3 == 0 then vxACPass() end            -- believable-move pass, throttled ~20/s
-				game:GetService("RunService").Heartbeat:Wait()
+			local prev, done = from, 0
+			for _, wp in ipairs(route) do
+				local legHops = math.max(1, math.round(hops * (wp - prev).Magnitude / math.max(totalDist, 1)))
+				for i = 1, legHops do
+					if myGen ~= vxTeleGen then return end                 -- superseded by a newer teleport
+					local c = vxMyChar(); local h = c and c:FindFirstChild("HumanoidRootPart")
+					if not h then break end
+					local cf = CFrame.new(prev:Lerp(wp, i / legHops)) * targetCFrame.Rotation
+					vxHardWrite(c, h, cf)
+					vxCurrentTargetCF = cf                                 -- lock target follows the glide (no snap-to-end)
+					done = done + 1
+					if done == 1 or done % 3 == 0 then vxACPass() end      -- believable-move pass, throttled ~20/s
+					game:GetService("RunService").Heartbeat:Wait()
+				end
+				prev = wp
 			end
 			if myGen ~= vxTeleGen then return end
 			local c = vxMyChar(); local h = c and c:FindFirstChild("HumanoidRootPart")
@@ -2357,6 +2416,7 @@ do
 		{ "HOME", Vector3.new(265.3, 73.0, 120.3) },
 		{ "GET SOME MILK", Vector3.new(-240.9, 28.9, -124.2) },
 	}
+	_G.VX_TP_SPOTS = SPOTS   -- the glide router reads these: known locations double as safe waypoints when a building blocks the straight path
 	local function hrp() local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character; return c and c:FindFirstChild("HumanoidRootPart") end  -- JJS body lives under workspace.Characters
 	local function locate(names)
 		for _, nm in ipairs(names) do
