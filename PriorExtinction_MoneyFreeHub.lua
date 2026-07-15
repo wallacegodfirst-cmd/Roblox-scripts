@@ -1488,7 +1488,19 @@ if FWindow then
 	mkSlider = function(par, txt, key, mn, mx, _o, step) pcall(function() par:AddSlider(key,{Title=txt, Default=tonumber(CFG[key]) or mn, Min=mn, Max=mx, Rounding=((step and step>=1) and 0 or 2), Callback=function(v) CFG[key]=v; saveCfg() end}) end) end
 	mkBtn = function(par, txt, cb) pcall(function() par:AddButton({Title=txt, Callback=function() pcall(cb) end}) end) end
 	mkTextbox = function(par, lbl, key, _o, numeric) pcall(function() par:AddInput(key,{Title=lbl, Default=tostring(CFG[key] or ""), Numeric=numeric and true or false, Finished=true, Callback=function(v) if numeric then CFG[key]=tonumber(v) or CFG[key] else CFG[key]=v end saveCfg() end}) end) end
-	mkStatus = function() return nil end
+	-- mkStatus USED to return nil under Fluent — every status row (the whole Target profile, the HUD readout)
+	-- silently died on `sUser.Text = ...` inside a pcall = "Target tab: nothing works". Now it returns a proxy:
+	-- writing .Text on it updates a real Fluent paragraph, so profiles/readouts show in the Fluent menu too.
+	mkStatus = function(par, lbl)
+		local pg; pcall(function() pg = par:AddParagraph({Title=lbl, Content="--"}) end)
+		return setmetatable({}, {
+			__newindex = function(t, k, v)
+				if k=="Text" then rawset(t,"_t",v); pcall(function() if pg then if pg.SetDesc then pg:SetDesc(tostring(v)) elseif pg.SetContent then pg:SetContent(tostring(v)) end end end)
+				else rawset(t, k, v) end
+			end,
+			__index = function(t, k) if k=="Text" then return rawget(t,"_t") or "--" end return nil end,
+		})
+	end
 	mkLabel = function(par, txt) pcall(function() local title,content=tostring(txt),""; local nl=title:find("\n"); if nl then content=title:sub(nl+1); title=title:sub(1,nl-1) end par:AddParagraph({Title=title, Content=content}) end) end
 	mkDropdown = function(par, label, getOptions, getSelected, onSelect)
 		local dd; pcall(function() dd=par:AddDropdown(label,{Title=label, Values=getOptions() or {"Default"}, Multi=false, Default=getSelected() or 1}); dd:OnChanged(function(v) onSelect(v); saveCfg() end) end)
@@ -1560,7 +1572,9 @@ do local p=Pages["Survival"]
 	-- INF Stamina keeps the bar full AND holds your real run speed so exhaustion never slows you. Run Speed sets how
 	-- fast you move while it's on. 16+ made the server snap you back, so the slider is now the safe 12-15 band
 	-- (14 default) and the drive tells the server where you are through the game's own move remote so it sticks.
-	mkSlider(f,"Run Speed","RunSpeed",12,15,2,1)
+	-- DECIMALS (0.1 steps) so you can dial in the exact best speed — e.g. 14.7 if 15 snaps and 14 feels slow.
+	-- Want the exact number the server tolerates? Run the separate PE_SpeedFinder.lua and press Shift to record.
+	mkSlider(f,"Run Speed","RunSpeed",12,15,2,0.1)
 	local _,pr=mkSec(p,"Protection",2)
 	mkToggle(pr,"Anti Drown","AntiDrown",1)
 	mkSlider(pr,"Anti Drown Rise","AntiDrownRise",2,30,1,1)
@@ -1681,75 +1695,81 @@ do local p=Pages["Auto Farm"]
 	end
 end
 if Pages["Target"] then local p=Pages["Target"]
+	-- REWORKED (was: "nothing works"): the profile rows exist in BOTH UIs now (Fluent mkStatus fix above),
+	-- Load re-resolves the model live so the profile fills even if their dino streams in late, and every
+	-- action reports what it's doing instead of dying silently.
 	local _,ld=mkSec(p,"Load Player",1)
 	mkTextbox(ld,"Username","TargetUser",1,false)
-	-- status rows filled by Load
-	local sUser  = mkStatus(ld,"User",3)
-	local sDino  = mkStatus(ld,"Dino",4)
-	local sStage = mkStatus(ld,"Stage",5)
-	local sHP    = mkStatus(ld,"Health",6)
-	local sFood  = mkStatus(ld,"Food",7)
-	local sWater = mkStatus(ld,"Water",8)
-	local sStam  = mkStatus(ld,"Stamina",9)
-	local sDist  = mkStatus(ld,"Distance",10)
+	-- status rows filled by Load + the live tick
+	local sUser   = mkStatus(ld,"User",3)
+	local sDino   = mkStatus(ld,"Dino",4)
+	local sStage  = mkStatus(ld,"Stage",5)
+	local sGender = mkStatus(ld,"Gender",6)
+	local sHP     = mkStatus(ld,"Health",7)
+	local sDist   = mkStatus(ld,"Distance",8)
+	local sState  = mkStatus(ld,"Status",9)
 	local function fmtStat(v, mx)
 		if type(v)~="number" then return "--" end
 		if type(mx)=="number" and mx>0 then return math.floor(v).." / "..math.floor(mx) end
 		return tostring(math.floor(v))
 	end
 	local function refreshTarget()
+		local T=__gg.MH_Target
+		if not (T and T.plr) then
+			sUser.Text="type a name, press Load"; sDino.Text="--"; sStage.Text="--"; sGender.Text="--"
+			sHP.Text="--"; sDist.Text="--"; sState.Text="no target"
+			return
+		end
 		local info = _G.MH_targetInfo and _G.MH_targetInfo() or {}
-		sUser.Text  = info.user and (info.display and info.display~=info.user and (info.display.." (@"..info.user..")") or info.user) or "not found"
-		sDino.Text  = info.species and tostring(info.species) or "--"
-		sStage.Text = info.stage and tostring(info.stage) or "--"
-		sHP.Text    = fmtStat(info.hp, info.hpMax)
-		sFood.Text  = fmtStat(info.food)
-		sWater.Text = fmtStat(info.water)
-		sStam.Text  = fmtStat(info.stam)
-		sDist.Text  = type(info.dist)=="number" and (info.dist.."m") or "--"
+		sUser.Text   = info.user and (info.display and info.display~=info.user and (info.display.." (@"..info.user..")") or info.user) or "--"
+		sDino.Text   = info.species and tostring(info.species) or "--"
+		sStage.Text  = info.stage and tostring(info.stage) or "--"
+		sGender.Text = info.gender and tostring(info.gender) or "--"
+		sHP.Text     = fmtStat(info.hp, info.hpMax)
+		sDist.Text   = type(info.dist)=="number" and (info.dist.."m") or "--"
+		sState.Text  = (T.model and T.model.Parent) and (T.viewing and "viewing" or "loaded") or "dino not visible (they may be far / respawning)"
 	end
 	mkBtn(ld,"Load Player",function()
-		local pl = (function()
-			local txt=tostring(CFG.TargetUser or ""):gsub("^%s+",""):gsub("%s+$","")
-			if txt=="" then return nil end
-			local low=txt:lower(); local exact,ci,pre
-			for _,q in ipairs(Players:GetPlayers()) do if q~=LP then
-				if q.Name==txt or q.DisplayName==txt then exact=exact or q end
-				if q.Name:lower()==low or q.DisplayName:lower()==low then ci=ci or q end
-				if q.Name:lower():sub(1,#low)==low or q.DisplayName:lower():sub(1,#low)==low then pre=pre or q end
-			end end
-			return exact or ci or pre
-		end)()
-		if not pl then notify("Target","No player in this server matches \""..tostring(CFG.TargetUser).."\"."); refreshTarget(); return end
-		__gg.MH_Target.plr = pl
-		local ch=WS:FindFirstChild("Characters"); __gg.MH_Target.model=(ch and ch:FindFirstChild(pl.Name)) or pl.Character
-		notify("Target","Loaded "..pl.Name..".")
+		local T=__gg.MH_Target
+		local pl = __gg.MH_targetResolve and __gg.MH_targetResolve(CFG.TargetUser)
+		if not pl then notify("Target","No player in this server matches \""..tostring(CFG.TargetUser).."\"."); T.plr=nil; T.model=nil; refreshTarget(); return end
+		T.plr = pl
+		T.model = __gg.MH_targetModelFor and __gg.MH_targetModelFor(pl)
+		notify("Target","Loaded "..pl.Name..(T.model and "." or " — their dino isn't visible yet; the profile fills in when it is."))
 		refreshTarget()
 	end,2)
-	-- keep the readout live (distance/health tick) while the tab is used
+	mkBtn(ld,"Unload",function()
+		local T=__gg.MH_Target; T.plr=nil; T.model=nil; T.viewing=false
+		notify("Target","Target cleared."); refreshTarget()
+	end,2.5)
+	-- live tick: keep the profile fresh (distance/health/stage) and re-find their dino if it respawned
 	task.spawn(function() while RUNNING do if __gg.MH_Target and __gg.MH_Target.plr then pcall(refreshTarget) end task.wait(1) end end)
+	refreshTarget()
 
 	local _,ac=mkSec(p,"Actions",2)
-	mkBtn(ac,"View Player (spectate)",function()
-		if not (__gg.MH_Target and __gg.MH_Target.plr) then notify("Target","Load a player first."); return end
-		__gg.MH_Target.viewing = not __gg.MH_Target.viewing
-		notify("Target", __gg.MH_Target.viewing and "Now spectating "..__gg.MH_Target.plr.Name.."." or "Stopped spectating.")
+	mkBtn(ac,"View Player (on / off)",function()
+		local T=__gg.MH_Target
+		if not (T and T.plr) then notify("Target","Load a player first."); return end
+		T.viewing = not T.viewing
+		if T.viewing and not (T.model and T.model.Parent) then
+			T.model = __gg.MH_targetModelFor and __gg.MH_targetModelFor(T.plr)
+			if not T.model then T.viewing=false; notify("Target","Can't view — their dino isn't loaded in (too far away)."); return end
+		end
+		notify("Target", T.viewing and ("Viewing "..T.plr.Name.." — press again to stop.") or "Stopped viewing — camera back on your dino.")
 	end,1)
 	mkToggle(ac,"Track Player","TargetTrack",2)
 	mkLabel(ac,"Track keeps a marker + distance on them.")
 	mkBtn(ac,"Teleport to Player",function()
-		if not (__gg.MH_Target and __gg.MH_Target.model and __gg.MH_Target.model.Parent) then notify("Target","Load a player first."); return end
-		local T=__gg.MH_Target; local r=getHitbox(T.model) or rootOf(T.model)
-		if not r then notify("Target","Can't find their position."); return end
-		local goal=r.Position+Vector3.new(0,6,0)
-		if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
-		if __gg.MH_hopMove then __gg.MH_hopMove(goal) else local cc=getMyModel(); pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(CFrame.new(goal)) else local h=hrp(); if h then h.CFrame=CFrame.new(goal) end end end) end
-		notify("Target","Teleported to "..T.plr.Name..".")
+		local T=__gg.MH_Target
+		if not (T and T.plr) then notify("Target","Load a player first."); return end
+		if __gg.MH_targetTeleport and __gg.MH_targetTeleport() then notify("Target","Teleported to "..T.plr.Name..".")
+		else notify("Target","Can't find their position (their dino isn't loaded in).") end
 	end,4)
 	mkBtn(ac,"Attack Player Once",function()
-		if not (__gg.MH_Target and __gg.MH_Target.model and __gg.MH_Target.model.Parent) then notify("Target","Load a player first."); return end
-		if _G.MH_attack then pcall(function() _G.MH_attack(__gg.MH_Target.model) end); notify("Target","Hit "..__gg.MH_Target.plr.Name..".")
-		else notify("Target","Attack unavailable.") end
+		local T=__gg.MH_Target
+		if not (T and T.model and T.model.Parent) then notify("Target","Load a player first."); return end
+		if _G.MH_attack then pcall(function() _G.MH_attack(T.model) end); notify("Target","Hit "..T.plr.Name..".")
+		else notify("Target","Attack unavailable — bite something once so the Attack remote gets captured, then retry.") end
 	end,5)
 	if __gg.PE_PLUS then   -- Auto Farm Player = Plus + Premium
 		local _,af=mkSec(p,"Auto Farm Player",3)
@@ -3131,43 +3151,57 @@ do
 		if prompt then pcall(function() local od,oh=prompt.MaxActivationDistance,prompt.HoldDuration; prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(od or 8,40); prompt.HoldDuration=0; if fireprox then fireprox(prompt) end; prompt.MaxActivationDistance=od; prompt.HoldDuration=oh end) end   -- restore so YOUR hold-to-eat still works
 		pcall(fakeEat)   -- captured Bite remotes — fills the bar without pressing E
 	end
-	-- FULL → walk in a CIRCLE using the real W/A/S/D keys (native movement, no velocity snap). We press the WASD combo
-	-- toward a direction that slowly ROTATES, so you trace a circle. Trot/sprint off so it stays a slow growth walk.
+	-- FULL → walk in a CIRCLE. REWORKED (was: W+D key holds — those only walked you diagonally in a straight line,
+	-- and the fake key-holds could STICK after you turned Pro Food off, so you kept "circling" forever): now the
+	-- circle is a rotating-heading velocity drive (the same proven write INF Stam / Speed Hack use) at a slow walk
+	-- speed, reported to the server on its own move remote so it never snaps. Stopping is now a hard stop —
+	-- stopCircle() zeroes the drive, releases any legacy keys, and runs the moment Pro Food turns off or you eat.
 	local PWK = {W=Enum.KeyCode.W, A=Enum.KeyCode.A, S=Enum.KeyCode.S, D=Enum.KeyCode.D}
 	PRO.held = PRO.held or {}
-	local function setKey(k, down) if PRO.held[k]==down then return end; PRO.held[k]=down; pcall(function() VIM:SendKeyEvent(down, PWK[k], false, game) end) end
-	local function releaseWASD() for k in pairs(PWK) do setKey(k,false) end end
-	local function circle()
-		-- HOLD W + D: forward + right. The camera follows your dino, so holding these two keeps curving you right =
-		-- a continuous circle (the classic third-person circle-strafe). Trot/sprint off so it's a slow growth walk.
+	local function releaseWASD()   -- unconditional key-ups: never trust the held-table to know a key stuck
+		for k,kc in pairs(PWK) do PRO.held[k]=false; pcall(function() VIM:SendKeyEvent(false, kc, false, game) end) end
+	end
+	local function stopCircle()
+		if not PRO.circling then return end
+		PRO.circling=false
+		releaseWASD()
+		local r=hrp(); if r then pcall(function() r.AssemblyLinearVelocity=Vector3.new(0, r.AssemblyLinearVelocity.Y, 0) end) end
+	end
+	local function circle()   -- one STEP of the circle walk; call it repeatedly while food is full
+		if not PRO.circling then PRO.circling=true; releaseWASD() end
 		pcall(function() replicaAction("SetAction","Run",false) end); pcall(function() replicaAction("SetAction","Trot",false) end)
-		setKey("W", true); setKey("D", true); setKey("A", false); setKey("S", false)
+		local r=hrp(); if not r then return end
+		local now=tick(); local dt=math.clamp(now-(PRO.stepT or now), 0, 0.6); PRO.stepT=now
+		PRO.ang=((PRO.ang or 0) + dt*0.8) % (2*math.pi)   -- ~8s per lap; walk speed 8 → ≈10-stud circle
+		local dir=Vector3.new(math.cos(PRO.ang), 0, math.sin(PRO.ang))
+		pcall(function() r.AssemblyLinearVelocity=Vector3.new(dir.X*8, r.AssemblyLinearVelocity.Y, dir.Z*8) end)
+		if __gg.MH_hopFire and now-(PRO.cfT or 0)>0.12 then PRO.cfT=now; __gg.MH_hopFire(r.CFrame) end   -- server follows = no snap
 	end
 	task.spawn(function() while RUNNING do
 		if CFG.ProFood and alive() and tick()>=(__gg.MH_spawnGrace or 0) then
-			if reachedAge() then CFG.ProFood=false; if __gg.MH_setToggle then __gg.MH_setToggle("ProFood",false) end; pcall(function() notify("Pro Food","Reached "..tostring(CFG.ProFoodStopAge).." — growth stopped.") end)
+			if reachedAge() then stopCircle(); CFG.ProFood=false; if __gg.MH_setToggle then __gg.MH_setToggle("ProFood",false) end; pcall(function() notify("Pro Food","Reached "..tostring(CFG.ProFoodStopAge).." — growth stopped.") end)
 			else
 				local ff = foodFrac(); local r = hrp()
 				if ff and ff>=0.96 then
-					PRO.cur=nil; circle(); task.wait(0.15)          -- FULL → circle to grow (drop the corpse lock)
+					PRO.cur=nil; circle(); task.wait(0.1)           -- FULL → circle to grow (drop the corpse lock)
 				elseif PRO.cur and PRO.cur.Parent and r and (PRO.cur.Position - r.Position).Magnitude < 60 then
 					-- STICKY: still on the current corpse → EAT IN PLACE, never re-teleport. If food stops rising for
 					-- ~5s the corpse is finished → drop it so we move to the next one.
 					if ff and (not PRO.lastFood or ff > PRO.lastFood + 0.001) then PRO.lastFood=ff; PRO.foodT=tick() end
 					if PRO.foodT and tick()-PRO.foodT > 5 then PRO.cur=nil
-					else releaseWASD(); eatAt(PRO.cur); task.wait(0.4) end   -- eating = keys off (not circling)
+					else stopCircle(); eatAt(PRO.cur); task.wait(0.4) end   -- eating = circle off (standing still)
 				else
 					-- no corpse locked (or it's gone/far) → pick a new SAFE corpse and TELEPORT ONCE, then lock it
-					releaseWASD()
 					local fd = pickSafeFood()
 					if fd and fd[2] then
+						stopCircle()
 						PRO.cur=fd[2]; PRO.lastFood=ff; PRO.foodT=tick()
 						if r and (fd[2].Position - r.Position).Magnitude > 14 and __gg.MH_tpToCorpse then pcall(function() __gg.MH_tpToCorpse(fd[2]) end); task.wait(0.9) end
 						eatAt(fd[2]); task.wait(0.4)
-					else circle(); task.wait(0.4) end
+					else circle(); task.wait(0.1) end   -- nothing to eat anywhere → keep circling (still grows)
 				end
 			end
-		else PRO.cur=nil; releaseWASD(); task.wait(0.4) end   -- Pro Food off → let go of the keys
+		else PRO.cur=nil; stopCircle(); task.wait(0.2) end   -- Pro Food OFF → hard-stop the circle NOW (keys + velocity)
 	end end)
 end
 task.spawn(function() while RUNNING do
@@ -4291,6 +4325,7 @@ local function targetResolvePlayer(txt)
 	end
 	return exact or ci or pre
 end
+__gg.MH_targetResolve = targetResolvePlayer   -- the Target tab (built earlier in the file) calls these at click time
 -- The player's dino model (Characters[name], then their .Character, then LeftCharacters).
 local function targetModelFor(pl)
 	if not pl then return nil end
@@ -4302,6 +4337,7 @@ local function targetModelFor(pl)
 	if ci then local lm=ci:FindFirstChild(pl.Name); if lm then return lm end end
 	return nil
 end
+__gg.MH_targetModelFor = targetModelFor
 -- Read a stat off a model/MeshModel by trying several attribute names; returns number or nil.
 local function targetAttrNum(model, names)
 	if not model then return nil end
@@ -4321,8 +4357,12 @@ local function targetReadInfo()
 	if pl and (not model or not model.Parent) then model = targetModelFor(pl); T.model = model end
 	local info = { user=pl and pl.Name, display=pl and pl.DisplayName, userId=pl and pl.UserId }
 	if model then
-		info.species = detectDinoModel(model) or (model:FindFirstChild("MeshModel") and model.MeshModel:GetAttribute("Type")) or model:GetAttribute("Type") or model:GetAttribute("DinoType")
-		info.stage = (model:FindFirstChild("MeshModel") and model.MeshModel:GetAttribute("Stage")) or model:GetAttribute("Stage") or model:GetAttribute("GrowthStage") or model:GetAttribute("Age")
+		-- read exactly the way we read OUR OWN dino (skGetCharInfo): the MeshModel's Type/Stage/Gender attributes
+		-- are how PE tags every dino, the target's included.
+		local mm = model:FindFirstChild("MeshModel")
+		info.species = (mm and mm:GetAttribute("Type")) or detectDinoModel(model) or model:GetAttribute("Type") or model:GetAttribute("DinoType")
+		info.stage = (mm and mm:GetAttribute("Stage")) or model:GetAttribute("Stage") or model:GetAttribute("GrowthStage") or model:GetAttribute("Age")
+		info.gender = (mm and mm:GetAttribute("Gender")) or model:GetAttribute("Gender")
 		local h = model:FindFirstChildOfClass("Humanoid")
 		if h and h.MaxHealth>0 then info.hp = math.floor(h.Health+0.5); info.hpMax = math.floor(h.MaxHealth+0.5) end
 		info.food = targetAttrNum(model, {"Food","Hunger","Nutrition","Fullness"})
@@ -4347,22 +4387,39 @@ local function targetTeleport()
 	end
 	return true
 end
--- Spectate camera: point the camera at the target's dino; restore on toggle-off / target loss.
-task.spawn(function() while RUNNING do
-	local T = __gg.MH_Target
-	if T.viewing and T.model and T.model.Parent then
-		local subj = T.model:FindFirstChildOfClass("Humanoid") or getHitbox(T.model) or rootOf(T.model)
-		if subj and Cam then pcall(function() Cam.CameraSubject = subj end) end
-		task.wait(0.2)
-	else
-		if T.viewing and (not T.model or not T.model.Parent) then
-			-- target gone: fall back to your own camera
-			local mine=getMyModel(); local h=mine and mine:FindFirstChildOfClass("Humanoid")
-			if h and Cam then pcall(function() Cam.CameraSubject=h end) end
+__gg.MH_targetTeleport = targetTeleport
+-- Spectate camera — REWORKED ("viewing don't work"): just setting Cam.CameraSubject did nothing because PE's own
+-- camera scripts fight it back every frame. Now viewing takes the camera over completely (Scriptable) and follows
+-- the target's dino from behind-above every frame, scaled to the dino's size so an Elder rex and a hatchling both
+-- frame nicely. On stop / target loss the camera is handed straight back to YOUR dino (Custom + your Humanoid).
+task.spawn(function()
+	local wasViewing=false
+	while RUNNING do
+		local T = __gg.MH_Target
+		if T.viewing and T.plr and (not T.model or not T.model.Parent) then T.model=targetModelFor(T.plr) end
+		if T.viewing and T.model and T.model.Parent then
+			wasViewing=true
+			local r = getHitbox(T.model) or rootOf(T.model)
+			if r and Cam then pcall(function()
+				Cam.CameraType = Enum.CameraType.Scriptable
+				local ext=12; pcall(function() local sz=T.model:GetExtentsSize(); ext=math.clamp(math.max(sz.X,sz.Y,sz.Z), 8, 120) end)
+				local look=r.CFrame.LookVector; local flat=Vector3.new(look.X,0,look.Z); flat=(flat.Magnitude>0.05) and flat.Unit or Vector3.new(0,0,-1)
+				local eye=r.Position - flat*(ext*1.6) + Vector3.new(0, ext*0.9, 0)
+				Cam.CFrame = CFrame.lookAt(eye, r.Position + Vector3.new(0, ext*0.25, 0))
+			end) end
+			task.wait()   -- every frame = smooth follow
+		else
+			if wasViewing then
+				wasViewing=false
+				if T.viewing then T.viewing=false; pcall(function() notify("Target","Lost sight of their dino — stopped viewing.") end) end
+				pcall(function() Cam.CameraType = Enum.CameraType.Custom end)
+				local mine=getMyModel(); local h=mine and mine:FindFirstChildOfClass("Humanoid")
+				if h and Cam then pcall(function() Cam.CameraSubject=h end) end
+			end
+			task.wait(0.3)
 		end
-		task.wait(0.4)
 	end
-end end)
+end)
 -- Track: a Highlight on the loaded player's dino while CFG.TargetTrack is on (clears when off / gone).
 task.spawn(function() local hl
 	while RUNNING do

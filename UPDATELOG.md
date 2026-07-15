@@ -1,7 +1,38 @@
 DREAM HUB - UPDATE LOG
 
 ===================================================================
-GLIDE ROUTING + SPEED BAND + FOSSIL INSTANT TP  (latest)
+TARGET TAB REWORK + SPEED DECIMALS + PRO FOOD CIRCLE  (latest)
+===================================================================
+
+PRIOR EXTINCTION
+~ TARGET TAB REWORKED (was: nothing worked). The root cause: in the
+  Fluent menu every profile row was silently a dead stub, so Load ran
+  but nothing could ever display. Profile rows are real now in both
+  menus and show User, Dino, Stage, Gender, Health, Distance and a
+  Status line, refreshed live every second. Load tells you when the
+  player is found but their dino isn't streamed in yet (the profile
+  fills in as soon as it is), and there's an Unload button.
+~ View Player actually works now. Setting the camera subject did
+  nothing because PE's camera scripts fight it back — viewing now takes
+  the camera over completely and follows their dino from behind-above
+  every frame, scaled to the dino's size. Press again to stop; the
+  camera hands straight back to your dino (also on target loss).
+~ Run Speed slider now has DECIMALS (0.1 steps) across the 12-15 band,
+  so you can dial in the exact best speed (e.g. 14.7).
++ NEW: PE_SpeedFinder.lua (separate script) — shows your LIVE speed on
+  a HUD; press SHIFT to record the current number (log copies to your
+  clipboard so you can paste it back to support). Snapbacks are logged
+  AUTOMATICALLY with the speed you were running when the server yanked
+  you, so the tolerated max finds itself.
+~ Pro Food circle fixed both ways. ON: the old W+D key-hold only walked
+  you diagonally in a straight line — the circle is now a rotating-
+  heading walk (slow speed, reported on the game's own move remote) so
+  you genuinely go in a circle. OFF: the fake key-holds could stick and
+  keep you walking forever — turning Pro Food off now hard-stops the
+  circle immediately (keys released unconditionally + velocity zeroed).
+
+===================================================================
+GLIDE ROUTING + SPEED BAND + FOSSIL INSTANT TP
 ===================================================================
 
 JUJUTSU SHENANIGANS
