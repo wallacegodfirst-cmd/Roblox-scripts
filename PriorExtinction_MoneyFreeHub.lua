@@ -56,7 +56,7 @@ local CFG = {
 	BotFlee=true, BotFleeRange=240, BotRoam=true, BotRoamRadius=350, BotEatAt=80, BotDrinkAt=80, BotSleepHeal=true, BotSpeed=18, BotAnnounce=true,
 	BoneProtect=false, ProtectBone="All",
 	TurnHack=false, TurnSpeed=30,
-	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=14, Noclip=false, Invis=false,
+	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=15, Noclip=false, Invis=false,
 	InfJump=false, BypassTP=true,
 	InfFood=false, InfWater=false, InfStam=false, InfOxygen=false,
 	AntiDrown=true, AntiDrownRise=14, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false, HeadDmgReduce=90,
@@ -94,9 +94,10 @@ local function loadCfg()
 end
 loadCfg()
 -- MIGRATE + CLAMP the INF-Stam run speed on load: 16 was STILL above what the server tolerates ("16 speed makes
--- u snap back"), so the safe band is now 12-15 with 14 the default. Any saved value outside 12-15 (old 16-90
--- configs included) is reset to 14 so nobody keeps a snapping speed from an old save.
-do local rs = tonumber(CFG.RunSpeed) or 14; CFG.RunSpeed = (rs >= 12 and rs <= 15) and rs or 14 end
+-- u snap back"), so the safe band is 12-15. Default is 15: Speed-Finder testing measured ~15.7 sustained (21.9
+-- bursts) with ZERO snapbacks now that the drive reports through the game's own move remote — the band top is
+-- simply the best speed. Any saved value outside 12-15 (old 16-90 configs included) is reset to 15.
+do local rs = tonumber(CFG.RunSpeed) or 15; CFG.RunSpeed = (rs >= 12 and rs <= 15) and rs or 15 end
 MS("1 config ok")
 CFG.Keybinds = CFG.Keybinds or {}
 CFG.Keybinds.UIKey = CFG.Keybinds.UIKey or CFG.UIKey
@@ -1570,8 +1571,8 @@ do local p=Pages["Survival"]
 	local _,f=mkSec(p,"Stamina",1)
 	mkToggle(f,"INF Stamina","InfStam",1)
 	-- INF Stamina keeps the bar full AND holds your real run speed so exhaustion never slows you. Run Speed sets how
-	-- fast you move while it's on. 16+ made the server snap you back, so the slider is now the safe 12-15 band
-	-- (14 default) and the drive tells the server where you are through the game's own move remote so it sticks.
+	-- fast you move while it's on. 16+ made the server snap you back, so the slider is the safe 12-15 band
+	-- (15 default — Speed-Finder-verified) and the drive reports through the game's own move remote so it sticks.
 	-- DECIMALS (0.1 steps) so you can dial in the exact best speed — e.g. 14.7 if 15 snaps and 14 feels slow.
 	-- Want the exact number the server tolerates? Run the separate PE_SpeedFinder.lua and press Shift to record.
 	mkSlider(f,"Run Speed","RunSpeed",12,15,2,0.1)
@@ -2103,7 +2104,7 @@ conn(RunService.Heartbeat:Connect(function()
 	if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end
 	if dir.Magnitude<=0 then local h=charHumanoid(); local md=h and h.MoveDirection; if md and md.Magnitude>0 then dir=md end end   -- mobile thumbstick / click-to-move (use the real dino humanoid; LP.Character is often nil in PE)
 	if dir.Magnitude>0 then
-		local spd=math.clamp(tonumber(CFG.RunSpeed) or 14, 12, 15)   -- the slider value and NOTHING above it (16+ = snap back)
+		local spd=math.clamp(tonumber(CFG.RunSpeed) or 15, 12, 15)   -- the slider value and NOTHING above it (16+ = snap back)
 		dir=Vector3.new(dir.X,0,dir.Z).Unit*spd
 		pcall(function() r.AssemblyLinearVelocity=Vector3.new(dir.X, r.AssemblyLinearVelocity.Y, dir.Z) end)
 		-- ANTI-SNAPBACK: report our position on the game's own move remote (throttled ~10/s) so the server accepts it
