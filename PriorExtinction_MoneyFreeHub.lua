@@ -2085,9 +2085,11 @@ end
 -- INF STAM — REAL RUN SPEED (the "makes me slow" fix): pinning WalkSpeed did NOTHING here because PE's movement is
 -- server-authoritative — the server reverts a WalkSpeed write, so the exhaustion walk-speed held you slow no matter
 -- what we set. So instead we drive your horizontal velocity at your run speed while you MOVE, using the exact
--- per-frame write the Speed Hack uses. THE SNAP-BACK FIX ("it keeps sending me back / 16 speed makes u snap back"):
---   1) the speed is EXACTLY the slider value, clamped to the safe 12-15 band — the old code took the max of the
---      slider and the highest WalkSpeed ever seen, which could push you back over 16 and snap you; and
+-- per-frame write the Speed Hack uses. NO SLOW + NO SNAP-BACK, both at once:
+--   1) the speed is the Run Speed slider (12-15) OR the game's OWN sprint WalkSpeed for THIS dino, whichever is
+--      higher — big dinos sprint way above 15, and capping them at the slider made INF Stam feel slow. The
+--      learned sprint resets every time your dino changes, so a fast dino's speed never leaks onto a slow one,
+--      and the game's own sprint is a speed the server already accepts (it granted it).
 --   2) while we drive you, we keep telling the server where you are through the game's OWN move remote
 --      (ReplicaSignalUnreliable "CFrame" — the same channel the teleports use), ~10x/s. The server's copy of you
 --      follows along instead of deciding you moved impossibly and yanking you back.
@@ -2096,6 +2098,11 @@ end
 conn(RunService.Heartbeat:Connect(function()
 	if not (CFG.InfStam and alive()) or CFG.SpeedHack or CFG.Fly then return end
 	local r=hrp(); if not r then return end
+	pcall(function()   -- learn THIS dino's real sprint speed; reset the memory when the dino changes
+		local m=(WS:FindFirstChild("Characters") and WS.Characters:FindFirstChild(LP.Name)) or char()
+		if __gg.MH_runSpeedM~=m then __gg.MH_runSpeedM=m; __gg.MH_runSpeed=0 end
+		local h=charHumanoid(); if h and h.WalkSpeed and h.WalkSpeed>0 then __gg.MH_runSpeed=math.max(__gg.MH_runSpeed or 0, h.WalkSpeed) end
+	end)
 	local dir=Vector3.zero
 	local cf=(workspace.CurrentCamera and workspace.CurrentCamera.CFrame) or CFrame.new()
 	if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end
@@ -2104,7 +2111,7 @@ conn(RunService.Heartbeat:Connect(function()
 	if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end
 	if dir.Magnitude<=0 then local h=charHumanoid(); local md=h and h.MoveDirection; if md and md.Magnitude>0 then dir=md end end   -- mobile thumbstick / click-to-move (use the real dino humanoid; LP.Character is often nil in PE)
 	if dir.Magnitude>0 then
-		local spd=math.clamp(tonumber(CFG.RunSpeed) or 15, 12, 15)   -- the slider value and NOTHING above it (16+ = snap back)
+		local spd=math.max(math.clamp(tonumber(CFG.RunSpeed) or 15, 12, 15), __gg.MH_runSpeed or 0)   -- never slower than THIS dino's own sprint
 		dir=Vector3.new(dir.X,0,dir.Z).Unit*spd
 		pcall(function() r.AssemblyLinearVelocity=Vector3.new(dir.X, r.AssemblyLinearVelocity.Y, dir.Z) end)
 		-- ANTI-SNAPBACK: report our position on the game's own move remote (throttled ~10/s) so the server accepts it

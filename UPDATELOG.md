@@ -1,7 +1,36 @@
 DREAM HUB - UPDATE LOG
 
 ===================================================================
-TARGET TAB REWORK + SPEED DECIMALS + PRO FOOD CIRCLE  (latest)
+JJS VELOCITY TELEPORT + LOGO, PE INF STAM NO-SLOW  (latest)
+===================================================================
+
+JUJUTSU SHENANIGANS
+~ TELEPORT REBUILT on the velocity method: instead of writing CFrames,
+  you are pushed to the target with plain physics velocity every frame —
+  the server just watches you move, so there is nothing for it to
+  reject. Your own collision is off during the flight (restored after),
+  and when a building blocks the straight line you fly UP 400 studs
+  first, then dive to the target. Exact landing at the end. Applies to
+  every teleport (locations, players, slots, Target, Auto Farm) — one
+  engine.
+~ 🏗️ "In fixing" notes added while the new method is tested: on the
+  Teleports tab, the Target tab (teleports) and Auto Farm (teleport).
+~ LOGO FIXED: the floating button was a blank purple circle when the
+  logo image failed to load. It is now a proper gradient badge with a
+  white ring and DREAM across it from the first frame, and the real
+  logo image fades in on top only once it has actually loaded.
+
+PRIOR EXTINCTION (Plus)
+~ INF Stam is NO LONGER SLOW on big dinos. Capping the drive at the
+  12-15 slider band made anything whose real sprint is faster than 15
+  feel sluggish. The drive now uses the slider OR your dino's own
+  sprint WalkSpeed, whichever is higher — the game granted that speed,
+  so the server accepts it, and the position reporting keeps it from
+  snapping. The learned sprint resets whenever your dino changes, so a
+  rex's speed never leaks onto a hatchling.
+
+===================================================================
+TARGET TAB REWORK + SPEED DECIMALS + PRO FOOD CIRCLE
 ===================================================================
 
 PRIOR EXTINCTION

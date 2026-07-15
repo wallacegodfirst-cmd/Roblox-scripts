@@ -1063,11 +1063,7 @@ function vxHardWrite(char, hrp, cf)
 		hrp.AssemblyAngularVelocity = Vector3.new(0,0,0)
 	end)
 end
--- GLIDE ROUTING (obstacle avoidance): a straight glide INTO a building just grinds you along the wall until the
--- hold ends. Before gliding we raycast the path; if something solid blocks it we route AROUND the blocker the way
--- a real player would move — first via a known location from the Teleports tab list (those coordinates double as
--- safe waypoints), then a LEFT/RIGHT sidestep, then UP-and-over at rising heights, and as a last resort a high
--- cruise straight over everything with a drop down onto the target.
+-- FLIGHT PATH CHECK: is the straight line to the target blocked by anything solid (a building)?
 local function vxRouteClear(a, b)
 	local d = b - a
 	if d.Magnitude < 1 then return true end
@@ -1083,33 +1079,34 @@ local function vxRouteClear(a, b)
 	end)
 	return ok and hit == nil
 end
-local function vxBuildRoute(from, to)
-	if vxRouteClear(from, to) then return { to } end
-	local direct = (to - from).Magnitude
-	-- 1) known locations as waypoints: the smallest detour whose both legs are clear wins
-	local best, bestD
-	for _, s in ipairs(_G.VX_TP_SPOTS or {}) do
-		local p = s[2] + Vector3.new(0, 4, 0)
-		local d = (p - from).Magnitude + (to - p).Magnitude
-		if d < direct * 1.4 and (not bestD or d < bestD) and vxRouteClear(from, p) and vxRouteClear(p, to) then best, bestD = p, d end
+-- VELOCITY FLIGHT (the TP method that works): instead of writing CFrames at the target, we push the character
+-- there with plain physics VELOCITY every frame — the server watches you MOVE, so there is nothing to reject.
+-- Collisions are turned off on your own parts for the flight (restored after) so walls/floors can't stop you,
+-- and when the straight line is blocked by a building we fly UP 400 studs first, then dive to the target.
+-- Returns when you're within 3 studs (or the safety timeout fires — then we hard-write and let the lock hold).
+local function vxVelocityLeg(targetPos, speed, myGen)
+	local changed = {}
+	local c = vxMyChar()
+	if c then for _, v in ipairs(c:GetDescendants()) do
+		if v:IsA("BasePart") and v.CanCollide then v.CanCollide = false; changed[#changed + 1] = v end
+	end end
+	local h0 = c and c:FindFirstChild("HumanoidRootPart")
+	local t0 = tick()
+	local timeout = (h0 and (targetPos - h0.Position).Magnitude or 400) / speed * 2 + 2
+	while tick() - t0 < timeout do
+		if myGen ~= vxTeleGen then break end                          -- superseded by a newer teleport
+		local cc = vxMyChar(); local hrp = cc and cc:FindFirstChild("HumanoidRootPart")
+		if not hrp then break end
+		local dist = targetPos - hrp.Position
+		if dist.Magnitude < 3 then break end
+		hrp.AssemblyLinearVelocity = (dist.Magnitude > 0.01) and (dist.Unit * speed) or Vector3.zero
+		vxCurrentTargetCF = CFrame.new(hrp.Position)                  -- lock follows the flight (never yanks mid-air)
+		if math.floor((tick() - t0) * 10) % 3 == 0 then vxACPass() end
+		task.wait()
 	end
-	if best then return { best, to } end
-	-- 2) sidestep LEFT / RIGHT around the blocker
-	local flat = Vector3.new(to.X - from.X, 0, to.Z - from.Z)
-	local right = (flat.Magnitude > 0.1) and flat.Unit:Cross(Vector3.new(0, 1, 0)) or Vector3.new(1, 0, 0)
-	for _, off in ipairs({ right * 20, -right * 20, right * 45, -right * 45 }) do
-		local mid = (from + to) * 0.5 + off
-		if vxRouteClear(from, mid) and vxRouteClear(mid, to) then return { mid, to } end
-	end
-	-- 3) UP and over, trying higher each time
-	for _, rise in ipairs({ 30, 60, 100, 160 }) do
-		local a = from + Vector3.new(0, rise, 0)
-		local b = Vector3.new(to.X, math.max(to.Y + 6, a.Y), to.Z)
-		if vxRouteClear(from, a) and vxRouteClear(a, b) and vxRouteClear(b, to) then return { a, b, to } end
-	end
-	-- 4) last resort: cruise high above everything, then drop straight down onto the target
-	local cruise = math.max(from.Y, to.Y) + 220
-	return { Vector3.new(from.X, cruise, from.Z), Vector3.new(to.X, cruise, to.Z), to }
+	for _, v in ipairs(changed) do pcall(function() v.CanCollide = true end) end
+	local cc = vxMyChar(); local hrp = cc and cc:FindFirstChild("HumanoidRootPart")
+	if hrp then pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end) end
 end
 -- Teleport = THE GLIDE METHOD (default). Instead of one impossible-speed snap, we walk the server to the target
 -- in small believable hops and fire the anti-cheat "I teleported legitimately" pass on each hop -- the SAME
@@ -1147,34 +1144,19 @@ local function safeTeleport(targetCFrame, holdTime)
 		vxACPass()
 		vxCurrentTargetCF = targetCFrame
 	else
-		-- GLIDE along a ROUTE: if a building (or anything solid) blocks the straight line, vxBuildRoute bends the
-		-- path around it — up, left, right, or via a known location waypoint — and we glide leg by leg. >=3 hops
-		-- total even for short jumps, so a short teleport still passes the AC each step.
-		local route = vxBuildRoute(from, targetCFrame.Position)
-		local totalDist = 0
-		do local prev = from; for _, wp in ipairs(route) do totalDist = totalDist + (wp - prev).Magnitude; prev = wp end end
-		local hops = math.max(3, math.min(math.ceil(totalDist / step), 300))
-		glideSecs = hops / 60
+		-- VELOCITY FLIGHT (the working method): push yourself to the target with plain physics velocity —
+		-- the server just sees you moving, nothing to reject. If a building blocks the straight line we fly
+		-- UP 400 studs first, then dive to the target. Collisions off during flight, restored after.
+		local vel = math.clamp(tonumber(_G.VX_TP_VEL) or 100, 30, 400)
+		local blocked = not vxRouteClear(from, targetCFrame.Position)
+		local total = dist + (blocked and 800 or 0)                      -- up + dive when routing over a building
+		glideSecs = total / vel + 0.4
 		task.spawn(function()
-			local prev, done = from, 0
-			for _, wp in ipairs(route) do
-				local legHops = math.max(1, math.round(hops * (wp - prev).Magnitude / math.max(totalDist, 1)))
-				for i = 1, legHops do
-					if myGen ~= vxTeleGen then return end                 -- superseded by a newer teleport
-					local c = vxMyChar(); local h = c and c:FindFirstChild("HumanoidRootPart")
-					if not h then break end
-					local cf = CFrame.new(prev:Lerp(wp, i / legHops)) * targetCFrame.Rotation
-					vxHardWrite(c, h, cf)
-					vxCurrentTargetCF = cf                                 -- lock target follows the glide (no snap-to-end)
-					done = done + 1
-					if done == 1 or done % 3 == 0 then vxACPass() end      -- believable-move pass, throttled ~20/s
-					game:GetService("RunService").Heartbeat:Wait()
-				end
-				prev = wp
-			end
+			if blocked then vxVelocityLeg(from + Vector3.new(0, 400, 0), vel, myGen) end
+			vxVelocityLeg(targetCFrame.Position, vel, myGen)
 			if myGen ~= vxTeleGen then return end
 			local c = vxMyChar(); local h = c and c:FindFirstChild("HumanoidRootPart")
-			if c and h then vxHardWrite(c, h, targetCFrame); vxACPass() end
+			if c and h then vxHardWrite(c, h, targetCFrame); vxACPass() end   -- exact landing (position + facing)
 			vxCurrentTargetCF = targetCFrame
 		end)
 	end
@@ -2416,7 +2398,6 @@ do
 		{ "HOME", Vector3.new(265.3, 73.0, 120.3) },
 		{ "GET SOME MILK", Vector3.new(-240.9, 28.9, -124.2) },
 	}
-	_G.VX_TP_SPOTS = SPOTS   -- the glide router reads these: known locations double as safe waypoints when a building blocks the straight path
 	local function hrp() local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character; return c and c:FindFirstChild("HumanoidRootPart") end  -- JJS body lives under workspace.Characters
 	local function locate(names)
 		for _, nm in ipairs(names) do
@@ -9664,24 +9645,38 @@ do
         pcall(function() mmGui.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
         if not mmGui.Parent then mmGui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui") end
         local btn = Instance.new("ImageButton")
-        -- IMAGE LOGO, top-center. A raw decal id doesn't render in an ImageButton (that was the grey block) -
-        -- the rbxthumb:// endpoint DOES render decals, so we load it through that. Text fallback only if it fails.
+        -- LOGO FIX (was: a blank purple circle): the rbxthumb image often never loads in-game, and the old
+        -- fallback was a flat purple disc with tiny text. Now the button ALWAYS looks finished from frame one —
+        -- a purple→blue gradient circle, white ring, and "DREAM" across it — and the real logo image only fades
+        -- in ON TOP if (and only if) it verifiably loads. No more blank circle in any case.
         local LOGO_ID = "82151574125055"
         btn.Size = UDim2.fromOffset(52, 52); btn.Position = UDim2.new(0.5, -26, 0, 4); btn.AnchorPoint = Vector2.new(0, 0)
-        btn.BackgroundTransparency = 1; btn.AutoButtonColor = true
+        btn.BackgroundTransparency = 0; btn.BackgroundColor3 = Color3.fromRGB(124, 86, 255)
+        btn.AutoButtonColor = true
         btn.Image = "rbxthumb://type=Asset&id=" .. LOGO_ID .. "&w=150&h=150"
+        btn.ImageTransparency = 1   -- hidden until we KNOW it loaded
         btn.ScaleType = Enum.ScaleType.Fit
         btn.Active = true; btn.ZIndex = 10; btn.Parent = mmGui
         Instance.new("UICorner", btn).CornerRadius = UDim.new(1, 0)
-        task.delay(3, function()   -- if the thumbnail never loaded, fall back to a visible label (never an invisible/grey button)
-            if btn.Parent and not btn.IsLoaded then
-                pcall(function()
-                    btn.Image = ""
-                    btn.BackgroundTransparency = 0; btn.BackgroundColor3 = Color3.fromRGB(120, 80, 255)
-                    local tl = Instance.new("TextLabel"); tl.Size = UDim2.fromScale(1, 1); tl.BackgroundTransparency = 1
-                    tl.Font = Enum.Font.GothamBold; tl.Text = "Dream"; tl.TextSize = 12; tl.TextColor3 = Color3.fromRGB(255, 255, 255); tl.Parent = btn
-                end)
+        local grad = Instance.new("UIGradient"); grad.Rotation = 55
+        grad.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(158, 96, 255)),
+            ColorSequenceKeypoint.new(0.55, Color3.fromRGB(110, 82, 255)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(64, 120, 255)),
+        }); grad.Parent = btn
+        local ring = Instance.new("UIStroke"); ring.Color = Color3.fromRGB(255, 255, 255); ring.Transparency = 0.45; ring.Thickness = 1.6; ring.Parent = btn
+        local tl = Instance.new("TextLabel"); tl.Size = UDim2.fromScale(1, 1); tl.BackgroundTransparency = 1
+        tl.Font = Enum.Font.GothamBlack; tl.Text = "DREAM"; tl.TextScaled = true; tl.TextColor3 = Color3.fromRGB(255, 255, 255)
+        tl.ZIndex = 11; tl.Parent = btn
+        local pad2 = Instance.new("UIPadding"); pad2.PaddingLeft = UDim.new(0, 6); pad2.PaddingRight = UDim.new(0, 6)
+        pad2.PaddingTop = UDim.new(0, 17); pad2.PaddingBottom = UDim.new(0, 17); pad2.Parent = tl
+        task.spawn(function()   -- show the real logo image only once it has ACTUALLY loaded
+            for _ = 1, 40 do
+                if not btn.Parent then return end
+                if btn.IsLoaded then break end
+                task.wait(0.15)
             end
+            if btn.Parent and btn.IsLoaded then pcall(function() btn.ImageTransparency = 0; tl.Visible = false end) end
         end)
         -- DRAG (custom - won't capture-freeze movement) + TAP toggles the menu only if you didn't drag
         do
@@ -9940,6 +9935,7 @@ do
     task.spawn(function()   -- keep the item list current: refresh with the REAL items on the map every 10s
         while true do task.wait(10); pcall(function() if grabDD and ItemsApi then grabDD:Refresh(ItemsApi.names()) end end) end
     end)
+    pcall(function() auSec:Label("🏗️ Auto Farm: In fixing (teleport)") end)
     auSec:Toggle({ Name = "Auto Farm", Callback = function(b) if FarmApi then FarmApi.set(b) end end })
     auSec:Dropdown({ Name = "Farm Target", Items = playerList(), Default = "Nearest", Callback = function(v) if FarmApi then FarmApi.setTarget(v) end end })
     auSec:Toggle({ Name = "Auto Train", Callback = function(b) if TrainApi then TrainApi.setAuto(b) end end })
@@ -9948,6 +9944,7 @@ do
     local TargetPage = Window:Page({ Name = "Target", Icon = "crosshair" })
     local tgSub = TargetPage:SubPage({ Name = "Target", Columns = 2 })
     local tSec = tgSub:Section({ Name = "Target", Side = 1 })
+    pcall(function() tSec:Label("🏗️ In fixing (teleports)") end)
     -- IN-GUI info panel (user: "show it inside the gui"): one line per stat, all live-updating.
     local nameL, hpL, ultL, killL   -- fwd (textbox callback below refreshes them)
     local function liveInfo()
@@ -10070,6 +10067,7 @@ do
     local TpPage = Window:Page({ Name = "Teleports", Icon = "navigation" })
     local tpSub = TpPage:SubPage({ Name = "Teleports", Columns = 2 })
     local locSec = tpSub:Section({ Name = "Locations", Side = 1 })
+    pcall(function() locSec:Label("🏗️ In fixing") end)
     if TPApi and TPApi.spotNames then for _, n in ipairs(TPApi.spotNames()) do locSec:Button({ Name = n, Callback = function() if TPApi then TPApi.spot(n) end end }) end end
     local quickSec = tpSub:Section({ Name = "Quick", Side = 2 })
     quickSec:Button({ Name = "Print TP Remote", Callback = function()
