@@ -5,6 +5,9 @@
       is really Prior Ex Plus, retries through several fetch methods to route around a bad
       proxy, and tells you in plain words what happened.  ]]
 
+_G.PE_PLUS = true   -- tier flags: the hub reads these BEFORE loading. Without them this loader booted the
+_G.PE_PREM = true   -- hub in FREE tier (no Target tab / Auto Farm Player). Premium counts as Plus.
+
 -- TWO mirrors of the same file: if an executor proxy has poisoned its cache for one host,
 -- the other host path fetches clean.
 local URLS = {
