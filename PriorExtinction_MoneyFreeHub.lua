@@ -648,9 +648,15 @@ __gg.MH_spawnRescue = function()
 				local base=r.Position
 				pcall(function() LP:RequestStreamAroundAsync(base, 1) end)
 				local rp=RaycastParams.new(); rp.FilterType=Enum.RaycastFilterType.Exclude; rp.IgnoreWater=true   -- SOLID ground only: v1 used the water surface and parked you in the open ocean
+				rp.RespectCanCollide=true   -- FALSE-RESCUE FIX: without this the ray hit non-collidable TREE LEAVES above you, read the canopy as "the ground", decided you were under the map, and yanked you up on every normal forest spawn
 				rp.FilterDescendantsInstances={LP.Character, WS:FindFirstChild("Characters"), WS:FindFirstChild("CharacterIgnore")}
+				-- STANDING ON REAL GROUND = healthy spawn, hands off. This alone kills the "it keeps bringing me up
+				-- when I spawn on the map" bug: a normal spawn always has footing within a few studs.
+				local footing=WS:Raycast(base+Vector3.new(0,3,0), Vector3.new(0,-18,0), rp)
+				if footing then return end
 				local ground=WS:Raycast(Vector3.new(base.X, base.Y+400, base.Z), Vector3.new(0,-4000,0), rp)
 				local wp=RaycastParams.new(); wp.FilterType=Enum.RaycastFilterType.Exclude; wp.IgnoreWater=false
+				wp.RespectCanCollide=true
 				wp.FilterDescendantsInstances=rp.FilterDescendantsInstances
 				local surface=WS:Raycast(Vector3.new(base.X, base.Y+400, base.Z), Vector3.new(0,-4000,0), wp)
 				local deepSea = ground and surface and (surface.Position.Y - ground.Position.Y) > 25   -- solid floor way below the water = open ocean
