@@ -31,6 +31,11 @@ JUJUTSU SHENANIGANS
   and Auto Farm.
 
 ABILITY ARENA
++ AUTO HEAL (Plus + Premium): one button — hops you to the lobby,
+  instantly re-deploys, and puts you back on the exact spot you were
+  standing, with full health. Shows a clear notification that it WON'T
+  WORK IN PVP (the game blocks the lobby hop while you're in combat)
+  instead of silently doing nothing.
 + PREMIUM build added (AbilityArena_PREMIUM.lua) — everything in Plus,
   plus Premium-only features as they land.
 
