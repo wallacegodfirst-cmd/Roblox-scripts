@@ -1,6 +1,41 @@
 DREAM HUB - UPDATE LOG
 
 ===================================================================
+JJS TELEPORT FIXED + PE STAM/FOOD/TARGET PASS  (latest)
+===================================================================
+
+JUJUTSU SHENANIGANS
+~ TELEPORT FIXED for real: the flight engine was erroring at the end of
+  every leg (a leftover from the noclip refactor), so the landing never
+  ran and your collision never restored. Fixed — flights land exactly on
+  target and collisions always come back. The position lock also idles
+  during the flight now, so low-FPS clients don't get their flight
+  velocity zeroed mid-air.
+
+PRIOR EXTINCTION
+~ TARGET TAB ALWAYS LOADS — the Plus gate made the whole tab vanish
+  when the tier flag wasn't set (that's why "Target doesn't load").
+  The tab and everything in it (View, Track, Teleport, Attack, Auto
+  Farm Player) now builds for every loader.
+~ INF STAM NO LONGER TOUCHES YOUR MOVEMENT. The velocity drive was
+  fighting PE's server-side movement anti-cheat = the rubberbanding /
+  "all the bugs". Plain INF Stam now ONLY keeps the bar full. The
+  speed drive still exists as an optional "Run Speed Drive" toggle
+  (off by default) for those who want it.
+~ INF FOOD — BETTER, STRONGER, ALWAYS GROWS: the food bar is now
+  pinned to 100% while INF Food is on (max passive growth), and the
+  Bite spam finally obeys the "INF Food grow speed" slider — each
+  captured Bite remote fires 1-10x per pass (slider), on a faster
+  0.1s loop, capped so it can't lag. Note: the game may hide the
+  hold-E eat prompt while the bar reads full — growth comes from the
+  Bite spam, so you don't need E anymore.
+
+ABILITY ARENA
+~ Auto Heal notifications reworded: they no longer reveal how the
+  heal works — just "won't work in PvP", "not available yet", and
+  "Healed — full HP".
+
+===================================================================
 DEEP VERIFY PASS + TRASH THROW + AA PREMIUM  (latest)
 ===================================================================
 

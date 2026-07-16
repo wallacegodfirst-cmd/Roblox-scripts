@@ -1122,7 +1122,11 @@ local function vxVelocityLeg(targetPos, speed, myGen)
 		if math.floor((tick() - t0) * 10) % 3 == 0 then vxACPass() end
 		task.wait()
 	end
-	for _, v in ipairs(changed) do pcall(function() v.CanCollide = true end) end
+	-- (THE "teleport broken" BUG: this used to restore a `changed` list that no longer exists after the shared
+	-- noclip-list refactor — ipairs(nil) ERRORED here at the end of EVERY leg, so the landing hard-write never ran
+	-- and collisions never restored. vxNoclipOff is the correct restore: only the current teleport's landing
+	-- restores; a superseded leg leaves the shared list for the newer teleport.)
+	vxNoclipOff(myGen)
 	local cc = vxMyChar(); local hrp = cc and cc:FindFirstChild("HumanoidRootPart")
 	if hrp then pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end) end
 end
@@ -1169,6 +1173,7 @@ local function safeTeleport(targetCFrame, holdTime)
 		local blocked = not vxRouteClear(from, targetCFrame.Position)
 		local total = dist + (blocked and 800 or 0)                      -- up + dive when routing over a building
 		glideSecs = total / vel + 0.4
+		vxCurrentTargetCF = nil                                          -- lock idles during the flight (see vxVelocityLeg)
 		task.spawn(function()
 			if blocked then vxVelocityLeg(from + Vector3.new(0, 400, 0), vel, myGen) end
 			vxVelocityLeg(targetCFrame.Position, vel, myGen)

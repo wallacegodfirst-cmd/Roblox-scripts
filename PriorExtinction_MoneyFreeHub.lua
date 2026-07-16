@@ -56,7 +56,7 @@ local CFG = {
 	BotFlee=true, BotFleeRange=240, BotRoam=true, BotRoamRadius=350, BotEatAt=80, BotDrinkAt=80, BotSleepHeal=true, BotSpeed=18, BotAnnounce=true,
 	BoneProtect=false, ProtectBone="All",
 	TurnHack=false, TurnSpeed=30,
-	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=15, Noclip=false, Invis=false,
+	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=15, StamSpeedDrive=false, Noclip=false, Invis=false,
 	InfJump=false, BypassTP=true,
 	InfFood=false, InfWater=false, InfStam=false, InfOxygen=false,
 	AntiDrown=true, AntiDrownRise=14, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false, HeadDmgReduce=90,
@@ -1528,7 +1528,7 @@ MS("4 menu ready ("..(USE_FLUENT and "Fluent" or "built-in")..") - building tabs
 __gg.PE_PLUS = (_G.PE_PLUS==true) or (_G.PE_PREM==true) or (_G.PE_PREMIUM==true)
 __gg.PE_PREM = (_G.PE_PREM==true) or (_G.PE_PREMIUM==true)
 mkTab("Combat",1); mkTab("PvP",2); mkTab("Movement",3); mkTab("Survival",4); mkTab("Growth",5); mkTab("Auto Farm",6); mkTab("Teleport",7)
-if __gg.PE_PLUS then mkTab("Target",7.5) end   -- Target tab is Plus-only
+mkTab("Target",7.5)   -- Target tab always loads (the PE_PLUS gate made it vanish whenever the tier flag wasn't set)
 mkTab("Visuals",8); mkTab("Skins",9); mkTab("Misc",10); mkTab("Settings",11); mkTab("Info",12)
 
 do local p=Pages["Combat"]
@@ -1570,12 +1570,12 @@ do local p=Pages["Survival"]
 	-- (INF Food / INF Water / Carnivore Meat TP / Teleport Back moved to the Growth tab.) Stamina stays here.
 	local _,f=mkSec(p,"Stamina",1)
 	mkToggle(f,"INF Stamina","InfStam",1)
-	-- INF Stamina keeps the bar full AND holds your real run speed so exhaustion never slows you. Run Speed sets how
-	-- fast you move while it's on. 16+ made the server snap you back, so the slider is the safe 12-15 band
-	-- (15 default — Speed-Finder-verified) and the drive reports through the game's own move remote so it sticks.
-	-- DECIMALS (0.1 steps) so you can dial in the exact best speed — e.g. 14.7 if 15 snaps and 14 feels slow.
-	-- Want the exact number the server tolerates? Run the separate PE_SpeedFinder.lua and press Shift to record.
-	mkSlider(f,"Run Speed","RunSpeed",12,15,2,0.1)
+	-- INF Stamina now ONLY keeps the bar full — it never touches your movement, so no rubberbanding ever.
+	-- The optional Run Speed Drive below pushes your velocity at the slider speed; it can fight PE's movement
+	-- anti-cheat on some servers (that was "all the bugs"), which is why it's OFF by default. Use the separate
+	-- PE_SpeedFinder.lua (Shift records, snapbacks self-log) to find what your server tolerates before using it.
+	mkToggle(f,"Run Speed Drive (optional — can rubber-band)","StamSpeedDrive",2)
+	mkSlider(f,"Run Speed","RunSpeed",12,15,3,0.1)
 	local _,pr=mkSec(p,"Protection",2)
 	mkToggle(pr,"Anti Drown","AntiDrown",1)
 	mkSlider(pr,"Anti Drown Rise","AntiDrownRise",2,30,1,1)
@@ -1772,7 +1772,7 @@ if Pages["Target"] then local p=Pages["Target"]
 		if _G.MH_attack then pcall(function() _G.MH_attack(T.model) end); notify("Target","Hit "..T.plr.Name..".")
 		else notify("Target","Attack unavailable — bite something once so the Attack remote gets captured, then retry.") end
 	end,5)
-	if __gg.PE_PLUS then   -- Auto Farm Player = Plus + Premium
+	do   -- Auto Farm Player: ungated with the rest of the Target tab so EVERYTHING in the tab works
 		local _,af=mkSec(p,"Auto Farm Player",3)
 		mkToggle(af,"Auto Farm Player","AutoFarmPlayer",1)
 		mkLabel(af,"Keeps hitting the loaded player, teleporting to them if they run.")
@@ -2010,6 +2010,7 @@ conn(RunService.RenderStepped:Connect(function()
 		local function zero(keys) for _,k in ipairs(keys) do if stats[k]~=nil then if type(stats[k])=="boolean" then stats[k]=false else stats[k]=0 end end end end
 		if stats then
 			if CFG.InfStam   then pin({"Stamina","Stam","Energy","Endurance"}); zero({"Exhaustion","Fatigue","Tired","Exhausted"}) end
+			if CFG.InfFood   then pin({"Food","Hunger","Nutrition","Fullness","Satiation"}) end   -- FORCE FOOD TO 100% = max passive growth (the Bite spam grows you; you don't need the E prompt)
 			if CFG.InfOxygen then pin({"Oxygen","Air","Breath","O2","Lung"}) end
 			-- BONE PROTECTORS = HEALTH KEEP: the injury REPORT is swallowed in the hook, but the raw HP damage (your
 			-- 1k head hit) is dealt server-side and can't be refused — so while any bone protector is on we also PIN
@@ -2018,7 +2019,7 @@ conn(RunService.RenderStepped:Connect(function()
 				pin({"Health","HP","Hitpoints"})
 				pcall(function() local h=hum(); if h and h.MaxHealth>0 then h.Health=h.MaxHealth end end)
 			end
-			-- (food is NOT pinned here — pinning it to max hid the eat prompt so you couldn't hold E. Auto-eat refills it.)
+			-- (food IS pinned above now — you asked for max growth over the E prompt; the Bite spam feeds real growth.)
 			if CFG.InfWater  then pin({"Water","Thirst","Hydration"}) end
 			-- (Anti bleed/fracture/break handled by the dedicated PATH-AWARE antiInjurySweep loop below — more thorough.)
 		end
@@ -2095,8 +2096,12 @@ end
 --      follows along instead of deciding you moved impossibly and yanking you back.
 -- Runs only while you're actually moving (a key/thumbstick is down), so it costs nothing idle and never fights
 -- teleports or standing still. Speed Hack / Fly take over when either is on. Tune it with the Run Speed slider.
+-- THE BIG FIX ("Inf Stam causes all the bugs"): this velocity drive was fighting PE's server-side movement
+-- anti-cheat — overriding AssemblyLinearVelocity locally made the server violently snap you back. So it is now
+-- OFF unless you explicitly turn on the "Run Speed Drive" toggle. Plain INF Stam just keeps the bar full and
+-- NEVER touches your movement = no rubberbanding, no glitching.
 conn(RunService.Heartbeat:Connect(function()
-	if not (CFG.InfStam and alive()) or CFG.SpeedHack or CFG.Fly then return end
+	if not (CFG.InfStam and CFG.StamSpeedDrive and alive()) or CFG.SpeedHack or CFG.Fly then return end
 	local r=hrp(); if not r then return end
 	pcall(function()   -- learn THIS dino's real sprint speed; reset the memory when the dino changes
 		local m=(WS:FindFirstChild("Characters") and WS.Characters:FindFirstChild(LP.Name)) or char()
@@ -2149,19 +2154,24 @@ task.spawn(function() while RUNNING do
 					end
 				end
 			end)
-			-- Bite spam (growth), capped at ~10 fires per pass so it can't lag like the old x3-of-all loop
+			-- Bite spam (growth) — STRONGER: fires each captured Bite remote FoodEatSpeed times per pass (your
+			-- "INF Food grow speed" slider finally drives this, 1-10x), capped at 30 fires per pass so it can't lag.
 			if __gg.MH_lastEatCall then
 				local rs=getReplicaSignal()
 				if rs then
 					local list=__gg.MH_biteCalls; if type(list)~="table" or #list==0 then list={__gg.MH_lastEatCall} end
+					local spamCount=math.clamp(tonumber(CFG.FoodEatSpeed) or 5, 1, 10)
 					local fired=0
 					for _,ec in ipairs(list) do
-						if type(ec)=="table" and ec.n and ec.n>=2 then pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end); fired=fired+1; if fired>=10 then break end end
+						if type(ec)=="table" and ec.n and ec.n>=2 then
+							for _=1,spamCount do pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end); fired=fired+1; if fired>=30 then break end end
+						end
+						if fired>=30 then break end
 					end
 				end
 			end
 		end
-		task.wait(0.12)
+		task.wait(0.1)
 	else task.wait(0.4) end
 end end)
 

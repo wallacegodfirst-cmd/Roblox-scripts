@@ -2889,24 +2889,25 @@ end})
 -- teleported straight back to the exact spot you were standing on, with a fresh full-health character. The game
 -- refuses the lobby hop while you're IN COMBAT (the lobby button itself says so), so we tell you instead of
 -- silently doing nothing. Needs the executor's firesignal (most have it).
-CombatTab:CreateButton({Name="Auto Heal (full HP, keeps your spot)", Callback=function()
+CombatTab:CreateButton({Name="Auto Heal (won't work in PvP)", Callback=function()
+    -- NOTE: notifications are deliberately VAGUE — they never mention the lobby/re-deploy loop, so users can't
+    -- learn the method from the toasts and patch/leak it. Keep it that way.
     local function say(t) pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "Auto Heal", Text = t, Duration = 5 }) end) end
     local gi = LP:FindFirstChild("PlayerGui") and LP.PlayerGui:FindFirstChild("Game Interface")
     local main = gi and gi:FindFirstChild("Main_HUD"); main = main and main:FindFirstChild("Main")
     local deploy = main and main:FindFirstChild("Play")
     local lobbyBtn = main and main:FindFirstChild("MainMenu")
-    if not (deploy and lobbyBtn) then say("Can't find the game's Play/Lobby buttons — are you fully loaded in?") return end
+    if not (deploy and lobbyBtn) then say("Not available yet — wait for the game to fully load, then try again.") return end
     local txt = ""
     pcall(function() txt = tostring(lobbyBtn.TextContent.Text) end)
     if txt:lower():find("combat", 1, true) then
-        say("WON'T WORK IN PVP: you're in combat — the game blocks the lobby hop. Get out of combat, then press again.")
+        say("WON'T WORK IN PVP: you're in combat. Get out of combat, then press again.")
         return
     end
-    if typeof(firesignal) ~= "function" then say("Your executor has no firesignal — Auto Heal can't press the lobby button.") return end
+    if typeof(firesignal) ~= "function" then say("Your executor doesn't support Auto Heal.") return end
     local ch = LP.Character
     local og = ch and ch:GetPivot()
     if not og then say("No character to heal.") return end
-    say("Healing — lobby hop, re-deploy, and back to your spot...")
     LP.CharacterAdded:Once(function(newCh)
         task.spawn(function()
             newCh:WaitForChild("Humanoid", 8)
@@ -2918,7 +2919,7 @@ CombatTab:CreateButton({Name="Auto Heal (full HP, keeps your spot)", Callback=fu
                 if z and z < -250 then break end
             until tick() - t0 > 10
             pcall(function() (LP.Character or newCh):PivotTo(og) end)
-            say("Healed — full HP, back at your spot.")
+            say("Healed — full HP.")
         end)
     end)
     pcall(function() firesignal(lobbyBtn.Activated) end)
