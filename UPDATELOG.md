@@ -1,6 +1,37 @@
 DREAM HUB - UPDATE LOG
 
 ===================================================================
+PRIOR EX BIG BUG PASS  (latest)
+===================================================================
+
+PRIOR EXTINCTION
+~ DEATH-SPAWN LOOP FIXED (spawn outside the map -> die, every join,
+  even with no script running): that's a BAD SAVE — you saved while
+  teleported outside the map, so the GAME respawns you in the void
+  forever. New SPAWN RESCUE watches every spawn for ~20s: under the
+  map -> snapped on top of real ground; free-falling with no ground
+  anywhere below -> moved to a real spawn point / solid terrain, with
+  a notification telling you to RE-SAVE somewhere safe (that repairs
+  the bad save for good).
+~ TARGET: their dino + profile now actually load. Other players'
+  models are NOT named after the player (only yours is) — the lookup
+  now matches models the same way the ESP does, and the profile falls
+  back to the ESP's own reader for Dino/Stage/HP, so Target can never
+  show less than ESP does.
+~ INF STAM: Run Speed Drive is ON by default again — the WalkSpeed
+  keeper alone couldn't beat the server's every-frame clamp ("still
+  makes me slow"). Drive + move-remote reporting tested clean in the
+  Speed Finder. If a laggy server rubber-bands you, just flip the
+  drive off; the bar + WalkSpeed keeper stay.
+~ "I move like Pro Food when I toggle INF Food": clicking YES on the
+  corpse-TP popup was silently AUTO-STARTING Pro Food (the circling).
+  Removed — Pro Food only ever starts from its own Growth-tab toggle.
+~ "The E thing not working": INF Food pinned the bar to a literal
+  100%, and at full the game kills eating (prompt + E-hold). All food
+  forcing now targets 97% — same growth, and E/eating stays alive.
+  (Raise-only: eating past 97% yourself is never pulled back down.)
+
+===================================================================
 JJS TELEPORT FIXED + PE STAM/FOOD/TARGET PASS  (latest)
 ===================================================================
 

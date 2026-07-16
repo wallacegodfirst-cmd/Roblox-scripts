@@ -56,7 +56,7 @@ local CFG = {
 	BotFlee=true, BotFleeRange=240, BotRoam=true, BotRoamRadius=350, BotEatAt=80, BotDrinkAt=80, BotSleepHeal=true, BotSpeed=18, BotAnnounce=true,
 	BoneProtect=false, ProtectBone="All",
 	TurnHack=false, TurnSpeed=30,
-	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=15, StamSpeedDrive=false, Noclip=false, Invis=false,
+	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=15, StamDrive=true, Noclip=false, Invis=false,
 	InfJump=false, BypassTP=true,
 	InfFood=false, InfWater=false, InfStam=false, InfOxygen=false,
 	AntiDrown=true, AntiDrownRise=14, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false, HeadDmgReduce=90,
@@ -607,6 +607,52 @@ local function getSoundRemote()
 	if not RCACHE.sound then for _,d in ipairs(RS:GetDescendants()) do if d.Name=="SoundRemote" and d:IsA("RemoteEvent") then RCACHE.sound=d break end end end
 	return RCACHE.sound
 end
+-- ═══ SPAWN RESCUE — the "I spawn outside the map and die, EVERY time, even without the script" fix ═══
+-- Cause: a teleport put you outside the map and you SAVED there — so the GAME itself now respawns you in the
+-- void every join and you die on repeat (that's why it happens with no script running). While the hub IS running
+-- we break the loop: for ~20s after every spawn we stream the map in around you and raycast for real ground.
+-- Under the map → snapped on top of the ground. Free-falling with NO ground anywhere below for 6s+ → your spawn
+-- spot is genuinely outside the map, so we move you to a real spawn point / the nearest big terrain piece.
+-- Run the hub once after dying, stand somewhere real, and re-save — that repairs the bad save for good.
+-- (Stored on __gg, NOT a new local — the main chunk sits at Luau's 200-local cap.)
+__gg.MH_spawnRescue = function()
+	task.spawn(function()
+		local t0=tick()
+		while tick()-t0<20 and RUNNING do
+			pcall(function()
+				local r=hrp(); if not r then return end
+				local base=r.Position
+				pcall(function() LP:RequestStreamAroundAsync(base, 1) end)
+				local rp=RaycastParams.new(); rp.FilterType=Enum.RaycastFilterType.Exclude; rp.IgnoreWater=false
+				rp.FilterDescendantsInstances={LP.Character, WS:FindFirstChild("Characters"), WS:FindFirstChild("CharacterIgnore")}
+				local ground=WS:Raycast(Vector3.new(base.X, base.Y+400, base.Z), Vector3.new(0,-4000,0), rp)
+				local down=WS:Raycast(base, Vector3.new(0,-1500,0), rp)
+				local falling=(r.AssemblyLinearVelocity.Y < -25) and not down
+				if ground and base.Y < ground.Position.Y - 8 then
+					local goal=CFrame.new(ground.Position + Vector3.new(0,6,0))   -- under the map -> on top of it
+					for _=1,90 do local rr=hrp(); if rr then pcall(function() rr.CFrame=goal; rr.AssemblyLinearVelocity=Vector3.zero end) end task.wait() end
+					pcall(function() notify("Spawn Rescue","You spawned under the map — pulled you back on top. Re-save your dino somewhere safe!") end)
+				elseif falling and tick()-t0>6 then
+					local dest
+					pcall(function() local sp=WS:FindFirstChildWhichIsA("SpawnLocation", true); if sp then dest=sp.Position+Vector3.new(0,8,0) end end)
+					if not dest then pcall(function()
+						local bf=WS:FindFirstChild("Biomes") or WS:FindFirstChild("Map")
+						if bf then for _,d in ipairs(bf:GetDescendants()) do if d:IsA("BasePart") and d.Size.Magnitude>50 then dest=d.Position+Vector3.new(0,20,0); break end end end
+					end) end
+					if dest then
+						pcall(function() LP:RequestStreamAroundAsync(dest, 1) end)
+						local goal=CFrame.new(dest)
+						for _=1,90 do local rr=hrp(); if rr then pcall(function() rr.CFrame=goal; rr.AssemblyLinearVelocity=Vector3.zero end) end task.wait() end
+						pcall(function() notify("Spawn Rescue","Your saved spot is OUTSIDE the map — moved you somewhere real. Re-save your dino now so this stops happening!") end)
+					end
+				end
+			end)
+			task.wait(0.3)
+		end
+	end)
+end
+conn(LP.CharacterAdded:Connect(function() task.wait(1); if __gg.MH_spawnRescue then __gg.MH_spawnRescue() end end))
+task.spawn(function() task.wait(2); if __gg.MH_spawnRescue then __gg.MH_spawnRescue() end end)   -- also guard THIS spawn (you may already be falling)
 local CharacterState
 pcall(function() local cm=RS:FindFirstChild("Common"); local cs=cm and cm:FindFirstChild("CharacterState"); if cs then CharacterState=require(cs) end end)
 local function csReplica() return CharacterState and CharacterState.Replica end
@@ -1570,12 +1616,11 @@ do local p=Pages["Survival"]
 	-- (INF Food / INF Water / Carnivore Meat TP / Teleport Back moved to the Growth tab.) Stamina stays here.
 	local _,f=mkSec(p,"Stamina",1)
 	mkToggle(f,"INF Stamina","InfStam",1)
-	-- INF Stamina keeps the bar full AND keeps your WalkSpeed at your dino's real sprint (the server's exhaustion
-	-- clamp gets reverted every frame) — no velocity writes, so no rubberbanding ever. The optional Run Speed
-	-- Drive below pushes velocity at the slider speed on top; it can fight PE's movement anti-cheat on some
-	-- servers (that was "all the bugs"), which is why it's OFF by default. Use the separate PE_SpeedFinder.lua
-	-- (Shift records, snapbacks self-log) to find what your server tolerates before turning it on.
-	mkToggle(f,"Run Speed Drive (optional — can rubber-band)","StamSpeedDrive",2)
+	-- INF Stamina keeps the bar full, keeps your WalkSpeed at your dino's real sprint (the server's exhaustion
+	-- clamp gets reverted every frame), AND drives your run speed (slider, 12-15) with position reported on the
+	-- game's own move remote so it doesn't snap back. If a laggy server still rubber-bands you, turn the
+	-- Run Speed Drive off — the bar + WalkSpeed keeper stay on. PE_SpeedFinder.lua finds your server's limit.
+	mkToggle(f,"Run Speed Drive","StamDrive",2)
 	mkSlider(f,"Run Speed","RunSpeed",12,15,3,0.1)
 	local _,pr=mkSec(p,"Protection",2)
 	mkToggle(pr,"Anti Drown","AntiDrown",1)
@@ -1727,7 +1772,7 @@ if Pages["Target"] then local p=Pages["Target"]
 		sDino.Text   = info.species and tostring(info.species) or "--"
 		sStage.Text  = info.stage and tostring(info.stage) or "--"
 		sGender.Text = info.gender and tostring(info.gender) or "--"
-		sHP.Text     = fmtStat(info.hp, info.hpMax)
+		sHP.Text     = (type(info.hp)=="number" and fmtStat(info.hp, info.hpMax)) or info.hpStr or "--"
 		sDist.Text   = type(info.dist)=="number" and (info.dist.."m") or "--"
 		sState.Text  = (T.model and T.model.Parent) and (T.viewing and "viewing" or "loaded") or "dino not visible (they may be far / respawning)"
 	end
@@ -2014,7 +2059,17 @@ conn(RunService.RenderStepped:Connect(function()
 		local function zero(keys) for _,k in ipairs(keys) do if stats[k]~=nil then if type(stats[k])=="boolean" then stats[k]=false else stats[k]=0 end end end end
 		if stats then
 			if CFG.InfStam   then pin({"Stamina","Stam","Energy","Endurance"}); zero({"Exhaustion","Fatigue","Tired","Exhausted"}) end
-			if CFG.InfFood   then pin({"Food","Hunger","Nutrition","Fullness","Satiation"}) end   -- FORCE FOOD TO 100% = max passive growth (the Bite spam grows you; you don't need the E prompt)
+			-- FOOD = 97%, not 100% ("the E thing not working" fix): at a pinned 100% the game decides you're full —
+			-- the eat prompt dies and a manual E-hold does nothing. 97% keeps E/eating alive with the same growth.
+			-- Raise-only: if you eat past 97% yourself we never pull the bar back down.
+			if CFG.InfFood then for _,k in ipairs({"Food","Hunger","Nutrition","Fullness","Satiation"}) do
+				if stats[k]~=nil then
+					local cur=tonumber(stats[k])
+					if cur then __gg.MH_max=__gg.MH_max or {}; if not __gg.MH_max[k] or cur>__gg.MH_max[k] then __gg.MH_max[k]=cur end end
+					local target=(maxs and maxs[k]) or (__gg.MH_max and __gg.MH_max[k])
+					if target and cur and cur < target*0.97 then stats[k]=target*0.97 end
+				end
+			end end
 			if CFG.InfOxygen then pin({"Oxygen","Air","Breath","O2","Lung"}) end
 			-- BONE PROTECTORS = HEALTH KEEP: the injury REPORT is swallowed in the hook, but the raw HP damage (your
 			-- 1k head hit) is dealt server-side and can't be refused — so while any bone protector is on we also PIN
@@ -2112,8 +2167,10 @@ conn(RunService.Heartbeat:Connect(function()
 			h.WalkSpeed = __gg.MH_runSpeed   -- the server tried to slow you (exhaustion clamp) — force it back
 		end
 	end)
-	-- OPTIONAL velocity drive — only when the "Run Speed Drive" toggle is on (can rubber-band on some servers)
-	if CFG.StamSpeedDrive then
+	-- VELOCITY DRIVE — ON by default again ("inf stam still makes me slow"): the WalkSpeed keeper alone can't win
+	-- when the server re-clamps every frame, and the Speed-Finder test proved this drive + the move-remote
+	-- reporting runs clean (no snapbacks). New key (StamDrive) so configs saved while it was off don't stick.
+	if CFG.StamDrive then
 		local dir=Vector3.zero
 		local cf=(workspace.CurrentCamera and workspace.CurrentCamera.CFrame) or CFrame.new()
 		if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end
@@ -2137,7 +2194,7 @@ end))
 --   · because it is never pinned to full, the eat ProximityPrompt keeps showing, so you can still hold E to eat
 --     for growth. Eating pushes you toward 100%; this keeper never pulls you back down (it only fires when low).
 -- Reports through the SAME ReplicaSignal SetProperty the game uses, plus a client write so the HUD matches.
--- ═══ INF FOOD — SEVEN STRONG (force 100% + Bite spam) ═══ Forces the food bar to FULL and re-fires your captured
+-- ═══ INF FOOD — SEVEN STRONG (force 97% + Bite spam) ═══ Forces the food bar near-FULL and re-fires your captured
 -- Bite remotes so the server keeps registering you eating (= growth). Backs off only while YOU hold E, so a manual
 -- hold-to-eat still works. Bite fires are capped per pass so this stays strong WITHOUT re-introducing the lag.
 task.spawn(function() while RUNNING do
@@ -2154,9 +2211,9 @@ task.spawn(function() while RUNNING do
 					if foodKey then
 						mx = (maxs and (maxs[foodKey] or maxs.Food)) or (__gg.MH_maxFood) or 100
 						if cur and cur > 0 then __gg.MH_maxFood = math.max(__gg.MH_maxFood or 0, cur, mx); mx = __gg.MH_maxFood end
-						if cur and cur < mx then   -- FORCE TO 100%
-							pcall(function() replicaFire("SetProperty", foodKey, mx) end)
-							pcall(function() stats[foodKey] = mx end)
+						if cur and cur < mx*0.97 then   -- FORCE TO 97% ("E not working" fix: a literal-full bar kills eating; 97% = same growth, E stays alive)
+							pcall(function() replicaFire("SetProperty", foodKey, mx*0.97) end)
+							pcall(function() stats[foodKey] = mx*0.97 end)
 						end
 					end
 				end
@@ -3032,11 +3089,13 @@ local function doNextCorpse()
 	if not ok then corpseList={}; pcall(function() carnGui.Enabled=false end); notify("Corpse TP","Tried all "..tostring(tries).." corpse spots — none are in the map right now. Rescanning next press."); return end
 	pcall(function() carnLabel.Text="Teleported to corpse "..corpseIdx.." / "..#corpseList.." - did it work?"; carnGui.Enabled=true end)
 end
-yesBtn.MouseButton1Click:Connect(function()   -- YES = stay + AUTO-START Pro Food (the full growth loop takes over from here)
+yesBtn.MouseButton1Click:Connect(function()   -- YES = stay at this corpse (and stop the TP-cycle popup)
 	pcall(function() carnGui.Enabled=false end)
 	if __gg.MH_setToggle then __gg.MH_setToggle("CarnMeatTP", false) else CFG.CarnMeatTP=false end   -- stop the TP-cycle popup
-	if __gg.MH_setToggle then __gg.MH_setToggle("ProFood", true) else CFG.ProFood=true end            -- flip the Pro Food switch ON (visual too)
-	pcall(function() notify("Pro Food","Growth started — eating, then circling to grow, then next corpse. Pick a Stop-at-age in Growth.") end)
+	-- (NO MORE Pro Food AUTO-START: clicking YES used to silently flip Pro Food on, so people who only wanted the
+	-- corpse TP suddenly started "moving like Pro Food" — circling on their own. Pro Food is now ONLY ever the
+	-- Growth-tab toggle you flip yourself.)
+	pcall(function() notify("Corpse TP","Staying here. Want the full growth loop (eat + circle + next corpse)? Turn on Pro Food in the Growth tab.") end)
 	local r=hrp(); if r then local pos=r.Position
 		task.spawn(function() local bp=Instance.new("BodyPosition"); bp.MaxForce=Vector3.new(9e9,9e9,9e9); bp.P=2e4; bp.D=2500; bp.Position=pos; pcall(function() bp.Parent=r end)
 			local t0=tick(); while tick()-t0<1.2 do local rr=hrp(); if rr then pcall(function() rr.AssemblyLinearVelocity=Vector3.zero end) end; task.wait(0.1) end
@@ -4351,13 +4410,24 @@ local function targetResolvePlayer(txt)
 	return exact or ci or pre
 end
 __gg.MH_targetResolve = targetResolvePlayer   -- the Target tab (built earlier in the file) calls these at click time
--- The player's dino model (Characters[name], then their .Character, then LeftCharacters).
+-- The player's dino model. THE "dino never loads" FIX: other players' models under workspace.Characters are
+-- NOT named after the player (that only holds for YOUR own dino) — the ESP always matched them with
+-- Players:GetPlayerFromCharacter, so the Target lookup now does the same: .Character first, then the
+-- name fast-path, then a GetPlayerFromCharacter scan of every model, then LeftCharacters.
 local function targetModelFor(pl)
 	if not pl then return nil end
-	local ch = WS:FindFirstChild("Characters")
-	local m = ch and ch:FindFirstChild(pl.Name)
-	if m and m.Parent then return m end
 	if pl.Character and pl.Character.Parent then return pl.Character end
+	local ch = WS:FindFirstChild("Characters")
+	if ch then
+		local m = ch:FindFirstChild(pl.Name)
+		if m and m.Parent then return m end
+		for _,mm in ipairs(ch:GetChildren()) do
+			if mm:IsA("Model") then
+				local owner; pcall(function() owner = Players:GetPlayerFromCharacter(mm) end)
+				if owner == pl then return mm end
+			end
+		end
+	end
 	local ci = WS:FindFirstChild("CharacterIgnore"); ci = ci and ci:FindFirstChild("LeftCharacters")
 	if ci then local lm=ci:FindFirstChild(pl.Name); if lm then return lm end end
 	return nil
@@ -4388,6 +4458,16 @@ local function targetReadInfo()
 		info.species = (mm and mm:GetAttribute("Type")) or detectDinoModel(model) or model:GetAttribute("Type") or model:GetAttribute("DinoType")
 		info.stage = (mm and mm:GetAttribute("Stage")) or model:GetAttribute("Stage") or model:GetAttribute("GrowthStage") or model:GetAttribute("Age")
 		info.gender = (mm and mm:GetAttribute("Gender")) or model:GetAttribute("Gender")
+		-- FALLBACK = the ESP's own reader (readDinoInfo, exposed as __gg.MH_readDino): it's the thing that already
+		-- shows species/stage/HP/stam on every dino on the map, so the Target profile can never do worse than ESP.
+		pcall(function()
+			if __gg.MH_readDino then
+				local sp, gr, hpStr, stamStr = __gg.MH_readDino(model)
+				info.species = info.species or sp
+				info.stage = info.stage or gr
+				info.hpStr = hpStr; info.stamStr = stamStr
+			end
+		end)
 		local h = model:FindFirstChildOfClass("Humanoid")
 		if h and h.MaxHealth>0 then info.hp = math.floor(h.Health+0.5); info.hpMax = math.floor(h.MaxHealth+0.5) end
 		info.food = targetAttrNum(model, {"Food","Hunger","Nutrition","Fullness"})
@@ -4607,7 +4687,7 @@ task.spawn(function() while RUNNING do
 	if CFG.ESPColor=="Rainbow" then local col=Color3.fromHSV((tick()*0.15)%1,1,1); for _,o in pairs(ESP.objs) do pcall(function() if o[1] then o[1].FillColor=col end if o[3] then o[3].TextColor3=col end end) end; task.wait(0.05)
 	else task.wait(0.3) end
 end end)
-local function readDinoInfo(model)
+local function readDinoInfo(model)   -- (exposed as __gg.MH_readDino below — the Target profile reuses it)
 	local species,growth,health,stam,bleed,hpFrac
 	species = detectDinoModel(model)
 	for _,a in ipairs({"GrowthStage","Stage","Growth","Age","Maturity","LifeStage"}) do local v=model:GetAttribute(a); if v~=nil then growth=tostring(v); break end end
@@ -4671,6 +4751,7 @@ local function readDinoInfo(model)
 	end
 	return species,growth,health,stam,bleed,hpFrac,stamFrac
 end
+__gg.MH_readDino = readDinoInfo   -- the Target profile calls this at runtime (guarded) — same reader the ESP uses
 -- ESP is throttled (1.6s) and HARD-CAPPED at 60 objects, and the whole rebuild is pcall-wrapped,
 -- so Fish ESP (which used to scan the entire workspace every 0.6s) can no longer lag you out or kill the menu.
 task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
