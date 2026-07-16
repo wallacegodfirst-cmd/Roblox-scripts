@@ -1570,10 +1570,11 @@ do local p=Pages["Survival"]
 	-- (INF Food / INF Water / Carnivore Meat TP / Teleport Back moved to the Growth tab.) Stamina stays here.
 	local _,f=mkSec(p,"Stamina",1)
 	mkToggle(f,"INF Stamina","InfStam",1)
-	-- INF Stamina now ONLY keeps the bar full — it never touches your movement, so no rubberbanding ever.
-	-- The optional Run Speed Drive below pushes your velocity at the slider speed; it can fight PE's movement
-	-- anti-cheat on some servers (that was "all the bugs"), which is why it's OFF by default. Use the separate
-	-- PE_SpeedFinder.lua (Shift records, snapbacks self-log) to find what your server tolerates before using it.
+	-- INF Stamina keeps the bar full AND keeps your WalkSpeed at your dino's real sprint (the server's exhaustion
+	-- clamp gets reverted every frame) — no velocity writes, so no rubberbanding ever. The optional Run Speed
+	-- Drive below pushes velocity at the slider speed on top; it can fight PE's movement anti-cheat on some
+	-- servers (that was "all the bugs"), which is why it's OFF by default. Use the separate PE_SpeedFinder.lua
+	-- (Shift records, snapbacks self-log) to find what your server tolerates before turning it on.
 	mkToggle(f,"Run Speed Drive (optional — can rubber-band)","StamSpeedDrive",2)
 	mkSlider(f,"Run Speed","RunSpeed",12,15,3,0.1)
 	local _,pr=mkSec(p,"Protection",2)
@@ -1732,6 +1733,9 @@ if Pages["Target"] then local p=Pages["Target"]
 	end
 	mkBtn(ld,"Load Player",function()
 		local T=__gg.MH_Target
+		-- FORCE-READ the textbox ("user not in game" fix): the Fluent input only saves on Enter/focus-lost, so
+		-- typing a name and clicking Load straight away checked an EMPTY string. Read the live value directly.
+		pcall(function() if Fluent and Fluent.Options and Fluent.Options.TargetUser then CFG.TargetUser = Fluent.Options.TargetUser.Value end end)
 		local pl = __gg.MH_targetResolve and __gg.MH_targetResolve(CFG.TargetUser)
 		if not pl then notify("Target","No player in this server matches \""..tostring(CFG.TargetUser).."\"."); T.plr=nil; T.model=nil; refreshTarget(); return end
 		T.plr = pl
@@ -2083,44 +2087,47 @@ local function charHumanoid()
 	local m = (WS:FindFirstChild("Characters") and WS.Characters:FindFirstChild(LP.Name)) or char()
 	return m and m:FindFirstChildOfClass("Humanoid")
 end
--- INF STAM — REAL RUN SPEED (the "makes me slow" fix): pinning WalkSpeed did NOTHING here because PE's movement is
--- server-authoritative — the server reverts a WalkSpeed write, so the exhaustion walk-speed held you slow no matter
--- what we set. So instead we drive your horizontal velocity at your run speed while you MOVE, using the exact
--- per-frame write the Speed Hack uses. NO SLOW + NO SNAP-BACK, both at once:
---   1) the speed is the Run Speed slider (12-15) OR the game's OWN sprint WalkSpeed for THIS dino, whichever is
---      higher — big dinos sprint way above 15, and capping them at the slider made INF Stam feel slow. The
---      learned sprint resets every time your dino changes, so a fast dino's speed never leaks onto a slow one,
---      and the game's own sprint is a speed the server already accepts (it granted it).
---   2) while we drive you, we keep telling the server where you are through the game's OWN move remote
---      (ReplicaSignalUnreliable "CFrame" — the same channel the teleports use), ~10x/s. The server's copy of you
---      follows along instead of deciding you moved impossibly and yanking you back.
--- Runs only while you're actually moving (a key/thumbstick is down), so it costs nothing idle and never fights
--- teleports or standing still. Speed Hack / Fly take over when either is on. Tune it with the Run Speed slider.
--- THE BIG FIX ("Inf Stam causes all the bugs"): this velocity drive was fighting PE's server-side movement
--- anti-cheat — overriding AssemblyLinearVelocity locally made the server violently snap you back. So it is now
--- OFF unless you explicitly turn on the "Run Speed Drive" toggle. Plain INF Stam just keeps the bar full and
--- NEVER touches your movement = no rubberbanding, no glitching.
+-- INF STAM — NO SLOW (WalkSpeed keeper) + optional velocity drive.
+-- The server clamps your Humanoid WalkSpeed to walking pace whenever it decides stamina hit 0 (our drain hook
+-- can miss a packet). While INF Stam is on we LEARN this dino's real sprint WalkSpeed (per-life; resets when the
+-- dino changes) and simply put WalkSpeed back every Heartbeat if it gets cut. A per-frame re-apply wins even
+-- against a server revert, and there are NO velocity writes involved — so nothing to rubber-band or snap back.
+-- The old velocity drive (which DID fight PE's movement anti-cheat = "all the bugs") still exists below it, but
+-- only runs with the "Run Speed Drive" toggle on: slider speed (12-15) or the dino's own sprint, whichever is
+-- higher, with position reported ~10x/s on the game's own move remote. Speed Hack / Fly take over when on.
 conn(RunService.Heartbeat:Connect(function()
-	if not (CFG.InfStam and CFG.StamSpeedDrive and alive()) or CFG.SpeedHack or CFG.Fly then return end
+	if not (CFG.InfStam and alive()) or CFG.SpeedHack or CFG.Fly then return end
 	local r=hrp(); if not r then return end
-	pcall(function()   -- learn THIS dino's real sprint speed; reset the memory when the dino changes
+	-- WALKSPEED KEEPER ("Inf Stam still makes me slow" fix, NO velocity): the server clamps your WalkSpeed to
+	-- walk when it thinks stamina hit 0 (the hook can miss a drain packet). We LEARN this dino's real sprint
+	-- speed and put WalkSpeed back the moment it's cut — no velocity writes, so nothing to rubber-band.
+	pcall(function()
 		local m=(WS:FindFirstChild("Characters") and WS.Characters:FindFirstChild(LP.Name)) or char()
 		if __gg.MH_runSpeedM~=m then __gg.MH_runSpeedM=m; __gg.MH_runSpeed=0 end
-		local h=charHumanoid(); if h and h.WalkSpeed and h.WalkSpeed>0 then __gg.MH_runSpeed=math.max(__gg.MH_runSpeed or 0, h.WalkSpeed) end
+		local h=charHumanoid()
+		if h and h.WalkSpeed and h.WalkSpeed>0 then
+			__gg.MH_runSpeed=math.max(__gg.MH_runSpeed or 0, h.WalkSpeed)
+		end
+		if h and __gg.MH_runSpeed and __gg.MH_runSpeed>0 and h.WalkSpeed < __gg.MH_runSpeed then
+			h.WalkSpeed = __gg.MH_runSpeed   -- the server tried to slow you (exhaustion clamp) — force it back
+		end
 	end)
-	local dir=Vector3.zero
-	local cf=(workspace.CurrentCamera and workspace.CurrentCamera.CFrame) or CFrame.new()
-	if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end
-	if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end
-	if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end
-	if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end
-	if dir.Magnitude<=0 then local h=charHumanoid(); local md=h and h.MoveDirection; if md and md.Magnitude>0 then dir=md end end   -- mobile thumbstick / click-to-move (use the real dino humanoid; LP.Character is often nil in PE)
-	if dir.Magnitude>0 then
-		local spd=math.max(math.clamp(tonumber(CFG.RunSpeed) or 15, 12, 15), __gg.MH_runSpeed or 0)   -- never slower than THIS dino's own sprint
-		dir=Vector3.new(dir.X,0,dir.Z).Unit*spd
-		pcall(function() r.AssemblyLinearVelocity=Vector3.new(dir.X, r.AssemblyLinearVelocity.Y, dir.Z) end)
-		-- ANTI-SNAPBACK: report our position on the game's own move remote (throttled ~10/s) so the server accepts it
-		if __gg.MH_hopFire and tick()-(__gg.MH_stamCfT or 0)>0.1 then __gg.MH_stamCfT=tick(); __gg.MH_hopFire(r.CFrame) end
+	-- OPTIONAL velocity drive — only when the "Run Speed Drive" toggle is on (can rubber-band on some servers)
+	if CFG.StamSpeedDrive then
+		local dir=Vector3.zero
+		local cf=(workspace.CurrentCamera and workspace.CurrentCamera.CFrame) or CFrame.new()
+		if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end
+		if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end
+		if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end
+		if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end
+		if dir.Magnitude<=0 then local h=charHumanoid(); local md=h and h.MoveDirection; if md and md.Magnitude>0 then dir=md end end   -- mobile thumbstick / click-to-move (use the real dino humanoid; LP.Character is often nil in PE)
+		if dir.Magnitude>0 then
+			local spd=math.max(math.clamp(tonumber(CFG.RunSpeed) or 15, 12, 15), __gg.MH_runSpeed or 0)   -- never slower than THIS dino's own sprint
+			dir=Vector3.new(dir.X,0,dir.Z).Unit*spd
+			pcall(function() r.AssemblyLinearVelocity=Vector3.new(dir.X, r.AssemblyLinearVelocity.Y, dir.Z) end)
+			-- ANTI-SNAPBACK: report our position on the game's own move remote (throttled ~10/s) so the server accepts it
+			if __gg.MH_hopFire and tick()-(__gg.MH_stamCfT or 0)>0.1 then __gg.MH_stamCfT=tick(); __gg.MH_hopFire(r.CFrame) end
+		end
 	end
 end))
 
@@ -3282,9 +3289,9 @@ task.spawn(function() while RUNNING do
 end end)
 task.spawn(function() while RUNNING do
 	if CFG.InfWater and alive() then
-		fakeDrink()                       -- the captured "Sip" action (works at a water source)
-		local eHeld2 = false; pcall(function() eHeld2 = UIS:IsKeyDown(Enum.KeyCode.E) end)
-		if not eHeld2 then holdKey(Enum.KeyCode.E, 0.3) end   -- don't fight your own E-hold (was interrupting manual eat while INF Water on)
+		fakeDrink()                       -- fires the Sip remote directly (works map-wide)
+		-- E-KEY SPAM REMOVED ("the E thing is spamming, I can't eat"): this loop used to press E every 0.6s —
+		-- its synthetic key-UP kept cancelling your own hold-to-eat. The Sip remote alone fills water fine.
 		task.wait(0.6)
 	else task.wait(0.4) end
 end end)

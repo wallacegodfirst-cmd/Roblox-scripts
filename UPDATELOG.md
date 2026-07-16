@@ -13,6 +13,18 @@ JUJUTSU SHENANIGANS
   velocity zeroed mid-air.
 
 PRIOR EXTINCTION
+~ TARGET: "user not in game" fixed — the textbox only saved on Enter,
+  so typing a name and clicking Load straight away checked an EMPTY
+  string. Load now reads the live textbox value directly.
+~ INF WATER no longer blocks eating — it pressed E every 0.6s and the
+  synthetic key-release kept cancelling your manual hold-to-eat ("the
+  E thing is spamming"). The Sip remote alone fills water now; E is
+  never touched.
+~ INF STAM truly no-slow, no-glitch: a WalkSpeed keeper learns your
+  dino's real sprint speed and reverts the server's exhaustion clamp
+  every frame — pure WalkSpeed, zero velocity writes, so nothing can
+  rubber-band. The velocity drive stays available behind the optional
+  "Run Speed Drive" toggle.
 ~ TARGET TAB ALWAYS LOADS — the Plus gate made the whole tab vanish
   when the tier flag wasn't set (that's why "Target doesn't load").
   The tab and everything in it (View, Track, Teleport, Attack, Auto
