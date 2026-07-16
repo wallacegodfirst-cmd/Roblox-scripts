@@ -2619,10 +2619,17 @@ do
     -- ── ENEMY M1 DETECTOR (velocity of their arm + their attack anims, facing you) ──
     local EnemyAttacked = false
     local trackedHumans = setmetatable({}, { __mode = "k" })
+    -- DODGE TARGET FILTER: S.DodgeTarget is "All" (default) or a specific username. When it's a name, only that
+    -- player's attacks trigger a dodge — so you can dodge just one person and ignore everyone else.
+    local function dodgeAllowed(p)
+        local t = S.DodgeTarget
+        if not t or t == "" or t == "All" then return true end
+        return p and (p.Name == t or p.DisplayName == t)
+    end
     RunService.Heartbeat:Connect(function()
         local myRoot = getRoot(); if not myRoot then return end
         for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= LP and p.Character then
+            if p ~= LP and p.Character and dodgeAllowed(p) then
                 local tr = p.Character:FindFirstChild("HumanoidRootPart") or charPart(p.Character)
                 if tr then
                     if (tr.Position - myRoot.Position).Magnitude < 25 then
@@ -2641,6 +2648,7 @@ do
                         if anim then
                             anim.AnimationPlayed:Connect(function()
                                 if not (S.ProAutoDodge or S.LegitAutoPlay) then return end
+                                if not dodgeAllowed(p) then return end
                                 local myR = getRoot(); if not myR then return end
                                 local tr2 = p.Character and (p.Character:FindFirstChild("HumanoidRootPart") or charPart(p.Character))
                                 if tr2 and (tr2.Position - myR.Position).Magnitude < 35 then
@@ -2885,10 +2893,11 @@ CombatTab:CreateToggle({Name="God Mode", CurrentValue=false, Flag="GodModeLobby"
         end
     end)
 end})
--- AUTO HEAL (PLUS): the lobby re-deploy trick — press it and you hop to the lobby, instantly re-deploy, and get
--- teleported straight back to the exact spot you were standing on, with a fresh full-health character. The game
--- refuses the lobby hop while you're IN COMBAT (the lobby button itself says so), so we tell you instead of
--- silently doing nothing. Needs the executor's firesignal (most have it).
+-- AUTO HEAL (PLUS ONLY — NOT Premium): the lobby re-deploy trick — press it and you hop to the lobby, instantly
+-- re-deploy, and get teleported straight back to the exact spot you were standing on, with a fresh full-health
+-- character. The game refuses the lobby hop while you're IN COMBAT (the lobby button itself says so), so we tell
+-- you instead of silently doing nothing. Needs the executor's firesignal (most have it).
+if not _G.AA_PREM then   -- Auto Heal is a PLUS-tier feature; Premium intentionally does NOT get it
 CombatTab:CreateButton({Name="Auto Heal (won't work in PvP)", Callback=function()
     -- NOTE: notifications are deliberately VAGUE — they never mention the lobby/re-deploy loop, so users can't
     -- learn the method from the toasts and patch/leak it. Keep it that way.
@@ -2924,6 +2933,7 @@ CombatTab:CreateButton({Name="Auto Heal (won't work in PvP)", Callback=function(
     end)
     pcall(function() firesignal(lobbyBtn.Activated) end)
 end})
+end   -- (not _G.AA_PREM) — Auto Heal built for Plus only
 -- AUTO RESPAWN (PLUS + PREMIUM): the moment you die and your new character spawns, it presses the game's Deploy
 -- button for you — instantly back in the fight, no lobby sitting. Toggle off = the connection is dropped cleanly.
 do
@@ -2951,6 +2961,10 @@ end
 CombatTab:CreateSection("Combat Pro")
 CombatTab:CreateToggle({Name="Legit Auto Play", CurrentValue=false, Flag="LegitAutoPlay", Callback=function(v) S.LegitAutoPlay=v; if not v and _G.AA_RELEASEKEYS then _G.AA_RELEASEKEYS() end end})
 CombatTab:CreateToggle({Name="Auto Dodge", CurrentValue=false, Flag="ProAutoDodge", Callback=function(v) S.ProAutoDodge=v end})
+-- Dodge only a chosen player, or everyone. "All" = dodge any attacker; pick a name = dodge ONLY that player.
+S.DodgeTarget = S.DodgeTarget or "All"
+local dodgeDrop = CombatTab:CreateDropdown({Name="Dodge Player", Options=(function() local t={"All"} for _,n in ipairs(playerNames()) do t[#t+1]=n end return t end)(), CurrentOption={"All"}, Flag="DodgeTargetSel", Callback=function(o) S.DodgeTarget=(type(o)=="table" and o[1]) or o or "All" end})
+CombatTab:CreateButton({Name="Refresh Dodge List", Callback=function() pcall(function() dodgeDrop:Refresh((function() local t={"All"} for _,n in ipairs(playerNames()) do t[#t+1]=n end return t end)()) end) end})
 CombatTab:CreateToggle({Name="Instant 1v1 Win", CurrentValue=false, Flag="Win1v1", Callback=function(v) S.Win1v1=v end})
 CombatTab:CreateDropdown({Name="1v1 Win Position", Options={"Back","Front"}, CurrentOption={"Back"}, Flag="Win1v1Pos", Callback=function(o) S.Win1v1Pos=(type(o)=="table" and o[1]) or o end})
 
@@ -3172,6 +3186,7 @@ local function refreshPlayerDrops()
     pcall(function() tpDrop:Refresh(playerNames()) end)
     pcall(function() farmDrop:Refresh(playerNames()) end)
     pcall(function() viewDrop:Refresh(playerNames()) end)
+    pcall(function() dodgeDrop:Refresh((function() local t={"All"} for _,n in ipairs(playerNames()) do t[#t+1]=n end return t end)()) end)
 end
 hook(Players.PlayerAdded,    function() task.delay(0.3, refreshPlayerDrops) end)
 hook(Players.PlayerRemoving, function() task.delay(0.3, refreshPlayerDrops) end)
