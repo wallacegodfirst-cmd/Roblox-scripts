@@ -2274,20 +2274,50 @@ end)
 do
 	local WB_MAX = {"Comfort","Activity","Cleanliness","Immunity","Proteins","Fats","Calcium","Fiber","Carbohydrates","Nutrition","Wellbeing"}
 	local WB_ZERO = {"Toxins","Toxin","Toxicity"}
+	-- THE REAL WELLBEING REPLICA (from the decompiled Wellbeing class): these stats do NOT live on the
+	-- CharacterState replica — the game creates a SEPARATE replica with the token "Wellbeing"
+	-- (Replica.Client.OnNew("Wellbeing", ...)) holding Data.SavableStats.Stats + Data.SavableStats.BufferTimers.
+	-- The old pin wrote to CharacterState.Replica.Data.SavableStats, which usually doesn't exist = the pin did
+	-- NOTHING. We now grab the actual Wellbeing replica through the game's own Replica package and pin THAT.
+	task.spawn(function()
+		pcall(function()
+			local pk = RS:WaitForChild("Packages", 20); pk = pk and pk:WaitForChild("Replica", 10)
+			local Client = pk and require(pk).Client
+			if Client and Client.OnNew then Client.OnNew("Wellbeing", function(rep) __gg.MH_wellbeing = rep end) end
+		end)
+	end)
 	task.spawn(function() while RUNNING do
 		if (CFG.InfStam or CFG.InfFood or CFG.GodMode) and alive() then
 			pcall(function()
-				local r=csReplica()
-				local ss = r and r.Data and r.Data.SavableStats and r.Data.SavableStats.Stats
+				-- 1) the REAL Wellbeing replica (decompile-verified home of these stats)
+				local rep = __gg.MH_wellbeing
+				local ss = rep and rep.Data and rep.Data.SavableStats and rep.Data.SavableStats.Stats
 				if ss then
 					for _,k in ipairs(WB_MAX)  do if type(ss[k])=="number" then ss[k]=100 end end
 					for _,k in ipairs(WB_ZERO) do if type(ss[k])=="number" then ss[k]=0   end end
 				end
-				-- some builds also mirror these on the top-level Stats table — pin the two that gate stamina there too
+				-- BUFFER TIMERS: while a stat's buffer timer is up it doesn't drain — keep them all topped up,
+				-- so wellbeing (and through it the stamina-drain multiplier) never decays in the first place.
+				local bt = rep and rep.Data and rep.Data.SavableStats and rep.Data.SavableStats.BufferTimers
+				if bt then for k,v in pairs(bt) do if type(v)=="number" and v<30 then bt[k]=60 end end end
+				-- 2) report the pins to the server through the replica's own channel (same client-reported
+				-- SetProperty pattern the game itself uses, e.g. for "Cave"); unknown shapes are ignored = harmless
+				if rep and rep.FireServer then
+					for _,k in ipairs({"Comfort","Activity"}) do
+						pcall(function() rep:FireServer("SetProperty", k, 100) end)
+						pcall(function() rep:FireServer("SetProperty", "Stats", k, 100) end)
+					end
+				end
+				-- 3) legacy fallbacks (older builds mirrored these under CharacterState) — keep, they're cheap
+				local r=csReplica()
+				local ss2 = r and r.Data and r.Data.SavableStats and r.Data.SavableStats.Stats
+				if ss2 then
+					for _,k in ipairs(WB_MAX)  do if type(ss2[k])=="number" then ss2[k]=100 end end
+					for _,k in ipairs(WB_ZERO) do if type(ss2[k])=="number" then ss2[k]=0   end end
+				end
 				local stats=csStats()
 				if stats then for _,k in ipairs({"Comfort","Activity"}) do if type(stats[k])=="number" then stats[k]=100 end end end
 			end)
-			-- report the stamina-gating ones to the server on the client-authoritative path as well
 			pcall(function() replicaFire("SetProperty","Comfort",100) end)
 			pcall(function() replicaFire("SetProperty","Activity",100) end)
 			task.wait(0.4)

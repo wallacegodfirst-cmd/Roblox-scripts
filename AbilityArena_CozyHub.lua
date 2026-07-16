@@ -2924,6 +2924,28 @@ CombatTab:CreateButton({Name="Auto Heal (won't work in PvP)", Callback=function(
     end)
     pcall(function() firesignal(lobbyBtn.Activated) end)
 end})
+-- AUTO RESPAWN (PLUS + PREMIUM): the moment you die and your new character spawns, it presses the game's Deploy
+-- button for you — instantly back in the fight, no lobby sitting. Toggle off = the connection is dropped cleanly.
+do
+    local arConn
+    CombatTab:CreateToggle({Name="Auto Respawn", CurrentValue=false, Flag="AutoRespawn", Callback=function(v)
+        if arConn then pcall(function() arConn:Disconnect() end); arConn=nil end
+        if not v then return end
+        if typeof(firesignal) ~= "function" then
+            pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "Auto Respawn", Text = "Your executor doesn't support Auto Respawn.", Duration = 5 }) end)
+            return
+        end
+        arConn = LP.CharacterAdded:Connect(function(ch)
+            task.spawn(function()
+                pcall(function() ch:WaitForChild("Humanoid", 8) end)
+                local gi = LP:FindFirstChild("PlayerGui") and LP.PlayerGui:FindFirstChild("Game Interface")
+                local main = gi and gi:FindFirstChild("Main_HUD"); main = main and main:FindFirstChild("Main")
+                local deploy = main and main:FindFirstChild("Play")
+                if deploy then pcall(function() firesignal(deploy.Activated) end) end
+            end)
+        end)
+    end})
+end
 end
 
 CombatTab:CreateSection("Combat Pro")
