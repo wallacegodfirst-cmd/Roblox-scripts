@@ -1139,6 +1139,33 @@ local function getHitbox(model)
 			local any=hb:FindFirstChildWhichIsA("BasePart", true); if any then return any end
 		end
 	end
+	-- GAME'S OWN HITBOX BUILDER (from the decompiled Common.CreateHitbox): when a dino has no Hitbox child yet,
+	-- ask the game to build the EXACT hitbox model it hits against itself (ragdoll-rig clone, grouped parts, or a
+	-- bounding box). Built once per model, then the loop above finds it forever after.
+	pcall(function()
+		if __gg.MH_mkHB == nil then
+			local cm=RS:FindFirstChild("Common"); local chb=cm and cm:FindFirstChild("CreateHitbox")
+			__gg.MH_mkHB = (chb and require(chb)) or false
+		end
+		if type(__gg.MH_mkHB)=="function" then
+			__gg.MH_hbMade = __gg.MH_hbMade or setmetatable({}, {__mode="k"})
+			if not __gg.MH_hbMade[model] then
+				__gg.MH_hbMade[model] = true
+				__gg.MH_mkHB(model)
+				local hb=model:FindFirstChild("Hitbox")
+				if hb then
+					local any=(hb:IsA("BasePart") and hb) or hb:FindFirstChildWhichIsA("BasePart", true)
+					if any then return end   -- found next call via the loop above; fall through this pass
+				end
+			end
+		end
+	end)
+	do local hb=model:FindFirstChild("Hitbox")
+		if hb then
+			local any=(hb:IsA("BasePart") and hb) or hb:FindFirstChildWhichIsA("BasePart", true)
+			if any then return any end
+		end
+	end
 	local ta=model:FindFirstChild("TurningAnimation"); if ta then local b=ta:FindFirstChild("Body"); if b and b:IsA("BasePart") then return b end end
 	if model.PrimaryPart then return model.PrimaryPart end
 	return rootOf(model)
@@ -2151,7 +2178,7 @@ conn(RunService.RenderStepped:Connect(function()
 			if eNow then __gg.MH_lastE=tick() end
 			-- 3s GRACE after you let go of E: your manual eat's result stays on screen / registers server-side
 			-- before any forcing resumes — this is the "E sometimes works" fix (we were overwriting it instantly).
-			if CFG.InfFood and not eNow and tick()-(__gg.MH_lastE or 0)>3 then for _,k in ipairs({"Food","Hunger","Nutrition","Fullness","Satiation"}) do
+			if CFG.InfFood and not eNow and tick()-(__gg.MH_lastE or 0)>5 then for _,k in ipairs({"Food","Hunger","Nutrition","Fullness","Satiation"}) do
 				if stats[k]~=nil then
 					local cur=tonumber(stats[k])
 					if cur then __gg.MH_max=__gg.MH_max or {}; if not __gg.MH_max[k] or cur>__gg.MH_max[k] then __gg.MH_max[k]=cur end end
@@ -2273,7 +2300,7 @@ task.spawn(function() while RUNNING do
 	if CFG.InfFood and alive() then
 		local eHeld=false; pcall(function() eHeld=UIS:IsKeyDown(Enum.KeyCode.E) end)
 		if eHeld then __gg.MH_lastE=tick() end
-		if not eHeld and tick()-(__gg.MH_lastE or 0)>3 then   -- 3s grace after E so a manual eat is never overwritten
+		if not eHeld and tick()-(__gg.MH_lastE or 0)>5 then   -- 5s grace after E so a manual eat is never overwritten
 
 			pcall(function()
 				local stats, maxs = csStats()
@@ -2312,6 +2339,62 @@ task.spawn(function() while RUNNING do
 		task.wait(0.1)
 	else task.wait(0.4) end
 end end)
+
+-- ═══ E EAT ASSIST — the definitive "E doesn't work" fix ═══ When you PRESS E, the hub makes the eat land for
+-- you: it finds the nearest eat/consume ProximityPrompt within reach (meat chunks, corpses, plants — the game's
+-- MeatController tags meat with HintType="Corpse"), removes its line-of-sight requirement, and FIRES it directly.
+-- So even when the game's own prompt logic refuses (bar too high, prompt hidden, LOS blocked), your E still eats.
+-- All hub food-writes also freeze for 5s after E so nothing overwrites what you just ate.
+conn(UIS.InputBegan:Connect(function(input, gp)
+	if input.KeyCode ~= Enum.KeyCode.E then return end
+	__gg.MH_lastE = tick()   -- freeze the food forcers (checked with a 5s grace below/above)
+	if not alive() then return end
+	task.spawn(function() pcall(function()
+		local r=hrp(); if not r then return end
+		local best, bestD
+		-- targeted scan (NOT the whole workspace — PE maps are huge): the folders that actually hold eatables,
+		-- per the game's own MeatController (CharacterIgnore.SpawnedMeat) + Food + corpses + spawn markers.
+		local ci=WS:FindFirstChild("CharacterIgnore")
+		local pools={}
+		local function addPool(x) if x then pools[#pools+1]=x end end
+		addPool(ci and ci:FindFirstChild("SpawnedMeat")); addPool(WS:FindFirstChild("Food"))
+		addPool(ci and ci:FindFirstChild("CorpseSpawns")); addPool(ci and ci:FindFirstChild("LeftCharacters"))
+		addPool(WS:FindFirstChild("Characters")); addPool(WS:FindFirstChild("Map")); addPool(WS:FindFirstChild("Biomes"))
+		local scanned=0
+		for _,pool in ipairs(pools) do
+			for _,pp in ipairs(pool:GetDescendants()) do
+				scanned=scanned+1; if scanned>8000 then break end
+				if pp:IsA("ProximityPrompt") and pp.Enabled then
+					local par = pp.Parent
+					local pos
+					if par and par:IsA("BasePart") then pos = par.Position
+					elseif par and par:IsA("Model") then local root=rootOf(par); pos = root and root.Position end
+					if pos then
+						local d=(pos - r.Position).Magnitude
+						if d < 16 then
+							-- prefer prompts that look like eating: on meat/corpse/food or with an eat-ish action text
+							local score = d
+							local hint = par and (par:GetAttribute("HintType") or (par.Parent and par.Parent:GetAttribute("HintType")))
+							local at = string.lower(tostring(pp.ActionText or ""))
+							if hint=="Corpse" or at:find("eat",1,true) or at:find("consume",1,true) or at:find("bite",1,true) then score = d - 8 end
+							if not bestD or score < bestD then best=pp; bestD=score end
+						end
+					end
+				end
+			end
+			if scanned>8000 then break end
+		end
+		if best then
+			pcall(function() best.RequiresLineOfSight = false end)
+			if fireprox then
+				local oh=best.HoldDuration
+				pcall(function() best.HoldDuration=0 end)
+				pcall(function() fireprox(best) end)
+				pcall(function() best.HoldDuration=oh end)
+			end
+		end
+	end) end)
+end))
 
 -- BITE-REMOTE WATCHER ("make sure INF Food is catching the Bite REMOTE, not the animation"): growth comes ONLY
 -- from replaying the game's real Bite RemoteEvent call, captured the first time a bite fires. This watcher tells
@@ -3038,6 +3121,11 @@ local function collectCorpses()
 	end end
 	-- 2) players who died / left (LeftCharacters) + ragdoll corpses + bones + meat = actual eatable bodies
 	if ci then local lc=ci:FindFirstChild("LeftCharacters"); if lc then for _,m in ipairs(lc:GetChildren()) do addM(m) end end end
+	-- 2a) SPAWNED MEAT (from the game's own MeatController): fresh meat CHUNKS live in a persistent
+	--     CharacterIgnore.SpawnedMeat model — every "Meat" part in there is real eatable carnivore food, tagged
+	--     HintType="Corpse" by the game itself. Best TP targets on the map for a carnivore, so they're added FIRST
+	--     in this group. (Streams everywhere: the game marks the folder Persistent, so far chunks still count.)
+	if ci then local sm=ci:FindFirstChild("SpawnedMeat"); if sm then for _,m in ipairs(sm:GetChildren()) do addM(m) end end end
 	for _,fn in ipairs({"DinosaurRagdolls","Bonepiles","Corpses","DeadBodies"}) do local f=WS:FindFirstChild(fn); if f then for _,m in ipairs(f:GetChildren()) do addM(m) end end end
 	-- Food: DEEP scan (Food.Meat / Food.CollectedMeat may hold grouped models, not flat parts). Every meat/bone MODEL
 	-- or top-level meat part counts as one corpse so the "1/2" number reflects what's really eatable on the map.
@@ -4552,7 +4640,11 @@ __gg.MH_targetResolve = targetResolvePlayer   -- the Target tab (built earlier i
 -- name fast-path, then a GetPlayerFromCharacter scan of every model, then LeftCharacters.
 local function targetModelFor(pl)
 	if not pl then return nil end
-	if pl.Character and pl.Character.Parent then return pl.Character end
+	-- THE ESP'S WAY, in the ESP's order ("when I turn on ESP it loads their info — use that"): the ESP walks
+	-- workspace.Characters and identifies dinos there. So: Characters[name] first, then the same
+	-- GetPlayerFromCharacter match the ESP uses, then owner tags. pl.Character is only trusted LAST and only
+	-- when it actually looks like a dino — PE sometimes parks a junk placeholder there, and trusting it first
+	-- made the whole profile read "--" (wrong model = no attributes, no position, "dino not loaded").
 	local ch = WS:FindFirstChild("Characters")
 	if ch then
 		local m = ch:FindFirstChild(pl.Name)
@@ -4596,6 +4688,16 @@ local function targetModelFor(pl)
 			end
 		end
 	end
+	-- pl.Character LAST, and only when it looks like a REAL dino (has a part + dino markers)
+	local pc = pl.Character
+	if pc and pc.Parent then
+		local looksReal = false
+		pcall(function()
+			looksReal = (pc:FindFirstChildWhichIsA("BasePart") ~= nil)
+				and (pc:FindFirstChild("MeshModel") ~= nil or pc:FindFirstChildOfClass("Humanoid") ~= nil or pc:GetAttribute("Type") ~= nil)
+		end)
+		if looksReal then return pc end
+	end
 	local ci = WS:FindFirstChild("CharacterIgnore"); ci = ci and ci:FindFirstChild("LeftCharacters")
 	if ci then local lm=ci:FindFirstChild(pl.Name); if lm then return lm end end
 	return nil
@@ -4626,22 +4728,21 @@ local function targetReadInfo()
 	end
 	local info = { user=pl and pl.Name, display=pl and pl.DisplayName, userId=pl and pl.UserId }
 	if model then
-		-- read exactly the way we read OUR OWN dino (skGetCharInfo): the MeshModel's Type/Stage/Gender attributes
-		-- are how PE tags every dino, the target's included.
-		local mm = model:FindFirstChild("MeshModel")
-		info.species = (mm and mm:GetAttribute("Type")) or detectDinoModel(model) or model:GetAttribute("Type") or model:GetAttribute("DinoType")
-		info.stage = (mm and mm:GetAttribute("Stage")) or model:GetAttribute("Stage") or model:GetAttribute("GrowthStage") or model:GetAttribute("Age")
-		info.gender = (mm and mm:GetAttribute("Gender")) or model:GetAttribute("Gender")
-		-- FALLBACK = the ESP's own reader (readDinoInfo, exposed as __gg.MH_readDino): it's the thing that already
-		-- shows species/stage/HP/stam on every dino on the map, so the Target profile can never do worse than ESP.
+		-- THE ESP'S READER FIRST ("when I turn on ESP it loads their info — use that same function"): readDinoInfo
+		-- is exactly what fills every ESP label (species/stage/HP/stam), so the Target profile now runs on it as the
+		-- PRIMARY source, with the MeshModel attribute reads only filling any gaps it leaves.
 		pcall(function()
 			if __gg.MH_readDino then
 				local sp, gr, hpStr, stamStr = __gg.MH_readDino(model)
-				info.species = info.species or sp
-				info.stage = info.stage or gr
+				info.species = sp
+				info.stage = gr
 				info.hpStr = hpStr; info.stamStr = stamStr
 			end
 		end)
+		local mm = model:FindFirstChild("MeshModel")
+		info.species = info.species or (mm and mm:GetAttribute("Type")) or detectDinoModel(model) or model:GetAttribute("Type") or model:GetAttribute("DinoType")
+		info.stage = info.stage or (mm and mm:GetAttribute("Stage")) or model:GetAttribute("Stage") or model:GetAttribute("GrowthStage") or model:GetAttribute("Age")
+		info.gender = (mm and mm:GetAttribute("Gender")) or model:GetAttribute("Gender")
 		local h = model:FindFirstChildOfClass("Humanoid")
 		if h and h.MaxHealth>0 then info.hp = math.floor(h.Health+0.5); info.hpMax = math.floor(h.MaxHealth+0.5) end
 		info.food = targetAttrNum(model, {"Food","Hunger","Nutrition","Fullness"})
@@ -5158,8 +5259,11 @@ end))
 -- ── MOBILE menu toggle (Delta & other touch executors have NO keyboard, so RightShift can't open the menu) ──
 local function toggleMenu()
 	if USE_FLUENT then
-		-- replay the Fluent MinimizeKey (RightShift) virtually so Fluent shows/hides itself
-		pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.RightShift, false, game); task.wait(); VIM:SendKeyEvent(false, Enum.KeyCode.RightShift, false, game) end)
+		-- LOGO = HIDE/SHOW ("when they click my logo it removes the GUI, click again brings it back"):
+		-- 1) Fluent's own Minimize (works on every executor), 2) virtual RightShift as backup.
+		local ok=false
+		pcall(function() if FWindow and FWindow.Minimize then FWindow:Minimize(); ok=true end end)
+		if not ok then pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.RightShift, false, game); task.wait(); VIM:SendKeyEvent(false, Enum.KeyCode.RightShift, false, game) end) end
 	else
 		SG.Enabled = not SG.Enabled; if SG.Enabled then task.defer(clampWindow) end
 	end
