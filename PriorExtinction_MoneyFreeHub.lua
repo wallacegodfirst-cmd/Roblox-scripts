@@ -617,22 +617,51 @@ end
 -- (Stored on __gg, NOT a new local — the main chunk sits at Luau's 200-local cap.)
 __gg.MH_spawnRescue = function()
 	task.spawn(function()
-		local t0=tick()
-		while tick()-t0<20 and RUNNING do
+		-- THE GAME'S OWN "UNSTUCK" IS THE REAL FIX: PE shows an Unstuck timer that teleports you to the nearest
+		-- spawn — but ANY movement cancels it, and v1 of this rescue kept re-writing your CFrame, which fought the
+		-- timer forever (your screenshot). Now: the MOMENT the Unstuck UI is visible we go completely hands-off
+		-- and keep you input-still so the timer finishes and the game itself puts you at a real spawn.
+		local function unstuckOn()
+			local found=false
 			pcall(function()
+				local pg=LP:FindFirstChild("PlayerGui"); if not pg then return end
+				for _,d in ipairs(pg:GetDescendants()) do
+					if d:IsA("TextLabel") and d.Visible then
+						local t=string.lower(tostring(d.Text))
+						if t:find("unstuck",1,true) or t:find("nearest spawn",1,true) then found=true; break end
+					end
+				end
+			end)
+			return found
+		end
+		local t0=tick()
+		local warned=false
+		while tick()-t0<30 and RUNNING do
+			local handsOff=false
+			pcall(function()
+				if unstuckOn() then
+					handsOff=true
+					if not warned then warned=true; pcall(function() notify("Spawn Rescue","The game's Unstuck timer is running — DON'T MOVE (moving cancels it). It teleports you to a real spawn; then RE-SAVE your dino!") end) end
+					return
+				end
 				local r=hrp(); if not r then return end
 				local base=r.Position
 				pcall(function() LP:RequestStreamAroundAsync(base, 1) end)
-				local rp=RaycastParams.new(); rp.FilterType=Enum.RaycastFilterType.Exclude; rp.IgnoreWater=false
+				local rp=RaycastParams.new(); rp.FilterType=Enum.RaycastFilterType.Exclude; rp.IgnoreWater=true   -- SOLID ground only: v1 used the water surface and parked you in the open ocean
 				rp.FilterDescendantsInstances={LP.Character, WS:FindFirstChild("Characters"), WS:FindFirstChild("CharacterIgnore")}
 				local ground=WS:Raycast(Vector3.new(base.X, base.Y+400, base.Z), Vector3.new(0,-4000,0), rp)
+				local wp=RaycastParams.new(); wp.FilterType=Enum.RaycastFilterType.Exclude; wp.IgnoreWater=false
+				wp.FilterDescendantsInstances=rp.FilterDescendantsInstances
+				local surface=WS:Raycast(Vector3.new(base.X, base.Y+400, base.Z), Vector3.new(0,-4000,0), wp)
+				local deepSea = ground and surface and (surface.Position.Y - ground.Position.Y) > 25   -- solid floor way below the water = open ocean
 				local down=WS:Raycast(base, Vector3.new(0,-1500,0), rp)
 				local falling=(r.AssemblyLinearVelocity.Y < -25) and not down
-				if ground and base.Y < ground.Position.Y - 8 then
-					local goal=CFrame.new(ground.Position + Vector3.new(0,6,0))   -- under the map -> on top of it
+				if ground and not deepSea and base.Y < ground.Position.Y - 8 then
+					local goal=CFrame.new(ground.Position + Vector3.new(0,6,0))   -- under the map -> on top of REAL land
 					for _=1,90 do local rr=hrp(); if rr then pcall(function() rr.CFrame=goal; rr.AssemblyLinearVelocity=Vector3.zero end) end task.wait() end
 					pcall(function() notify("Spawn Rescue","You spawned under the map — pulled you back on top. Re-save your dino somewhere safe!") end)
-				elseif falling and tick()-t0>6 then
+				elseif (falling and tick()-t0>6) or (deepSea and tick()-t0>6) then
+					-- outside the map / open ocean: go to a REAL spawn point (or big land), not "on top of the water"
 					local dest
 					pcall(function() local sp=WS:FindFirstChildWhichIsA("SpawnLocation", true); if sp then dest=sp.Position+Vector3.new(0,8,0) end end)
 					if not dest then pcall(function()
@@ -643,11 +672,11 @@ __gg.MH_spawnRescue = function()
 						pcall(function() LP:RequestStreamAroundAsync(dest, 1) end)
 						local goal=CFrame.new(dest)
 						for _=1,90 do local rr=hrp(); if rr then pcall(function() rr.CFrame=goal; rr.AssemblyLinearVelocity=Vector3.zero end) end task.wait() end
-						pcall(function() notify("Spawn Rescue","Your saved spot is OUTSIDE the map — moved you somewhere real. Re-save your dino now so this stops happening!") end)
+						pcall(function() notify("Spawn Rescue","Your saved spot is OUTSIDE the map — moved you to a real spawn. RE-SAVE your dino now so this stops happening!") end)
 					end
 				end
 			end)
-			task.wait(0.3)
+			task.wait(handsOff and 1 or 0.3)
 		end
 	end)
 end
@@ -2061,8 +2090,10 @@ conn(RunService.RenderStepped:Connect(function()
 			if CFG.InfStam   then pin({"Stamina","Stam","Energy","Endurance"}); zero({"Exhaustion","Fatigue","Tired","Exhausted"}) end
 			-- FOOD = 97%, not 100% ("the E thing not working" fix): at a pinned 100% the game decides you're full —
 			-- the eat prompt dies and a manual E-hold does nothing. 97% keeps E/eating alive with the same growth.
-			-- Raise-only: if you eat past 97% yourself we never pull the bar back down.
-			if CFG.InfFood then for _,k in ipairs({"Food","Hunger","Nutrition","Fullness","Satiation"}) do
+			-- Raise-only: if you eat past 97% yourself we never pull the bar back down. And while you're HOLDING E
+			-- we don't touch food at all, so nothing can fight your manual eat mid-bite.
+			local eNow=false; pcall(function() eNow=UIS:IsKeyDown(Enum.KeyCode.E) end)
+			if CFG.InfFood and not eNow then for _,k in ipairs({"Food","Hunger","Nutrition","Fullness","Satiation"}) do
 				if stats[k]~=nil then
 					local cur=tonumber(stats[k])
 					if cur then __gg.MH_max=__gg.MH_max or {}; if not __gg.MH_max[k] or cur>__gg.MH_max[k] then __gg.MH_max[k]=cur end end
@@ -2182,8 +2213,10 @@ conn(RunService.Heartbeat:Connect(function()
 			local spd=math.max(math.clamp(tonumber(CFG.RunSpeed) or 15, 12, 15), __gg.MH_runSpeed or 0)   -- never slower than THIS dino's own sprint
 			dir=Vector3.new(dir.X,0,dir.Z).Unit*spd
 			pcall(function() r.AssemblyLinearVelocity=Vector3.new(dir.X, r.AssemblyLinearVelocity.Y, dir.Z) end)
-			-- ANTI-SNAPBACK: report our position on the game's own move remote (throttled ~10/s) so the server accepts it
-			if __gg.MH_hopFire and tick()-(__gg.MH_stamCfT or 0)>0.1 then __gg.MH_stamCfT=tick(); __gg.MH_hopFire(r.CFrame) end
+			-- SETBACK BYPASS: report our position on the game's own move remote at 20/s (2x the old rate — the gap
+			-- between reports is where the server decided you'd moved impossibly and set you back) so its copy of
+			-- you keeps up and there's never a delta big enough to reject.
+			if __gg.MH_hopFire and tick()-(__gg.MH_stamCfT or 0)>0.05 then __gg.MH_stamCfT=tick(); __gg.MH_hopFire(r.CFrame) end
 		end
 	end
 end))
@@ -2239,6 +2272,29 @@ task.spawn(function() while RUNNING do
 	else task.wait(0.4) end
 end end)
 
+-- BITE-REMOTE WATCHER ("make sure INF Food is catching the Bite REMOTE, not the animation"): growth comes ONLY
+-- from replaying the game's real Bite RemoteEvent call, captured the first time a bite fires. This watcher tells
+-- you plainly which state you're in: still waiting for a capture (and how to force one — eat anything once), or
+-- captured and remote-driven. No animation is ever involved — animations don't grow you and we never play one.
+task.spawn(function()
+	local told=false
+	local waitedT=nil
+	while RUNNING do
+		if CFG.InfFood and alive() then
+			if __gg.MH_lastEatCall then
+				if not told then told=true; pcall(function() notify("INF Food","Bite remote captured — growth is now remote-driven. The spam obeys your grow-speed slider.") end) end
+				waitedT=nil
+			else
+				waitedT = waitedT or tick()
+				if tick()-waitedT > 15 then
+					waitedT = tick()
+					pcall(function() notify("INF Food","No Bite remote captured yet — walk to ANY food and eat it once (hold E). INF Food learns the remote from that one bite, then runs it forever.") end)
+				end
+			end
+		else waitedT=nil end
+		task.wait(1)
+	end
+end)
 -- WELLBEING PIN (the "INF Stam breaks with INF Food" fix): PE hides a stamina-drain MULTIPLIER behind the
 -- Wellbeing stats — WellbeingData says "High activity makes your stamina drain less" and "Comfort goes down… eating
 -- bad food". When those drop (e.g. from eating the wrong diet) stamina drains faster than any pin can refill, so
@@ -4421,10 +4477,42 @@ local function targetModelFor(pl)
 	if ch then
 		local m = ch:FindFirstChild(pl.Name)
 		if m and m.Parent then return m end
+		-- PE often never assigns plr.Character (LP.Character is nil even for YOU), so GetPlayerFromCharacter can
+		-- come up empty for everyone. Hunt the owner EVERY way a game tags it: the character mapping, owner-ish
+		-- attributes (Player/Owner/User/Creator, by name / display name / UserId), ObjectValues pointing at the
+		-- player, StringValues holding their name, and finally model names that contain the username.
+		local lowName, lowDisp = string.lower(pl.Name), string.lower(pl.DisplayName or pl.Name)
+		local function ownedBy(mm)
+			local hit=false
+			pcall(function()
+				if Players:GetPlayerFromCharacter(mm)==pl then hit=true; return end
+				for k,v in pairs(mm:GetAttributes()) do
+					local kk=string.lower(tostring(k))
+					if kk:find("player",1,true) or kk:find("owner",1,true) or kk:find("user",1,true) or kk:find("creator",1,true) or kk=="name" then
+						local vs=string.lower(tostring(v))
+						if vs==lowName or vs==lowDisp or vs==tostring(pl.UserId) then hit=true; return end
+					end
+				end
+				for _,d in ipairs(mm:GetChildren()) do
+					if d:IsA("ObjectValue") and d.Value==pl then hit=true; return end
+					if (d:IsA("StringValue") or d:IsA("IntValue") or d:IsA("NumberValue")) then
+						local nn=string.lower(d.Name)
+						if nn:find("player",1,true) or nn:find("owner",1,true) or nn:find("user",1,true) then
+							local vs=string.lower(tostring(d.Value))
+							if vs==lowName or vs==lowDisp or vs==tostring(pl.UserId) then hit=true; return end
+						end
+					end
+				end
+			end)
+			return hit
+		end
 		for _,mm in ipairs(ch:GetChildren()) do
+			if mm:IsA("Model") and ownedBy(mm) then return mm end
+		end
+		for _,mm in ipairs(ch:GetChildren()) do   -- last resort: the model NAME contains their username/display name
 			if mm:IsA("Model") then
-				local owner; pcall(function() owner = Players:GetPlayerFromCharacter(mm) end)
-				if owner == pl then return mm end
+				local mn=string.lower(mm.Name)
+				if mn:find(lowName,1,true) or (lowDisp~=lowName and mn:find(lowDisp,1,true)) then return mm end
 			end
 		end
 	end
@@ -4449,7 +4537,13 @@ end
 local function targetReadInfo()
 	local T = __gg.MH_Target
 	local pl, model = T.plr, T.model
-	if pl and (not model or not model.Parent) then model = targetModelFor(pl); T.model = model end
+	if pl and (not model or not model.Parent) then
+		model = targetModelFor(pl); T.model = model
+		-- FAR-AWAY TARGET: ask the client to STREAM their last-known area in, so their dino loads without you
+		-- walking there. (If we've never seen them this session there's no position to stream — the game simply
+		-- hasn't sent their dino to your client yet; it appears the moment any position for them is known.)
+		if not model and T.lastPos then pcall(function() LP:RequestStreamAroundAsync(T.lastPos, 1) end) end
+	end
 	local info = { user=pl and pl.Name, display=pl and pl.DisplayName, userId=pl and pl.UserId }
 	if model then
 		-- read exactly the way we read OUR OWN dino (skGetCharInfo): the MeshModel's Type/Stage/Gender attributes
@@ -4476,6 +4570,7 @@ local function targetReadInfo()
 		local r = getHitbox(model) or rootOf(model)
 		local me = hrp()
 		if r and me then info.dist = math.floor(dist(me.Position, r.Position)) end
+		if r then T.lastPos = r.Position end   -- remember where they were (streaming re-pull when they unload)
 	end
 	return info
 end

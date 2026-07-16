@@ -1,7 +1,38 @@
 DREAM HUB - UPDATE LOG
 
 ===================================================================
-PRIOR EX BIG BUG PASS  (latest)
+PRIOR EX: UNSTUCK-AWARE RESCUE, TARGET OWNER-HUNT, 20HZ SETBACK
+BYPASS, E-PROTECT, BITE-REMOTE WATCHER  (latest)
+===================================================================
+
+PRIOR EXTINCTION
+~ SPAWN RESCUE v2 (death loop): the game's own UNSTUCK timer is the
+  real cure — but ANY movement cancels it, and v1 kept re-writing your
+  position, fighting the timer forever. Now the moment the Unstuck UI
+  shows, the rescue goes hands-off and tells you not to move; the game
+  teleports you to a real spawn, then you re-save. The under-map snap
+  also only targets REAL land now (v1 could park you on the open-ocean
+  water surface), and open-ocean spawns relocate to a real spawn point.
+~ TARGET owner-hunt: PE often never assigns plr.Character, so the old
+  match missed. The lookup now hunts every way a game tags ownership —
+  character mapping, Player/Owner/User/Creator attributes (name,
+  display name, UserId), ObjectValues pointing at the player,
+  name-contains as last resort. Plus: their last-known area is
+  re-streamed in when their dino unloads, so far-away targets load
+  without you walking there.
+~ INF STAM setback bypass: position reports on the game's own move
+  remote now go at 20/s (was 10/s) — the report gap was where the
+  server decided you'd moved impossibly and set you back.
+~ E-PROTECT: while you're physically holding E, NOTHING touches the
+  food stat (the 97% force pauses), so a manual eat can never be
+  interrupted mid-bite.
+~ BITE-REMOTE WATCHER: INF Food growth is 100% the captured Bite
+  REMOTE (never an animation). It now tells you which state you're
+  in: "no capture yet — eat anything once (hold E) and it learns the
+  remote", then "Bite remote captured — growth is remote-driven".
+
+===================================================================
+PRIOR EX BIG BUG PASS
 ===================================================================
 
 PRIOR EXTINCTION
