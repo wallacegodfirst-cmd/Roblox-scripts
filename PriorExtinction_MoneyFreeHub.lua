@@ -724,6 +724,15 @@ local function replicaActionAll(...)
 	for _,id in ipairs(seenIds) do if id~=myReplicaId then pcall(function() rs:FireServer(id, table.unpack(a,1,a.n)) end); f=true end end
 	return f
 end
+-- GAME'S OWN REPORT METHOD (from the decompiled Wellbeing/Character code): the client sets its own properties by
+-- calling Replica:FireServer("SetProperty", key, value) on the CharacterState replica — e.g. the game itself does
+-- CharacterState.Replica:FireServer("SetProperty", "Cave", ...). Firing stamina/wellbeing THROUGH this exact path
+-- is the most authentic way to tell the server "this stat is full", so the server accepts it like a real report.
+local function csFireProp(key, value)
+	local r = csReplica()
+	if r and r.FireServer then return (pcall(function() r:FireServer("SetProperty", key, value) end)) end
+	return replicaFire("SetProperty", key, value)   -- fallback to the raw ReplicaSignal path
+end
 setHeadAngles = function(pitch, yaw) return replicaFire("SetProperty", "HeadAngles", {pitch, yaw}) end
 local function setReplicaProp(prop, value) return replicaFire("SetProperty", prop, value) end
 local function replicaAction(...) return replicaFire(...) end
@@ -1784,25 +1793,35 @@ if Pages["Target"] then local p=Pages["Target"]
 	-- Load re-resolves the model live so the profile fills even if their dino streams in late, and every
 	-- action reports what it's doing instead of dying silently.
 	local _,ld=mkSec(p,"Load Player",1)
-	mkTextbox(ld,"Username","TargetUser",1,false)
-	-- status rows filled by Load + the live tick
+	mkTextbox(ld,"Username / display name / part of it","TargetUser",1,false)
+	-- FULL PROFILE — every row is ALWAYS present (shows "--" until it fills), per request.
 	local sUser   = mkStatus(ld,"User",3)
 	local sDino   = mkStatus(ld,"Dino",4)
 	local sStage  = mkStatus(ld,"Stage",5)
 	local sGender = mkStatus(ld,"Gender",6)
 	local sHP     = mkStatus(ld,"Health",7)
-	local sDist   = mkStatus(ld,"Distance",8)
-	local sState  = mkStatus(ld,"Status",9)
+	local sStam   = mkStatus(ld,"Stamina",8)
+	local sWell   = mkStatus(ld,"Wellbeing",9)
+	local sDist   = mkStatus(ld,"Distance",10)
+	local sState  = mkStatus(ld,"Status",11)
 	local function fmtStat(v, mx)
 		if type(v)~="number" then return "--" end
 		if type(mx)=="number" and mx>0 then return math.floor(v).." / "..math.floor(mx) end
 		return tostring(math.floor(v))
 	end
+	-- little text bar so Stamina/Wellbeing read like a bar, e.g. 72%  [#######···]
+	local function bar(v, mx)
+		local pct
+		if type(v)=="number" and type(mx)=="number" and mx>0 then pct=math.clamp(v/mx,0,1)
+		elseif type(v)=="number" then pct=math.clamp(v/100,0,1) else return "--" end
+		local fill=math.floor(pct*10+0.5)
+		return math.floor(pct*100).."%  ["..string.rep("#",fill)..string.rep("·",10-fill).."]"
+	end
 	local function refreshTarget()
 		local T=__gg.MH_Target
 		if not (T and T.plr) then
 			sUser.Text="type a name, press Load"; sDino.Text="--"; sStage.Text="--"; sGender.Text="--"
-			sHP.Text="--"; sDist.Text="--"; sState.Text="no target"
+			sHP.Text="--"; sStam.Text="--"; sWell.Text="--"; sDist.Text="--"; sState.Text="no target"
 			return
 		end
 		local info = _G.MH_targetInfo and _G.MH_targetInfo() or {}
@@ -1811,27 +1830,54 @@ if Pages["Target"] then local p=Pages["Target"]
 		sStage.Text  = info.stage and tostring(info.stage) or "--"
 		sGender.Text = info.gender and tostring(info.gender) or "--"
 		sHP.Text     = (type(info.hp)=="number" and fmtStat(info.hp, info.hpMax)) or info.hpStr or "--"
+		sStam.Text   = (type(info.stam)=="number" and bar(info.stam, info.stamMax)) or info.stamStr or "--"
+		sWell.Text   = (type(info.wellbeing)=="number" and bar(info.wellbeing, 100)) or "--"
 		sDist.Text   = type(info.dist)=="number" and (info.dist.."m") or "--"
-		sState.Text  = (T.model and T.model.Parent) and (T.viewing and "viewing" or "loaded") or "dino not visible (they may be far / respawning)"
+		sState.Text  = (T.model and T.model.Parent) and (T.viewing and "viewing" or "loaded") or "finding their dino…"
+	end
+	-- ACTIVE LOADER: streams the player's area in and keeps re-finding their dino for a few seconds, filling the
+	-- profile the moment it appears — so a player who's inside the map (just not yet sent to your client) loads
+	-- without you walking over there. Stops early the instant the dino is found.
+	local function activeLoad(pl)
+		local T=__gg.MH_Target
+		task.spawn(function()
+			for i=1,24 do
+				if __gg.MH_Target.plr~=pl then return end          -- target changed / unloaded
+				T.model = __gg.MH_targetModelFor and __gg.MH_targetModelFor(pl)
+				if not T.model then
+					local pos = T.lastPos
+					pcall(function() local c=pl.Character; if c then pos = c:GetPivot().Position end end)
+					if pos then pcall(function() LP:RequestStreamAroundAsync(pos, 1) end) end
+				end
+				pcall(refreshTarget)
+				if T.model and T.model.Parent then
+					notify("Target","Loaded "..pl.Name.." — profile is live.")
+					return
+				end
+				task.wait(0.5)
+			end
+			if not (T.model and T.model.Parent) then
+				notify("Target","Loaded "..pl.Name..", but their dino isn't in your client yet — it'll fill in when they're nearer.")
+			end
+		end)
 	end
 	mkBtn(ld,"Load Player",function()
 		local T=__gg.MH_Target
-		-- FORCE-READ the textbox ("user not in game" fix): the Fluent input only saves on Enter/focus-lost, so
-		-- typing a name and clicking Load straight away checked an EMPTY string. Read the live value directly.
+		-- Read the box live (Fluent only saves on Enter, so a click-without-Enter used to check an empty string).
 		pcall(function() if Fluent and Fluent.Options and Fluent.Options.TargetUser then CFG.TargetUser = Fluent.Options.TargetUser.Value end end)
 		local pl = __gg.MH_targetResolve and __gg.MH_targetResolve(CFG.TargetUser)
-		if not pl then notify("Target","No player in this server matches \""..tostring(CFG.TargetUser).."\"."); T.plr=nil; T.model=nil; refreshTarget(); return end
-		T.plr = pl
-		T.model = __gg.MH_targetModelFor and __gg.MH_targetModelFor(pl)
-		notify("Target","Loaded "..pl.Name..(T.model and "." or " — their dino isn't visible yet; the profile fills in when it is."))
+		if not pl then notify("Target","No one here matches \""..tostring(CFG.TargetUser).."\". Try part of their name."); T.plr=nil; T.model=nil; refreshTarget(); return end
+		T.plr = pl; T.model = __gg.MH_targetModelFor and __gg.MH_targetModelFor(pl)
+		notify("Target","Loaded "..pl.Name..".")
 		refreshTarget()
+		activeLoad(pl)   -- keep pulling their area in until the dino shows
 	end,2)
 	mkBtn(ld,"Unload",function()
 		local T=__gg.MH_Target; T.plr=nil; T.model=nil; T.viewing=false
 		notify("Target","Target cleared."); refreshTarget()
 	end,2.5)
-	-- live tick: keep the profile fresh (distance/health/stage) and re-find their dino if it respawned
-	task.spawn(function() while RUNNING do if __gg.MH_Target and __gg.MH_Target.plr then pcall(refreshTarget) end task.wait(1) end end)
+	-- live tick: fast profile refresh (distance/health/stamina) + re-find the dino if it streamed out/respawned
+	task.spawn(function() while RUNNING do if __gg.MH_Target and __gg.MH_Target.plr then pcall(refreshTarget) end task.wait(0.5) end end)
 	refreshTarget()
 
 	local _,ac=mkSec(p,"Actions",2)
@@ -2153,39 +2199,65 @@ end))
 -- the bar never reaches the exhaust threshold and the game never forces you down to walk speed. Run PASSES
 -- THROUGH untouched, so you keep the game's real sprint speed — this is fully DECOUPLED from Speed Hack (no
 -- BodyVelocity, no boosted speed). Refill is fast (0.12s) so a fast drain never accumulates.
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════
+-- INF STAM — THE REAL FIX (data-only, wellbeing-driven, no movement writes at all)
+-- ═══════════════════════════════════════════════════════════════════════════════════════════════════════════
+-- What actually makes you "slow": PE decides your run speed from your STAMINA VALUE. When it reads 0 it forces you
+-- to walk. It reads that value from the client's own replica data. So the whole game is won on the DATA side — we
+-- never touch WalkSpeed or velocity (that's what caused the snap-backs), we just make sure nothing can ever read
+-- your stamina as low:
+--   (A) Every frame, write stamina = its real max into EVERY place the client keeps it (Data.Stats, top-level
+--       CharacterState, and a deep scan of the replica) so the client's own speed math never sees a low number.
+--   (B) Report "stamina = full" to the server through the GAME'S OWN method (Replica:FireServer("SetProperty",...),
+--       exactly how the game reports "Cave") on every stamina key, fast, so the server agrees.
+--   (C) Kill the DRAIN AT THE SOURCE via WELLBEING: the decompiled WellbeingData says stamina drains SLOWER the
+--       higher your Activity / Comfort / nutrition are, and buffered stats don't drain at all. We max those on the
+--       real Wellbeing replica and keep their buffer timers open, so the drain multiplier bottoms out — the bar
+--       stops falling in the first place, which is why exhaustion never triggers.
+local STAM_KEYS = {"Stamina","Stam","Energy","Endurance","Vigor","SP","Fatigue","Exertion"}
 task.spawn(function() while RUNNING do
 	if CFG.InfStam and alive() then
-		local mx
-		pcall(function() local _,maxs=csStats(); if maxs then mx=maxs.Stamina or maxs.Stam or maxs.Energy end end)
-		mx = mx or (__gg.MH_max and (__gg.MH_max.Stamina or __gg.MH_max.Stam or __gg.MH_max.Energy)) or 100
-		-- Fire every known stamina key so we hit whichever property name the server actually tracks.
-		-- The hook rewrites any incoming SetProperty-stam to tracked-max before firing through, so
-		-- these calls also get rewritten — meaning the server always hears "stamina = full" on each key.
-		for _,k in ipairs({"Stamina","Stam","Energy","Endurance"}) do
-			local v = (__gg.MH_max and __gg.MH_max[k]) or mx
-			pcall(function() replicaFire("SetProperty", k, v) end)
-		end
-		-- VERBATIM REPLAY (strongest): if we captured the game's OWN full-stamina report, replay it byte-for-byte.
-		-- This lands even if PE tracks stamina under a name/shape our key list above doesn't match.
-		local sc=__gg.MH_stamCall
-		if type(sc)=="table" and sc.n and sc.n>=2 then
-			local rs=getReplicaSignal(); if rs then pcall(function() rs:FireServer(table.unpack(sc,1,sc.n)) end) end
-		end
-		-- (No Run re-assert here — firing Run=false would drop you to WALK speed. Run passes through so you
-		-- keep real sprint speed; the stamina PINS above/below are what stop the drain from ever showing.)
-		task.wait(0.12)
+		pcall(function()
+			-- (A) LOCAL DATA PIN — every place the client might read stamina from
+			local stats, maxs = csStats()
+			local function pinLocal(tbl, mtbl)
+				if type(tbl)~="table" then return end
+				for _,k in ipairs(STAM_KEYS) do
+					if type(tbl[k])=="number" then
+						local cur=tbl[k]
+						__gg.MH_max=__gg.MH_max or {}
+						if cur>0 and (not __gg.MH_max[k] or cur>__gg.MH_max[k]) then __gg.MH_max[k]=cur end
+						local target=(mtbl and mtbl[k]) or (__gg.MH_max and __gg.MH_max[k])
+						if target then tbl[k]=target end
+					end
+				end
+			end
+			pinLocal(stats, maxs)
+			local r=csReplica()
+			if r and r.Data then
+				pinLocal(r.Data.Stats, r.Data.MaxStats or r.Data.Max)
+				pinLocal(r.Data.SavableStats and r.Data.SavableStats.Stats, nil)
+			end
+			if CharacterState then pinLocal(CharacterState, CharacterState) end
+			-- (B) SERVER REPORT — through the game's OWN Replica method, then the raw path as backup
+			for _,k in ipairs(STAM_KEYS) do
+				local v = (__gg.MH_max and __gg.MH_max[k]) or (maxs and (maxs[k])) or 100
+				pcall(function() csFireProp(k, v) end)
+			end
+			local sc=__gg.MH_stamCall
+			if type(sc)=="table" and sc.n and sc.n>=2 then
+				local rs=getReplicaSignal(); if rs then pcall(function() rs:FireServer(table.unpack(sc,1,sc.n)) end) end
+			end
+		end)
+		task.wait(0.1)
 	else task.wait(0.4) end
 end end)
 
--- INF STAM — NO SLOW: REMOVED the WalkSpeed keeper and the velocity drive entirely.
--- Both were movement overrides, and PE's server anti-cheat reads ANY local movement override as impossible
--- movement and violently teleports you back (the setback). The stamina hook (which rewrites the drain to max
--- before it ever reaches the server) plus the FAST STAT PIN are already enough: the server never learns your
--- stamina hit 0, so it never clamps your speed naturally — no override needed, no snapbacks possible.
+-- INF STAM — MOVEMENT IS NEVER TOUCHED. No WalkSpeed keeper, no velocity drive. The data pin + wellbeing above are
+-- what keep you fast; because we never override movement, there is nothing for the anti-cheat to snap back.
 conn(RunService.Heartbeat:Connect(function()
 	if not (CFG.InfStam and alive()) or CFG.SpeedHack or CFG.Fly then return end
-	-- Do nothing here: stamina is kept full by the hook and FAST STAT PIN.
-	-- This prevents any movement interference and stops the snapbacks completely.
+	-- intentionally empty — see the block above.
 end))
 
 -- INF FOOD — FLOOR KEEPER (keep the bar UP whether you eat or not, WITHOUT hiding the eat prompt): the food bar
@@ -4452,20 +4524,26 @@ end end)
 -- Water / Stamina are in each player's PRIVATE replica (not readable for other players), so we show
 -- whatever the model exposes as attributes and "--" otherwise — never a fake number.
 __gg.MH_Target = { plr=nil, model=nil, viewing=false }
--- Resolve a player from a typed name: exact, then case-insensitive on Name / DisplayName, then prefix.
+-- Resolve a player from a typed name. Order of preference: exact → case-insensitive full → prefix → ANY
+-- SUBSTRING (a small portion anywhere in their username OR display name). So "chr", "243", or their display
+-- name all resolve to chris3243242342. Ties are broken toward the shortest name (the closest match).
 local function targetResolvePlayer(txt)
 	txt = tostring(txt or ""):gsub("^%s+",""):gsub("%s+$","")
 	if txt=="" then return nil end
 	local low = txt:lower()
-	local exact, ci, pre
+	local exact, ci, pre, sub
 	for _,pl in ipairs(Players:GetPlayers()) do
 		if pl~=LP then
+			local n, d = pl.Name:lower(), (pl.DisplayName or pl.Name):lower()
 			if pl.Name==txt or pl.DisplayName==txt then exact=exact or pl end
-			if pl.Name:lower()==low or pl.DisplayName:lower()==low then ci=ci or pl end
-			if pl.Name:lower():sub(1,#low)==low or pl.DisplayName:lower():sub(1,#low)==low then pre=pre or pl end
+			if n==low or d==low then ci=ci or pl end
+			if n:sub(1,#low)==low or d:sub(1,#low)==low then pre=pre or pl end
+			if n:find(low,1,true) or d:find(low,1,true) then
+				if not sub or #pl.Name < #sub.Name then sub=pl end   -- prefer the closest (shortest) match
+			end
 		end
 	end
-	return exact or ci or pre
+	return exact or ci or pre or sub
 end
 __gg.MH_targetResolve = targetResolvePlayer   -- the Target tab (built earlier in the file) calls these at click time
 -- The player's dino model. THE "dino never loads" FIX: other players' models under workspace.Characters are
@@ -4568,7 +4646,38 @@ local function targetReadInfo()
 		if h and h.MaxHealth>0 then info.hp = math.floor(h.Health+0.5); info.hpMax = math.floor(h.MaxHealth+0.5) end
 		info.food = targetAttrNum(model, {"Food","Hunger","Nutrition","Fullness"})
 		info.water = targetAttrNum(model, {"Water","Thirst","Hydration"})
-		info.stam = targetAttrNum(model, {"Stamina","Stam","Energy","Endurance"})
+		-- STAMINA (value + max, so we can show a real bar): attributes first, then NumberValue/IntValue children.
+		info.stam = targetAttrNum(model, {"Stamina","Stam","Energy","Endurance","CurrentStamina","StaminaValue"})
+		info.stamMax = targetAttrNum(model, {"MaxStamina","MaxStam","MaxEnergy","StaminaMax"})
+		if not info.stam then pcall(function()
+			local scanned=0
+			for _,v in ipairs(model:GetDescendants()) do
+				scanned=scanned+1; if scanned>600 then break end   -- cap so the 0.5s tick can't lag on a big model
+				if (v:IsA("NumberValue") or v:IsA("IntValue")) then
+					local nn=v.Name:lower()
+					if (nn:find("stam",1,true) or nn=="energy" or nn:find("endur",1,true)) and not nn:find("max",1,true) then
+						info.stam = tonumber(v.Value)
+						local sib = v.Parent and (v.Parent:FindFirstChild("MaxStamina") or v.Parent:FindFirstChild("MaxStam"))
+						if sib then info.stamMax = tonumber(sib.Value) end
+						break
+					end
+				end
+			end
+		end) end
+		-- WELLBEING — the % that gates their stamina drain / amber gain. We can only read what the game exposes on
+		-- the model to us; scan for a wellbeing / comfort / activity attribute or value. Often private to other
+		-- players, in which case the row shows "--" (it's always PRESENT in the UI, per request).
+		info.wellbeing = targetAttrNum(model, {"Wellbeing","WellbeingAverage","Comfort","Activity","Condition"})
+		if not info.wellbeing then pcall(function()
+			local scanned=0
+			for _,v in ipairs(model:GetDescendants()) do
+				scanned=scanned+1; if scanned>600 then break end
+				if (v:IsA("NumberValue") or v:IsA("IntValue")) then
+					local nn=v.Name:lower()
+					if nn:find("wellbeing",1,true) or nn=="comfort" or nn=="activity" or nn=="condition" then info.wellbeing=tonumber(v.Value); break end
+				end
+			end
+		end) end
 		local r = getHitbox(model) or rootOf(model)
 		local me = hrp()
 		if r and me then info.dist = math.floor(dist(me.Position, r.Position)) end
