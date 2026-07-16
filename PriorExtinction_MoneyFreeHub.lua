@@ -2297,14 +2297,15 @@ task.spawn(function()
 	local waitedT=nil
 	while RUNNING do
 		if CFG.InfFood and alive() then
+			-- (VAGUE on purpose — the toasts never say HOW it works, so nothing here can get the method patched.)
 			if __gg.MH_lastEatCall then
-				if not told then told=true; pcall(function() notify("INF Food","Bite remote captured — growth is now remote-driven. The spam obeys your grow-speed slider.") end) end
+				if not told then told=true; pcall(function() notify("INF Food","Active.") end) end
 				waitedT=nil
 			else
 				waitedT = waitedT or tick()
-				if tick()-waitedT > 15 then
+				if tick()-waitedT > 20 then
 					waitedT = tick()
-					pcall(function() notify("INF Food","No Bite remote captured yet — walk to ANY food and eat it once (hold E). INF Food learns the remote from that one bite, then runs it forever.") end)
+					pcall(function() notify("INF Food","Eat any food once (hold E) to activate.") end)
 				end
 			end
 		else waitedT=nil end
@@ -5069,12 +5070,24 @@ local function toggleMenu()
 		SG.Enabled = not SG.Enabled; if SG.Enabled then task.defer(clampWindow) end
 	end
 end
-if UIS.TouchEnabled then   -- only build the floating button on touch devices (PC users just press RightShift)
+do   -- DREAM LOGO button (ALL devices now): black & white Dream badge — tap opens/closes the menu, drag moves it.
 	local tg = C("ScreenGui",{Name="MH_Toggle", ResetOnSpawn=false, IgnoreGuiInset=true, DisplayOrder=10001, Enabled=true})
 	safeParentGui(tg)
-	local btn = C("TextButton",{Parent=tg, Size=UDim2.fromOffset(46,46), Position=UDim2.new(0,14,0.35,0), BackgroundColor3=(T and T.Accent) or Color3.fromRGB(200,40,40), Text="≡", TextColor3=Color3.fromRGB(255,255,255), TextSize=24, Font=UIFONT, AutoButtonColor=true, ZIndex=50})
+	-- BLACK & WHITE by design: black circle, white ring, the Dream logo image (the same Roblox asset the JJS hub
+	-- uses) tinted pure white on top, with a white "DREAM" as the instant fallback until the image verifiably loads.
+	local btn = C("ImageButton",{Parent=tg, Size=UDim2.fromOffset(46,46), Position=UDim2.new(0,14,0.35,0), BackgroundColor3=Color3.fromRGB(10,10,10), AutoButtonColor=true, ZIndex=50})
+	btn.Image = "rbxthumb://type=Asset&id=82151574125055&w=150&h=150"
+	btn.ImageTransparency = 1
+	btn.ImageColor3 = Color3.fromRGB(255,255,255)   -- white-on-black = the B/W look
+	btn.ScaleType = Enum.ScaleType.Fit
 	Instance.new("UICorner", btn).CornerRadius = UDim.new(1,0)
-	local st = Instance.new("UIStroke"); st.Color=Color3.fromRGB(0,0,0); st.Thickness=1.5; st.Parent=btn
+	local st = Instance.new("UIStroke"); st.Color=Color3.fromRGB(255,255,255); st.Transparency=0.35; st.Thickness=1.6; st.Parent=btn
+	local tl = C("TextLabel",{Parent=btn, Size=UDim2.fromScale(1,1), BackgroundTransparency=1, Text="DREAM", TextColor3=Color3.fromRGB(255,255,255), Font=Enum.Font.GothamBlack, TextScaled=true, ZIndex=51})
+	local pd = Instance.new("UIPadding"); pd.PaddingLeft=UDim.new(0,5); pd.PaddingRight=UDim.new(0,5); pd.PaddingTop=UDim.new(0,15); pd.PaddingBottom=UDim.new(0,15); pd.Parent=tl
+	task.spawn(function()   -- swap the text for the real logo only once the image has ACTUALLY loaded (never a blank circle)
+		for _=1,40 do if not btn.Parent then return end if btn.IsLoaded then break end task.wait(0.15) end
+		if btn.Parent and btn.IsLoaded then pcall(function() btn.ImageTransparency=0; tl.Visible=false end) end
+	end)
 	-- tap = toggle menu; drag = reposition (so it never blocks gameplay). We tell them apart by movement.
 	local dragging, dragStart, startPos, moved = false, nil, nil, false
 	btn.InputBegan:Connect(function(i)
@@ -5095,15 +5108,17 @@ if UIS.TouchEnabled then   -- only build the floating button on touch devices (P
 			dragging=false
 		end
 	end))
-	-- Fly ascend/descend buttons (Space/LeftControl can't be pressed on a touchscreen). Only affect Fly while it's on.
+	-- Fly ascend/descend buttons (Space/LeftControl can't be pressed on a touchscreen). Touch devices only.
 	local function flyBtn(txt, yoff, down, up)
 		local b = C("TextButton",{Parent=tg, Size=UDim2.fromOffset(46,46), Position=UDim2.new(1,-60,0.5,yoff), BackgroundColor3=(T and T.Accent) or Color3.fromRGB(200,40,40), Text=txt, TextColor3=Color3.fromRGB(255,255,255), TextSize=22, Font=UIFONT, AutoButtonColor=true, ZIndex=50})
 		Instance.new("UICorner", b).CornerRadius = UDim.new(0,10)
 		local s2=Instance.new("UIStroke"); s2.Color=Color3.fromRGB(0,0,0); s2.Thickness=1.5; s2.Parent=b
 		b.MouseButton1Down:Connect(down); b.MouseButton1Up:Connect(up)
 	end
-	flyBtn("▲", -52, function() MB.up=true end,   function() MB.up=false end)
-	flyBtn("▼",   6, function() MB.down=true end, function() MB.down=false end)
+	if UIS.TouchEnabled then
+		flyBtn("▲", -52, function() MB.up=true end,   function() MB.up=false end)
+		flyBtn("▼",   6, function() MB.down=true end, function() MB.down=false end)
+	end
 end
 task.spawn(function() local last=false; while RUNNING do task.wait(0.1); if CFG.Fly~=last then last=CFG.Fly; if CFG.Fly then startFly() else stopFly() end end end end)
 conn(LP.CharacterAdded:Connect(function()
