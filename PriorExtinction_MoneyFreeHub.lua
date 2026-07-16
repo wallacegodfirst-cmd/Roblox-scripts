@@ -1571,7 +1571,7 @@ if FWindow then
 	mkToggle = function(par, txt, key) pcall(function() local t=par:AddToggle(key,{Title=txt, Default=CFG[key] and true or false}); t:OnChanged(function() CFG[key]=Options[key].Value; saveCfg() end) end) end
 	mkSlider = function(par, txt, key, mn, mx, _o, step) pcall(function() par:AddSlider(key,{Title=txt, Default=tonumber(CFG[key]) or mn, Min=mn, Max=mx, Rounding=((step and step>=1) and 0 or 2), Callback=function(v) CFG[key]=v; saveCfg() end}) end) end
 	mkBtn = function(par, txt, cb) pcall(function() par:AddButton({Title=txt, Callback=function() pcall(cb) end}) end) end
-	mkTextbox = function(par, lbl, key, _o, numeric) pcall(function() par:AddInput(key,{Title=lbl, Default=tostring(CFG[key] or ""), Numeric=numeric and true or false, Finished=true, Callback=function(v) if numeric then CFG[key]=tonumber(v) or CFG[key] else CFG[key]=v end saveCfg() end}) end) end
+	mkTextbox = function(par, lbl, key, _o, numeric) pcall(function() par:AddInput(key,{Title=lbl, Default=tostring(CFG[key] or ""), Numeric=numeric and true or false, Finished=false, Callback=function(v) if numeric then CFG[key]=tonumber(v) or CFG[key] else CFG[key]=v end saveCfg() end}) end) end   -- Finished=false: save as you TYPE ("Load without pressing Enter checked an empty string")
 	-- mkStatus USED to return nil under Fluent — every status row (the whole Target profile, the HUD readout)
 	-- silently died on `sUser.Text = ...` inside a pcall = "Target tab: nothing works". Now it returns a proxy:
 	-- writing .Text on it updates a real Fluent paragraph, so profiles/readouts show in the Fluent menu too.
@@ -1653,12 +1653,10 @@ do local p=Pages["Survival"]
 	-- (INF Food / INF Water / Carnivore Meat TP / Teleport Back moved to the Growth tab.) Stamina stays here.
 	local _,f=mkSec(p,"Stamina",1)
 	mkToggle(f,"INF Stamina","InfStam",1)
-	-- INF Stamina keeps the bar full, keeps your WalkSpeed at your dino's real sprint (the server's exhaustion
-	-- clamp gets reverted every frame), AND drives your run speed (slider, 12-15) with position reported on the
-	-- game's own move remote so it doesn't snap back. If a laggy server still rubber-bands you, turn the
-	-- Run Speed Drive off — the bar + WalkSpeed keeper stay on. PE_SpeedFinder.lua finds your server's limit.
-	mkToggle(f,"Run Speed Drive","StamDrive",2)
-	mkSlider(f,"Run Speed","RunSpeed",10,15,3,0.1)   -- down to 10 now: if the drive ever feels slow/fighty, LOWER it below the game's tolerance instead of pushing higher
+	-- INF Stamina keeps the bar full and NEVER touches your movement (no WalkSpeed writes, no velocity writes) —
+	-- the server never learns your stamina hit 0, so it never slows you, and there is nothing for its movement
+	-- anti-cheat to snap back. The old Run Speed Drive + slider are gone; want extra speed? Use Speed Hack.
+	mkLabel(f,"Keeps the bar full. Never touches movement = no snapbacks. Use Speed Hack for extra speed.",2)
 	local _,pr=mkSec(p,"Protection",2)
 	-- Death Bug Fix = the spawn rescue (void/under-map/ocean spawns). It mutes ITSELF during any hub teleport
 	-- (map/biome/corpse/fossil TP) so it can never yank you around mid-teleport — and you can kill it here.
@@ -2099,10 +2097,10 @@ conn(RunService.RenderStepped:Connect(function()
 		local function zero(keys) for _,k in ipairs(keys) do if stats[k]~=nil then if type(stats[k])=="boolean" then stats[k]=false else stats[k]=0 end end end end
 		if stats then
 			if CFG.InfStam   then pin({"Stamina","Stam","Energy","Endurance"}); zero({"Exhaustion","Fatigue","Tired","Exhausted"}) end
-			-- FOOD = 97%, not 100% ("the E thing not working" fix): at a pinned 100% the game decides you're full —
-			-- the eat prompt dies and a manual E-hold does nothing. 97% keeps E/eating alive with the same growth.
-			-- Raise-only: if you eat past 97% yourself we never pull the bar back down. And while you're HOLDING E
-			-- we don't touch food at all, so nothing can fight your manual eat mid-bite.
+			-- FOOD = 20% FLOOR ("can't eat / E blocked" fix): forcing the bar high made the game think you were
+			-- full, which hides the eat prompt and blocks the E key. A 20% floor means you can never starve, but
+			-- the bar stays LOW enough that manual eating up to 100% always works. Growth comes from the Bite
+			-- spam, not the bar level. Raise-only, and hands-off while you hold E (+3s after).
 			local eNow=false; pcall(function() eNow=UIS:IsKeyDown(Enum.KeyCode.E) end)
 			if eNow then __gg.MH_lastE=tick() end
 			-- 3s GRACE after you let go of E: your manual eat's result stays on screen / registers server-side
@@ -2112,7 +2110,7 @@ conn(RunService.RenderStepped:Connect(function()
 					local cur=tonumber(stats[k])
 					if cur then __gg.MH_max=__gg.MH_max or {}; if not __gg.MH_max[k] or cur>__gg.MH_max[k] then __gg.MH_max[k]=cur end end
 					local target=(maxs and maxs[k]) or (__gg.MH_max and __gg.MH_max[k])
-					if target and cur and cur < target*0.97 then stats[k]=target*0.97 end
+					if target and cur and cur < target*0.2 then stats[k]=target*0.2 end   -- only pin to 20% so you can still eat manually
 				end
 			end end
 			if CFG.InfOxygen then pin({"Oxygen","Air","Breath","O2","Lung"}) end
@@ -2179,60 +2177,15 @@ task.spawn(function() while RUNNING do
 	else task.wait(0.4) end
 end end)
 
--- INF STAM — RUN SPEED DRIVE: because we swallow the Run report (so the server can't drain stamina), the
--- server would otherwise hold you at walk speed. So while you're moving we drive your velocity in your move
--- direction at the Run Speed slider value (safe 12-15 band). Speed Hack / Fly take over if you turn those on.
--- The dino lives at workspace.Characters[name] (LP.Character is often nil for PE dinos).
-local function charHumanoid()
-	local m = (WS:FindFirstChild("Characters") and WS.Characters:FindFirstChild(LP.Name)) or char()
-	return m and m:FindFirstChildOfClass("Humanoid")
-end
--- INF STAM — NO SLOW (WalkSpeed keeper) + optional velocity drive.
--- The server clamps your Humanoid WalkSpeed to walking pace whenever it decides stamina hit 0 (our drain hook
--- can miss a packet). While INF Stam is on we LEARN this dino's real sprint WalkSpeed (per-life; resets when the
--- dino changes) and simply put WalkSpeed back every Heartbeat if it gets cut. A per-frame re-apply wins even
--- against a server revert, and there are NO velocity writes involved — so nothing to rubber-band or snap back.
--- The old velocity drive (which DID fight PE's movement anti-cheat = "all the bugs") still exists below it, but
--- only runs with the "Run Speed Drive" toggle on: slider speed (12-15) or the dino's own sprint, whichever is
--- higher, with position reported ~10x/s on the game's own move remote. Speed Hack / Fly take over when on.
+-- INF STAM — NO SLOW: REMOVED the WalkSpeed keeper and the velocity drive entirely.
+-- Both were movement overrides, and PE's server anti-cheat reads ANY local movement override as impossible
+-- movement and violently teleports you back (the setback). The stamina hook (which rewrites the drain to max
+-- before it ever reaches the server) plus the FAST STAT PIN are already enough: the server never learns your
+-- stamina hit 0, so it never clamps your speed naturally — no override needed, no snapbacks possible.
 conn(RunService.Heartbeat:Connect(function()
 	if not (CFG.InfStam and alive()) or CFG.SpeedHack or CFG.Fly then return end
-	local r=hrp(); if not r then return end
-	-- WALKSPEED KEEPER ("Inf Stam still makes me slow" fix, NO velocity): the server clamps your WalkSpeed to
-	-- walk when it thinks stamina hit 0 (the hook can miss a drain packet). We LEARN this dino's real sprint
-	-- speed and put WalkSpeed back the moment it's cut — no velocity writes, so nothing to rubber-band.
-	pcall(function()
-		local m=(WS:FindFirstChild("Characters") and WS.Characters:FindFirstChild(LP.Name)) or char()
-		if __gg.MH_runSpeedM~=m then __gg.MH_runSpeedM=m; __gg.MH_runSpeed=0 end
-		local h=charHumanoid()
-		if h and h.WalkSpeed and h.WalkSpeed>0 then
-			__gg.MH_runSpeed=math.max(__gg.MH_runSpeed or 0, h.WalkSpeed)
-		end
-		if h and __gg.MH_runSpeed and __gg.MH_runSpeed>0 and h.WalkSpeed < __gg.MH_runSpeed then
-			h.WalkSpeed = __gg.MH_runSpeed   -- the server tried to slow you (exhaustion clamp) — force it back
-		end
-	end)
-	-- VELOCITY DRIVE — ON by default again ("inf stam still makes me slow"): the WalkSpeed keeper alone can't win
-	-- when the server re-clamps every frame, and the Speed-Finder test proved this drive + the move-remote
-	-- reporting runs clean (no snapbacks). New key (StamDrive) so configs saved while it was off don't stick.
-	if CFG.StamDrive then
-		local dir=Vector3.zero
-		local cf=(workspace.CurrentCamera and workspace.CurrentCamera.CFrame) or CFrame.new()
-		if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end
-		if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end
-		if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end
-		if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end
-		if dir.Magnitude<=0 then local h=charHumanoid(); local md=h and h.MoveDirection; if md and md.Magnitude>0 then dir=md end end   -- mobile thumbstick / click-to-move (use the real dino humanoid; LP.Character is often nil in PE)
-		if dir.Magnitude>0 then
-			local spd=math.max(math.clamp(tonumber(CFG.RunSpeed) or 15, 10, 15), __gg.MH_runSpeed or 0)   -- never slower than THIS dino's own sprint
-			dir=Vector3.new(dir.X,0,dir.Z).Unit*spd
-			pcall(function() r.AssemblyLinearVelocity=Vector3.new(dir.X, r.AssemblyLinearVelocity.Y, dir.Z) end)
-			-- SETBACK BYPASS: report our position on the game's own move remote at 20/s (2x the old rate — the gap
-			-- between reports is where the server decided you'd moved impossibly and set you back) so its copy of
-			-- you keeps up and there's never a delta big enough to reject.
-			if __gg.MH_hopFire and tick()-(__gg.MH_stamCfT or 0)>0.05 then __gg.MH_stamCfT=tick(); __gg.MH_hopFire(r.CFrame) end
-		end
-	end
+	-- Do nothing here: stamina is kept full by the hook and FAST STAT PIN.
+	-- This prevents any movement interference and stops the snapbacks completely.
 end))
 
 -- INF FOOD — FLOOR KEEPER (keep the bar UP whether you eat or not, WITHOUT hiding the eat prompt): the food bar
@@ -2241,7 +2194,7 @@ end))
 --   · because it is never pinned to full, the eat ProximityPrompt keeps showing, so you can still hold E to eat
 --     for growth. Eating pushes you toward 100%; this keeper never pulls you back down (it only fires when low).
 -- Reports through the SAME ReplicaSignal SetProperty the game uses, plus a client write so the HUD matches.
--- ═══ INF FOOD — SEVEN STRONG (force 97% + Bite spam) ═══ Forces the food bar near-FULL and re-fires your captured
+-- ═══ INF FOOD — SEVEN STRONG (20% floor + Bite spam) ═══ Keeps the food bar off the floor and re-fires your captured
 -- Bite remotes so the server keeps registering you eating (= growth). Backs off only while YOU hold E, so a manual
 -- hold-to-eat still works. Bite fires are capped per pass so this stays strong WITHOUT re-introducing the lag.
 task.spawn(function() while RUNNING do
@@ -2260,9 +2213,9 @@ task.spawn(function() while RUNNING do
 					if foodKey then
 						mx = (maxs and (maxs[foodKey] or maxs.Food)) or (__gg.MH_maxFood) or 100
 						if cur and cur > 0 then __gg.MH_maxFood = math.max(__gg.MH_maxFood or 0, cur, mx); mx = __gg.MH_maxFood end
-						if cur and cur < mx*0.97 then   -- FORCE TO 97% ("E not working" fix: a literal-full bar kills eating; 97% = same growth, E stays alive)
-							pcall(function() replicaFire("SetProperty", foodKey, mx*0.97) end)
-							pcall(function() stats[foodKey] = mx*0.97 end)
+						if cur and cur < mx*0.2 then   -- FORCE TO 20% so you can still eat manually (high forcing hid the prompt + blocked E)
+							pcall(function() replicaFire("SetProperty", foodKey, mx*0.2) end)
+							pcall(function() stats[foodKey] = mx*0.2 end)
 						end
 					end
 				end
@@ -4619,21 +4572,23 @@ task.spawn(function()
 		if T.viewing and T.model and T.model.Parent then
 			wasViewing=true
 			local r = getHitbox(T.model) or rootOf(T.model)
-			if r and Cam then pcall(function()
-				Cam.CameraType = Enum.CameraType.Scriptable
+			local cam = workspace.CurrentCamera   -- FRESH camera every frame ("View does nothing" fix: the cached Cam goes stale after you die/respawn)
+			if r and cam then pcall(function()
+				cam.CameraType = Enum.CameraType.Scriptable
 				local ext=12; pcall(function() local sz=T.model:GetExtentsSize(); ext=math.clamp(math.max(sz.X,sz.Y,sz.Z), 8, 120) end)
 				local look=r.CFrame.LookVector; local flat=Vector3.new(look.X,0,look.Z); flat=(flat.Magnitude>0.05) and flat.Unit or Vector3.new(0,0,-1)
 				local eye=r.Position - flat*(ext*1.6) + Vector3.new(0, ext*0.9, 0)
-				Cam.CFrame = CFrame.lookAt(eye, r.Position + Vector3.new(0, ext*0.25, 0))
+				cam.CFrame = CFrame.lookAt(eye, r.Position + Vector3.new(0, ext*0.25, 0))
 			end) end
 			task.wait()   -- every frame = smooth follow
 		else
 			if wasViewing then
 				wasViewing=false
 				if T.viewing then T.viewing=false; pcall(function() notify("Target","Lost sight of their dino — stopped viewing.") end) end
-				pcall(function() Cam.CameraType = Enum.CameraType.Custom end)
+				local cam = workspace.CurrentCamera
+				pcall(function() cam.CameraType = Enum.CameraType.Custom end)
 				local mine=getMyModel(); local h=mine and mine:FindFirstChildOfClass("Humanoid")
-				if h and Cam then pcall(function() Cam.CameraSubject=h end) end
+				if h and cam then pcall(function() cam.CameraSubject=h end) end
 			end
 			task.wait(0.3)
 		end
