@@ -1912,8 +1912,8 @@ if Pages["Target"] then local p=Pages["Target"]
 		local T=__gg.MH_Target
 		if not (T and T.plr) then notify("Target","Load a player first."); return end
 		T.viewing = not T.viewing
-		if T.viewing then
-			local _, m = __gg.MH_targetLivePart and __gg.MH_targetLivePart(T.plr)   -- resolve live; spectate loop keeps re-finding + streaming
+		if T.viewing and __gg.MH_targetLivePart then
+			local _, m = __gg.MH_targetLivePart(T.plr)   -- resolve live (call NOT behind `and`, so both returns land)
 			if m then T.model=m end
 		end
 		notify("Target", T.viewing and ("Viewing "..T.plr.Name.." — press again to stop.") or "Stopped viewing — camera back on your dino.")
@@ -1929,7 +1929,7 @@ if Pages["Target"] then local p=Pages["Target"]
 	mkBtn(ac,"Attack Player Once",function()
 		local T=__gg.MH_Target
 		if not (T and T.plr) then notify("Target","Load a player first."); return end
-		local _, m = __gg.MH_targetLivePart and __gg.MH_targetLivePart(T.plr); if m then T.model=m end
+		if __gg.MH_targetLivePart then local _, m = __gg.MH_targetLivePart(T.plr); if m then T.model=m end end
 		if not (T.model and T.model.Parent) then notify("Target","Their dino isn't in your client yet — get a bit closer."); return end
 		if _G.MH_attack then pcall(function() _G.MH_attack(T.model) end); notify("Target","Hit "..T.plr.Name..".")
 		else notify("Target","Attack unavailable — bite something once so the Attack remote gets captured, then retry.") end
