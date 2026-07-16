@@ -1912,9 +1912,9 @@ if Pages["Target"] then local p=Pages["Target"]
 		local T=__gg.MH_Target
 		if not (T and T.plr) then notify("Target","Load a player first."); return end
 		T.viewing = not T.viewing
-		if T.viewing and not (T.model and T.model.Parent) then
-			T.model = __gg.MH_targetModelFor and __gg.MH_targetModelFor(T.plr)
-			if not T.model then T.viewing=false; notify("Target","Can't view — their dino isn't loaded in (too far away)."); return end
+		if T.viewing then
+			local _, m = __gg.MH_targetLivePart and __gg.MH_targetLivePart(T.plr)   -- resolve live; spectate loop keeps re-finding + streaming
+			if m then T.model=m end
 		end
 		notify("Target", T.viewing and ("Viewing "..T.plr.Name.." — press again to stop.") or "Stopped viewing — camera back on your dino.")
 	end,1)
@@ -1928,7 +1928,9 @@ if Pages["Target"] then local p=Pages["Target"]
 	end,4)
 	mkBtn(ac,"Attack Player Once",function()
 		local T=__gg.MH_Target
-		if not (T and T.model and T.model.Parent) then notify("Target","Load a player first."); return end
+		if not (T and T.plr) then notify("Target","Load a player first."); return end
+		local _, m = __gg.MH_targetLivePart and __gg.MH_targetLivePart(T.plr); if m then T.model=m end
+		if not (T.model and T.model.Parent) then notify("Target","Their dino isn't in your client yet — get a bit closer."); return end
 		if _G.MH_attack then pcall(function() _G.MH_attack(T.model) end); notify("Target","Hit "..T.plr.Name..".")
 		else notify("Target","Attack unavailable — bite something once so the Attack remote gets captured, then retry.") end
 	end,5)
@@ -2280,11 +2282,24 @@ task.spawn(function() while RUNNING do
 	else task.wait(0.4) end
 end end)
 
--- INF STAM — MOVEMENT IS NEVER TOUCHED. No WalkSpeed keeper, no velocity drive. The data pin + wellbeing above are
--- what keep you fast; because we never override movement, there is nothing for the anti-cheat to snap back.
+-- INF STAM — WALKSPEED KEEPER (safe, no snap-back). The data pin + wellbeing keep the SERVER from clamping you,
+-- but if a laggy frame still lets the game cut your WalkSpeed, we set it straight back to your dino's real run
+-- speed. This is a WALKSPEED write only — it does NOT move you or write velocity, so it can NEVER cause the
+-- position snap-back (that only came from velocity/CFrame writes, which we removed). Learns the real speed per
+-- dino from the highest WalkSpeed we ever see it use.
 conn(RunService.Heartbeat:Connect(function()
 	if not (CFG.InfStam and alive()) or CFG.SpeedHack or CFG.Fly then return end
-	-- intentionally empty — see the block above.
+	pcall(function()
+		local m=(WS:FindFirstChild("Characters") and WS.Characters:FindFirstChild(LP.Name)) or char()
+		if __gg.MH_runSpeedM~=m then __gg.MH_runSpeedM=m; __gg.MH_runSpeed=0 end   -- reset when the dino changes
+		local h=m and m:FindFirstChildOfClass("Humanoid")
+		if h and h.WalkSpeed and h.WalkSpeed>0 then
+			if h.WalkSpeed > (__gg.MH_runSpeed or 0) then __gg.MH_runSpeed=h.WalkSpeed end   -- learn its real sprint
+			if __gg.MH_runSpeed and __gg.MH_runSpeed>0 and h.WalkSpeed < __gg.MH_runSpeed - 0.1 then
+				h.WalkSpeed = __gg.MH_runSpeed   -- the game cut it (exhaustion) — put it right back
+			end
+		end
+	end)
 end))
 
 -- INF FOOD — FLOOR KEEPER (keep the bar UP whether you eat or not, WITHOUT hiding the eat prompt): the food bar
@@ -2599,6 +2614,56 @@ conn(RunService.Heartbeat:Connect(function()
 		else __gg.MH_lastHP = math.min(hp, mx) end
 	end)
 end))
+-- ═══ ANTI HEAD — SHRINK / DISABLE THE HEAD HITBOX (your idea: "make my head hitbox so small") ═══
+-- From the decompiled Common.CreateHitbox, the game builds a hitbox model on your dino whose parts are tagged with
+-- a "Group" attribute ("Head", "Neck", "Leg", "Tail", "Body", …). Enemy attacks hit-scan THOSE parts. So while a
+-- protector is on, we take the matching-group hitbox parts and make them un-hittable: CanQuery=false (hit-scans
+-- pass through) + shrink the part small. This makes head/neck/etc. bites miss OUTRIGHT — the strongest anti-head.
+-- It only touches the RECEIVING hitbox: your movement, your own attacks and your damage are completely unaffected.
+-- Everything is restored the instant you turn the protector off. (The HP-restore below still backs up anything
+-- that slips through.)
+do
+	local GROUPS = {}   -- which hitbox groups to neutralize, from the toggles
+	local saved = setmetatable({}, {__mode="k"})   -- part -> {size, canquery} to restore
+	local function wantGroup(g)
+		g = string.lower(tostring(g or ""))
+		if (CFG.AntiFracture or CFG.AntiBreakHead) and (g=="head" or g:find("skull",1,true) or g:find("jaw",1,true)) then return true end
+		if CFG.AntiBreakNeck and g=="neck" then return true end
+		if CFG.AntiBreakLeg  and (g=="leg" or g:find("limb",1,true) or g:find("arm",1,true)) then return true end
+		if CFG.AntiBreakTail and g=="tail" then return true end
+		if CFG.AntiBreakTorso and (g=="torso" or g=="body") then return true end
+		return false
+	end
+	local function restore(part)
+		local s=saved[part]; if not s then return end
+		pcall(function() if part.Parent then part.Size=s.size; part.CanQuery=s.cq end end)
+		saved[part]=nil
+	end
+	conn(RunService.Heartbeat:Connect(function()
+		local anyProt = CFG.AntiFracture or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso
+		if not (anyProt and alive()) then
+			for p in pairs(saved) do restore(p) end
+			return
+		end
+		pcall(function()
+			local m=getMyModel(); if not m then return end
+			local hb=m:FindFirstChild("Hitbox") or m:FindFirstChild("HitBox")
+			if not hb then return end
+			for _,part in ipairs(hb:GetDescendants()) do
+				if part:IsA("BasePart") then
+					local grp = part:GetAttribute("Group") or part.Name
+					if wantGroup(grp) then
+						if not saved[part] then saved[part]={size=part.Size, cq=part.CanQuery} end
+						if part.CanQuery~=false then part.CanQuery=false end          -- hit-scans pass THROUGH = bites miss
+						if part.Size.Magnitude>0.25 then part.Size=Vector3.new(0.1,0.1,0.1) end   -- tiny = nothing to clip
+					elseif saved[part] then
+						restore(part)   -- group no longer protected (toggle changed) → put it back
+					end
+				end
+			end
+		end)
+	end))
+end
 -- ═══ ANTI HEAD / BONE PROTECTION — AGGRESSIVE DAMAGE BLOCK (ANTI 1K DAMAGE) ═══
 -- Incoming damage is dealt SERVER-side (the attacker's client reports the bite; the server drops your HP), so we
 -- can't refuse it. Instead: the instant HP drops, heal straight back to max, block the Dead state, and report full.
@@ -4640,6 +4705,10 @@ __gg.MH_targetResolve = targetResolvePlayer   -- the Target tab (built earlier i
 -- name fast-path, then a GetPlayerFromCharacter scan of every model, then LeftCharacters.
 local function targetModelFor(pl)
 	if not pl then return nil end
+	-- CACHE FIRST: a background scan (below) maps every player to their dino model exactly the way the ESP does,
+	-- with NO range limit — so the instant their dino is streamed to your client, Target has it.
+	local cached = __gg.MH_pmodels and __gg.MH_pmodels[pl.UserId]
+	if cached and cached.Parent then return cached end
 	-- THE ESP'S WAY, in the ESP's order ("when I turn on ESP it loads their info — use that"): the ESP walks
 	-- workspace.Characters and identifies dinos there. So: Characters[name] first, then the same
 	-- GetPlayerFromCharacter match the ESP uses, then owner tags. pl.Character is only trusted LAST and only
@@ -4703,6 +4772,46 @@ local function targetModelFor(pl)
 	return nil
 end
 __gg.MH_targetModelFor = targetModelFor
+-- ═══ PLAYER → DINO CACHE ═══ Always-on, no range limit. Maps every player to their dino model the SAME way the
+-- ESP finds them (GetPlayerFromCharacter over workspace.Characters), plus name/owner matching for the dinos PE
+-- doesn't register normally. This is what makes Target "just load" — the profile and every action read from here.
+__gg.MH_pmodels = __gg.MH_pmodels or {}
+task.spawn(function() while RUNNING do
+	pcall(function()
+		local ch = WS:FindFirstChild("Characters")
+		local fresh = {}
+		local byName = {}
+		for _,pl in ipairs(Players:GetPlayers()) do if pl~=LP then
+			byName[string.lower(pl.Name)] = pl
+			byName[string.lower(pl.DisplayName or pl.Name)] = pl
+		end end
+		if ch then for _,m in ipairs(ch:GetChildren()) do if m:IsA("Model") then
+			local owner
+			pcall(function() owner = Players:GetPlayerFromCharacter(m) end)
+			if not owner then
+				local mn = string.lower(m.Name)
+				owner = byName[mn]
+				if not owner then for nm,pl in pairs(byName) do if mn:find(nm,1,true) then owner=pl; break end end end
+			end
+			if owner and owner~=LP then fresh[owner.UserId] = m end
+		end end end
+		-- keep last-known models that are still parented even if this pass missed them (streaming flicker)
+		for uid,m in pairs(__gg.MH_pmodels) do if not fresh[uid] and m and m.Parent then fresh[uid]=m end end
+		__gg.MH_pmodels = fresh
+	end)
+	task.wait(1)
+end end)
+-- LIVE POSITION for a player — ANY part we can reach, so View / Teleport / Auto Farm work WITHOUT needing a
+-- fully "loaded" profile first. Tries the cached dino, then a fresh lookup, then their Character, then a scan.
+local function targetLivePart(pl)
+	if not pl then return nil end
+	local m = targetModelFor(pl)
+	if m then local r=getHitbox(m) or rootOf(m); if r then return r, m end end
+	local pc = pl.Character
+	if pc then local r=pc:FindFirstChild("HumanoidRootPart") or rootOf(pc) or pc:FindFirstChildWhichIsA("BasePart"); if r then return r, pc end end
+	return nil, nil
+end
+__gg.MH_targetLivePart = targetLivePart
 -- Read a stat off a model/MeshModel by trying several attribute names; returns number or nil.
 local function targetAttrNum(model, names)
 	if not model then return nil end
@@ -4787,11 +4896,12 @@ local function targetReadInfo()
 	return info
 end
 _G.MH_targetInfo = targetReadInfo
--- Teleport to the current target (uses the hop-mover if present, else a direct PivotTo).
+-- Teleport to the current target. Resolves position LIVE from any part — never needs a pre-loaded profile.
 local function targetTeleport()
-	local T = __gg.MH_Target; local model = T.model
-	if not (model and model.Parent) then return false end
-	local r = getHitbox(model) or rootOf(model); if not r then return false end
+	local T = __gg.MH_Target; if not T.plr then return false end
+	local r, model = targetLivePart(T.plr)
+	if model then T.model = model end
+	if not r then return false end
 	local goal = r.Position + Vector3.new(0, 6, 0)
 	if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
 	if __gg.MH_hopMove then __gg.MH_hopMove(goal) else
@@ -4858,11 +4968,10 @@ end)
 task.spawn(function() while RUNNING do
 	if CFG.AutoFarmPlayer and alive() then
 		local T = __gg.MH_Target
-		local model = T.model
-		if model and (not model.Parent) then model=targetModelFor(T.plr); T.model=model end
+		local r, model
+		if T.plr then r, model = targetLivePart(T.plr); if model then T.model=model end end
 		local h = model and model:FindFirstChildOfClass("Humanoid")
 		if model and model.Parent and ((not h) or h.Health>0) then
-			local r = getHitbox(model) or rootOf(model)
 			local me = hrp()
 			if r and me then
 				local d = dist(me.Position, r.Position)
