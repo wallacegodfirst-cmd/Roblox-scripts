@@ -56,7 +56,7 @@ local CFG = {
 	BotFlee=true, BotFleeRange=240, BotRoam=true, BotRoamRadius=350, BotEatAt=80, BotDrinkAt=80, BotSleepHeal=true, BotSpeed=18, BotAnnounce=true,
 	BoneProtect=false, ProtectBone="All",
 	TurnHack=false, TurnSpeed=30,
-	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=15, StamDrive=true, Noclip=false, Invis=false,
+	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=15, StamDrive=true, DeathFix=true, Noclip=false, Invis=false,
 	InfJump=false, BypassTP=true,
 	InfFood=false, InfWater=false, InfStam=false, InfOxygen=false,
 	AntiDrown=true, AntiDrownRise=14, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false, HeadDmgReduce=90,
@@ -97,7 +97,7 @@ loadCfg()
 -- u snap back"), so the safe band is 12-15. Default is 15: Speed-Finder testing measured ~15.7 sustained (21.9
 -- bursts) with ZERO snapbacks now that the drive reports through the game's own move remote — the band top is
 -- simply the best speed. Any saved value outside 12-15 (old 16-90 configs included) is reset to 15.
-do local rs = tonumber(CFG.RunSpeed) or 15; CFG.RunSpeed = (rs >= 12 and rs <= 15) and rs or 15 end
+do local rs = tonumber(CFG.RunSpeed) or 15; CFG.RunSpeed = (rs >= 10 and rs <= 15) and rs or 15 end
 MS("1 config ok")
 CFG.Keybinds = CFG.Keybinds or {}
 CFG.Keybinds.UIKey = CFG.Keybinds.UIKey or CFG.UIKey
@@ -639,6 +639,8 @@ __gg.MH_spawnRescue = function()
 		while tick()-t0<30 and RUNNING do
 			local handsOff=false
 			pcall(function()
+				if not CFG.DeathFix then handsOff=true; return end                          -- "Death Bug Fix" toggle is OFF
+				if (__gg.MH_rescueMute or 0) > tick() then handsOff=true; return end       -- a hub teleport is in progress — never fight it
 				if unstuckOn() then
 					handsOff=true
 					if not warned then warned=true; pcall(function() notify("Spawn Rescue","The game's Unstuck timer is running — DON'T MOVE (moving cancels it). It teleports you to a real spawn; then RE-SAVE your dino!") end) end
@@ -1656,8 +1658,11 @@ do local p=Pages["Survival"]
 	-- game's own move remote so it doesn't snap back. If a laggy server still rubber-bands you, turn the
 	-- Run Speed Drive off — the bar + WalkSpeed keeper stay on. PE_SpeedFinder.lua finds your server's limit.
 	mkToggle(f,"Run Speed Drive","StamDrive",2)
-	mkSlider(f,"Run Speed","RunSpeed",12,15,3,0.1)
+	mkSlider(f,"Run Speed","RunSpeed",10,15,3,0.1)   -- down to 10 now: if the drive ever feels slow/fighty, LOWER it below the game's tolerance instead of pushing higher
 	local _,pr=mkSec(p,"Protection",2)
+	-- Death Bug Fix = the spawn rescue (void/under-map/ocean spawns). It mutes ITSELF during any hub teleport
+	-- (map/biome/corpse/fossil TP) so it can never yank you around mid-teleport — and you can kill it here.
+	mkToggle(pr,"Death Bug Fix (spawn rescue)","DeathFix",0)
 	mkToggle(pr,"Anti Drown","AntiDrown",1)
 	mkSlider(pr,"Anti Drown Rise","AntiDrownRise",2,30,1,1)
 	mkLabel(pr,"How fast Anti Drown lifts you to the surface. Lower = smoother on weak devices.")
@@ -2099,7 +2104,10 @@ conn(RunService.RenderStepped:Connect(function()
 			-- Raise-only: if you eat past 97% yourself we never pull the bar back down. And while you're HOLDING E
 			-- we don't touch food at all, so nothing can fight your manual eat mid-bite.
 			local eNow=false; pcall(function() eNow=UIS:IsKeyDown(Enum.KeyCode.E) end)
-			if CFG.InfFood and not eNow then for _,k in ipairs({"Food","Hunger","Nutrition","Fullness","Satiation"}) do
+			if eNow then __gg.MH_lastE=tick() end
+			-- 3s GRACE after you let go of E: your manual eat's result stays on screen / registers server-side
+			-- before any forcing resumes — this is the "E sometimes works" fix (we were overwriting it instantly).
+			if CFG.InfFood and not eNow and tick()-(__gg.MH_lastE or 0)>3 then for _,k in ipairs({"Food","Hunger","Nutrition","Fullness","Satiation"}) do
 				if stats[k]~=nil then
 					local cur=tonumber(stats[k])
 					if cur then __gg.MH_max=__gg.MH_max or {}; if not __gg.MH_max[k] or cur>__gg.MH_max[k] then __gg.MH_max[k]=cur end end
@@ -2216,7 +2224,7 @@ conn(RunService.Heartbeat:Connect(function()
 		if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end
 		if dir.Magnitude<=0 then local h=charHumanoid(); local md=h and h.MoveDirection; if md and md.Magnitude>0 then dir=md end end   -- mobile thumbstick / click-to-move (use the real dino humanoid; LP.Character is often nil in PE)
 		if dir.Magnitude>0 then
-			local spd=math.max(math.clamp(tonumber(CFG.RunSpeed) or 15, 12, 15), __gg.MH_runSpeed or 0)   -- never slower than THIS dino's own sprint
+			local spd=math.max(math.clamp(tonumber(CFG.RunSpeed) or 15, 10, 15), __gg.MH_runSpeed or 0)   -- never slower than THIS dino's own sprint
 			dir=Vector3.new(dir.X,0,dir.Z).Unit*spd
 			pcall(function() r.AssemblyLinearVelocity=Vector3.new(dir.X, r.AssemblyLinearVelocity.Y, dir.Z) end)
 			-- SETBACK BYPASS: report our position on the game's own move remote at 20/s (2x the old rate — the gap
@@ -2239,7 +2247,9 @@ end))
 task.spawn(function() while RUNNING do
 	if CFG.InfFood and alive() then
 		local eHeld=false; pcall(function() eHeld=UIS:IsKeyDown(Enum.KeyCode.E) end)
-		if not eHeld then
+		if eHeld then __gg.MH_lastE=tick() end
+		if not eHeld and tick()-(__gg.MH_lastE or 0)>3 then   -- 3s grace after E so a manual eat is never overwritten
+
 			pcall(function()
 				local stats, maxs = csStats()
 				local foodKey, mx, cur
@@ -3039,6 +3049,7 @@ __gg.MH_hopFire=MH_hopFire   -- shared: the INF-Stam speed drive reports its pos
 -- (a) feeding the server the goal on its own move remote for ~1.2s and (b) re-asserting the goal locally only
 -- if the server shoves you more than 6 studs (so it never freezes you when you're already there).
 __gg.MH_snapTo=function(targetPos)
+	__gg.MH_rescueMute = tick()+12   -- teleporting on purpose — the spawn rescue stays out of it
 	local goal=CFrame.new(targetPos)
 	local cc=getMyModel()
 	pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end end)
@@ -3054,6 +3065,7 @@ __gg.MH_snapTo=function(targetPos)
 	end)
 end
 __gg.MH_hopMove=function(targetPos, localWrite)
+	__gg.MH_rescueMute = tick()+12   -- teleporting on purpose — the spawn rescue stays out of it
 	task.spawn(function()
 		local r=hrp(); if not r then return end
 		local from=r.Position
