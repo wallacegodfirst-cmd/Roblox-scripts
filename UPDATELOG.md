@@ -1,7 +1,47 @@
 DREAM HUB - UPDATE LOG
 
 ===================================================================
-JJS VELOCITY TELEPORT + LOGO, PE INF STAM NO-SLOW  (latest)
+DEEP VERIFY PASS + TRASH THROW + AA PREMIUM  (latest)
+===================================================================
+
+JUJUTSU SHENANIGANS
+~ Throw Trash At User actually picks the trash up now — and clicks it.
+  The grab fires the trash's ClickDetector AND lands a real mouse click
+  on it (plus touch / prompt / E), then VERIFIES you're holding it and
+  retries up to 3 times. If there's no loose trash it finds the nearest
+  TRASH CAN, clicks the can to get trash out, and grabs that. The throw
+  itself was clicking screen corner (0,0) = threw nothing — it now
+  clicks screen center, the same fix Auto Farm's M1 needed.
+~ Deep verify pass over the whole hub (6 parallel reviewers + trace
+  checks). Confirmed + fixed:
+  - Overlapping teleports (e.g. Rika sword spam) corrupted the noclip
+    save/restore — the old flight re-solidified you mid-flight of the
+    new one, or left you permanently noclipped. One shared save-list
+    now; only the current teleport's landing restores collisions.
+  - The position-lock could fight the velocity flight on low-FPS
+    clients (re-pin + velocity zero every frame). Lock is now off
+    during flight — the flight self-corrects every frame — and
+    re-engages at the exact target on landing.
+  - The Target module's item search was silently calling a function
+    from another module (always failed, fallback masked it). Resolved
+    inline now.
+  - Teleport engine, UI wiring, logo button, labels, Target module,
+    auto farm loop and all loaders traced clean.
+~ Notes updated to "🏗️ In fixing + kind of works" on Teleports, Target
+  and Auto Farm.
+
+ABILITY ARENA
++ PREMIUM build added (AbilityArena_PREMIUM.lua) — everything in Plus,
+  plus Premium-only features as they land.
+
+PRIOR EXTINCTION
+~ Deep verify pass (Target tab, INF Stam drive, Pro Food circle, fossil
+  farm, loaders — all traced clean end-to-end). One bug found + fixed:
+  the farm counter counted every collected fossil/gem TWICE (the
+  notification bar showed double). Collection itself was fine.
+
+===================================================================
+JJS VELOCITY TELEPORT + LOGO, PE INF STAM NO-SLOW
 ===================================================================
 
 JUJUTSU SHENANIGANS

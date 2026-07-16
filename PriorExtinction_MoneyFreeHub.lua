@@ -3816,7 +3816,7 @@ local function runFarm(enabledKey, kind, rangeKey)
 						if prompt and fireprox then pcall(function() fireprox(prompt) end) end   -- backup: complete it now
 						if prompt then pcall(function() prompt.MaxActivationDistance=od; prompt.RequiresLineOfSight=ol; prompt.KeyboardKeyCode=okc; prompt.Enabled=oen end) end   -- restore native prompt state
 						pcall(function() if bp then bp:Destroy() end end)
-						if done or not (part and part.Parent) then FARM.count[kind]=(FARM.count[kind] or 0)+1; FARM.tried[part]=nil end
+						if done or not (part and part.Parent) then FARM.count[kind]=(FARM.count[kind] or 0)+1; FARM.tried[part]=nil; pending[part]=nil end   -- clear pending too, or the vanish-sweep counts this node AGAIN (double count)
 						-- SLOW cadence for fossils (you asked for it): pause between each fossil so it collects one at a
 						-- calm pace instead of blinking node-to-node. Gems keep the quick pace.
 						task.wait((kind=="fossil") and (tonumber(CFG.FossilSlow) or 1.2) or 0.2)

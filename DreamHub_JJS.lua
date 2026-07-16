@@ -1084,12 +1084,27 @@ end
 -- Collisions are turned off on your own parts for the flight (restored after) so walls/floors can't stop you,
 -- and when the straight line is blocked by a building we fly UP 400 studs first, then dive to the target.
 -- Returns when you're within 3 studs (or the safety timeout fires — then we hard-write and let the lock hold).
-local function vxVelocityLeg(targetPos, speed, myGen)
-	local changed = {}
+-- SHARED noclip save-list: with two overlapping teleports (Rika-sword spam), the OLD leg used to restore
+-- collisions mid-flight of the NEW one — and the new leg had recorded nothing (parts were already off), so
+-- you ended solid in a wall or permanently noclipped. One shared list: first leg records, only the CURRENT
+-- teleport's landing restores, superseded legs leave it alone.
+local vxNoclipParts = nil
+local function vxNoclipOn()
+	if vxNoclipParts then return end
+	vxNoclipParts = {}
 	local c = vxMyChar()
 	if c then for _, v in ipairs(c:GetDescendants()) do
-		if v:IsA("BasePart") and v.CanCollide then v.CanCollide = false; changed[#changed + 1] = v end
+		if v:IsA("BasePart") and v.CanCollide then v.CanCollide = false; vxNoclipParts[#vxNoclipParts + 1] = v end
 	end end
+end
+local function vxNoclipOff(myGen)
+	if myGen ~= vxTeleGen then return end            -- a newer teleport is still flying; it restores when IT lands
+	if vxNoclipParts then for _, v in ipairs(vxNoclipParts) do pcall(function() v.CanCollide = true end) end end
+	vxNoclipParts = nil
+end
+local function vxVelocityLeg(targetPos, speed, myGen)
+	vxNoclipOn()
+	local c = vxMyChar()
 	local h0 = c and c:FindFirstChild("HumanoidRootPart")
 	local t0 = tick()
 	local timeout = (h0 and (targetPos - h0.Position).Magnitude or 400) / speed * 2 + 2
@@ -1100,7 +1115,10 @@ local function vxVelocityLeg(targetPos, speed, myGen)
 		local dist = targetPos - hrp.Position
 		if dist.Magnitude < 3 then break end
 		hrp.AssemblyLinearVelocity = (dist.Magnitude > 0.01) and (dist.Unit * speed) or Vector3.zero
-		vxCurrentTargetCF = CFrame.new(hrp.Position)                  -- lock follows the flight (never yanks mid-air)
+		-- lock OFF while flying: on a low-FPS client you cover >3 studs between frames, and the lock's re-pin
+		-- (which also zeroes velocity) would fight the flight. The flight self-corrects anyway — it re-aims from
+		-- wherever you are every frame — and the landing hard-write re-engages the lock at the exact target.
+		vxCurrentTargetCF = nil
 		if math.floor((tick() - t0) * 10) % 3 == 0 then vxACPass() end
 		task.wait()
 	end
@@ -1479,12 +1497,69 @@ do
         end
         return false
     end
+    -- REAL CLICK on a world part: fire its ClickDetector directly (the reliable path), and ALSO aim a real
+    -- mouse click at its on-screen position so click-scripted pickups that need a genuine click get one.
+    local function clickOn(obj)
+        local part = obj:IsA("BasePart") and obj or partOf(obj)
+        if not part then return end
+        pcall(function()
+            if typeof(fireclickdetector) == "function" then
+                local holder = obj:IsA("Model") and obj or part
+                for _, cd in ipairs(holder:GetDescendants()) do if cd:IsA("ClickDetector") then fireclickdetector(cd) end end
+                local cd = part:FindFirstChildOfClass("ClickDetector"); if cd then fireclickdetector(cd) end
+            end
+        end)
+        pcall(function()
+            local cam = workspace.CurrentCamera
+            local sp, on = cam:WorldToViewportPoint(part.Position)
+            if on then VIM:SendMouseButtonEvent(sp.X, sp.Y, 0, true, game, 0); task.wait(0.04); VIM:SendMouseButtonEvent(sp.X, sp.Y, 0, false, game, 0) end
+        end)
+    end
+    -- did the pickup actually happen? you're holding a Tool, OR the item vanished / got welded onto you
+    local function holdingSomething(item)
+        local me = myChar()
+        if me and me:FindFirstChildOfClass("Tool") then return true end
+        if item and (not item.Parent or (me and item:IsDescendantOf(me))) then return true end
+        return false
+    end
+    -- pick THIS item up and make sure it took: TP onto it, then CLICK it (detector + real mouse click) + touch
+    -- + prompt + E, and verify; up to 3 tries before giving up. Returns true only when the pickup really landed.
+    local function grabThis(best)
+        local part = best:IsA("BasePart") and best or partOf(best)
+        if not part then return false end
+        vxTeleportHard(part.Position + Vector3.new(0, 2, 0), 1.2); task.wait(0.6)
+        for _ = 1, 3 do
+            local me = myChar()
+            if me and typeof(firetouchinterest) == "function" then
+                for _, ip in ipairs(best:IsA("Model") and best:GetDescendants() or { best }) do
+                    if ip:IsA("BasePart") then
+                        for _, mp in ipairs(me:GetChildren()) do
+                            if mp:IsA("BasePart") then pcall(function() firetouchinterest(mp, ip, 0); firetouchinterest(mp, ip, 1) end) end
+                        end
+                    end
+                end
+            end
+            if typeof(fireproximityprompt) == "function" and best:IsA("Model") then
+                for _, dpp in ipairs(best:GetDescendants()) do
+                    if dpp:IsA("ProximityPrompt") then pcall(function() fireproximityprompt(dpp) end) end
+                end
+            end
+            clickOn(best)
+            pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game) end)
+            task.wait(0.3)
+            if holdingSomething(best) then return true end
+        end
+        return holdingSomething(best)
+    end
     local function grabNearestItem(filter)   -- pick up an item (filter name or "Any"), returns true if grabbed
         local hrp = myHRP(); if not hrp then return false end
         local best, bd
-        -- roots to search: the resolved items folder (Map.Destructible.Throwable) FIRST, then common fallbacks
+        -- roots to search: Map.Destructible.Throwable FIRST (resolved inline — itemsFolder() lives in the ITEMS
+        -- do-block and is NOT visible here; the old pcall(itemsFolder) was silently calling nil), then fallbacks
         local roots = {}
-        local okF, itF = pcall(itemsFolder); if okF and itF then roots[#roots+1] = itF end
+        for _, base in ipairs({ workspace:FindFirstChild("Map"), workspace }) do
+            if base then local d = base:FindFirstChild("Destructible"); local t = d and d:FindFirstChild("Throwable"); if t then roots[#roots+1] = t end end
+        end
         local mp = workspace:FindFirstChild("Map")
         for _, base in ipairs({ mp, workspace }) do
             if base then for _, fn in ipairs({ "Destructible", "Throwable", "Items", "Drops", "Loot" }) do
@@ -1501,25 +1576,7 @@ do
             if best then break end
         end
         if not best then return false end
-        local part = best:IsA("BasePart") and best or partOf(best)
-        vxTeleportHard(part.Position + Vector3.new(0, 2, 0), 1.2); task.wait(0.6)
-        local me = myChar()
-        if me and typeof(firetouchinterest) == "function" then
-            for _, ip in ipairs(best:IsA("Model") and best:GetDescendants() or { best }) do
-                if ip:IsA("BasePart") then
-                    for _, mp in ipairs(me:GetChildren()) do
-                        if mp:IsA("BasePart") then pcall(function() firetouchinterest(mp, ip, 0); firetouchinterest(mp, ip, 1) end) end
-                    end
-                end
-            end
-        end
-        if typeof(fireproximityprompt) == "function" and best:IsA("Model") then
-            for _, dpp in ipairs(best:GetDescendants()) do
-                if dpp:IsA("ProximityPrompt") then pcall(function() fireproximityprompt(dpp) end) end
-            end
-        end
-        pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game) end)
-        return true
+        return grabThis(best)
     end
     -- AUTO FARM the target: TP behind + M1 loop
     task.spawn(function()
@@ -1634,16 +1691,46 @@ do
         end,
         throwTrash = function()
             task.spawn(function()
-                if grabNearestItem("Trash") then   -- trash lives in workspace.Destructible.Throwable, named "Trash"
-                    task.wait(0.2)
-                    local _, mdl = resolve(); local tr = partOf(mdl)
-                    if tr then
-                        vxTeleportHard(tr.Position - (tr.CFrame.LookVector * 5) + Vector3.new(0, 1, 0), 1.5); task.wait(0.35)
-                        faceTo(tr.Position)
-                        -- throw = M1 (or R) while holding; do both taps to be safe
-                        pcall(function() VIM:SendMouseButtonEvent(0, 0, 0, true, game, 0); task.wait(0.05); VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0) end)
+                -- STEP 1 — GET TRASH IN HAND (verified, not assumed): grab a loose Trash item; if there is none,
+                -- find the nearest TRASH CAN and CLICK IT (detector + a real mouse click on it) to get trash out,
+                -- then grab that. grabThis/grabNearestItem only return true when you're actually holding it.
+                local got = grabNearestItem("Trash")
+                if not got then
+                    local hrp = myHRP()
+                    local can, cd
+                    if hrp then
+                        for _, m in ipairs(workspace:GetDescendants()) do
+                            if (m:IsA("Model") or m:IsA("BasePart")) then
+                                local n = string.lower(m.Name)
+                                if n:find("trash", 1, true) and (n:find("can", 1, true) or n:find("bin", 1, true) or m:FindFirstChildWhichIsA("ClickDetector", true)) then
+                                    local p = m:IsA("BasePart") and m or partOf(m)
+                                    if p then local d = (p.Position - hrp.Position).Magnitude; if not cd or d < cd then can, cd = m, d end end
+                                end
+                            end
+                        end
                     end
-                elseif VX_NOTIFY then VX_NOTIFY("No trash found", false) end
+                    if can then
+                        local p = can:IsA("BasePart") and can or partOf(can)
+                        if p then vxTeleportHard(p.Position + Vector3.new(0, 2, 0), 1.2); task.wait(0.5) end
+                        clickOn(can)   -- click ON the trash can to get the trash out
+                        pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game) end)
+                        task.wait(0.5)
+                        got = grabNearestItem("Trash") or holdingSomething(nil)
+                    end
+                end
+                if not got then if VX_NOTIFY then VX_NOTIFY("No trash found (checked loose trash + trash cans)", false) end return end
+                -- STEP 2 — THROW IT AT THE TARGET: TP in front, face them, M1 at SCREEN CENTER (a 0,0 click hits
+                -- the GUI corner and throws nothing — same fix the Auto Farm click needed).
+                task.wait(0.2)
+                local _, mdl = resolve(); local tr = partOf(mdl)
+                if not tr then if VX_NOTIFY then VX_NOTIFY("Holding trash, but the target wasn't found", false) end return end
+                vxTeleportHard(tr.Position - (tr.CFrame.LookVector * 5) + Vector3.new(0, 1, 0), 1.5); task.wait(0.35)
+                faceTo(tr.Position)
+                pcall(function()
+                    local cam = workspace.CurrentCamera; local vp = (cam and cam.ViewportSize) or Vector2.new(1280, 720)
+                    local cx, cy = vp.X / 2, vp.Y / 2
+                    VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.05); VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+                end)
             end)
         end,
         setFarm = function(v) farmOn = v == true end,
@@ -9935,7 +10022,7 @@ do
     task.spawn(function()   -- keep the item list current: refresh with the REAL items on the map every 10s
         while true do task.wait(10); pcall(function() if grabDD and ItemsApi then grabDD:Refresh(ItemsApi.names()) end end) end
     end)
-    pcall(function() auSec:Label("🏗️ Auto Farm: In fixing (teleport)") end)
+    pcall(function() auSec:Label("🏗️ Auto Farm: In fixing + kind of works (teleport)") end)
     auSec:Toggle({ Name = "Auto Farm", Callback = function(b) if FarmApi then FarmApi.set(b) end end })
     auSec:Dropdown({ Name = "Farm Target", Items = playerList(), Default = "Nearest", Callback = function(v) if FarmApi then FarmApi.setTarget(v) end end })
     auSec:Toggle({ Name = "Auto Train", Callback = function(b) if TrainApi then TrainApi.setAuto(b) end end })
@@ -9944,7 +10031,7 @@ do
     local TargetPage = Window:Page({ Name = "Target", Icon = "crosshair" })
     local tgSub = TargetPage:SubPage({ Name = "Target", Columns = 2 })
     local tSec = tgSub:Section({ Name = "Target", Side = 1 })
-    pcall(function() tSec:Label("🏗️ In fixing (teleports)") end)
+    pcall(function() tSec:Label("🏗️ In fixing + kind of works (teleports)") end)
     -- IN-GUI info panel (user: "show it inside the gui"): one line per stat, all live-updating.
     local nameL, hpL, ultL, killL   -- fwd (textbox callback below refreshes them)
     local function liveInfo()
@@ -10067,7 +10154,7 @@ do
     local TpPage = Window:Page({ Name = "Teleports", Icon = "navigation" })
     local tpSub = TpPage:SubPage({ Name = "Teleports", Columns = 2 })
     local locSec = tpSub:Section({ Name = "Locations", Side = 1 })
-    pcall(function() locSec:Label("🏗️ In fixing") end)
+    pcall(function() locSec:Label("🏗️ In fixing + kind of works") end)
     if TPApi and TPApi.spotNames then for _, n in ipairs(TPApi.spotNames()) do locSec:Button({ Name = n, Callback = function() if TPApi then TPApi.spot(n) end end }) end end
     local quickSec = tpSub:Section({ Name = "Quick", Side = 2 })
     quickSec:Button({ Name = "Print TP Remote", Callback = function()
