@@ -86,16 +86,21 @@ task.spawn(function()
 _G.__DreamGameName = "ABILITY ARENA"
 _G.__DreamTier = (_G.AA_PREM and "PREMIUM") or (_G.AA_PLUS and "PLUS") or "FREE"
 -- ═══════════════════ DREAM HUB — LOADING SCREEN ═══════════════════
--- Black screen → Dream logo fades in slowly → title + tier + your profile + an animated loading bar. Fades out
--- and destroys when the hub finishes building (or after a safety timeout so it can never get stuck).
+-- Premium YUB-X-style intro: blurred backdrop, drifting particles, a glowing logo that springs in, gradient
+-- title, tier pill, your profile card, and a shimmering progress bar with cycling status text. Fades out when
+-- the hub finishes building (or a safety timeout) so it can never get stuck.
 pcall(function()
-	local Players = game:GetService("Players")
-	local Tween   = game:GetService("TweenService")
-	local LP      = Players.LocalPlayer
+	local Players  = game:GetService("Players")
+	local Tween    = game:GetService("TweenService")
+	local Lighting = game:GetService("Lighting")
+	local LP       = Players.LocalPlayer
 	if not LP then return end
-	local accent  = Color3.fromRGB(224, 36, 36)
+	local accent  = Color3.fromRGB(226, 34, 44)     -- Dream red
+	local accent2 = Color3.fromRGB(120, 20, 26)
 	local GAME = _G.__DreamGameName or "DREAM HUB"
 	local TIER = _G.__DreamTier or ""
+	local TI = TweenInfo.new
+	local function tw(o, t, props, style, dir) return Tween:Create(o, TI(t, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out), props) end
 
 	local gui = Instance.new("ScreenGui")
 	gui.Name = "DreamLoader"; gui.IgnoreGuiInset = true; gui.ResetOnSpawn = false
@@ -103,84 +108,161 @@ pcall(function()
 	pcall(function() gui.Parent = (typeof(gethui)=="function" and gethui()) or game:GetService("CoreGui") end)
 	if not gui.Parent then pcall(function() gui.Parent = LP:WaitForChild("PlayerGui") end) end
 
+	-- backdrop blur (real Lighting blur = the premium frosted look), fades in then out
+	local blur = Instance.new("BlurEffect"); blur.Size = 0; pcall(function() blur.Parent = Lighting end)
+	tw(blur, 0.9, {Size = 24}):Play()
+
 	local bg = Instance.new("Frame")
-	bg.Size = UDim2.fromScale(1,1); bg.BackgroundColor3 = Color3.fromRGB(0,0,0)
-	bg.BorderSizePixel = 0; bg.ZIndex = 1; bg.Parent = gui
-	local grad = Instance.new("UIGradient")
-	grad.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, Color3.fromRGB(24,24,27)), ColorSequenceKeypoint.new(1, Color3.fromRGB(0,0,0))})
-	grad.Rotation = 90; grad.Parent = bg
+	bg.Size = UDim2.fromScale(1,1); bg.BackgroundColor3 = Color3.fromRGB(8,8,11)
+	bg.BackgroundTransparency = 0; bg.BorderSizePixel = 0; bg.ZIndex = 1; bg.Parent = gui
+	local bgGrad = Instance.new("UIGradient")
+	bgGrad.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, Color3.fromRGB(26,14,16)), ColorSequenceKeypoint.new(0.5, Color3.fromRGB(10,10,13)), ColorSequenceKeypoint.new(1, Color3.fromRGB(4,4,6))})
+	bgGrad.Rotation = 90; bgGrad.Parent = bg
 
-	local logo = Instance.new("ImageLabel")
-	logo.AnchorPoint = Vector2.new(0.5,0.5); logo.Position = UDim2.new(0.5,0,0.37,0)
-	logo.Size = UDim2.fromOffset(150,150); logo.BackgroundTransparency = 1
-	logo.Image = "rbxassetid://82151574125055"; logo.ImageColor3 = Color3.fromRGB(255,255,255)
-	logo.ImageTransparency = 1; logo.ScaleType = Enum.ScaleType.Fit; logo.ZIndex = 3; logo.Parent = bg
+	-- drifting particles
+	local particles = Instance.new("Frame"); particles.BackgroundTransparency = 1; particles.Size = UDim2.fromScale(1,1); particles.ZIndex = 2; particles.Parent = bg
+	local seeds = {13, 41, 77, 103, 149, 191, 233, 271, 317, 359, 401, 443}
+	for i, s in ipairs(seeds) do
+		local dot = Instance.new("Frame")
+		local sz = 2 + (s % 4)
+		dot.Size = UDim2.fromOffset(sz, sz); dot.BackgroundColor3 = accent
+		dot.BackgroundTransparency = 0.4 + (s % 5) * 0.1; dot.BorderSizePixel = 0; dot.ZIndex = 2; dot.Parent = particles
+		Instance.new("UICorner", dot).CornerRadius = UDim.new(1,0)
+		local xs = (s * 61 % 100) / 100
+		task.spawn(function()
+			while dot.Parent do
+				dot.Position = UDim2.new(xs, 0, 1.05, 0)
+				dot.BackgroundTransparency = 0.85
+				local dur = 5 + (s % 5)
+				tw(dot, dur, {Position = UDim2.new(xs, 0, -0.05, 0), BackgroundTransparency = 0.55}, Enum.EasingStyle.Linear):Play()
+				task.wait(dur + (i * 0.2))
+			end
+		end)
+	end
 
-	local title = Instance.new("TextLabel")
-	title.AnchorPoint = Vector2.new(0.5,0.5); title.Position = UDim2.new(0.5,0,0.53,0)
-	title.Size = UDim2.fromOffset(500,42); title.BackgroundTransparency = 1
-	title.Text = "DREAM HUB"; title.TextColor3 = Color3.fromRGB(255,255,255)
-	title.Font = Enum.Font.GothamBlack; title.TextSize = 32; title.TextTransparency = 1; title.ZIndex = 3; title.Parent = bg
+	-- center container
+	local center = Instance.new("Frame")
+	center.AnchorPoint = Vector2.new(0.5,0.5); center.Position = UDim2.new(0.5,0,0.44,0)
+	center.Size = UDim2.fromOffset(520, 360); center.BackgroundTransparency = 1; center.ZIndex = 3; center.Parent = bg
 
-	local sub = Instance.new("TextLabel")
-	sub.AnchorPoint = Vector2.new(0.5,0.5); sub.Position = UDim2.new(0.5,0,0.585,0)
-	sub.Size = UDim2.fromOffset(500,24); sub.BackgroundTransparency = 1
-	sub.Text = (TIER ~= "" and (GAME.."   •   "..TIER)) or GAME
-	sub.TextColor3 = accent; sub.Font = Enum.Font.GothamBold; sub.TextSize = 16; sub.TextTransparency = 1; sub.ZIndex = 3; sub.Parent = bg
-
-	local track = Instance.new("Frame")
-	track.AnchorPoint = Vector2.new(0.5,0.5); track.Position = UDim2.new(0.5,0,0.70,0)
-	track.Size = UDim2.fromOffset(320,8); track.BackgroundColor3 = Color3.fromRGB(38,38,42)
-	track.BorderSizePixel = 0; track.ZIndex = 3; track.Parent = bg
-	Instance.new("UICorner", track).CornerRadius = UDim.new(1,0)
-	local fill = Instance.new("Frame")
-	fill.Size = UDim2.new(0,0,1,0); fill.BackgroundColor3 = accent; fill.BorderSizePixel = 0; fill.ZIndex = 4; fill.Parent = track
-	Instance.new("UICorner", fill).CornerRadius = UDim.new(1,0)
-	local fillGrad = Instance.new("UIGradient")
-	fillGrad.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, Color3.fromRGB(255,120,120)), ColorSequenceKeypoint.new(1, accent)})
-	fillGrad.Parent = fill
-
-	local pct = Instance.new("TextLabel")
-	pct.AnchorPoint = Vector2.new(0.5,0.5); pct.Position = UDim2.new(0.5,0,0.745,0)
-	pct.Size = UDim2.fromOffset(320,18); pct.BackgroundTransparency = 1
-	pct.Text = "Loading…"; pct.TextColor3 = Color3.fromRGB(165,165,172); pct.Font = Enum.Font.Gotham; pct.TextSize = 13; pct.TextTransparency = 1; pct.ZIndex = 3; pct.Parent = bg
-
-	local card = Instance.new("Frame")
-	card.AnchorPoint = Vector2.new(0.5,1); card.Position = UDim2.new(0.5,0,0.93,0)
-	card.Size = UDim2.fromOffset(268,56); card.BackgroundColor3 = Color3.fromRGB(20,20,23); card.BackgroundTransparency = 1; card.BorderSizePixel = 0; card.ZIndex = 3; card.Parent = bg
-	Instance.new("UICorner", card).CornerRadius = UDim.new(0,12)
-	local cstroke = Instance.new("UIStroke"); cstroke.Color = accent; cstroke.Transparency = 1; cstroke.Thickness = 1; cstroke.Parent = card
-	local av = Instance.new("ImageLabel")
-	av.AnchorPoint = Vector2.new(0,0.5); av.Position = UDim2.new(0,9,0.5,0); av.Size = UDim2.fromOffset(40,40)
-	av.BackgroundColor3 = Color3.fromRGB(35,35,40); av.Image = "rbxthumb://type=AvatarHeadShot&id="..LP.UserId.."&w=150&h=150"
-	av.ImageTransparency = 1; av.ZIndex = 4; av.Parent = card
-	Instance.new("UICorner", av).CornerRadius = UDim.new(1,0)
-	local nm = Instance.new("TextLabel")
-	nm.AnchorPoint = Vector2.new(0,0.5); nm.Position = UDim2.new(0,58,0.34,0); nm.Size = UDim2.fromOffset(196,18)
-	nm.BackgroundTransparency = 1; nm.Text = LP.DisplayName; nm.TextColor3 = Color3.fromRGB(255,255,255); nm.Font = Enum.Font.GothamBold; nm.TextSize = 15; nm.TextXAlignment = Enum.TextXAlignment.Left; nm.TextTransparency = 1; nm.ZIndex = 4; nm.Parent = card
-	local un = Instance.new("TextLabel")
-	un.AnchorPoint = Vector2.new(0,0.5); un.Position = UDim2.new(0,58,0.68,0); un.Size = UDim2.fromOffset(196,16)
-	un.BackgroundTransparency = 1; un.Text = "@"..LP.Name; un.TextColor3 = Color3.fromRGB(150,150,158); un.Font = Enum.Font.Gotham; un.TextSize = 12; un.TextXAlignment = Enum.TextXAlignment.Left; un.TextTransparency = 1; un.ZIndex = 4; un.Parent = card
-
-	local TI = TweenInfo.new
-	Tween:Create(logo, TI(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {ImageTransparency = 0}):Play()
-	task.delay(0.55, function()
-		Tween:Create(title, TI(0.9), {TextTransparency = 0}):Play()
-		Tween:Create(sub, TI(0.9), {TextTransparency = 0}):Play()
-		Tween:Create(pct, TI(0.9), {TextTransparency = 0}):Play()
-		Tween:Create(card, TI(0.9), {BackgroundTransparency = 0.12}):Play()
-		Tween:Create(cstroke, TI(0.9), {Transparency = 0.4}):Play()
-		Tween:Create(av, TI(0.9), {ImageTransparency = 0}):Play()
-		Tween:Create(nm, TI(0.9), {TextTransparency = 0}):Play()
-		Tween:Create(un, TI(0.9), {TextTransparency = 0}):Play()
+	-- glow behind logo (pulsing)
+	local glow = Instance.new("Frame")
+	glow.AnchorPoint = Vector2.new(0.5,0.5); glow.Position = UDim2.new(0.5,0,0.24,0)
+	glow.Size = UDim2.fromOffset(150,150); glow.BackgroundColor3 = accent; glow.BackgroundTransparency = 1; glow.BorderSizePixel = 0; glow.ZIndex = 3; glow.Parent = center
+	Instance.new("UICorner", glow).CornerRadius = UDim.new(1,0)
+	task.delay(1.0, function()
+		task.spawn(function()
+			while glow.Parent do
+				tw(glow, 1.3, {Size = UDim2.fromOffset(190,190), BackgroundTransparency = 0.82}, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut):Play()
+				task.wait(1.3)
+				tw(glow, 1.3, {Size = UDim2.fromOffset(150,150), BackgroundTransparency = 0.9}, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut):Play()
+				task.wait(1.3)
+			end
+		end)
 	end)
 
-	local done = false
+	-- logo (springs in)
+	local logo = Instance.new("ImageLabel")
+	logo.AnchorPoint = Vector2.new(0.5,0.5); logo.Position = UDim2.new(0.5,0,0.24,0)
+	logo.Size = UDim2.fromOffset(0,0); logo.BackgroundTransparency = 1
+	logo.Image = "rbxassetid://82151574125055"; logo.ImageColor3 = Color3.fromRGB(255,255,255)
+	logo.ImageTransparency = 1; logo.ScaleType = Enum.ScaleType.Fit; logo.ZIndex = 4; logo.Parent = center
+	tw(logo, 1.0, {ImageTransparency = 0}):Play()
+	Tween:Create(logo, TI(1.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = UDim2.fromOffset(132,132)}):Play()
+
+	-- title with gradient
+	local title = Instance.new("TextLabel")
+	title.AnchorPoint = Vector2.new(0.5,0.5); title.Position = UDim2.new(0.5,0,0.56,0)
+	title.Size = UDim2.fromOffset(520,44); title.BackgroundTransparency = 1
+	title.Text = "DREAM HUB"; title.TextColor3 = Color3.fromRGB(255,255,255)
+	title.Font = Enum.Font.GothamBlack; title.TextSize = 36; title.TextTransparency = 1; title.ZIndex = 4; title.Parent = center
+	local tGrad = Instance.new("UIGradient")
+	tGrad.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, Color3.fromRGB(255,255,255)), ColorSequenceKeypoint.new(1, Color3.fromRGB(255,150,155))})
+	tGrad.Rotation = 90; tGrad.Parent = title
+	tw(title, 0.9, {TextTransparency = 0}):Play()
+
+	-- tier pill
+	local pill = Instance.new("Frame")
+	pill.AnchorPoint = Vector2.new(0.5,0.5); pill.Position = UDim2.new(0.5,0,0.70,0)
+	pill.Size = UDim2.fromOffset(0,26); pill.BackgroundColor3 = accent; pill.BackgroundTransparency = 1; pill.BorderSizePixel = 0; pill.ZIndex = 4; pill.Parent = center
+	Instance.new("UICorner", pill).CornerRadius = UDim.new(1,0)
+	local pillTxt = Instance.new("TextLabel")
+	pillTxt.Size = UDim2.fromScale(1,1); pillTxt.BackgroundTransparency = 1
+	pillTxt.Text = (TIER ~= "" and (GAME.."  ·  "..TIER)) or GAME
+	pillTxt.TextColor3 = Color3.fromRGB(255,255,255); pillTxt.Font = Enum.Font.GothamBold; pillTxt.TextSize = 13; pillTxt.TextTransparency = 1; pillTxt.ZIndex = 5; pillTxt.Parent = pill
+	local pw = 120 + #pillTxt.Text * 6
+	task.delay(0.5, function()
+		tw(pill, 0.7, {Size = UDim2.fromOffset(pw, 26), BackgroundTransparency = 0.15}):Play()
+		tw(pillTxt, 0.8, {TextTransparency = 0}):Play()
+	end)
+
+	-- progress bar (with shimmer)
+	local track = Instance.new("Frame")
+	track.AnchorPoint = Vector2.new(0.5,0.5); track.Position = UDim2.new(0.5,0,0.86,0)
+	track.Size = UDim2.fromOffset(340,10); track.BackgroundColor3 = Color3.fromRGB(30,30,34); track.BorderSizePixel = 0; track.ClipsDescendants = true; track.ZIndex = 4; track.Parent = center
+	Instance.new("UICorner", track).CornerRadius = UDim.new(1,0)
+	local fill = Instance.new("Frame")
+	fill.Size = UDim2.new(0,0,1,0); fill.BackgroundColor3 = accent; fill.BorderSizePixel = 0; fill.ZIndex = 5; fill.Parent = track
+	Instance.new("UICorner", fill).CornerRadius = UDim.new(1,0)
+	local fGrad = Instance.new("UIGradient")
+	fGrad.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, accent2), ColorSequenceKeypoint.new(0.5, accent), ColorSequenceKeypoint.new(1, Color3.fromRGB(255,140,145))})
+	fGrad.Parent = fill
+	local shimmer = Instance.new("Frame")
+	shimmer.Size = UDim2.new(0,60,1,0); shimmer.BackgroundColor3 = Color3.fromRGB(255,255,255); shimmer.BackgroundTransparency = 0.55; shimmer.BorderSizePixel = 0; shimmer.ZIndex = 6; shimmer.Parent = track
+	local sGrad = Instance.new("UIGradient")
+	sGrad.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0,1), NumberSequenceKeypoint.new(0.5,0.3), NumberSequenceKeypoint.new(1,1)})
+	sGrad.Parent = shimmer
 	task.spawn(function()
-		local p = 0
-		while not done and p < 0.9 do
-			p = p + (0.9 - p) * 0.05 + 0.004
-			pcall(function() fill.Size = UDim2.new(math.clamp(p,0,0.9),0,1,0); pct.Text = ("Loading…  %d%%"):format(math.floor(p*100)) end)
+		while shimmer.Parent do
+			shimmer.Position = UDim2.new(-0.25,0,0,0)
+			tw(shimmer, 1.1, {Position = UDim2.new(1.05,0,0,0)}, Enum.EasingStyle.Linear):Play()
+			task.wait(1.6)
+		end
+	end)
+
+	local status = Instance.new("TextLabel")
+	status.AnchorPoint = Vector2.new(0.5,0.5); status.Position = UDim2.new(0.5,0,0.93,0)
+	status.Size = UDim2.fromOffset(340,18); status.BackgroundTransparency = 1
+	status.Text = "Initializing…"; status.TextColor3 = Color3.fromRGB(170,170,178); status.Font = Enum.Font.Gotham; status.TextSize = 13; status.TextTransparency = 1; status.ZIndex = 4; status.Parent = center
+	tw(status, 0.9, {TextTransparency = 0}):Play()
+
+	-- profile card
+	local card = Instance.new("Frame")
+	card.AnchorPoint = Vector2.new(0.5,1); card.Position = UDim2.new(0.5,0,0.95,0)
+	card.Size = UDim2.fromOffset(276,58); card.BackgroundColor3 = Color3.fromRGB(18,18,22); card.BackgroundTransparency = 1; card.BorderSizePixel = 0; card.ZIndex = 3; card.Parent = bg
+	Instance.new("UICorner", card).CornerRadius = UDim.new(0,14)
+	local cStroke = Instance.new("UIStroke"); cStroke.Color = accent; cStroke.Transparency = 1; cStroke.Thickness = 1.2; cStroke.Parent = card
+	local av = Instance.new("ImageLabel")
+	av.AnchorPoint = Vector2.new(0,0.5); av.Position = UDim2.new(0,10,0.5,0); av.Size = UDim2.fromOffset(40,40)
+	av.BackgroundColor3 = Color3.fromRGB(34,34,40); av.Image = "rbxthumb://type=AvatarHeadShot&id="..LP.UserId.."&w=150&h=150"
+	av.ImageTransparency = 1; av.ZIndex = 4; av.Parent = card
+	Instance.new("UICorner", av).CornerRadius = UDim.new(1,0)
+	local avStroke = Instance.new("UIStroke"); avStroke.Color = accent; avStroke.Transparency = 1; avStroke.Thickness = 1.5; avStroke.Parent = av
+	local nm = Instance.new("TextLabel")
+	nm.AnchorPoint = Vector2.new(0,0.5); nm.Position = UDim2.new(0,60,0.34,0); nm.Size = UDim2.fromOffset(200,18)
+	nm.BackgroundTransparency = 1; nm.Text = LP.DisplayName; nm.TextColor3 = Color3.fromRGB(255,255,255); nm.Font = Enum.Font.GothamBold; nm.TextSize = 15; nm.TextXAlignment = Enum.TextXAlignment.Left; nm.TextTransparency = 1; nm.ZIndex = 4; nm.Parent = card
+	local un = Instance.new("TextLabel")
+	un.AnchorPoint = Vector2.new(0,0.5); un.Position = UDim2.new(0,60,0.68,0); un.Size = UDim2.fromOffset(200,16)
+	un.BackgroundTransparency = 1; un.Text = "@"..LP.Name; un.TextColor3 = Color3.fromRGB(150,150,160); un.Font = Enum.Font.Gotham; un.TextSize = 12; un.TextXAlignment = Enum.TextXAlignment.Left; un.TextTransparency = 1; un.ZIndex = 4; un.Parent = card
+	task.delay(0.6, function()
+		tw(card, 0.9, {BackgroundTransparency = 0.1}):Play(); tw(cStroke, 0.9, {Transparency = 0.5}):Play()
+		tw(av, 0.9, {ImageTransparency = 0}):Play(); tw(avStroke, 0.9, {Transparency = 0.2}):Play()
+		tw(nm, 0.9, {TextTransparency = 0}):Play(); tw(un, 0.9, {TextTransparency = 0}):Play()
+	end)
+
+	-- progress + cycling status
+	local done = false
+	local msgs = {"Initializing…", "Loading modules…", "Building interface…", "Applying tweaks…", "Almost there…"}
+	task.spawn(function()
+		local p, mi = 0, 1
+		while not done and p < 0.92 do
+			p = p + (0.92 - p) * 0.045 + 0.004
+			pcall(function() fill.Size = UDim2.new(math.clamp(p,0,0.92),0,1,0) end)
+			local nmi = math.min(#msgs, 1 + math.floor(p * #msgs))
+			if nmi ~= mi then mi = nmi; pcall(function()
+				tw(status, 0.2, {TextTransparency = 1}):Play(); task.wait(0.2)
+				status.Text = msgs[mi]; tw(status, 0.3, {TextTransparency = 0}):Play()
+			end) end
 			task.wait(0.05)
 		end
 	end)
@@ -188,19 +270,21 @@ pcall(function()
 	local function finish()
 		if done then return end
 		done = true
-		pcall(function() Tween:Create(fill, TI(0.35), {Size = UDim2.new(1,0,1,0)}):Play(); pct.Text = "Ready" end)
-		task.delay(0.5, function()
+		pcall(function() fill.Size = fill.Size; tw(fill, 0.4, {Size = UDim2.new(1,0,1,0)}):Play() end)
+		pcall(function() tw(status, 0.2, {TextTransparency = 1}):Play(); task.delay(0.22, function() status.Text = "Ready"; tw(status, 0.3, {TextTransparency = 0}):Play() end) end)
+		task.delay(0.65, function()
 			pcall(function()
-				for _,o in ipairs({title, sub, pct, nm, un}) do Tween:Create(o, TI(0.5), {TextTransparency = 1}):Play() end
-				Tween:Create(logo, TI(0.5), {ImageTransparency = 1}):Play()
-				Tween:Create(av, TI(0.5), {ImageTransparency = 1}):Play()
-				Tween:Create(bg, TI(0.6), {BackgroundTransparency = 1}):Play()
+				for _,o in ipairs({title, pillTxt, status, nm, un}) do tw(o, 0.55, {TextTransparency = 1}):Play() end
+				tw(logo, 0.55, {ImageTransparency = 1}):Play(); tw(av, 0.55, {ImageTransparency = 1}):Play()
+				tw(glow, 0.5, {BackgroundTransparency = 1}):Play()
+				tw(bg, 0.7, {BackgroundTransparency = 1}):Play()
+				tw(blur, 0.7, {Size = 0}):Play()
 			end)
-			task.delay(0.7, function() pcall(function() gui:Destroy() end) end)
+			task.delay(0.8, function() pcall(function() gui:Destroy() end); pcall(function() blur:Destroy() end) end)
 		end)
 	end
 	_G.__DreamFinishLoad = finish
-	task.delay(14, finish)   -- safety: never stick even if the hub errors before calling finish
+	task.delay(16, finish)   -- safety: never stick even if the hub errors before calling finish
 end)
 -- ═══════════════════ END LOADING SCREEN ═══════════════════
 
