@@ -369,7 +369,7 @@ local S = {
     Viewing=nil, ViewTarget=nil,
     EnemyHighlight=false, HighlightColor="Bright blue",
     FullBright=false,
-    AutoFarm=false, FarmTarget=nil, AuraRange=60, JoltFarm=false, JoltFarmDwell=0.5, JoltFarmHealAt=40,
+    AutoFarm=false, FarmTarget=nil, AuraRange=60, JoltFarm=false, JoltFarmDwell=0.5, JoltFarmHealAt=55, JoltFarmHitRun=true,
     AutoPlay=false, AutoPlayRange=100,
     AntiAFK=false, InstantRespawn=false, ClickTP=false,
     GrabDelay=3, GrabReturn=true, M1Spy=false,
@@ -3249,7 +3249,8 @@ if _G.AA_PLUS then
         if #pool==0 then return nil end
         return pool[math.random(1,#pool)]
     end
-    FarmTab:CreateSlider({Name="Retreat & heal at HP %", Range={0,90}, Increment=5, Suffix="%", CurrentValue=40, Flag="JoltFarmHealAt", Callback=function(v) S.JoltFarmHealAt=v end})
+    FarmTab:CreateToggle({Name="Hit & Run (don't sit on them — safest)", CurrentValue=true, Flag="JoltFarmHitRun", Callback=function(v) S.JoltFarmHitRun=v end})
+    FarmTab:CreateSlider({Name="Retreat & heal at HP %", Range={0,90}, Increment=5, Suffix="%", CurrentValue=55, Flag="JoltFarmHealAt", Callback=function(v) S.JoltFarmHealAt=v end})
     -- my current HP fraction (0..1); 1 if we can't read it
     local function myHPFrac()
         local c=LP.Character; if not c then return 1 end
@@ -3266,10 +3267,15 @@ if _G.AA_PLUS then
         joltDeployNow()
         task.wait(0.8)   -- let the new (full-HP) character load in
     end
+    -- snap you to a SAFE perch high above the target (out of any melee reach) between hits
+    local function perchAbove(tc)
+        local me=LP.Character; if not (me and tc) then return end
+        pcall(function() me:PivotTo(tc:GetPivot() * CFrame.new(0, 45, 0)) end)   -- 45 studs straight up
+    end
     task.spawn(function()
         while true do
             if S.JoltFarm and onMap(LP) then
-                local healAt = (tonumber(S.JoltFarmHealAt) or 40)/100
+                local healAt = (tonumber(S.JoltFarmHealAt) or 55)/100
                 if healAt>0 and myHPFrac() <= healAt then
                     retreatHeal()
                 else
@@ -3279,16 +3285,24 @@ if _G.AA_PLUS then
                         local start = tick()
                         local dwell = tonumber(S.JoltFarmDwell) or 0.5
                         repeat
-                            RunService.Heartbeat:Wait()
-                            pcall(function() task.spawn(fireHit) end)
                             local me = LP.Character
                             local tc = target.Character
-                            -- sit just ABOVE + slightly behind them (never BELOW — that clipped you into the ground/
-                            -- lava and was killing you), still point-blank for the M1.
-                            if me and tc then pcall(function()
-                                local piv = tc:GetPivot()
-                                me:PivotTo(piv * CFrame.new(0, 1.5, 3))   -- behind + a touch up, in THEIR facing
-                            end) end
+                            if me and tc then
+                                if S.JoltFarmHitRun then
+                                    -- HIT & RUN: drop in behind, fire ONCE, immediately perch high out of reach.
+                                    pcall(function() me:PivotTo(tc:GetPivot() * CFrame.new(0, 1.5, 3)) end)
+                                    pcall(function() task.spawn(fireHit) end)
+                                    perchAbove(tc)          -- leave their melee range instantly
+                                    task.wait(0.12)
+                                else
+                                    -- STAY-ON (aggressive, riskier): sit behind them and spam.
+                                    RunService.Heartbeat:Wait()
+                                    pcall(function() task.spawn(fireHit) end)
+                                    pcall(function() me:PivotTo(tc:GetPivot() * CFrame.new(0, 1.5, 3)) end)
+                                end
+                            else
+                                RunService.Heartbeat:Wait()
+                            end
                         until (tick()-start > dwell)
                             or not S.JoltFarm
                             or (healAt>0 and myHPFrac() <= healAt)   -- bail to heal mid-target too

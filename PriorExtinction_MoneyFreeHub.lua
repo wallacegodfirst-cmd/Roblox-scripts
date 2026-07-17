@@ -4987,11 +4987,18 @@ task.spawn(function() while RUNNING do
 		if T.plr then r, model = targetLivePart(T.plr); if model then T.model=model end end
 		local h = model and model:FindFirstChildOfClass("Humanoid")
 		if r and model and model.Parent and ((not h) or h.Health>0) then
-			-- snap onto them (short hold so it sticks but stays snappy), then hit
 			if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
 			__gg.MH_rescueMute = tick()+2
+			-- KEEP YOU ALIVE ("auto farm kills me"): while farming, pin YOUR health to max every pass — the target
+			-- bites back and would otherwise kill you point-blank. Health pin = you can't die while farming.
+			pcall(function()
+				local myh=hum(); if myh and myh.MaxHealth>0 then myh.Health=myh.MaxHealth; pcall(function() myh:SetStateEnabled(Enum.HumanoidStateType.Dead,false) end) end
+				local st=csStats(); if st then for _,k in ipairs({"Health","HP","Hitpoints"}) do if type(st[k])=="number" then local mx=(select(2,csStats()) or {})[k]; if mx then st[k]=mx end end end end
+				pcall(function() setReplicaProp("Health", (myh and myh.MaxHealth) or 100) end)
+			end)
+			-- sit ABOVE + BEHIND them (out of their bite arc), not right on top where their attack lands on you
 			local cc=getMyModel(); local root = cc and (cc.PrimaryPart or cc:FindFirstChild("HumanoidRootPart")) or hrp()
-			if root then pcall(function() root.CFrame=CFrame.new(r.Position + Vector3.new(0,5,0)); root.AssemblyLinearVelocity=Vector3.zero end) end
+			if root then pcall(function() root.CFrame = r.CFrame * CFrame.new(0, 4, 6); root.AssemblyLinearVelocity=Vector3.zero end) end
 			if _G.MH_attack then pcall(function() _G.MH_attack(model) end) end
 			task.wait(1/math.max(1, tonumber(CFG.DamageRate) or 6))
 		else task.wait(0.3) end
