@@ -2960,36 +2960,9 @@ end
 
 CombatTab:CreateSection("Combat Pro")
 CombatTab:CreateToggle({Name="Legit Auto Play", CurrentValue=false, Flag="LegitAutoPlay", Callback=function(v) S.LegitAutoPlay=v; if not v and _G.AA_RELEASEKEYS then _G.AA_RELEASEKEYS() end end})
--- REMOVAL FLAGS: a separate script (AbilityArena_NoRisky.lua) sets _G.AA_REMOVE before loading the hub to strip
--- these features entirely — the toggle is never built AND the setting is force-false so the behaviour never runs.
-local RM = (type(_G.AA_REMOVE)=="table" and _G.AA_REMOVE) or {}
-if not RM.AutoDodge then
-	CombatTab:CreateToggle({Name="Auto Dodge", CurrentValue=false, Flag="ProAutoDodge", Callback=function(v) S.ProAutoDodge=v end})
-	-- Dodge only a chosen player, or everyone. "All" = dodge any attacker; pick a name = dodge ONLY that player.
-	S.DodgeTarget = S.DodgeTarget or "All"
-	local dodgeDrop = CombatTab:CreateDropdown({Name="Dodge Player", Options=(function() local t={"All"} for _,n in ipairs(playerNames()) do t[#t+1]=n end return t end)(), CurrentOption={"All"}, Flag="DodgeTargetSel", Callback=function(o) S.DodgeTarget=(type(o)=="table" and o[1]) or o or "All" end})
-	CombatTab:CreateButton({Name="Refresh Dodge List", Callback=function() pcall(function() dodgeDrop:Refresh((function() local t={"All"} for _,n in ipairs(playerNames()) do t[#t+1]=n end return t end)()) end) end})
-else S.ProAutoDodge=false end
-if not RM.Win1v1 then
-	CombatTab:CreateToggle({Name="Instant 1v1 Win", CurrentValue=false, Flag="Win1v1", Callback=function(v) S.Win1v1=v end})
-	CombatTab:CreateDropdown({Name="1v1 Win Position", Options={"Back","Front"}, CurrentOption={"Back"}, Flag="Win1v1Pos", Callback=function(o) S.Win1v1Pos=(type(o)=="table" and o[1]) or o end})
-else S.Win1v1=false end
-
-if not RM.M1Warp then
-	CombatTab:CreateSection("M1 Warp")
-	CombatTab:CreateToggle({Name="M1 Warp", CurrentValue=false, Flag="M1Warp", Callback=function(v) S.M1Warp=v end})
-	CombatTab:CreateSlider({Name="M1 Warp Range", Range={10,200}, Increment=5, Suffix="studs", CurrentValue=60, Flag="M1WarpRange", Callback=function(v) S.M1WarpRange=v end})
-	CombatTab:CreateToggle({Name="Warp Back After Swing", CurrentValue=true, Flag="M1WarpReturn", Callback=function(v) S.M1WarpReturn=v end})
-else S.M1Warp=false end
--- WATCHDOG: keep removed features OFF even if a saved config tries to restore the flag on load.
-if RM.AutoDodge or RM.Win1v1 or RM.M1Warp then
-	task.spawn(function() while true do
-		if RM.AutoDodge then S.ProAutoDodge=false end
-		if RM.Win1v1 then S.Win1v1=false end
-		if RM.M1Warp then S.M1Warp=false end
-		task.wait(0.5)
-	end end)
-end
+-- REMOVED (per request): Auto Dodge (+ Dodge Player / Refresh list), Instant 1v1 Win (+ 1v1 Win Position),
+-- and M1 Warp (+ Range / Warp Back). Force their settings off so nothing that references them can ever run.
+S.ProAutoDodge=false; S.Win1v1=false; S.M1Warp=false
 
 CombatTab:CreateSection("Auto")
 CombatTab:CreateToggle({Name="Aura M1", CurrentValue=false, Flag="AuraM1Pro", Callback=function(v) S.AuraM1Pro=v end})
