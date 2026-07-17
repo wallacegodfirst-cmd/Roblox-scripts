@@ -369,7 +369,7 @@ local S = {
     Viewing=nil, ViewTarget=nil,
     EnemyHighlight=false, HighlightColor="Bright blue",
     FullBright=false,
-    AutoFarm=false, FarmTarget=nil, AuraRange=60, JoltFarm=false, JoltFarmDwell=0.5,
+    AutoFarm=false, FarmTarget=nil, AuraRange=60, JoltFarm=false, JoltFarmDwell=0.5, JoltFarmHealAt=40,
     AutoPlay=false, AutoPlayRange=100,
     AntiAFK=false, InstantRespawn=false, ClickTP=false,
     GrabDelay=3, GrabReturn=true, M1Spy=false,
@@ -2994,11 +2994,12 @@ CombatTab:CreateToggle({Name="Legit Auto Play", CurrentValue=false, Flag="LegitA
 -- Auto Dodge / Instant 1v1 Win / M1 Warp — PLUS + PREMIUM ONLY. The FREE build never builds these toggles, and
 -- their settings are forced off there so nothing that references them can run. (AbilityArena_PLUS.lua sets AA_PLUS;
 -- the Premium loader sets it too, so both paid tiers get them; Free does not.)
+local dodgeDrop   -- hoisted: refreshPlayerDrops() (below) references it; built only in the Plus block
 if _G.AA_PLUS then
 	CombatTab:CreateToggle({Name="Auto Dodge", CurrentValue=false, Flag="ProAutoDodge", Callback=function(v) S.ProAutoDodge=v end})
 	-- Dodge only a chosen player, or everyone. "All" = dodge any attacker; pick a name = dodge ONLY that player.
 	S.DodgeTarget = S.DodgeTarget or "All"
-	local dodgeDrop = CombatTab:CreateDropdown({Name="Dodge Player", Options=(function() local t={"All"} for _,n in ipairs(playerNames()) do t[#t+1]=n end return t end)(), CurrentOption={"All"}, Flag="DodgeTargetSel", Callback=function(o) S.DodgeTarget=(type(o)=="table" and o[1]) or o or "All" end})
+	dodgeDrop = CombatTab:CreateDropdown({Name="Dodge Player", Options=(function() local t={"All"} for _,n in ipairs(playerNames()) do t[#t+1]=n end return t end)(), CurrentOption={"All"}, Flag="DodgeTargetSel", Callback=function(o) S.DodgeTarget=(type(o)=="table" and o[1]) or o or "All" end})
 	CombatTab:CreateButton({Name="Refresh Dodge List", Callback=function() pcall(function() dodgeDrop:Refresh((function() local t={"All"} for _,n in ipairs(playerNames()) do t[#t+1]=n end return t end)()) end) end})
 	CombatTab:CreateToggle({Name="Instant 1v1 Win", CurrentValue=false, Flag="Win1v1", Callback=function(v) S.Win1v1=v end})
 	CombatTab:CreateDropdown({Name="1v1 Win Position", Options={"Back","Front"}, CurrentOption={"Back"}, Flag="Win1v1Pos", Callback=function(o) S.Win1v1Pos=(type(o)=="table" and o[1]) or o end})
@@ -3248,26 +3249,54 @@ if _G.AA_PLUS then
         if #pool==0 then return nil end
         return pool[math.random(1,#pool)]
     end
+    FarmTab:CreateSlider({Name="Retreat & heal at HP %", Range={0,90}, Increment=5, Suffix="%", CurrentValue=40, Flag="JoltFarmHealAt", Callback=function(v) S.JoltFarmHealAt=v end})
+    -- my current HP fraction (0..1); 1 if we can't read it
+    local function myHPFrac()
+        local c=LP.Character; if not c then return 1 end
+        local h=c:FindFirstChildOfClass("Humanoid")
+        if h and h.MaxHealth>0 then return h.Health/h.MaxHealth end
+        return 1
+    end
+    -- LOW HP → don't die: hop to lobby (via the game's own ToLobby) then instantly re-deploy = full health, exactly
+    -- like Auto Heal. This is what stops "the auto farm kills me": instead of getting combo'd to death you bounce
+    -- out at low HP and come back topped up.
+    local function retreatHeal()
+        pcall(function() if joltToLobby and joltToLobby.Invoke then joltToLobby:Invoke() end end)
+        task.wait(0.5)
+        joltDeployNow()
+        task.wait(0.8)   -- let the new (full-HP) character load in
+    end
     task.spawn(function()
         while true do
             if S.JoltFarm and onMap(LP) then
-                local fireHit = getFireHit()
-                local target = randomOnMapPlayer()
-                if fireHit and target then
-                    local start = tick()
-                    local dwell = tonumber(S.JoltFarmDwell) or 0.5
-                    repeat
-                        RunService.Heartbeat:Wait()
-                        pcall(function() task.spawn(fireHit) end)
-                        local me = LP.Character
-                        local tc = target.Character
-                        if me and tc then pcall(function() me:PivotTo(tc:GetPivot() - Vector3.new(0,5,0)) end) end
-                    until (tick()-start > dwell)
-                        or not S.JoltFarm
-                        or not (target.Character and target.Character:FindFirstChild("Humanoid"))
-                        or (target.Character.Humanoid.Health < 1)
+                local healAt = (tonumber(S.JoltFarmHealAt) or 40)/100
+                if healAt>0 and myHPFrac() <= healAt then
+                    retreatHeal()
                 else
-                    task.wait(0.2)
+                    local fireHit = getFireHit()
+                    local target = randomOnMapPlayer()
+                    if fireHit and target then
+                        local start = tick()
+                        local dwell = tonumber(S.JoltFarmDwell) or 0.5
+                        repeat
+                            RunService.Heartbeat:Wait()
+                            pcall(function() task.spawn(fireHit) end)
+                            local me = LP.Character
+                            local tc = target.Character
+                            -- sit just ABOVE + slightly behind them (never BELOW — that clipped you into the ground/
+                            -- lava and was killing you), still point-blank for the M1.
+                            if me and tc then pcall(function()
+                                local piv = tc:GetPivot()
+                                me:PivotTo(piv * CFrame.new(0, 1.5, 3))   -- behind + a touch up, in THEIR facing
+                            end) end
+                        until (tick()-start > dwell)
+                            or not S.JoltFarm
+                            or (healAt>0 and myHPFrac() <= healAt)   -- bail to heal mid-target too
+                            or not (target.Character and target.Character:FindFirstChild("Humanoid"))
+                            or (target.Character.Humanoid.Health < 1)
+                    else
+                        task.wait(0.2)
+                    end
                 end
             else
                 task.wait(0.3)
@@ -3281,7 +3310,7 @@ local function refreshPlayerDrops()
     pcall(function() tpDrop:Refresh(playerNames()) end)
     pcall(function() farmDrop:Refresh(playerNames()) end)
     pcall(function() viewDrop:Refresh(playerNames()) end)
-    pcall(function() dodgeDrop:Refresh((function() local t={"All"} for _,n in ipairs(playerNames()) do t[#t+1]=n end return t end)()) end)
+    if dodgeDrop then pcall(function() dodgeDrop:Refresh((function() local t={"All"} for _,n in ipairs(playerNames()) do t[#t+1]=n end return t end)()) end) end
 end
 hook(Players.PlayerAdded,    function() task.delay(0.3, refreshPlayerDrops) end)
 hook(Players.PlayerRemoving, function() task.delay(0.3, refreshPlayerDrops) end)
@@ -3370,5 +3399,62 @@ end
 -- INSURANCE: Fluriore fires element callbacks on creation, which can flip the aura on during build.
 -- After the GUI settles, force the aura OFF so you always spawn clean (no red sphere).
 task.delay(1.2, function() S.VFXOn=false; pcall(clearCustomVFX) end)
+
+-- ═══ DREAM LOGO BUTTON (Plus + Premium) ═══ Black & white floating Dream badge — tap hides/shows the menu, drag
+-- to move it. Same look as the PE hub. Toggles the Fluriore window (CoreGui.HirimiGui) Enabled state.
+if _G.AA_PLUS then
+    task.delay(1.5, function()
+        pcall(function()
+            local CoreGui = game:GetService("CoreGui")
+            local parentGui = (gethui and gethui()) or CoreGui
+            local tg = Instance.new("ScreenGui")
+            tg.Name = "Dream_Logo"; tg.ResetOnSpawn = false; tg.IgnoreGuiInset = true; tg.DisplayOrder = 10050
+            pcall(function() tg.Parent = parentGui end)
+            local btn = Instance.new("ImageButton")
+            btn.Size = UDim2.fromOffset(46,46); btn.Position = UDim2.new(0,14,0.30,0)
+            btn.BackgroundColor3 = Color3.fromRGB(10,10,10); btn.AutoButtonColor = true; btn.ZIndex = 50
+            btn.Image = "rbxthumb://type=Asset&id=82151574125055&w=150&h=150"
+            btn.ImageTransparency = 1; btn.ImageColor3 = Color3.fromRGB(255,255,255); btn.ScaleType = Enum.ScaleType.Fit
+            btn.Parent = tg
+            local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(1,0); corner.Parent = btn
+            local st = Instance.new("UIStroke"); st.Color = Color3.fromRGB(255,255,255); st.Transparency = 0.35; st.Thickness = 1.6; st.Parent = btn
+            local tl = Instance.new("TextLabel")
+            tl.Size = UDim2.fromScale(1,1); tl.BackgroundTransparency = 1; tl.Text = "DREAM"
+            tl.TextColor3 = Color3.fromRGB(255,255,255); tl.Font = Enum.Font.GothamBlack; tl.TextScaled = true; tl.ZIndex = 51; tl.Parent = btn
+            local pd = Instance.new("UIPadding"); pd.PaddingLeft = UDim.new(0,5); pd.PaddingRight = UDim.new(0,5); pd.PaddingTop = UDim.new(0,15); pd.PaddingBottom = UDim.new(0,15); pd.Parent = tl
+            task.spawn(function()   -- swap DREAM text for the real logo only once it actually loads (never a blank circle)
+                for _=1,40 do if not btn.Parent then return end if btn.IsLoaded then break end task.wait(0.15) end
+                if btn.Parent and btn.IsLoaded then pcall(function() btn.ImageTransparency=0; tl.Visible=false end)
+                else pcall(function() btn.BackgroundColor3=Color3.fromRGB(180,30,30) end) end   -- fallback: red badge with DREAM
+            end)
+            local function toggleMenu()
+                pcall(function()
+                    local hg = ((gethui and gethui()) or CoreGui):FindFirstChild("HirimiGui") or CoreGui:FindFirstChild("HirimiGui")
+                    if hg then hg.Enabled = not hg.Enabled end
+                end)
+            end
+            -- tap = toggle, drag = reposition (tell them apart by movement)
+            local dragging, dragStart, startPos, moved = false, nil, nil, false
+            btn.InputBegan:Connect(function(i)
+                if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
+                    dragging=true; moved=false; dragStart=i.Position; startPos=btn.Position
+                end
+            end)
+            UserInputService.InputChanged:Connect(function(i)
+                if dragging and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then
+                    local d=i.Position-dragStart
+                    if (math.abs(d.X)+math.abs(d.Y))>6 then moved=true end
+                    btn.Position=UDim2.new(startPos.X.Scale, startPos.X.Offset+d.X, startPos.Y.Scale, startPos.Y.Offset+d.Y)
+                end
+            end)
+            UserInputService.InputEnded:Connect(function(i)
+                if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
+                    if dragging and not moved then toggleMenu() end
+                    dragging=false
+                end
+            end)
+        end)
+    end)
+end
 
 Rayfield:Notify({Title="Dream Hub", Content="Loaded.", Duration=5})
