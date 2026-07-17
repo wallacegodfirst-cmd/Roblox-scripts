@@ -2302,6 +2302,72 @@ conn(RunService.Heartbeat:Connect(function()
 	end)
 end))
 
+-- ═══ INF STAM — MOVEMENT-DATA EQUALIZER (the missing layer — why it STILL felt slow) ═══
+-- PE's dino isn't driven by Humanoid.WalkSpeed alone: the client's own MOVEMENT CONTROLLER
+-- (CharacterState.Movement — the decompiled Growth class calls CharacterState.Movement:UpdateTurnValues())
+-- applies speed NUMBERS it reads from the character data (Data.Movement.Walk/Trot/Run/Sprint tables).
+-- "Exhausted" = the controller switching from the Run numbers to the WALK numbers. So no matter how full the
+-- stamina bar is pinned, the moment the controller flips to the walk set, you crawl.
+-- THE FIX: every 0.2s we (1) learn the HIGHEST Speed in your Data.Movement sets and write it into the SLOW sets
+-- too — so even when the game "slows" you, the slow speed IS your run speed; (2) pin any speed-ish number on the
+-- live Movement controller object back to its own learned max; (3) force any exhausted/tired flag on the
+-- controller and CharacterState to false. All client-side data the game re-reads every frame — no velocity, no
+-- CFrame, nothing for the anti-cheat to snap back.
+task.spawn(function()
+	while RUNNING do
+		if CFG.InfStam and alive() and not (CFG.SpeedHack or CFG.Fly) then
+			pcall(function()
+				-- dino changed → forget every learned speed (a rex's numbers must never stick to a hatchling)
+				local curM=(WS:FindFirstChild("Characters") and WS.Characters:FindFirstChild(LP.Name)) or char()
+				if __gg.MH_mvModel~=curM then __gg.MH_mvModel=curM; __gg.MH_mvTop=nil; __gg.MH_mcMax=nil end
+				-- (1) EQUALIZE the Data.Movement speed sets (Walk/Trot/Run/Sprint … skip Turn — that's rotation)
+				local d = CharacterState and (CharacterState.Data or (CharacterState.Replica and CharacterState.Replica.Data))
+				local mv = d and d.Movement
+				if type(mv)=="table" then
+					local top=0
+					for k,st in pairs(mv) do
+						if type(st)=="table" and k~="Turn" and type(st.Speed)=="number" and st.Speed>top then top=st.Speed end
+					end
+					if top>0 then
+						__gg.MH_mvTop = math.max(__gg.MH_mvTop or 0, top)
+						for k,st in pairs(mv) do
+							if type(st)=="table" and k~="Turn" and type(st.Speed)=="number" and st.Speed < __gg.MH_mvTop then st.Speed = __gg.MH_mvTop end
+						end
+					end
+				end
+				-- (2) PIN the live Movement controller's own speed fields to their learned max (per-field)
+				local mc = CharacterState and CharacterState.Movement
+				if type(mc)=="table" then
+					__gg.MH_mcMax = __gg.MH_mcMax or {}
+					for k,v in pairs(mc) do
+						if type(v)=="number" then
+							local kl=string.lower(k)
+							if kl:find("speed",1,true) and not kl:find("turn",1,true) then
+								if v > (__gg.MH_mcMax[k] or 0) then __gg.MH_mcMax[k]=v end
+								if __gg.MH_mcMax[k] and v < __gg.MH_mcMax[k] - 0.05 then mc[k]=__gg.MH_mcMax[k] end
+							end
+						elseif type(v)=="boolean" then
+							local kl=string.lower(k)
+							if kl:find("exhaust",1,true) or kl:find("tired",1,true) or kl:find("fatigu",1,true) then mc[k]=false end
+						end
+					end
+				end
+				-- (3) exhausted flags on CharacterState itself → always false
+				if CharacterState then
+					for _,k in ipairs({"Exhausted","Exhaust","Tired","Fatigued","IsExhausted"}) do
+						pcall(function() if type(CharacterState[k])=="boolean" and CharacterState[k] then CharacterState[k]=false end end)
+					end
+				end
+			end)
+			task.wait(0.2)
+		else
+			-- reset the learned tops when INF Stam turns off / dino dies, so a new dino learns fresh numbers
+			if not CFG.InfStam then __gg.MH_mvTop=nil; __gg.MH_mcMax=nil end
+			task.wait(0.4)
+		end
+	end
+end)
+
 -- INF FOOD — FLOOR KEEPER (keep the bar UP whether you eat or not, WITHOUT hiding the eat prompt): the food bar
 -- is only topped up when it falls BELOW ~60% of max, and only raised to ~80% — never to 100%. So:
 --   · you never starve / go low (the bar always stays high), and
