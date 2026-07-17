@@ -1950,18 +1950,21 @@ if Pages["Target"] then local p=Pages["Target"]
 		if __gg.MH_targetTeleport and __gg.MH_targetTeleport() then notify("Target","Teleported to "..T.plr.Name..".")
 		else notify("Target","Can't find their position (their dino isn't loaded in).") end
 	end,4)
-	mkBtn(ac,"Attack Player Once",function()
+	mkBtn(ac,"Attack Player Once (TP in, hit, TP back)",function()
 		local T=__gg.MH_Target
 		if not (T and T.plr) then notify("Target","Load a player first."); return end
-		if __gg.MH_targetLivePart then local _, m = __gg.MH_targetLivePart(T.plr); if m then T.model=m end end
-		if not (T.model and T.model.Parent) then notify("Target","Their dino isn't in your client yet — get a bit closer."); return end
-		if _G.MH_attack then pcall(function() _G.MH_attack(T.model) end); notify("Target","Hit "..T.plr.Name..".")
-		else notify("Target","Attack unavailable — bite something once so the Attack remote gets captured, then retry.") end
+		if not _G.MH_attack then notify("Target","Attack unavailable — bite something once so the Attack remote gets captured, then retry."); return end
+		task.spawn(function()
+			local ok, why = __gg.MH_targetAttackReturn and __gg.MH_targetAttackReturn()
+			if ok then notify("Target","Hit "..T.plr.Name.." and returned.")
+			elseif why=="not loaded" then notify("Target","Their dino isn't in your client yet — get a bit closer.")
+			else notify("Target","Load a player first.") end
+		end)
 	end,5)
 	do   -- Auto Farm Player: ungated with the rest of the Target tab so EVERYTHING in the tab works
 		local _,af=mkSec(p,"Auto Farm Player",3)
 		mkToggle(af,"Auto Farm Player","AutoFarmPlayer",1)
-		mkLabel(af,"Keeps hitting the loaded player, teleporting to them if they run.")
+		mkLabel(af,"Keeps teleporting onto the loaded player and hitting them.")
 		mkSlider(af,"Farm Range","FarmPlayerRange",30,400,3,10)
 		mkSlider(af,"Hits / sec","DamageRate",1,15,4,1)
 	end
@@ -2325,91 +2328,12 @@ conn(RunService.RenderStepped:Connect(function()
 		end
 	end)
 end))
--- INF STAM — WALKSPEED KEEPER (safe, no snap-back). The data pin + wellbeing keep the SERVER from clamping you,
--- but if a laggy frame still lets the game cut your WalkSpeed, we set it straight back to your dino's real run
--- speed. This is a WALKSPEED write only — it does NOT move you or write velocity, so it can NEVER cause the
--- position snap-back (that only came from velocity/CFrame writes, which we removed). Learns the real speed per
--- dino from the highest WalkSpeed we ever see it use.
-conn(RunService.Heartbeat:Connect(function()
-	if not (CFG.InfStam and alive()) or CFG.SpeedHack or CFG.Fly then return end
-	pcall(function()
-		local m=(WS:FindFirstChild("Characters") and WS.Characters:FindFirstChild(LP.Name)) or char()
-		if __gg.MH_runSpeedM~=m then __gg.MH_runSpeedM=m; __gg.MH_runSpeed=0 end   -- reset when the dino changes
-		local h=m and m:FindFirstChildOfClass("Humanoid")
-		if h and h.WalkSpeed and h.WalkSpeed>0 then
-			if h.WalkSpeed > (__gg.MH_runSpeed or 0) then __gg.MH_runSpeed=h.WalkSpeed end   -- learn its real sprint
-			if __gg.MH_runSpeed and __gg.MH_runSpeed>0 and h.WalkSpeed < __gg.MH_runSpeed - 0.1 then
-				h.WalkSpeed = __gg.MH_runSpeed   -- the game cut it (exhaustion) — put it right back
-			end
-		end
-	end)
-end))
-
--- ═══ INF STAM — MOVEMENT-DATA EQUALIZER (the missing layer — why it STILL felt slow) ═══
--- PE's dino isn't driven by Humanoid.WalkSpeed alone: the client's own MOVEMENT CONTROLLER
--- (CharacterState.Movement — the decompiled Growth class calls CharacterState.Movement:UpdateTurnValues())
--- applies speed NUMBERS it reads from the character data (Data.Movement.Walk/Trot/Run/Sprint tables).
--- "Exhausted" = the controller switching from the Run numbers to the WALK numbers. So no matter how full the
--- stamina bar is pinned, the moment the controller flips to the walk set, you crawl.
--- THE FIX: every 0.2s we (1) learn the HIGHEST Speed in your Data.Movement sets and write it into the SLOW sets
--- too — so even when the game "slows" you, the slow speed IS your run speed; (2) pin any speed-ish number on the
--- live Movement controller object back to its own learned max; (3) force any exhausted/tired flag on the
--- controller and CharacterState to false. All client-side data the game re-reads every frame — no velocity, no
--- CFrame, nothing for the anti-cheat to snap back.
-task.spawn(function()
-	while RUNNING do
-		if CFG.InfStam and alive() and not (CFG.SpeedHack or CFG.Fly) then
-			pcall(function()
-				-- dino changed → forget every learned speed (a rex's numbers must never stick to a hatchling)
-				local curM=(WS:FindFirstChild("Characters") and WS.Characters:FindFirstChild(LP.Name)) or char()
-				if __gg.MH_mvModel~=curM then __gg.MH_mvModel=curM; __gg.MH_mvTop=nil; __gg.MH_mcMax=nil end
-				-- (1) EQUALIZE the Data.Movement speed sets (Walk/Trot/Run/Sprint … skip Turn — that's rotation)
-				local d = CharacterState and (CharacterState.Data or (CharacterState.Replica and CharacterState.Replica.Data))
-				local mv = d and d.Movement
-				if type(mv)=="table" then
-					local top=0
-					for k,st in pairs(mv) do
-						if type(st)=="table" and k~="Turn" and type(st.Speed)=="number" and st.Speed>top then top=st.Speed end
-					end
-					if top>0 then
-						__gg.MH_mvTop = math.max(__gg.MH_mvTop or 0, top)
-						for k,st in pairs(mv) do
-							if type(st)=="table" and k~="Turn" and type(st.Speed)=="number" and st.Speed < __gg.MH_mvTop then st.Speed = __gg.MH_mvTop end
-						end
-					end
-				end
-				-- (2) PIN the live Movement controller's own speed fields to their learned max (per-field)
-				local mc = CharacterState and CharacterState.Movement
-				if type(mc)=="table" then
-					__gg.MH_mcMax = __gg.MH_mcMax or {}
-					for k,v in pairs(mc) do
-						if type(v)=="number" then
-							local kl=string.lower(k)
-							if kl:find("speed",1,true) and not kl:find("turn",1,true) then
-								if v > (__gg.MH_mcMax[k] or 0) then __gg.MH_mcMax[k]=v end
-								if __gg.MH_mcMax[k] and v < __gg.MH_mcMax[k] - 0.05 then mc[k]=__gg.MH_mcMax[k] end
-							end
-						elseif type(v)=="boolean" then
-							local kl=string.lower(k)
-							if kl:find("exhaust",1,true) or kl:find("tired",1,true) or kl:find("fatigu",1,true) then mc[k]=false end
-						end
-					end
-				end
-				-- (3) exhausted flags on CharacterState itself → always false
-				if CharacterState then
-					for _,k in ipairs({"Exhausted","Exhaust","Tired","Fatigued","IsExhausted"}) do
-						pcall(function() if type(CharacterState[k])=="boolean" and CharacterState[k] then CharacterState[k]=false end end)
-					end
-				end
-			end)
-			task.wait(0.2)
-		else
-			-- reset the learned tops when INF Stam turns off / dino dies, so a new dino learns fresh numbers
-			if not CFG.InfStam then __gg.MH_mvTop=nil; __gg.MH_mcMax=nil end
-			task.wait(0.4)
-		end
-	end
-end)
+-- INF STAM — MOVEMENT IS NEVER TOUCHED (removed: the WalkSpeed keeper AND the Movement-Data equalizer).
+-- Deep-dive confirmed those were the snap-back: forcing WalkSpeed / speed data back up while the SERVER still
+-- thinks stamina is 0 reads as speed-hacking, and it rubber-banded you (and made you "walk on your own"). Now INF
+-- Stam is PURELY the data pin above — it keeps the SERVER's stamina full so the server never decides to slow you
+-- in the first place, and nothing ever writes to your speed. If a laggy server still slows you, you just walk
+-- normally until the bar refills (no snap-back). Want to run faster regardless? Use the Speed Hack toggle.
 
 -- INF FOOD — FLOOR KEEPER (keep the bar UP whether you eat or not, WITHOUT hiding the eat prompt): the food bar
 -- is only topped up when it falls BELOW ~60% of max, and only raised to ~80% — never to 100%. So:
@@ -4959,19 +4883,48 @@ local function targetReadInfo()
 end
 _G.MH_targetInfo = targetReadInfo
 -- Teleport to the current target. Resolves position LIVE from any part — never needs a pre-loaded profile.
-local function targetTeleport()
+-- HARD CFRAME TELEPORT (bypass the game's teleport): set your root CFrame straight to the goal and HOLD it there
+-- for a short window (writing every Heartbeat + zeroing velocity), which beats any server "put him back" attempt —
+-- the server sees you already there each tick, so there's nothing to snap back to. Returns once you're placed.
+local function hardTeleportTo(pos, holdSecs)
+	if not pos then return false end
+	if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
+	__gg.MH_rescueMute = tick()+3   -- keep the spawn rescue out of it
+	local goal = CFrame.new(pos)
+	local t0=tick()
+	repeat
+		local cc=getMyModel(); local root = cc and (cc.PrimaryPart or (cc:FindFirstChild("HumanoidRootPart"))) or hrp()
+		if root then pcall(function() root.CFrame=goal; root.AssemblyLinearVelocity=Vector3.zero; root.AssemblyAngularVelocity=Vector3.zero end) end
+		RunService.Heartbeat:Wait()
+	until tick()-t0 > (holdSecs or 0.35)
+	return true
+end
+__gg.MH_hardTeleportTo = hardTeleportTo
+
+local function targetTeleport(holdSecs)
 	local T = __gg.MH_Target; if not T.plr then return false end
 	local r, model = targetLivePart(T.plr)
 	if model then T.model = model end
 	if not r then return false end
-	local goal = r.Position + Vector3.new(0, 6, 0)
-	if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
-	if __gg.MH_hopMove then __gg.MH_hopMove(goal) else
-		local cc=getMyModel(); pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(CFrame.new(goal)) else local h=hrp(); if h then h.CFrame=CFrame.new(goal) end end end)
-	end
-	return true
+	return hardTeleportTo(r.Position + Vector3.new(0, 6, 0), holdSecs)
 end
 __gg.MH_targetTeleport = targetTeleport
+
+-- ATTACK ONCE + RETURN: save where you are, hard-TP onto them, land the captured attack, TP back to your spot.
+local function targetAttackAndReturn()
+	local T = __gg.MH_Target; if not T.plr then return false, "no target" end
+	local r, model = targetLivePart(T.plr)
+	if model then T.model = model end
+	if not (r and model and model.Parent) then return false, "not loaded" end
+	local myBack
+	do local cc=getMyModel(); local root=cc and (cc.PrimaryPart or cc:FindFirstChild("HumanoidRootPart")) or hrp(); if root then myBack=root.Position end end
+	hardTeleportTo(r.Position + Vector3.new(0, 5, 0), 0.15)   -- onto them
+	if _G.MH_attack then pcall(function() _G.MH_attack(model) end) end
+	task.wait(0.1)
+	if myBack then hardTeleportTo(myBack, 0.15) end            -- back to your spot
+	return true
+end
+__gg.MH_targetAttackReturn = targetAttackAndReturn
 -- Spectate camera — REWORKED ("viewing don't work"): just setting Cam.CameraSubject did nothing because PE's own
 -- camera scripts fight it back every frame. Now viewing takes the camera over completely (Scriptable) and follows
 -- the target's dino from behind-above every frame, scaled to the dino's size so an Elder rex and a hatchling both
@@ -5025,23 +4978,23 @@ task.spawn(function() local hl
 		end
 	end
 end)
--- AUTO FARM PLAYER (Plus + Premium): while on and a target is set, keep near their dino and land the
--- captured bone-targeted Attack at your Hits/sec. This is the loop AutoFarmPlayer never actually had.
+-- AUTO FARM PLAYER (Plus + Premium): STAY ON THEM and hit — every pass we hard-CFrame right onto their dino and
+-- land the captured Attack, over and over at your Hits/sec. This is the "keep TP to him and attacking" loop.
 task.spawn(function() while RUNNING do
 	if CFG.AutoFarmPlayer and alive() then
 		local T = __gg.MH_Target
 		local r, model
 		if T.plr then r, model = targetLivePart(T.plr); if model then T.model=model end end
 		local h = model and model:FindFirstChildOfClass("Humanoid")
-		if model and model.Parent and ((not h) or h.Health>0) then
-			local me = hrp()
-			if r and me then
-				local d = dist(me.Position, r.Position)
-				if d > (tonumber(CFG.FarmPlayerRange) or 120) then targetTeleport() end
-				if _G.MH_attack then pcall(function() _G.MH_attack(model) end) end
-			end
+		if r and model and model.Parent and ((not h) or h.Health>0) then
+			-- snap onto them (short hold so it sticks but stays snappy), then hit
+			if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
+			__gg.MH_rescueMute = tick()+2
+			local cc=getMyModel(); local root = cc and (cc.PrimaryPart or cc:FindFirstChild("HumanoidRootPart")) or hrp()
+			if root then pcall(function() root.CFrame=CFrame.new(r.Position + Vector3.new(0,5,0)); root.AssemblyLinearVelocity=Vector3.zero end) end
+			if _G.MH_attack then pcall(function() _G.MH_attack(model) end) end
 			task.wait(1/math.max(1, tonumber(CFG.DamageRate) or 6))
-		else task.wait(0.4) end
+		else task.wait(0.3) end
 	else task.wait(0.3) end
 end end)
 
