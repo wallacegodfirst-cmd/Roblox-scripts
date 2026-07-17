@@ -2991,9 +2991,24 @@ end
 
 CombatTab:CreateSection("Combat Pro")
 CombatTab:CreateToggle({Name="Legit Auto Play", CurrentValue=false, Flag="LegitAutoPlay", Callback=function(v) S.LegitAutoPlay=v; if not v and _G.AA_RELEASEKEYS then _G.AA_RELEASEKEYS() end end})
--- REMOVED (per request): Auto Dodge (+ Dodge Player / Refresh list), Instant 1v1 Win (+ 1v1 Win Position),
--- and M1 Warp (+ Range / Warp Back). Force their settings off so nothing that references them can ever run.
-S.ProAutoDodge=false; S.Win1v1=false; S.M1Warp=false
+-- Auto Dodge / Instant 1v1 Win / M1 Warp — PLUS + PREMIUM ONLY. The FREE build never builds these toggles, and
+-- their settings are forced off there so nothing that references them can run. (AbilityArena_PLUS.lua sets AA_PLUS;
+-- the Premium loader sets it too, so both paid tiers get them; Free does not.)
+if _G.AA_PLUS then
+	CombatTab:CreateToggle({Name="Auto Dodge", CurrentValue=false, Flag="ProAutoDodge", Callback=function(v) S.ProAutoDodge=v end})
+	-- Dodge only a chosen player, or everyone. "All" = dodge any attacker; pick a name = dodge ONLY that player.
+	S.DodgeTarget = S.DodgeTarget or "All"
+	local dodgeDrop = CombatTab:CreateDropdown({Name="Dodge Player", Options=(function() local t={"All"} for _,n in ipairs(playerNames()) do t[#t+1]=n end return t end)(), CurrentOption={"All"}, Flag="DodgeTargetSel", Callback=function(o) S.DodgeTarget=(type(o)=="table" and o[1]) or o or "All" end})
+	CombatTab:CreateButton({Name="Refresh Dodge List", Callback=function() pcall(function() dodgeDrop:Refresh((function() local t={"All"} for _,n in ipairs(playerNames()) do t[#t+1]=n end return t end)()) end) end})
+	CombatTab:CreateToggle({Name="Instant 1v1 Win", CurrentValue=false, Flag="Win1v1", Callback=function(v) S.Win1v1=v end})
+	CombatTab:CreateDropdown({Name="1v1 Win Position", Options={"Back","Front"}, CurrentOption={"Back"}, Flag="Win1v1Pos", Callback=function(o) S.Win1v1Pos=(type(o)=="table" and o[1]) or o end})
+	CombatTab:CreateSection("M1 Warp (Plus)")
+	CombatTab:CreateToggle({Name="M1 Warp", CurrentValue=false, Flag="M1Warp", Callback=function(v) S.M1Warp=v end})
+	CombatTab:CreateSlider({Name="M1 Warp Range", Range={10,200}, Increment=5, Suffix="studs", CurrentValue=60, Flag="M1WarpRange", Callback=function(v) S.M1WarpRange=v end})
+	CombatTab:CreateToggle({Name="Warp Back After Swing", CurrentValue=true, Flag="M1WarpReturn", Callback=function(v) S.M1WarpReturn=v end})
+else
+	S.ProAutoDodge=false; S.Win1v1=false; S.M1Warp=false   -- FREE: never on
+end
 
 CombatTab:CreateSection("Auto")
 CombatTab:CreateToggle({Name="Aura M1", CurrentValue=false, Flag="AuraM1Pro", Callback=function(v) S.AuraM1Pro=v end})
