@@ -409,7 +409,7 @@ local function installHook()
 						-- speed = "makes me slow") — Run AND Sprint pass through so you get the game's real running
 						-- speed, and we keep the bar pinned to max (below + the refill loop) so it never reaches 0
 						-- and the game never forces you down. The WalkSpeed keeper restores speed if it ever cuts it.
-						if CFG.InfStam and action=="SetAction" and (a[3]=="Run" or a[3]=="Sprint") and a[4]==true then
+						if CFG.InfStam and action=="SetAction" and (a[3]=="Run" or a[3]=="Sprint" or a[3]=="Trot") and a[4]==true then
 							__gg.MH_wantRun = tick()
 							pcall(function() local h=hum(); if h and h.WalkSpeed and h.WalkSpeed>0 then __gg.MH_runSpeed=math.max(__gg.MH_runSpeed or 0, h.WalkSpeed) end end)
 							-- no swallow: the action replicates so you keep real run/sprint speed; the pins hold the bar
@@ -435,6 +435,14 @@ local function installHook()
 						-- Some stamina drains do NOT come through SetProperty — the client reports them with their own
 						-- action name (StaminaDrain / Exhaust / FatigueTick). Swallow those outright while INF Stam is on.
 						if CFG.InfStam and (action=="StaminaDrain" or action=="Exhaust" or action=="FatigueTick") then return end
+						-- TIRED-FLAG REPORTS (the Shift/run "Tr…" family): if the client tries to TELL the server you're
+						-- tired/exhausted (SetAction/SetProperty "Tired"/"Exhausted"/"Fatigued" = true), swallow it — the
+						-- server never hears you got tired, so it never applies the slow. (Only TRUE reports are swallowed;
+						-- "no longer tired" passes through so you can never get stuck flagged.)
+						if CFG.InfStam and (action=="SetAction" or action=="SetProperty") and typeof(a[3])=="string" then
+							local tl=a[3]:lower()
+							if (tl:find("tired",1,true) or tl:find("exhaust",1,true) or tl:find("fatigu",1,true)) and (a[4]==true or (typeof(a[4])=="number" and a[4]>0)) then return end
+						end
 						-- ANTI-INJURY (report-block): injuries replicate the same way stamina does — the CLIENT reports
 						-- them to the server. While your antis are on, we SWALLOW any report that would tell the server
 						-- you fractured / bled / broke a bone — the injury never lands server-side. THIS is what makes
@@ -1889,13 +1897,29 @@ if Pages["Target"] then local p=Pages["Target"]
 		end)
 	end
 	mkBtn(ld,"Load Player",function()
-		local T=__gg.MH_Target
-		-- Read the box live (Fluent only saves on Enter, so a click-without-Enter used to check an empty string).
+		-- Force read the textbox live so you don't have to press Enter
 		pcall(function() if Fluent and Fluent.Options and Fluent.Options.TargetUser then CFG.TargetUser = Fluent.Options.TargetUser.Value end end)
-		local pl = __gg.MH_targetResolve and __gg.MH_targetResolve(CFG.TargetUser)
-		if not pl then notify("Target","No one here matches \""..tostring(CFG.TargetUser).."\". Try part of their name."); T.plr=nil; T.model=nil; refreshTarget(); return end
-		T.plr = pl; T.model = __gg.MH_targetModelFor and __gg.MH_targetModelFor(pl)
-		notify("Target","Loaded "..pl.Name..".")
+		local targetName = tostring(CFG.TargetUser or "")
+		if targetName == "" then notify("Target","Type a name first!") return end
+		-- Manually resolve the player RIGHT HERE (name / display name / any part of either) — no dependence on
+		-- the engine's resolver, so a missing/late function can never break Load again.
+		local pl
+		local lowName = string.lower(targetName)
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p ~= LP and (string.lower(p.Name):find(lowName, 1, true) or string.lower(p.DisplayName):find(lowName, 1, true)) then
+				pl = p
+				break
+			end
+		end
+		if not pl then
+			notify("Target","No player found matching '"..targetName.."'")
+			return
+		end
+		-- Manually set the target table
+		__gg.MH_Target = __gg.MH_Target or {}
+		__gg.MH_Target.plr = pl
+		__gg.MH_Target.model = nil   -- it will find their dino in a second (cache + active loader below)
+		notify("Target","Loaded "..pl.Name..". Profile will fill in shortly.")
 		refreshTarget()
 		activeLoad(pl)   -- keep pulling their area in until the dino shows
 	end,2)
@@ -2680,56 +2704,9 @@ conn(RunService.Heartbeat:Connect(function()
 		else __gg.MH_lastHP = math.min(hp, mx) end
 	end)
 end))
--- ═══ ANTI HEAD — SHRINK / DISABLE THE HEAD HITBOX (your idea: "make my head hitbox so small") ═══
--- From the decompiled Common.CreateHitbox, the game builds a hitbox model on your dino whose parts are tagged with
--- a "Group" attribute ("Head", "Neck", "Leg", "Tail", "Body", …). Enemy attacks hit-scan THOSE parts. So while a
--- protector is on, we take the matching-group hitbox parts and make them un-hittable: CanQuery=false (hit-scans
--- pass through) + shrink the part small. This makes head/neck/etc. bites miss OUTRIGHT — the strongest anti-head.
--- It only touches the RECEIVING hitbox: your movement, your own attacks and your damage are completely unaffected.
--- Everything is restored the instant you turn the protector off. (The HP-restore below still backs up anything
--- that slips through.)
-do
-	local GROUPS = {}   -- which hitbox groups to neutralize, from the toggles
-	local saved = setmetatable({}, {__mode="k"})   -- part -> {size, canquery} to restore
-	local function wantGroup(g)
-		g = string.lower(tostring(g or ""))
-		if (CFG.AntiFracture or CFG.AntiBreakHead) and (g=="head" or g:find("skull",1,true) or g:find("jaw",1,true)) then return true end
-		if CFG.AntiBreakNeck and g=="neck" then return true end
-		if CFG.AntiBreakLeg  and (g=="leg" or g:find("limb",1,true) or g:find("arm",1,true)) then return true end
-		if CFG.AntiBreakTail and g=="tail" then return true end
-		if CFG.AntiBreakTorso and (g=="torso" or g=="body") then return true end
-		return false
-	end
-	local function restore(part)
-		local s=saved[part]; if not s then return end
-		pcall(function() if part.Parent then part.Size=s.size; part.CanQuery=s.cq end end)
-		saved[part]=nil
-	end
-	conn(RunService.Heartbeat:Connect(function()
-		local anyProt = CFG.AntiFracture or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso
-		if not (anyProt and alive()) then
-			for p in pairs(saved) do restore(p) end
-			return
-		end
-		pcall(function()
-			local m=getMyModel(); if not m then return end
-			local hb=m:FindFirstChild("Hitbox") or m:FindFirstChild("HitBox")
-			if not hb then return end
-			for _,part in ipairs(hb:GetDescendants()) do
-				if part:IsA("BasePart") then
-					local grp = part:GetAttribute("Group") or part.Name
-					if wantGroup(grp) then
-						if not saved[part] then saved[part]={size=part.Size, cq=part.CanQuery} end
-						if part.CanQuery~=false then part.CanQuery=false end          -- hit-scans pass THROUGH = bites miss
-						if part.Size.Magnitude>0.25 then part.Size=Vector3.new(0.1,0.1,0.1) end   -- tiny = nothing to clip
-					elseif saved[part] then
-						restore(part)   -- group no longer protected (toggle changed) → put it back
-					end
-				end
-			end
-		end)
-	end))
-end
+-- (REMOVED — the head-hitbox shrink: it made YOUR OWN attacks deal no damage. PE uses your own hitbox parts as
+-- the bite ORIGIN, so CanQuery=false / shrinking them broke outgoing hits ("I can't hit / no damage"). Anti Head
+-- protection = the report-swallow in the hook + the HP-restore below, which never touch your hitbox.)
 -- ═══ ANTI HEAD / BONE PROTECTION — AGGRESSIVE DAMAGE BLOCK (ANTI 1K DAMAGE) ═══
 -- Incoming damage is dealt SERVER-side (the attacker's client reports the bite; the server drops your HP), so we
 -- can't refuse it. Instead: the instant HP drops, heal straight back to max, block the Dead state, and report full.
