@@ -2328,12 +2328,40 @@ conn(RunService.RenderStepped:Connect(function()
 		end
 	end)
 end))
--- INF STAM — MOVEMENT IS NEVER TOUCHED (removed: the WalkSpeed keeper AND the Movement-Data equalizer).
--- Deep-dive confirmed those were the snap-back: forcing WalkSpeed / speed data back up while the SERVER still
--- thinks stamina is 0 reads as speed-hacking, and it rubber-banded you (and made you "walk on your own"). Now INF
--- Stam is PURELY the data pin above — it keeps the SERVER's stamina full so the server never decides to slow you
--- in the first place, and nothing ever writes to your speed. If a laggy server still slows you, you just walk
--- normally until the bar refills (no snap-back). Want to run faster regardless? Use the Speed Hack toggle.
+-- INF STAM — WALKSPEED KEEPER (back by request: "it STILL makes me slow"). Data pin alone wasn't enough — the
+-- client still cut your WalkSpeed when it thought you were exhausted. This restores it. It writes ONLY WalkSpeed
+-- (never velocity/CFrame), so it does NOT cause the position snap-back — that only ever came from velocity writes,
+-- which stay removed. Learns your dino's real sprint (highest WalkSpeed seen) and puts it back the instant it's
+-- cut. Resets per dino. If a specific server still fights it, use Speed Hack for a hard bypass.
+conn(RunService.Heartbeat:Connect(function()
+	if not (CFG.InfStam and alive()) or CFG.SpeedHack or CFG.Fly then return end
+	pcall(function()
+		local m=(WS:FindFirstChild("Characters") and WS.Characters:FindFirstChild(LP.Name)) or char()
+		if __gg.MH_runSpeedM~=m then __gg.MH_runSpeedM=m; __gg.MH_runSpeed=0 end
+		local h=m and m:FindFirstChildOfClass("Humanoid")
+		if h and h.WalkSpeed and h.WalkSpeed>0 then
+			if h.WalkSpeed > (__gg.MH_runSpeed or 0) then __gg.MH_runSpeed=h.WalkSpeed end
+			if __gg.MH_runSpeed and __gg.MH_runSpeed>0 and h.WalkSpeed < __gg.MH_runSpeed - 0.1 then h.WalkSpeed=__gg.MH_runSpeed end
+		end
+	end)
+end))
+-- Also pin stamina on Stepped + Heartbeat (not just RenderStepped) so whichever loop the game reads stamina on,
+-- it sees full — closes the last timing gap that let the slow flicker in.
+local function stamPinNow()
+	if not (CFG.InfStam and alive()) then return end
+	pcall(function()
+		local Data = CharacterState and CharacterState.Replica and CharacterState.Replica.Data
+		local Stats = Data and Data.Stats
+		if type(Stats)=="table" and type(Stats.Stamina)=="number" then
+			local mx = (Data.MaxStats and Data.MaxStats.Stamina)
+			if Stats.Stamina>0 then __gg.MH_stamMax = math.max(__gg.MH_stamMax or 0, Stats.Stamina, mx or 0) end
+			local target = mx or __gg.MH_stamMax
+			if target and Stats.Stamina < target then Stats.Stamina = target end
+		end
+	end)
+end
+conn(RunService.Stepped:Connect(stamPinNow))
+conn(RunService.Heartbeat:Connect(stamPinNow))
 
 -- INF FOOD — FLOOR KEEPER (keep the bar UP whether you eat or not, WITHOUT hiding the eat prompt): the food bar
 -- is only topped up when it falls BELOW ~60% of max, and only raised to ~80% — never to 100%. So:
@@ -4883,20 +4911,19 @@ local function targetReadInfo()
 end
 _G.MH_targetInfo = targetReadInfo
 -- Teleport to the current target. Resolves position LIVE from any part — never needs a pre-loaded profile.
--- HARD CFRAME TELEPORT (bypass the game's teleport): set your root CFrame straight to the goal and HOLD it there
--- for a short window (writing every Heartbeat + zeroing velocity), which beats any server "put him back" attempt —
--- the server sees you already there each tick, so there's nothing to snap back to. Returns once you're placed.
+-- HARD TELEPORT = THE EXACT FOSSIL-FARM METHOD (MH_snapTo): PivotTo the goal, zero velocity, then for ~1.2s feed
+-- the server the goal on its OWN move remote and re-assert locally only if it shoves you >6 studs. This is the
+-- teleport that already works for Auto Farm Fossil — so Target uses it verbatim now, and it "sticks" the same way.
 local function hardTeleportTo(pos, holdSecs)
 	if not pos then return false end
-	if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
-	__gg.MH_rescueMute = tick()+3   -- keep the spawn rescue out of it
-	local goal = CFrame.new(pos)
-	local t0=tick()
-	repeat
-		local cc=getMyModel(); local root = cc and (cc.PrimaryPart or (cc:FindFirstChild("HumanoidRootPart"))) or hrp()
-		if root then pcall(function() root.CFrame=goal; root.AssemblyLinearVelocity=Vector3.zero; root.AssemblyAngularVelocity=Vector3.zero end) end
-		RunService.Heartbeat:Wait()
-	until tick()-t0 > (holdSecs or 0.35)
+	if __gg.MH_snapTo then __gg.MH_snapTo(pos)
+	else
+		-- fallback if the fossil snapper isn't loaded yet
+		if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
+		local cc=getMyModel(); local root = cc and (cc.PrimaryPart or cc:FindFirstChild("HumanoidRootPart")) or hrp()
+		if root then pcall(function() root.CFrame=CFrame.new(pos); root.AssemblyLinearVelocity=Vector3.zero end) end
+	end
+	if holdSecs then task.wait(holdSecs) end
 	return true
 end
 __gg.MH_hardTeleportTo = hardTeleportTo
@@ -4910,18 +4937,26 @@ local function targetTeleport(holdSecs)
 end
 __gg.MH_targetTeleport = targetTeleport
 
--- ATTACK ONCE + RETURN: save where you are, hard-TP onto them, land the captured attack, TP back to your spot.
+-- ATTACK ONCE + RETURN: DIRECT pivots (NOT MH_snapTo — its 1.2s settle loop would fight the return trip). Save
+-- your spot, pivot onto them, land the captured attack, pivot back.
 local function targetAttackAndReturn()
 	local T = __gg.MH_Target; if not T.plr then return false, "no target" end
 	local r, model = targetLivePart(T.plr)
 	if model then T.model = model end
 	if not (r and model and model.Parent) then return false, "not loaded" end
+	if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
+	__gg.MH_rescueMute = tick()+3
+	local function pivotTo(pos)
+		local cc=getMyModel(); local root=cc and (cc.PrimaryPart or cc:FindFirstChild("HumanoidRootPart")) or hrp()
+		if root then pcall(function() root.CFrame=CFrame.new(pos); root.AssemblyLinearVelocity=Vector3.zero end) end
+	end
 	local myBack
 	do local cc=getMyModel(); local root=cc and (cc.PrimaryPart or cc:FindFirstChild("HumanoidRootPart")) or hrp(); if root then myBack=root.Position end end
-	hardTeleportTo(r.Position + Vector3.new(0, 5, 0), 0.15)   -- onto them
+	pivotTo(r.Position + Vector3.new(0, 5, 0))   -- onto them
+	task.wait(0.06)
 	if _G.MH_attack then pcall(function() _G.MH_attack(model) end) end
 	task.wait(0.1)
-	if myBack then hardTeleportTo(myBack, 0.15) end            -- back to your spot
+	if myBack then pivotTo(myBack) end            -- back to your spot
 	return true
 end
 __gg.MH_targetAttackReturn = targetAttackAndReturn
