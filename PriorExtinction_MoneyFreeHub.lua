@@ -7,6 +7,128 @@ __gg.__PRIOR_EXT_HUB = nil
 -- EARLY visible proof-of-life (for console-less mobile executors): if you see this toast the script
 -- IS running -> press RightShift for the menu. If you DON'T see it, the executor failed to FETCH the
 -- script (blocked/cached HttpGet) -> use the retry loader.
+-- Dream Hub loading screen
+_G.__DreamGameName = "PRIOR EXTINCTION"
+_G.__DreamTier = (_G.PE_PREMIUM and "PREMIUM") or (_G.PE_PREM and "PREMIUM") or (_G.PE_PLUS and "PLUS") or "FREE"
+-- ═══════════════════ DREAM HUB — LOADING SCREEN ═══════════════════
+-- Black screen → Dream logo fades in slowly → title + tier + your profile + an animated loading bar. Fades out
+-- and destroys when the hub finishes building (or after a safety timeout so it can never get stuck).
+pcall(function()
+	local Players = game:GetService("Players")
+	local Tween   = game:GetService("TweenService")
+	local LP      = Players.LocalPlayer
+	if not LP then return end
+	local accent  = Color3.fromRGB(224, 36, 36)
+	local GAME = _G.__DreamGameName or "DREAM HUB"
+	local TIER = _G.__DreamTier or ""
+
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "DreamLoader"; gui.IgnoreGuiInset = true; gui.ResetOnSpawn = false
+	gui.DisplayOrder = 2000000; gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	pcall(function() gui.Parent = (typeof(gethui)=="function" and gethui()) or game:GetService("CoreGui") end)
+	if not gui.Parent then pcall(function() gui.Parent = LP:WaitForChild("PlayerGui") end) end
+
+	local bg = Instance.new("Frame")
+	bg.Size = UDim2.fromScale(1,1); bg.BackgroundColor3 = Color3.fromRGB(0,0,0)
+	bg.BorderSizePixel = 0; bg.ZIndex = 1; bg.Parent = gui
+	local grad = Instance.new("UIGradient")
+	grad.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, Color3.fromRGB(24,24,27)), ColorSequenceKeypoint.new(1, Color3.fromRGB(0,0,0))})
+	grad.Rotation = 90; grad.Parent = bg
+
+	local logo = Instance.new("ImageLabel")
+	logo.AnchorPoint = Vector2.new(0.5,0.5); logo.Position = UDim2.new(0.5,0,0.37,0)
+	logo.Size = UDim2.fromOffset(150,150); logo.BackgroundTransparency = 1
+	logo.Image = "rbxassetid://82151574125055"; logo.ImageColor3 = Color3.fromRGB(255,255,255)
+	logo.ImageTransparency = 1; logo.ScaleType = Enum.ScaleType.Fit; logo.ZIndex = 3; logo.Parent = bg
+
+	local title = Instance.new("TextLabel")
+	title.AnchorPoint = Vector2.new(0.5,0.5); title.Position = UDim2.new(0.5,0,0.53,0)
+	title.Size = UDim2.fromOffset(500,42); title.BackgroundTransparency = 1
+	title.Text = "DREAM HUB"; title.TextColor3 = Color3.fromRGB(255,255,255)
+	title.Font = Enum.Font.GothamBlack; title.TextSize = 32; title.TextTransparency = 1; title.ZIndex = 3; title.Parent = bg
+
+	local sub = Instance.new("TextLabel")
+	sub.AnchorPoint = Vector2.new(0.5,0.5); sub.Position = UDim2.new(0.5,0,0.585,0)
+	sub.Size = UDim2.fromOffset(500,24); sub.BackgroundTransparency = 1
+	sub.Text = (TIER ~= "" and (GAME.."   •   "..TIER)) or GAME
+	sub.TextColor3 = accent; sub.Font = Enum.Font.GothamBold; sub.TextSize = 16; sub.TextTransparency = 1; sub.ZIndex = 3; sub.Parent = bg
+
+	local track = Instance.new("Frame")
+	track.AnchorPoint = Vector2.new(0.5,0.5); track.Position = UDim2.new(0.5,0,0.70,0)
+	track.Size = UDim2.fromOffset(320,8); track.BackgroundColor3 = Color3.fromRGB(38,38,42)
+	track.BorderSizePixel = 0; track.ZIndex = 3; track.Parent = bg
+	Instance.new("UICorner", track).CornerRadius = UDim.new(1,0)
+	local fill = Instance.new("Frame")
+	fill.Size = UDim2.new(0,0,1,0); fill.BackgroundColor3 = accent; fill.BorderSizePixel = 0; fill.ZIndex = 4; fill.Parent = track
+	Instance.new("UICorner", fill).CornerRadius = UDim.new(1,0)
+	local fillGrad = Instance.new("UIGradient")
+	fillGrad.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, Color3.fromRGB(255,120,120)), ColorSequenceKeypoint.new(1, accent)})
+	fillGrad.Parent = fill
+
+	local pct = Instance.new("TextLabel")
+	pct.AnchorPoint = Vector2.new(0.5,0.5); pct.Position = UDim2.new(0.5,0,0.745,0)
+	pct.Size = UDim2.fromOffset(320,18); pct.BackgroundTransparency = 1
+	pct.Text = "Loading…"; pct.TextColor3 = Color3.fromRGB(165,165,172); pct.Font = Enum.Font.Gotham; pct.TextSize = 13; pct.TextTransparency = 1; pct.ZIndex = 3; pct.Parent = bg
+
+	local card = Instance.new("Frame")
+	card.AnchorPoint = Vector2.new(0.5,1); card.Position = UDim2.new(0.5,0,0.93,0)
+	card.Size = UDim2.fromOffset(268,56); card.BackgroundColor3 = Color3.fromRGB(20,20,23); card.BackgroundTransparency = 1; card.BorderSizePixel = 0; card.ZIndex = 3; card.Parent = bg
+	Instance.new("UICorner", card).CornerRadius = UDim.new(0,12)
+	local cstroke = Instance.new("UIStroke"); cstroke.Color = accent; cstroke.Transparency = 1; cstroke.Thickness = 1; cstroke.Parent = card
+	local av = Instance.new("ImageLabel")
+	av.AnchorPoint = Vector2.new(0,0.5); av.Position = UDim2.new(0,9,0.5,0); av.Size = UDim2.fromOffset(40,40)
+	av.BackgroundColor3 = Color3.fromRGB(35,35,40); av.Image = "rbxthumb://type=AvatarHeadShot&id="..LP.UserId.."&w=150&h=150"
+	av.ImageTransparency = 1; av.ZIndex = 4; av.Parent = card
+	Instance.new("UICorner", av).CornerRadius = UDim.new(1,0)
+	local nm = Instance.new("TextLabel")
+	nm.AnchorPoint = Vector2.new(0,0.5); nm.Position = UDim2.new(0,58,0.34,0); nm.Size = UDim2.fromOffset(196,18)
+	nm.BackgroundTransparency = 1; nm.Text = LP.DisplayName; nm.TextColor3 = Color3.fromRGB(255,255,255); nm.Font = Enum.Font.GothamBold; nm.TextSize = 15; nm.TextXAlignment = Enum.TextXAlignment.Left; nm.TextTransparency = 1; nm.ZIndex = 4; nm.Parent = card
+	local un = Instance.new("TextLabel")
+	un.AnchorPoint = Vector2.new(0,0.5); un.Position = UDim2.new(0,58,0.68,0); un.Size = UDim2.fromOffset(196,16)
+	un.BackgroundTransparency = 1; un.Text = "@"..LP.Name; un.TextColor3 = Color3.fromRGB(150,150,158); un.Font = Enum.Font.Gotham; un.TextSize = 12; un.TextXAlignment = Enum.TextXAlignment.Left; un.TextTransparency = 1; un.ZIndex = 4; un.Parent = card
+
+	local TI = TweenInfo.new
+	Tween:Create(logo, TI(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {ImageTransparency = 0}):Play()
+	task.delay(0.55, function()
+		Tween:Create(title, TI(0.9), {TextTransparency = 0}):Play()
+		Tween:Create(sub, TI(0.9), {TextTransparency = 0}):Play()
+		Tween:Create(pct, TI(0.9), {TextTransparency = 0}):Play()
+		Tween:Create(card, TI(0.9), {BackgroundTransparency = 0.12}):Play()
+		Tween:Create(cstroke, TI(0.9), {Transparency = 0.4}):Play()
+		Tween:Create(av, TI(0.9), {ImageTransparency = 0}):Play()
+		Tween:Create(nm, TI(0.9), {TextTransparency = 0}):Play()
+		Tween:Create(un, TI(0.9), {TextTransparency = 0}):Play()
+	end)
+
+	local done = false
+	task.spawn(function()
+		local p = 0
+		while not done and p < 0.9 do
+			p = p + (0.9 - p) * 0.05 + 0.004
+			pcall(function() fill.Size = UDim2.new(math.clamp(p,0,0.9),0,1,0); pct.Text = ("Loading…  %d%%"):format(math.floor(p*100)) end)
+			task.wait(0.05)
+		end
+	end)
+
+	local function finish()
+		if done then return end
+		done = true
+		pcall(function() Tween:Create(fill, TI(0.35), {Size = UDim2.new(1,0,1,0)}):Play(); pct.Text = "Ready" end)
+		task.delay(0.5, function()
+			pcall(function()
+				for _,o in ipairs({title, sub, pct, nm, un}) do Tween:Create(o, TI(0.5), {TextTransparency = 1}):Play() end
+				Tween:Create(logo, TI(0.5), {ImageTransparency = 1}):Play()
+				Tween:Create(av, TI(0.5), {ImageTransparency = 1}):Play()
+				Tween:Create(bg, TI(0.6), {BackgroundTransparency = 1}):Play()
+			end)
+			task.delay(0.7, function() pcall(function() gui:Destroy() end) end)
+		end)
+	end
+	_G.__DreamFinishLoad = finish
+	task.delay(14, finish)   -- safety: never stick even if the hub errors before calling finish
+end)
+-- ═══════════════════ END LOADING SCREEN ═══════════════════
+
 pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", {Title="Dream Hub", Text="Prior Extinction loading... press RightShift for the menu", Duration=6}) end)
 -- LOAD-STAGE CHECKPOINTS (debug): OFF by default. If a load ever dies with no UI, run `_G.PE_STAGES = true`
 -- before the loadstring — the LAST toast you see before it stops tells us exactly which section aborted.
@@ -56,7 +178,7 @@ local CFG = {
 	BotFlee=true, BotFleeRange=240, BotRoam=true, BotRoamRadius=350, BotEatAt=80, BotDrinkAt=80, BotSleepHeal=true, BotSpeed=18, BotAnnounce=true,
 	BoneProtect=false, ProtectBone="All",
 	TurnHack=false, TurnSpeed=30,
-	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=15, StamDrive=true, DeathFix=true, Noclip=false, Invis=false,
+	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=15, StamDrive=true, StamRunSpeed=0, DeathFix=true, Noclip=false, Invis=false,
 	InfJump=false, BypassTP=true,
 	InfFood=false, InfWater=false, InfStam=false, InfOxygen=false,
 	AntiDrown=true, AntiDrownRise=14, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false, HeadDmgReduce=90,
@@ -1609,7 +1731,7 @@ if FWindow then
 	-- farm-player guards read — true = Fluent menu open (pause aim so you can click tabs). Toggled with RightShift.
 	pcall(function() SG.Enabled=true; MF.Visible=false; Shd.Visible=false end)
 	for k in pairs(Pages) do Pages[k]=nil end
-	local ICONS = {Combat="swords", PvP="target", Movement="footprints", Survival="heart-pulse", Growth="sprout", ["Auto Farm"]="pickaxe", Teleport="map-pin", Visuals="eye", Skins="palette", Misc="wrench", Settings="settings", Info="info"}
+	local ICONS = {Combat="swords", PvP="target", Movement="footprints", Survival="heart-pulse", Growth="sprout", ["Auto Farm"]="pickaxe", Target="crosshair", Teleport="map-pin", Visuals="eye", Skins="palette", Misc="wrench", Settings="settings", Info="info"}
 	mkTab = function(name) local tb=FWindow:AddTab({Title=name, Icon=ICONS[name] or ""}); Pages[name]=tb; return tb end
 	mkSec = function(par, title) pcall(function() par:AddParagraph({Title=title, Content=""}) end); return par, par end
 	mkToggle = function(par, txt, key) pcall(function() local t=par:AddToggle(key,{Title=txt, Default=CFG[key] and true or false}); t:OnChanged(function() CFG[key]=Options[key].Value; saveCfg() end) end) end
@@ -1697,10 +1819,10 @@ do local p=Pages["Survival"]
 	-- (INF Food / INF Water / Carnivore Meat TP / Teleport Back moved to the Growth tab.) Stamina stays here.
 	local _,f=mkSec(p,"Stamina",1)
 	mkToggle(f,"INF Stamina","InfStam",1)
-	-- INF Stamina keeps the bar full and NEVER touches your movement (no WalkSpeed writes, no velocity writes) —
-	-- the server never learns your stamina hit 0, so it never slows you, and there is nothing for its movement
-	-- anti-cheat to snap back. The old Run Speed Drive + slider are gone; want extra speed? Use Speed Hack.
-	mkLabel(f,"Keeps the bar full. Never touches movement = no snapbacks. Use Speed Hack for extra speed.",2)
+	mkLabel(f,"Keeps the bar full AND holds your run speed so exhaustion never slows you.",1.5)
+	-- Force Run Speed: 0 = AUTO (learn your dino's real sprint). If it still feels slow, drag this UP to override —
+	-- it hard-sets your WalkSpeed to this every frame while INF Stam is on (WalkSpeed only, so no snapback).
+	mkSlider(f,"Force Run Speed (0 = auto)","StamRunSpeed",0,80,2,1)
 	local _,pr=mkSec(p,"Protection",2)
 	-- Death Bug Fix = the spawn rescue (void/under-map/ocean spawns). It mutes ITSELF during any hub teleport
 	-- (map/biome/corpse/fossil TP) so it can never yank you around mid-teleport — and you can kill it here.
@@ -2333,14 +2455,15 @@ end))
 -- (never velocity/CFrame), so it does NOT cause the position snap-back — that only ever came from velocity writes,
 -- which stay removed. Learns your dino's real sprint (highest WalkSpeed seen) and puts it back the instant it's
 -- cut. Resets per dino. If a specific server still fights it, use Speed Hack for a hard bypass.
-conn(RunService.Heartbeat:Connect(function()
+-- WalkSpeed enforcement on RENDERSTEPPED (every frame, before physics = wins the fight against the game's own
+-- per-frame slow). Learns the real run speed from Data.Movement + observed WalkSpeed; a non-zero "Force Run Speed"
+-- slider OVERRIDES the learned value so you can crank it if auto is wrong. WalkSpeed only — never velocity/CFrame,
+-- so it can't cause a position snapback.
+conn(RunService.RenderStepped:Connect(function()
 	if not (CFG.InfStam and alive()) or CFG.SpeedHack or CFG.Fly then return end
 	pcall(function()
 		local m=(WS:FindFirstChild("Characters") and WS.Characters:FindFirstChild(LP.Name)) or char()
 		if __gg.MH_runSpeedM~=m then __gg.MH_runSpeedM=m; __gg.MH_runSpeed=0 end
-		-- Learn the INTENDED run speed from the game's OWN movement data (Data.Movement.Run/Sprint/Trot.Speed) —
-		-- so it works even if you were ALREADY exhausted/slow when INF Stam turned on (observing WalkSpeed alone
-		-- would then only ever learn the SLOW value = still slow). We only READ this data; we don't write it back.
 		local d = CharacterState and CharacterState.Replica and CharacterState.Replica.Data
 		local mv = d and d.Movement
 		if type(mv)=="table" then
@@ -2350,8 +2473,11 @@ conn(RunService.Heartbeat:Connect(function()
 		end
 		local h=m and m:FindFirstChildOfClass("Humanoid")
 		if h and h.WalkSpeed and h.WalkSpeed>0 then
-			if h.WalkSpeed > (__gg.MH_runSpeed or 0) then __gg.MH_runSpeed=h.WalkSpeed end   -- also learn from a real run
-			if __gg.MH_runSpeed and __gg.MH_runSpeed>0 and h.WalkSpeed < __gg.MH_runSpeed - 0.1 then h.WalkSpeed=__gg.MH_runSpeed end
+			if h.WalkSpeed > (__gg.MH_runSpeed or 0) then __gg.MH_runSpeed=h.WalkSpeed end
+			-- target: the slider if set (>0), else the learned run speed
+			local target = (tonumber(CFG.StamRunSpeed) or 0)
+			if target <= 0 then target = __gg.MH_runSpeed or 0 end
+			if target>0 and h.WalkSpeed < target - 0.05 then h.WalkSpeed = target end
 		end
 	end)
 end))
@@ -5708,5 +5834,6 @@ G.__PRIOR_EXT_HUB = function()
 	G.__PRIOR_EXT_HUB=nil
 end
 MS("5 DONE - all tabs built, menu ready")
+pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
 print("[Dream Hub · Prior Extinction v6.1] Loaded — enemy-only hitbox (never yours), fixed restore camera+controls, BodyVelocity walk-on-water/anti-drown, server-side INF stam, food ESP highlights corpses, teleport farm, anti-injury report-block")

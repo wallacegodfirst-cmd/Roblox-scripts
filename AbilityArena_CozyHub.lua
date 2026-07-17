@@ -82,7 +82,129 @@
 task.spawn(function()
     local Players = game:GetService("Players")
     local RS = game:GetService("ReplicatedStorage")
-    local LP = Players.LocalPlayer
+    -- Dream Hub loading screen
+_G.__DreamGameName = "ABILITY ARENA"
+_G.__DreamTier = (_G.AA_PREM and "PREMIUM") or (_G.AA_PLUS and "PLUS") or "FREE"
+-- ═══════════════════ DREAM HUB — LOADING SCREEN ═══════════════════
+-- Black screen → Dream logo fades in slowly → title + tier + your profile + an animated loading bar. Fades out
+-- and destroys when the hub finishes building (or after a safety timeout so it can never get stuck).
+pcall(function()
+	local Players = game:GetService("Players")
+	local Tween   = game:GetService("TweenService")
+	local LP      = Players.LocalPlayer
+	if not LP then return end
+	local accent  = Color3.fromRGB(224, 36, 36)
+	local GAME = _G.__DreamGameName or "DREAM HUB"
+	local TIER = _G.__DreamTier or ""
+
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "DreamLoader"; gui.IgnoreGuiInset = true; gui.ResetOnSpawn = false
+	gui.DisplayOrder = 2000000; gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	pcall(function() gui.Parent = (typeof(gethui)=="function" and gethui()) or game:GetService("CoreGui") end)
+	if not gui.Parent then pcall(function() gui.Parent = LP:WaitForChild("PlayerGui") end) end
+
+	local bg = Instance.new("Frame")
+	bg.Size = UDim2.fromScale(1,1); bg.BackgroundColor3 = Color3.fromRGB(0,0,0)
+	bg.BorderSizePixel = 0; bg.ZIndex = 1; bg.Parent = gui
+	local grad = Instance.new("UIGradient")
+	grad.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, Color3.fromRGB(24,24,27)), ColorSequenceKeypoint.new(1, Color3.fromRGB(0,0,0))})
+	grad.Rotation = 90; grad.Parent = bg
+
+	local logo = Instance.new("ImageLabel")
+	logo.AnchorPoint = Vector2.new(0.5,0.5); logo.Position = UDim2.new(0.5,0,0.37,0)
+	logo.Size = UDim2.fromOffset(150,150); logo.BackgroundTransparency = 1
+	logo.Image = "rbxassetid://82151574125055"; logo.ImageColor3 = Color3.fromRGB(255,255,255)
+	logo.ImageTransparency = 1; logo.ScaleType = Enum.ScaleType.Fit; logo.ZIndex = 3; logo.Parent = bg
+
+	local title = Instance.new("TextLabel")
+	title.AnchorPoint = Vector2.new(0.5,0.5); title.Position = UDim2.new(0.5,0,0.53,0)
+	title.Size = UDim2.fromOffset(500,42); title.BackgroundTransparency = 1
+	title.Text = "DREAM HUB"; title.TextColor3 = Color3.fromRGB(255,255,255)
+	title.Font = Enum.Font.GothamBlack; title.TextSize = 32; title.TextTransparency = 1; title.ZIndex = 3; title.Parent = bg
+
+	local sub = Instance.new("TextLabel")
+	sub.AnchorPoint = Vector2.new(0.5,0.5); sub.Position = UDim2.new(0.5,0,0.585,0)
+	sub.Size = UDim2.fromOffset(500,24); sub.BackgroundTransparency = 1
+	sub.Text = (TIER ~= "" and (GAME.."   •   "..TIER)) or GAME
+	sub.TextColor3 = accent; sub.Font = Enum.Font.GothamBold; sub.TextSize = 16; sub.TextTransparency = 1; sub.ZIndex = 3; sub.Parent = bg
+
+	local track = Instance.new("Frame")
+	track.AnchorPoint = Vector2.new(0.5,0.5); track.Position = UDim2.new(0.5,0,0.70,0)
+	track.Size = UDim2.fromOffset(320,8); track.BackgroundColor3 = Color3.fromRGB(38,38,42)
+	track.BorderSizePixel = 0; track.ZIndex = 3; track.Parent = bg
+	Instance.new("UICorner", track).CornerRadius = UDim.new(1,0)
+	local fill = Instance.new("Frame")
+	fill.Size = UDim2.new(0,0,1,0); fill.BackgroundColor3 = accent; fill.BorderSizePixel = 0; fill.ZIndex = 4; fill.Parent = track
+	Instance.new("UICorner", fill).CornerRadius = UDim.new(1,0)
+	local fillGrad = Instance.new("UIGradient")
+	fillGrad.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, Color3.fromRGB(255,120,120)), ColorSequenceKeypoint.new(1, accent)})
+	fillGrad.Parent = fill
+
+	local pct = Instance.new("TextLabel")
+	pct.AnchorPoint = Vector2.new(0.5,0.5); pct.Position = UDim2.new(0.5,0,0.745,0)
+	pct.Size = UDim2.fromOffset(320,18); pct.BackgroundTransparency = 1
+	pct.Text = "Loading…"; pct.TextColor3 = Color3.fromRGB(165,165,172); pct.Font = Enum.Font.Gotham; pct.TextSize = 13; pct.TextTransparency = 1; pct.ZIndex = 3; pct.Parent = bg
+
+	local card = Instance.new("Frame")
+	card.AnchorPoint = Vector2.new(0.5,1); card.Position = UDim2.new(0.5,0,0.93,0)
+	card.Size = UDim2.fromOffset(268,56); card.BackgroundColor3 = Color3.fromRGB(20,20,23); card.BackgroundTransparency = 1; card.BorderSizePixel = 0; card.ZIndex = 3; card.Parent = bg
+	Instance.new("UICorner", card).CornerRadius = UDim.new(0,12)
+	local cstroke = Instance.new("UIStroke"); cstroke.Color = accent; cstroke.Transparency = 1; cstroke.Thickness = 1; cstroke.Parent = card
+	local av = Instance.new("ImageLabel")
+	av.AnchorPoint = Vector2.new(0,0.5); av.Position = UDim2.new(0,9,0.5,0); av.Size = UDim2.fromOffset(40,40)
+	av.BackgroundColor3 = Color3.fromRGB(35,35,40); av.Image = "rbxthumb://type=AvatarHeadShot&id="..LP.UserId.."&w=150&h=150"
+	av.ImageTransparency = 1; av.ZIndex = 4; av.Parent = card
+	Instance.new("UICorner", av).CornerRadius = UDim.new(1,0)
+	local nm = Instance.new("TextLabel")
+	nm.AnchorPoint = Vector2.new(0,0.5); nm.Position = UDim2.new(0,58,0.34,0); nm.Size = UDim2.fromOffset(196,18)
+	nm.BackgroundTransparency = 1; nm.Text = LP.DisplayName; nm.TextColor3 = Color3.fromRGB(255,255,255); nm.Font = Enum.Font.GothamBold; nm.TextSize = 15; nm.TextXAlignment = Enum.TextXAlignment.Left; nm.TextTransparency = 1; nm.ZIndex = 4; nm.Parent = card
+	local un = Instance.new("TextLabel")
+	un.AnchorPoint = Vector2.new(0,0.5); un.Position = UDim2.new(0,58,0.68,0); un.Size = UDim2.fromOffset(196,16)
+	un.BackgroundTransparency = 1; un.Text = "@"..LP.Name; un.TextColor3 = Color3.fromRGB(150,150,158); un.Font = Enum.Font.Gotham; un.TextSize = 12; un.TextXAlignment = Enum.TextXAlignment.Left; un.TextTransparency = 1; un.ZIndex = 4; un.Parent = card
+
+	local TI = TweenInfo.new
+	Tween:Create(logo, TI(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {ImageTransparency = 0}):Play()
+	task.delay(0.55, function()
+		Tween:Create(title, TI(0.9), {TextTransparency = 0}):Play()
+		Tween:Create(sub, TI(0.9), {TextTransparency = 0}):Play()
+		Tween:Create(pct, TI(0.9), {TextTransparency = 0}):Play()
+		Tween:Create(card, TI(0.9), {BackgroundTransparency = 0.12}):Play()
+		Tween:Create(cstroke, TI(0.9), {Transparency = 0.4}):Play()
+		Tween:Create(av, TI(0.9), {ImageTransparency = 0}):Play()
+		Tween:Create(nm, TI(0.9), {TextTransparency = 0}):Play()
+		Tween:Create(un, TI(0.9), {TextTransparency = 0}):Play()
+	end)
+
+	local done = false
+	task.spawn(function()
+		local p = 0
+		while not done and p < 0.9 do
+			p = p + (0.9 - p) * 0.05 + 0.004
+			pcall(function() fill.Size = UDim2.new(math.clamp(p,0,0.9),0,1,0); pct.Text = ("Loading…  %d%%"):format(math.floor(p*100)) end)
+			task.wait(0.05)
+		end
+	end)
+
+	local function finish()
+		if done then return end
+		done = true
+		pcall(function() Tween:Create(fill, TI(0.35), {Size = UDim2.new(1,0,1,0)}):Play(); pct.Text = "Ready" end)
+		task.delay(0.5, function()
+			pcall(function()
+				for _,o in ipairs({title, sub, pct, nm, un}) do Tween:Create(o, TI(0.5), {TextTransparency = 1}):Play() end
+				Tween:Create(logo, TI(0.5), {ImageTransparency = 1}):Play()
+				Tween:Create(av, TI(0.5), {ImageTransparency = 1}):Play()
+				Tween:Create(bg, TI(0.6), {BackgroundTransparency = 1}):Play()
+			end)
+			task.delay(0.7, function() pcall(function() gui:Destroy() end) end)
+		end)
+	end
+	_G.__DreamFinishLoad = finish
+	task.delay(14, finish)   -- safety: never stick even if the hub errors before calling finish
+end)
+-- ═══════════════════ END LOADING SCREEN ═══════════════════
+
+local LP = Players.LocalPlayer
     local function isAC(o)
         if not (o:IsA("LocalScript") or o:IsA("Script")) then return false end
         local n = o.Name:lower()
@@ -3471,4 +3593,5 @@ if _G.AA_PLUS then
     end)
 end
 
+pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 Rayfield:Notify({Title="Dream Hub", Content="Loaded.", Duration=5})
