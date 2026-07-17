@@ -2338,9 +2338,19 @@ conn(RunService.Heartbeat:Connect(function()
 	pcall(function()
 		local m=(WS:FindFirstChild("Characters") and WS.Characters:FindFirstChild(LP.Name)) or char()
 		if __gg.MH_runSpeedM~=m then __gg.MH_runSpeedM=m; __gg.MH_runSpeed=0 end
+		-- Learn the INTENDED run speed from the game's OWN movement data (Data.Movement.Run/Sprint/Trot.Speed) —
+		-- so it works even if you were ALREADY exhausted/slow when INF Stam turned on (observing WalkSpeed alone
+		-- would then only ever learn the SLOW value = still slow). We only READ this data; we don't write it back.
+		local d = CharacterState and CharacterState.Replica and CharacterState.Replica.Data
+		local mv = d and d.Movement
+		if type(mv)=="table" then
+			for k,st in pairs(mv) do
+				if type(st)=="table" and k~="Turn" and type(st.Speed)=="number" and st.Speed > (__gg.MH_runSpeed or 0) then __gg.MH_runSpeed=st.Speed end
+			end
+		end
 		local h=m and m:FindFirstChildOfClass("Humanoid")
 		if h and h.WalkSpeed and h.WalkSpeed>0 then
-			if h.WalkSpeed > (__gg.MH_runSpeed or 0) then __gg.MH_runSpeed=h.WalkSpeed end
+			if h.WalkSpeed > (__gg.MH_runSpeed or 0) then __gg.MH_runSpeed=h.WalkSpeed end   -- also learn from a real run
 			if __gg.MH_runSpeed and __gg.MH_runSpeed>0 and h.WalkSpeed < __gg.MH_runSpeed - 0.1 then h.WalkSpeed=__gg.MH_runSpeed end
 		end
 	end)
@@ -4928,12 +4938,36 @@ local function hardTeleportTo(pos, holdSecs)
 end
 __gg.MH_hardTeleportTo = hardTeleportTo
 
+-- TELEPORT TO A (MOVING) PLAYER: lands ON them and STAYS locked even as they run — the fossil snapper aimed at a
+-- FIXED point, so for a moving player it dragged you to where they WERE (the "weird" + "doesn't TP to them"). This
+-- re-resolves their LIVE position every tick during a short settle and feeds the server THAT, so you land on them
+-- and follow. One local write per tick (only if you're >8 studs off) = far less jitter than the old 0.06s slam.
 local function targetTeleport(holdSecs)
 	local T = __gg.MH_Target; if not T.plr then return false end
-	local r, model = targetLivePart(T.plr)
+	local r0, model = targetLivePart(T.plr)
 	if model then T.model = model end
-	if not r then return false end
-	return hardTeleportTo(r.Position + Vector3.new(0, 6, 0), holdSecs)
+	if not r0 then return false end
+	__gg.MH_rescueMute = tick()+3
+	if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
+	local function place(pos)
+		local cc=getMyModel(); local root=cc and (cc.PrimaryPart or cc:FindFirstChild("HumanoidRootPart")) or hrp()
+		if root then pcall(function() root.CFrame=CFrame.new(pos); root.AssemblyLinearVelocity=Vector3.zero end) end
+	end
+	place(r0.Position + Vector3.new(0, 6, 0))   -- initial snap
+	task.spawn(function()
+		local t0=tick()
+		while tick()-t0 < (holdSecs or 1.0) do
+			local rr = select(1, targetLivePart(T.plr))   -- their CURRENT part (they may be running)
+			if not rr then break end
+			local goal = rr.Position + Vector3.new(0, 6, 0)
+			if __gg.MH_hopFire then __gg.MH_hopFire(CFrame.new(goal)) end   -- tell the server (no local jitter)
+			local me=hrp()
+			if me and (me.Position-goal).Magnitude > 8 then place(goal)   -- only re-place if the server actually shoved you
+			end
+			task.wait(0.08)
+		end
+	end)
+	return true
 end
 __gg.MH_targetTeleport = targetTeleport
 
