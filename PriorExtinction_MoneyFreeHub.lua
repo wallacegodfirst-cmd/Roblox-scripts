@@ -2306,6 +2306,25 @@ task.spawn(function() while RUNNING do
 	else task.wait(0.4) end
 end end)
 
+-- ═══ INF STAM — DIRECT Stats.Stamina PIN (your exact path) ═══ EVERY render frame (60/s, not 10/s), hold the
+-- real object and slam Stamina to its max: CharacterState.Replica.Data.Stats.Stamina. The 0.1s loop above left a
+-- gap the drain slipped through between frames — this closes it. The reference is re-fetched if it goes stale
+-- (respawn / dino change). Pure data write, no movement.
+conn(RunService.RenderStepped:Connect(function()
+	if not (CFG.InfStam and alive()) then return end
+	pcall(function()
+		local Data = CharacterState and CharacterState.Replica and CharacterState.Replica.Data
+		local Stats = Data and Data.Stats
+		if type(Stats)~="table" then return end
+		if type(Stats.Stamina)=="number" then
+			-- learn the real max (highest ever seen or MaxStats), never inflate past it (that made the server fight)
+			local mx = (Data.MaxStats and Data.MaxStats.Stamina)
+			if Stats.Stamina>0 then __gg.MH_stamMax = math.max(__gg.MH_stamMax or 0, Stats.Stamina, mx or 0) end
+			local target = mx or __gg.MH_stamMax
+			if target and Stats.Stamina < target then Stats.Stamina = target end
+		end
+	end)
+end))
 -- INF STAM — WALKSPEED KEEPER (safe, no snap-back). The data pin + wellbeing keep the SERVER from clamping you,
 -- but if a laggy frame still lets the game cut your WalkSpeed, we set it straight back to your dino's real run
 -- speed. This is a WALKSPEED write only — it does NOT move you or write velocity, so it can NEVER cause the

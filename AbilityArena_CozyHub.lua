@@ -369,7 +369,7 @@ local S = {
     Viewing=nil, ViewTarget=nil,
     EnemyHighlight=false, HighlightColor="Bright blue",
     FullBright=false,
-    AutoFarm=false, FarmTarget=nil, AuraRange=60,
+    AutoFarm=false, FarmTarget=nil, AuraRange=60, JoltFarm=false, JoltFarmDwell=0.5,
     AutoPlay=false, AutoPlayRange=100,
     AntiAFK=false, InstantRespawn=false, ClickTP=false,
     GrabDelay=3, GrabReturn=true, M1Spy=false,
@@ -475,6 +475,37 @@ local function fireRaw(payload)
     if not JoltReliable then return end
     pcall(function() JoltReliable:FireServer(toWire(payload), {}) end)
 end
+
+-- ============================================================
+-- JOLT AUTO FARM (user method): the game's own Jolt component exposes Client("Deploy")/Client("ToLobby"), and the
+-- real M1 is a garbage-collected function named "usem1". We invoke Deploy, find usem1 via getgc, then bounce
+-- between on-map players spamming the hit + snapping onto them. Requires an executor with getgc + getinfo.
+-- ============================================================
+local JoltComp, joltDeploy, joltToLobby
+pcall(function()
+    JoltComp = require(RS:WaitForChild("Files",10):WaitForChild("Shared"):WaitForChild("Components"):WaitForChild("Jolt"))
+    if JoltComp and JoltComp.Client then
+        joltDeploy  = JoltComp.Client("Deploy")
+        joltToLobby = JoltComp.Client("ToLobby")
+    end
+end)
+local function joltDeployNow() if joltDeploy and joltDeploy.Invoke then pcall(function() joltDeploy:Invoke() end) end end
+-- find the "usem1" function once, cached
+local _fireHit
+local function getFireHit()
+    if _fireHit then return _fireHit end
+    if type(getgc)~="function" or type(getinfo)~="function" then return nil end
+    pcall(function()
+        for _,v in pairs(getgc(true)) do
+            if type(v)=="function" then
+                local ok,info = pcall(getinfo, v)
+                if ok and info and type(info.name)=="string" and info.name:lower():find("usem1",1,true) then _fireHit=v; break end
+            end
+        end
+    end)
+    return _fireHit
+end
+_G.AA_JOLTFARM_DEPLOY = joltDeployNow   -- exposed so Auto Respawn / manual deploy can reuse it
 
 local function nowStamp()
     local t = 0
@@ -3171,6 +3202,64 @@ end})
 FarmTab:CreateButton({Name="Refresh Player List", Callback=function()
     pcall(function() farmDrop:Refresh(playerNames()) end)
 end})
+
+-- JOLT AUTO FARM (Plus + Premium): the user's method — deploy via Jolt, then bounce between on-map players
+-- spamming the real usem1 hit and snapping onto each. Fights EVERYONE deployed, not a single picked target.
+if _G.AA_PLUS then
+    FarmTab:CreateSection("Jolt Auto Farm (Plus)")
+    FarmTab:CreateToggle({Name="Jolt Auto Farm (hit everyone on the map)", CurrentValue=false, Flag="JoltFarm", Callback=function(v)
+        S.JoltFarm=v
+        if v then
+            if type(getgc)~="function" then
+                S.JoltFarm=false
+                pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title="Jolt Auto Farm", Text="Your executor lacks getgc — this method can't find the hit function.", Duration=6 }) end)
+                return
+            end
+            joltDeployNow()
+        end
+    end})
+    FarmTab:CreateSlider({Name="Time per target (sec)", Range={0.2,3}, Increment=0.1, Suffix="s", CurrentValue=0.5, Flag="JoltFarmDwell", Callback=function(v) S.JoltFarmDwell=v end})
+
+    -- ON-MAP = deployed. The snippet uses char():GetPivot().Z < -250; keep that check.
+    local function onMap(plr)
+        local c = plr and plr.Character
+        if not c then return false end
+        local ok, piv = pcall(function() return c:GetPivot() end)
+        return ok and piv and piv.Position.Z < -250
+    end
+    local function randomOnMapPlayer()
+        local pool = {}
+        for _,p in ipairs(Players:GetPlayers()) do if p~=LP and onMap(p) then pool[#pool+1]=p end end
+        if #pool==0 then return nil end
+        return pool[math.random(1,#pool)]
+    end
+    task.spawn(function()
+        while true do
+            if S.JoltFarm and onMap(LP) then
+                local fireHit = getFireHit()
+                local target = randomOnMapPlayer()
+                if fireHit and target then
+                    local start = tick()
+                    local dwell = tonumber(S.JoltFarmDwell) or 0.5
+                    repeat
+                        RunService.Heartbeat:Wait()
+                        pcall(function() task.spawn(fireHit) end)
+                        local me = LP.Character
+                        local tc = target.Character
+                        if me and tc then pcall(function() me:PivotTo(tc:GetPivot() - Vector3.new(0,5,0)) end) end
+                    until (tick()-start > dwell)
+                        or not S.JoltFarm
+                        or not (target.Character and target.Character:FindFirstChild("Humanoid"))
+                        or (target.Character.Humanoid.Health < 1)
+                else
+                    task.wait(0.2)
+                end
+            else
+                task.wait(0.3)
+            end
+        end
+    end)
+end
 
 -- Keep the Teleport + Farm target lists current as players join/leave.
 local function refreshPlayerDrops()
