@@ -182,7 +182,7 @@ task.spawn(function()
 	local pf=panel("Profile", 0.185, 300)
 	local pav=Instance.new("ImageLabel"); pav.AnchorPoint=Vector2.new(0.5,0); pav.Position=UDim2.new(0.5,0,0,54); pav.Size=UDim2.fromOffset(84,84); pav.BackgroundColor3=C.Panel2; pav.Image=HEAD; pav.ZIndex=4; pav.Parent=pf; corner(pav,999); stroke(pav,C.Accent,2)
 	if IS_MOD then
-		local mt=txt(pf,"\240\159\148\168 DREAM HUB GAME MOD",13,C.Text,F.Black,Enum.TextXAlignment.Center); mt.AnchorPoint=Vector2.new(0.5,0); mt.Position=UDim2.new(0.5,0,0,142); mt.Size=UDim2.new(1,-14,0,18); mt.ZIndex=5
+		local mt=txt(pf,"DREAM HUB  GAME MOD",13,C.Text,F.Black,Enum.TextXAlignment.Center); mt.AnchorPoint=Vector2.new(0.5,0); mt.Position=UDim2.new(0.5,0,0,142); mt.Size=UDim2.new(1,-14,0,18); mt.ZIndex=5
 		local rg=Instance.new("UIGradient"); rg.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(255,80,80)),ColorSequenceKeypoint.new(0.25,Color3.fromRGB(255,190,60)),ColorSequenceKeypoint.new(0.5,Color3.fromRGB(120,255,120)),ColorSequenceKeypoint.new(0.75,Color3.fromRGB(90,190,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(210,120,255))}); rg.Parent=mt
 		track(RunService.RenderStepped:Connect(function() if mt.Parent then rg.Offset=Vector2.new(((tick()*0.4)%2)-1,0) end end))
 	end
@@ -260,7 +260,7 @@ task.spawn(function()
 	action("Copy Discord", 5, function() pcall(function() setclipboard("discord.gg/dreamhub") end) end)
 
 	-- ENTER HUB
-	local enterButton=Instance.new("TextButton"); enterButton.AnchorPoint=Vector2.new(0.5,1); enterButton.Position=UDim2.new(0.5,0,0.955,0); enterButton.Size=UDim2.fromOffset(560,68); enterButton.BackgroundColor3=C.Accent; enterButton.BackgroundTransparency=0.03; enterButton.FontFace=F.Black; enterButton.Text="\240\159\145\145  ENTER HUB    -    "..TIER; enterButton.TextSize=24; enterButton.TextColor3=C.Text; enterButton.AutoButtonColor=true; enterButton.ZIndex=4; enterButton.Parent=menuFit
+	local enterButton=Instance.new("TextButton"); enterButton.AnchorPoint=Vector2.new(0.5,1); enterButton.Position=UDim2.new(0.5,0,0.955,0); enterButton.Size=UDim2.fromOffset(560,68); enterButton.BackgroundColor3=C.Accent; enterButton.BackgroundTransparency=0.03; enterButton.FontFace=F.Black; enterButton.Text="ENTER HUB      "..TIER; enterButton.TextSize=24; enterButton.TextColor3=C.Text; enterButton.AutoButtonColor=true; enterButton.ZIndex=4; enterButton.Parent=menuFit
 	corner(enterButton,12); stroke(enterButton,Color3.fromRGB(255,120,128),1.4)
 
 	-- fit + session timer + player count
@@ -10025,7 +10025,7 @@ do
                             function S:Dropdown(c) c = c or {}; local el; pcall(function() el = sec():AddDropdown({ Title = c.Name or "Dropdown", Content = "", Multi = false, Options = arr(c.Items), Default = asTable(c.Default), Callback = c.Callback or function() end }) end); return elemWrap(el) end
                             function S:Button(c) c = c or {}; pcall(function() sec():AddButton({ Title = c.Name or "Button", Content = "", Callback = c.Callback or function() end }) end); return elemWrap(nil) end
                             function S:Label(t) local el; pcall(function() el = sec():AddParagraph({ Title = tostring(t or ""), Content = "" }) end); return elemWrap(el) end
-                            function S:Textbox(c) c = c or {}; local el; pcall(function() el = sec():AddInput({ Title = c.Name or "Input", Content = c.Default or "", Callback = c.Callback or function() end }) end); return elemWrap(el) end
+                            function S:Textbox(c) c = c or {}; local el; local nm=c.Name or "Input"; local ph=c.Placeholder or c.PlaceholderText or ""; pcall(function() el = sec():AddInput({ Title = nm, Name = nm, Description = "", Content = "", Placeholder = ph, PlaceholderText = ph, Default = c.Default or "", Callback = c.Callback or function() end }) end); return elemWrap(el) end
                             return guard(S)
                         end
                         return guard(SP)
@@ -10781,7 +10781,7 @@ do
             local aSec = aSub:Section({ Name = "Load User", Side = 1 })
             local dd = aSec:Dropdown({ Name = "Load User", Items = names(), Default = "", Callback = function(v) sel = (type(v)=="table" and v[1]) or v end })
             aSec:Button({ Name = "Refresh Players", Callback = function() pcall(function() if dd and dd.SetItems then dd:SetItems(names()) elseif dd and dd.Refresh then dd:Refresh(names()) end end) end })
-            aSec:Textbox({ Name = "Warn message", Placeholder = "warning text", Default = "", Callback = function(v) if v and v~="" then warnMsg=v end end })
+            aSec:Textbox({ Name = "Warn text (then press Send Warn)", Placeholder = "type the warning", Default = "", Callback = function(v) if v and v~="" then warnMsg=v end end })
             local aAct = aSub:Section({ Name = "Actions", Side = 2 })
             aAct:Button({ Name = "Send Warn", Callback = function() local p=targ(); if not p then toast("Load a user first.") return end local ok=sendChat("[ADMIN -> @"..p.Name.."] "..warnMsg); toast(ok and ("Warned "..p.Name) or "Chat blocked.") end })
             aAct:Button({ Name = "Teleport To User", Callback = function() local p=targ(); if not p then toast("Load a user first.") return end
@@ -10794,7 +10794,7 @@ do
             aAct:Button({ Name = "Copy Username", Callback = function() local p=targ(); if not p then toast("Load a user first.") return end pcall(function() setclipboard(p.Name) end) toast("Copied @"..p.Name) end })
             aAct:Button({ Name = "Copy UserId", Callback = function() local p=targ(); if not p then toast("Load a user first.") return end pcall(function() setclipboard(tostring(p.UserId)) end) toast("Copied "..p.UserId) end })
             local reason,proof="",""
-            aAct:Textbox({ Name = "Report reason", Placeholder = "what they did", Default = "", Callback = function(v) reason = v or "" end })
+            aAct:Textbox({ Name = "Put reason here", Placeholder = "what they did", Default = "", Callback = function(v) reason = v or "" end })
             aAct:Textbox({ Name = "Proof image link", Placeholder = "https://... (imgur/gyazo)", Default = "", Callback = function(v) proof = v or "" end })
             aAct:Button({ Name = "Send Report to Discord", Callback = function()
                 local p=targ(); if not p then toast("Load a user first.") return end

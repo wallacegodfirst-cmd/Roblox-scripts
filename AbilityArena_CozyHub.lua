@@ -180,7 +180,7 @@ task.spawn(function()
 	local pf=panel("Profile", 0.185, 300)
 	local pav=Instance.new("ImageLabel"); pav.AnchorPoint=Vector2.new(0.5,0); pav.Position=UDim2.new(0.5,0,0,54); pav.Size=UDim2.fromOffset(84,84); pav.BackgroundColor3=C.Panel2; pav.Image=HEAD; pav.ZIndex=4; pav.Parent=pf; corner(pav,999); stroke(pav,C.Accent,2)
 	if IS_MOD then
-		local mt=txt(pf,"\240\159\148\168 DREAM HUB GAME MOD",13,C.Text,F.Black,Enum.TextXAlignment.Center); mt.AnchorPoint=Vector2.new(0.5,0); mt.Position=UDim2.new(0.5,0,0,142); mt.Size=UDim2.new(1,-14,0,18); mt.ZIndex=5
+		local mt=txt(pf,"DREAM HUB  GAME MOD",13,C.Text,F.Black,Enum.TextXAlignment.Center); mt.AnchorPoint=Vector2.new(0.5,0); mt.Position=UDim2.new(0.5,0,0,142); mt.Size=UDim2.new(1,-14,0,18); mt.ZIndex=5
 		local rg=Instance.new("UIGradient"); rg.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(255,80,80)),ColorSequenceKeypoint.new(0.25,Color3.fromRGB(255,190,60)),ColorSequenceKeypoint.new(0.5,Color3.fromRGB(120,255,120)),ColorSequenceKeypoint.new(0.75,Color3.fromRGB(90,190,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(210,120,255))}); rg.Parent=mt
 		track(RunService.RenderStepped:Connect(function() if mt.Parent then rg.Offset=Vector2.new(((tick()*0.4)%2)-1,0) end end))
 	end
@@ -258,7 +258,7 @@ task.spawn(function()
 	action("Copy Discord", 5, function() pcall(function() setclipboard("discord.gg/dreamhub") end) end)
 
 	-- ENTER HUB
-	local enterButton=Instance.new("TextButton"); enterButton.AnchorPoint=Vector2.new(0.5,1); enterButton.Position=UDim2.new(0.5,0,0.955,0); enterButton.Size=UDim2.fromOffset(560,68); enterButton.BackgroundColor3=C.Accent; enterButton.BackgroundTransparency=0.03; enterButton.FontFace=F.Black; enterButton.Text="\240\159\145\145  ENTER HUB    -    "..TIER; enterButton.TextSize=24; enterButton.TextColor3=C.Text; enterButton.AutoButtonColor=true; enterButton.ZIndex=4; enterButton.Parent=menuFit
+	local enterButton=Instance.new("TextButton"); enterButton.AnchorPoint=Vector2.new(0.5,1); enterButton.Position=UDim2.new(0.5,0,0.955,0); enterButton.Size=UDim2.fromOffset(560,68); enterButton.BackgroundColor3=C.Accent; enterButton.BackgroundTransparency=0.03; enterButton.FontFace=F.Black; enterButton.Text="ENTER HUB      "..TIER; enterButton.TextSize=24; enterButton.TextColor3=C.Text; enterButton.AutoButtonColor=true; enterButton.ZIndex=4; enterButton.Parent=menuFit
 	corner(enterButton,12); stroke(enterButton,Color3.fromRGB(255,120,128),1.4)
 
 	-- fit + session timer + player count
@@ -610,7 +610,9 @@ do
                 end
                 function T:CreateInput(c)
                     c=c or {}
-                    pcall(function() sec():AddInput({ Title=c.Name or "Input", Content=c.PlaceholderText or "", Callback=c.Callback or function() end }) end)
+                    -- pass EVERY key variant so Fluriore shows the real title/placeholder (not "TextBox / This is a TextBox")
+                    local nm=c.Name or "Input"; local ph=c.PlaceholderText or ""
+                    pcall(function() sec():AddInput({ Title=nm, Name=nm, Description="", Content="", Placeholder=ph, PlaceholderText=ph, Default=c.Default or "", Numeric=false, Finished=false, Callback=c.Callback or function() end }) end)
                     return { Set=function() end }
                 end
                 function T:CreateColorPicker(c)
@@ -3820,7 +3822,7 @@ do
         local dd = AdminTab:CreateDropdown({Name="Load User", Options=names(), CurrentOption={}, Callback=function(o) sel=(type(o)=="table" and o[1]) or o end})
         AdminTab:CreateButton({Name="Refresh Players", Callback=function() pcall(function() dd:Refresh(names()) end) end})
         AdminTab:CreateSection("Actions")
-        AdminTab:CreateInput({Name="Warn message", PlaceholderText="warning text", Callback=function(t) if t and t~="" then warnMsg=t end end})
+        AdminTab:CreateInput({Name="Warn text (then press Send Warn)", PlaceholderText="type the warning", Callback=function(t) if t and t~="" then warnMsg=t end end})
         AdminTab:CreateButton({Name="Send Warn", Callback=function() local p=targ(); if not p then toast("Load a user first.") return end local ok=sendChat("[ADMIN -> @"..p.Name.."] "..warnMsg); toast(ok and ("Warned "..p.Name) or "Chat blocked.") end})
         AdminTab:CreateButton({Name="Teleport To User", Callback=function() local p=targ(); if not p then toast("Load a user first.") return end
             local okg=false; pcall(function() local mc=LP.Character; local mr=mc and (mc:FindFirstChild("HumanoidRootPart") or mc.PrimaryPart or mc:FindFirstChildWhichIsA("BasePart")); local tc=p.Character; local tr=tc and (tc:FindFirstChild("HumanoidRootPart") or tc.PrimaryPart or tc:FindFirstChildWhichIsA("BasePart")); if mr and tr then mr.CFrame=tr.CFrame*CFrame.new(0,0,-4); okg=true end end)
@@ -3835,7 +3837,7 @@ do
         AdminTab:CreateButton({Name="Copy Profile Link", Callback=function() local p=targ(); if not p then toast("Load a user first.") return end pcall(function() setclipboard("https://www.roblox.com/users/"..p.UserId.."/profile") end) toast("Copied profile link.") end})
         AdminTab:CreateSection("Report to Discord")
         local reason,proof="",""
-        AdminTab:CreateInput({Name="Reason / what they did", PlaceholderText="type the reason", Callback=function(t) reason=t or "" end})
+        AdminTab:CreateInput({Name="Put reason here", PlaceholderText="what they did", Callback=function(t) reason=t or "" end})
         AdminTab:CreateInput({Name="Proof image link (imgur/gyazo/medal)", PlaceholderText="https://...", Callback=function(t) proof=t or "" end})
         AdminTab:CreateButton({Name="Send Report", Callback=function()
             local p=targ(); if not p then toast("Load a user first.") return end

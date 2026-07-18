@@ -105,7 +105,7 @@ task.spawn(function()
 	local pf=panel("Profile", 0.185, 300)
 	local pav=Instance.new("ImageLabel"); pav.AnchorPoint=Vector2.new(0.5,0); pav.Position=UDim2.new(0.5,0,0,54); pav.Size=UDim2.fromOffset(84,84); pav.BackgroundColor3=C.Panel2; pav.Image=HEAD; pav.ZIndex=4; pav.Parent=pf; corner(pav,999); stroke(pav,C.Accent,2)
 	if IS_MOD then
-		local mt=txt(pf,"\240\159\148\168 DREAM HUB GAME MOD",13,C.Text,F.Black,Enum.TextXAlignment.Center); mt.AnchorPoint=Vector2.new(0.5,0); mt.Position=UDim2.new(0.5,0,0,142); mt.Size=UDim2.new(1,-14,0,18); mt.ZIndex=5
+		local mt=txt(pf,"DREAM HUB  GAME MOD",13,C.Text,F.Black,Enum.TextXAlignment.Center); mt.AnchorPoint=Vector2.new(0.5,0); mt.Position=UDim2.new(0.5,0,0,142); mt.Size=UDim2.new(1,-14,0,18); mt.ZIndex=5
 		local rg=Instance.new("UIGradient"); rg.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(255,80,80)),ColorSequenceKeypoint.new(0.25,Color3.fromRGB(255,190,60)),ColorSequenceKeypoint.new(0.5,Color3.fromRGB(120,255,120)),ColorSequenceKeypoint.new(0.75,Color3.fromRGB(90,190,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(210,120,255))}); rg.Parent=mt
 		track(RunService.RenderStepped:Connect(function() if mt.Parent then rg.Offset=Vector2.new(((tick()*0.4)%2)-1,0) end end))
 	end
@@ -183,7 +183,7 @@ task.spawn(function()
 	action("Copy Discord", 5, function() pcall(function() setclipboard("discord.gg/dreamhub") end) end)
 
 	-- ENTER HUB
-	local enterButton=Instance.new("TextButton"); enterButton.AnchorPoint=Vector2.new(0.5,1); enterButton.Position=UDim2.new(0.5,0,0.955,0); enterButton.Size=UDim2.fromOffset(560,68); enterButton.BackgroundColor3=C.Accent; enterButton.BackgroundTransparency=0.03; enterButton.FontFace=F.Black; enterButton.Text="\240\159\145\145  ENTER HUB    -    "..TIER; enterButton.TextSize=24; enterButton.TextColor3=C.Text; enterButton.AutoButtonColor=true; enterButton.ZIndex=4; enterButton.Parent=menuFit
+	local enterButton=Instance.new("TextButton"); enterButton.AnchorPoint=Vector2.new(0.5,1); enterButton.Position=UDim2.new(0.5,0,0.955,0); enterButton.Size=UDim2.fromOffset(560,68); enterButton.BackgroundColor3=C.Accent; enterButton.BackgroundTransparency=0.03; enterButton.FontFace=F.Black; enterButton.Text="ENTER HUB      "..TIER; enterButton.TextSize=24; enterButton.TextColor3=C.Text; enterButton.AutoButtonColor=true; enterButton.ZIndex=4; enterButton.Parent=menuFit
 	corner(enterButton,12); stroke(enterButton,Color3.fromRGB(255,120,128),1.4)
 
 	-- fit + session timer + player count
@@ -2311,7 +2311,7 @@ if __gg.PE_ADMIN and Pages["Admin"] then local p=Pages["Admin"]
 	mkTextbox(s,"Add admins (comma-sep usernames — saved, reload to apply)","AdminExtra",1.5,false)
 
 	local _,a=mkSec(p,"Actions",2)
-	mkTextbox(a,"Warn message","AdminWarnMsg",1,false)
+	mkTextbox(a,"Warn text (type, then press Send Warn)","AdminWarnMsg",1,false)
 	mkBtn(a,"Send Warn", function()
 		local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end
 		local ok=sendChat("[ADMIN → @"..pl.Name.."] "..tostring(CFG.AdminWarnMsg~="" and CFG.AdminWarnMsg or "Follow the rules or you'll be removed."))
@@ -2348,8 +2348,8 @@ if __gg.PE_ADMIN and Pages["Admin"] then local p=Pages["Admin"]
 	mkBtn(id,"Copy UserId", function() local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end local ok=pcall(function() setclipboard(tostring(pl.UserId)) end); notify("Admin", ok and ("Copied "..pl.UserId) or (tostring(pl.UserId).." (no clipboard)")) end)
 	mkBtn(id,"Copy Profile Link", function() local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end local link="https://www.roblox.com/users/"..pl.UserId.."/profile"; local ok=pcall(function() setclipboard(link) end); notify("Admin", ok and "Copied profile link." or link) end)
 	local _,rp=mkSec(p,"Report to Discord",4)
-	mkTextbox(rp,"Reason / what they did","AdminReason",1,false)
-	mkTextbox(rp,"Proof image link (imgur/gyazo/medal)","AdminProof",2,false)
+	mkTextbox(rp,"Put reason here","AdminReason",1,false)
+	mkTextbox(rp,"Proof image link","AdminProof",2,false)
 	mkBtn(rp,"Send Report", function()
 		local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end
 		local reason = tostring(CFG.AdminReason or "")
