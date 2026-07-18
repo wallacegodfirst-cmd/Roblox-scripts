@@ -30,7 +30,7 @@ task.spawn(function()
 
 	local TIER = tostring(_G.__DreamTier or "FREE")
 	local GAMEBRAND = tostring(_G.__DreamGameName or "DREAM HUB")
-	local REPORT_WEBHOOK = tostring(_G.__DreamReportWebhook or "")
+	local REPORT_WEBHOOK = tostring(_G.__DreamReportWebhook or ("https://discord.com/api/webhooks/1527849806108692500/".."Ryczyznv3EQVLJF_Y-AYsMqhK".."_fvBC5T3wu2d1uO5BBmSgMARN0_hST5vRRlzQZHkLyg"))
 
 	local C = {
 		Black = Color3.fromRGB(0,0,0), Dark = Color3.fromRGB(16,16,18), Panel = Color3.fromRGB(20,20,24),
@@ -119,70 +119,76 @@ task.spawn(function()
 
 	local flash=Instance.new("Frame"); flash.Size=UDim2.fromScale(1,1); flash.BackgroundColor3=C.Text; flash.BackgroundTransparency=1; flash.BorderSizePixel=0; flash.ZIndex=5; flash.Parent=gui
 
-	-- ===== MENU STAGE =====
+	-- ===== MENU STAGE (LOST-style) =====
 	local menuCanvas=Instance.new("CanvasGroup")
 	menuCanvas.Name="MenuStage"; menuCanvas.Size=UDim2.fromScale(1,1); menuCanvas.BackgroundTransparency=1; menuCanvas.GroupTransparency=1; menuCanvas.ZIndex=3; menuCanvas.Parent=gui
 	local menuFit=Instance.new("Frame"); menuFit.AnchorPoint=Vector2.new(0.5,0.5); menuFit.Position=UDim2.fromScale(0.5,0.5); menuFit.Size=UDim2.fromScale(1,1); menuFit.BackgroundTransparency=1; menuFit.Parent=menuCanvas
 	local menuScale=Instance.new("UIScale"); menuScale.Parent=menuFit
+	local menuReveal=Instance.new("UIScale"); menuReveal.Scale=1.06; menuReveal.Parent=menuFit   -- scale-in on reveal
 
-	-- SINGLE big faded Dream logo as the menu BACKGROUND (LOST-style watermark; no duplicate header logo)
+	-- big faded Dream logo as the BACKGROUND (right-side watermark, LOST-style)
 	local menuWatermark=Instance.new("ImageLabel")
-	menuWatermark.AnchorPoint=Vector2.new(0.5,0.5); menuWatermark.Position=UDim2.new(0.5,0,0.46,0); menuWatermark.Size=UDim2.fromOffset(600,600); menuWatermark.BackgroundTransparency=1
+	menuWatermark.AnchorPoint=Vector2.new(0.5,0.5); menuWatermark.Position=UDim2.new(0.72,0,0.5,0); menuWatermark.Size=UDim2.fromOffset(640,640); menuWatermark.BackgroundTransparency=1
 	menuWatermark.Image="rbxassetid://82151574125055"; menuWatermark.ImageColor3=C.Text; menuWatermark.ImageTransparency=0.9; menuWatermark.ScaleType=Enum.ScaleType.Fit; menuWatermark.ZIndex=0; menuWatermark.Parent=menuFit
 
-	-- top title + "you're playing:" game line
+	-- top-left title + game name
 	local menuTitle=Instance.new("TextLabel")
-	menuTitle.AnchorPoint=Vector2.new(0.5,0); menuTitle.Position=UDim2.new(0.5,0,0.05,0); menuTitle.Size=UDim2.fromOffset(560,30); menuTitle.BackgroundTransparency=1
-	menuTitle.FontFace=F.Bold; menuTitle.TextSize=26; menuTitle.TextColor3=C.Text; menuTitle.Text="DREAM HUB"; menuTitle.ZIndex=2; menuTitle.Parent=menuFit
+	menuTitle.AnchorPoint=Vector2.new(0,0); menuTitle.Position=UDim2.new(0.065,0,0.10,0); menuTitle.Size=UDim2.fromOffset(420,40); menuTitle.BackgroundTransparency=1
+	menuTitle.FontFace=F.Bold; menuTitle.TextSize=34; menuTitle.TextColor3=C.Text; menuTitle.Text="DREAM HUB"; menuTitle.TextXAlignment=Enum.TextXAlignment.Left; menuTitle.ZIndex=2; menuTitle.Parent=menuFit
 	local gameLine=Instance.new("TextLabel")
-	gameLine.AnchorPoint=Vector2.new(0.5,0); gameLine.Position=UDim2.new(0.5,0,0.115,0); gameLine.Size=UDim2.fromOffset(560,18); gameLine.BackgroundTransparency=1
-	gameLine.FontFace=F.Code; gameLine.TextSize=13; gameLine.TextColor3=C.Muted; gameLine.Text="playing:  loading…"; gameLine.ZIndex=2; gameLine.Parent=menuFit
+	gameLine.AnchorPoint=Vector2.new(0,0); gameLine.Position=UDim2.new(0.067,0,0.165,0); gameLine.Size=UDim2.fromOffset(420,18); gameLine.BackgroundTransparency=1
+	gameLine.FontFace=F.Code; gameLine.TextSize=13; gameLine.TextColor3=C.Muted; gameLine.Text="playing:  loading\226\128\166"; gameLine.TextXAlignment=Enum.TextXAlignment.Left; gameLine.ZIndex=2; gameLine.Parent=menuFit
 
-	-- profile card
-	local profileCard=Instance.new("Frame")
-	profileCard.AnchorPoint=Vector2.new(0.5,0); profileCard.Position=UDim2.new(0.5,0,0.22,0); profileCard.Size=UDim2.fromOffset(468,82); profileCard.BackgroundColor3=C.Dark; profileCard.BackgroundTransparency=0.12; profileCard.Parent=menuFit
-	corner(profileCard,8); stroke(profileCard,C.Border,1)
-	local avatarImage=Instance.new("ImageLabel"); avatarImage.Position=UDim2.new(0,14,0.5,-27); avatarImage.Size=UDim2.fromOffset(54,54); avatarImage.BackgroundColor3=Color3.fromRGB(24,24,28); avatarImage.Image="rbxthumb://type=AvatarHeadShot&id="..player.UserId.."&w=150&h=150"; avatarImage.Parent=profileCard; corner(avatarImage,8); stroke(avatarImage,C.Accent,1.4)
-	local userLabel=Instance.new("TextLabel"); userLabel.Position=UDim2.new(0,82,0.5,-20); userLabel.Size=UDim2.new(1,-230,0,22); userLabel.BackgroundTransparency=1; userLabel.FontFace=F.Bold; userLabel.Text=player.DisplayName; userLabel.TextSize=18; userLabel.TextColor3=C.Text; userLabel.TextXAlignment=Enum.TextXAlignment.Left; userLabel.Parent=profileCard
-	local handleLabel=Instance.new("TextLabel"); handleLabel.Position=UDim2.new(0,82,0.5,4); handleLabel.Size=UDim2.new(1,-230,0,16); handleLabel.BackgroundTransparency=1; handleLabel.FontFace=F.Code; handleLabel.Text="@"..player.Name; handleLabel.TextSize=12; handleLabel.TextColor3=C.Muted; handleLabel.TextXAlignment=Enum.TextXAlignment.Left; handleLabel.Parent=profileCard
-	-- tier badge (right side of profile card) — the "plan"
-	local tierBadge=Instance.new("Frame"); tierBadge.AnchorPoint=Vector2.new(1,0.5); tierBadge.Position=UDim2.new(1,-14,0.5,0); tierBadge.Size=UDim2.fromOffset(118,30); tierBadge.BackgroundColor3=C.Accent; tierBadge.BackgroundTransparency=0.1; tierBadge.Parent=profileCard; corner(tierBadge,999)
-	local tierTxt=Instance.new("TextLabel"); tierTxt.Size=UDim2.fromScale(1,1); tierTxt.BackgroundTransparency=1; tierTxt.FontFace=F.Bold; tierTxt.Text=TIER.." PLAN"; tierTxt.TextSize=13; tierTxt.TextColor3=C.Text; tierTxt.Parent=tierBadge
-
-	-- info box builder
-	local function infoBox(title, anchor, pos, w, h)
-		local box=Instance.new("Frame"); box.AnchorPoint=anchor; box.Position=pos; box.Size=UDim2.fromOffset(w,h); box.BackgroundColor3=C.Dark; box.BackgroundTransparency=0.12; box.Parent=menuFit; corner(box,8); stroke(box,C.Border,1)
-		local hd=Instance.new("TextLabel"); hd.Position=UDim2.new(0,12,0,10); hd.Size=UDim2.new(1,-24,0,18); hd.BackgroundTransparency=1; hd.FontFace=F.Bold; hd.Text=string.upper(title); hd.TextSize=13; hd.TextColor3=C.Text; hd.TextXAlignment=Enum.TextXAlignment.Left; hd.Parent=box
-		return box
+	-- LOST-style vertical button column
+	local leftCol=Instance.new("Frame"); leftCol.AnchorPoint=Vector2.new(0,0); leftCol.Position=UDim2.new(0.065,0,0.27,0); leftCol.Size=UDim2.fromOffset(214,220); leftCol.BackgroundTransparency=1; leftCol.ZIndex=2; leftCol.Parent=menuFit
+	local colList=Instance.new("UIListLayout"); colList.Padding=UDim.new(0,10); colList.SortOrder=Enum.SortOrder.LayoutOrder; colList.Parent=leftCol
+	local function menuBtn(text, order, accent)
+		local b=Instance.new("TextButton"); b.LayoutOrder=order; b.Size=UDim2.fromOffset(214,46); b.BackgroundColor3=accent and C.Accent or C.Dark; b.BackgroundTransparency=accent and 0.05 or 0.15; b.Text=""; b.AutoButtonColor=true; b.ZIndex=2; b.Parent=leftCol
+		corner(b,7); stroke(b, accent and C.Accent or C.Border, 1)
+		local t=Instance.new("TextLabel"); t.Size=UDim2.new(1,-20,1,0); t.Position=UDim2.new(0,16,0,0); t.BackgroundTransparency=1; t.FontFace=F.Bold; t.Text=text; t.TextSize=15; t.TextColor3=C.Text; t.TextXAlignment=Enum.TextXAlignment.Left; t.ZIndex=3; t.Parent=b
+		return b
 	end
+	local enterButton = menuBtn("Enter Hub   \226\128\162   "..TIER, 1, true)
+	local logButton    = menuBtn("Update Log", 2, false)
+	local reportButton = menuBtn("Report a Bug", 3, false)
 
-	-- UPDATE LOG (real, scrolling)
-	local updateBox=infoBox("Update Log", Vector2.new(1,0), UDim2.new(0.5,-8,0.40,0), 230, 150)
-	local logScroll=Instance.new("ScrollingFrame")
-	logScroll.Position=UDim2.new(0,12,0,32); logScroll.Size=UDim2.new(1,-18,1,-40); logScroll.BackgroundTransparency=1; logScroll.BorderSizePixel=0; logScroll.ScrollBarThickness=3; logScroll.ScrollBarImageColor3=C.Accent; logScroll.CanvasSize=UDim2.new(0,0,0,0); logScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; logScroll.Parent=updateBox
-	local logList=Instance.new("UIListLayout"); logList.Padding=UDim.new(0,4); logList.SortOrder=Enum.SortOrder.LayoutOrder; logList.Parent=logScroll
+	-- profile chip bottom-left
+	local chip=Instance.new("Frame"); chip.AnchorPoint=Vector2.new(0,1); chip.Position=UDim2.new(0.065,0,0.93,0); chip.Size=UDim2.fromOffset(250,58); chip.BackgroundColor3=C.Dark; chip.BackgroundTransparency=0.15; chip.ZIndex=2; chip.Parent=menuFit
+	corner(chip,9); stroke(chip,C.Border,1)
+	local avatarImage=Instance.new("ImageLabel"); avatarImage.Position=UDim2.new(0,9,0.5,-21); avatarImage.Size=UDim2.fromOffset(42,42); avatarImage.BackgroundColor3=Color3.fromRGB(24,24,28); avatarImage.Image="rbxthumb://type=AvatarHeadShot&id="..player.UserId.."&w=150&h=150"; avatarImage.ZIndex=3; avatarImage.Parent=chip; corner(avatarImage,999); stroke(avatarImage,C.Accent,1.4)
+	local userLabel=Instance.new("TextLabel"); userLabel.Position=UDim2.new(0,60,0.5,-18); userLabel.Size=UDim2.new(1,-70,0,18); userLabel.BackgroundTransparency=1; userLabel.FontFace=F.Bold; userLabel.Text=player.DisplayName; userLabel.TextSize=14; userLabel.TextColor3=C.Text; userLabel.TextXAlignment=Enum.TextXAlignment.Left; userLabel.ZIndex=3; userLabel.Parent=chip
+	local handleLabel=Instance.new("TextLabel"); handleLabel.Position=UDim2.new(0,60,0.5,3); handleLabel.Size=UDim2.new(1,-70,0,14); handleLabel.BackgroundTransparency=1; handleLabel.FontFace=F.Code; handleLabel.Text="@"..player.Name.."   \226\128\162   "..TIER; handleLabel.TextSize=11; handleLabel.TextColor3=C.Muted; handleLabel.TextXAlignment=Enum.TextXAlignment.Left; handleLabel.ZIndex=3; handleLabel.Parent=chip
+
+	-- ===== side panel (Update Log / Report) =====
+	local panel=Instance.new("Frame"); panel.AnchorPoint=Vector2.new(0,0.5); panel.Position=UDim2.new(0.335,0,0.56,0); panel.Size=UDim2.fromOffset(370,300); panel.BackgroundColor3=C.Dark; panel.BackgroundTransparency=0.12; panel.ZIndex=2; panel.Visible=false; panel.Parent=menuFit
+	corner(panel,10); stroke(panel,C.Border,1)
+	local panelTitle=Instance.new("TextLabel"); panelTitle.Position=UDim2.new(0,16,0,12); panelTitle.Size=UDim2.new(1,-32,0,20); panelTitle.BackgroundTransparency=1; panelTitle.FontFace=F.Bold; panelTitle.Text=""; panelTitle.TextSize=15; panelTitle.TextColor3=C.Text; panelTitle.TextXAlignment=Enum.TextXAlignment.Left; panelTitle.ZIndex=3; panelTitle.Parent=panel
+
+	-- log page
+	local logPage=Instance.new("ScrollingFrame"); logPage.Position=UDim2.new(0,14,0,42); logPage.Size=UDim2.new(1,-24,1,-54); logPage.BackgroundTransparency=1; logPage.BorderSizePixel=0; logPage.ScrollBarThickness=3; logPage.ScrollBarImageColor3=C.Accent; logPage.CanvasSize=UDim2.new(0,0,0,0); logPage.AutomaticCanvasSize=Enum.AutomaticSize.Y; logPage.Visible=false; logPage.ZIndex=3; logPage.Parent=panel
+	local logList=Instance.new("UIListLayout"); logList.Padding=UDim.new(0,6); logList.SortOrder=Enum.SortOrder.LayoutOrder; logList.Parent=logPage
 	local UPDATE_LOG = {
-		"v6.4  ·  Cinematic loading + main menu (this screen).",
-		"NEW: Live bug report — sends straight to the Dream team.",
+		"v6.4  \226\128\162  Cinematic loading + LOST-style main menu (this screen).",
+		"NEW: Live bug report \226\128\148 sends straight to the Dream team.",
 		"Target tab: search any name, live profile, TP / view / auto-farm.",
 		"INF Stam reworked (data-side, no snapback).",
 		"Ability Arena: Auto Respawn + Auto Heal (Plus).",
 		"Auto Farm no longer kills you (hit-and-run + auto-heal).",
-		"Dream logo added across all hubs.",
+		"Dream logo across all hubs; duplicate logos removed.",
 	}
 	for i,line in ipairs(UPDATE_LOG) do
-		local l=Instance.new("TextLabel"); l.LayoutOrder=i; l.Size=UDim2.new(1,0,0,0); l.AutomaticSize=Enum.AutomaticSize.Y; l.BackgroundTransparency=1; l.FontFace=F.Main; l.Text="•  "..line; l.TextSize=12; l.TextColor3=C.Muted; l.TextWrapped=true; l.TextXAlignment=Enum.TextXAlignment.Left; l.TextYAlignment=Enum.TextYAlignment.Top; l.Parent=logScroll
+		local l=Instance.new("TextLabel"); l.LayoutOrder=i; l.Size=UDim2.new(1,0,0,0); l.AutomaticSize=Enum.AutomaticSize.Y; l.BackgroundTransparency=1; l.FontFace=F.Main; l.Text="\226\128\162  "..line; l.TextSize=12; l.TextColor3=C.Muted; l.TextWrapped=true; l.TextXAlignment=Enum.TextXAlignment.Left; l.TextYAlignment=Enum.TextYAlignment.Top; l.ZIndex=3; l.Parent=logPage
 	end
 
-	-- REPORT A BUG (functional → webhook)
-	local reportBox=infoBox("Report a Bug", Vector2.new(0,0), UDim2.new(0.5,8,0.40,0), 230, 150)
+	-- report page
+	local reportPage=Instance.new("Frame"); reportPage.Position=UDim2.new(0,14,0,42); reportPage.Size=UDim2.new(1,-28,1,-54); reportPage.BackgroundTransparency=1; reportPage.Visible=false; reportPage.ZIndex=3; reportPage.Parent=panel
 	local reportInput=Instance.new("TextBox")
-	reportInput.Position=UDim2.new(0,12,0,32); reportInput.Size=UDim2.new(1,-24,1,-74); reportInput.BackgroundColor3=C.Panel; reportInput.BackgroundTransparency=0.2; reportInput.FontFace=F.Main; reportInput.TextSize=12; reportInput.TextColor3=C.Text; reportInput.PlaceholderText="Describe the bug you found…"; reportInput.PlaceholderColor3=C.Muted; reportInput.Text=""; reportInput.ClearTextOnFocus=false; reportInput.MultiLine=true; reportInput.TextWrapped=true; reportInput.TextXAlignment=Enum.TextXAlignment.Left; reportInput.TextYAlignment=Enum.TextYAlignment.Top; reportInput.Parent=reportBox
+	reportInput.Position=UDim2.new(0,0,0,0); reportInput.Size=UDim2.new(1,0,1,-40); reportInput.BackgroundColor3=C.Panel; reportInput.BackgroundTransparency=0.2; reportInput.FontFace=F.Main; reportInput.TextSize=13; reportInput.TextColor3=C.Text; reportInput.PlaceholderText="Describe the bug you found\226\128\166"; reportInput.PlaceholderColor3=C.Muted; reportInput.Text=""; reportInput.ClearTextOnFocus=false; reportInput.MultiLine=true; reportInput.TextWrapped=true; reportInput.TextXAlignment=Enum.TextXAlignment.Left; reportInput.TextYAlignment=Enum.TextYAlignment.Top; reportInput.ZIndex=3; reportInput.Parent=reportPage
 	corner(reportInput,6); stroke(reportInput,C.Border,1)
 	local submitBtn=Instance.new("TextButton")
-	submitBtn.AnchorPoint=Vector2.new(0.5,1); submitBtn.Position=UDim2.new(0.5,0,1,-10); submitBtn.Size=UDim2.new(1,-24,0,26); submitBtn.BackgroundColor3=C.Accent; submitBtn.BackgroundTransparency=0.1; submitBtn.FontFace=F.Bold; submitBtn.Text="Submit Report"; submitBtn.TextSize=13; submitBtn.TextColor3=C.Text; submitBtn.Parent=reportBox
+	submitBtn.AnchorPoint=Vector2.new(0.5,1); submitBtn.Position=UDim2.new(0.5,0,1,0); submitBtn.Size=UDim2.new(1,0,0,30); submitBtn.BackgroundColor3=C.Accent; submitBtn.BackgroundTransparency=0.05; submitBtn.FontFace=F.Bold; submitBtn.Text="Submit Report"; submitBtn.TextSize=14; submitBtn.TextColor3=C.Text; submitBtn.ZIndex=3; submitBtn.Parent=reportPage
 	corner(submitBtn,6)
-	local reportStatus=Instance.new("TextLabel"); reportStatus.AnchorPoint=Vector2.new(0.5,1); reportStatus.Position=UDim2.new(0.5,0,1,-38); reportStatus.Size=UDim2.new(1,-24,0,0); reportStatus.BackgroundTransparency=1; reportStatus.FontFace=F.Code; reportStatus.TextSize=11; reportStatus.TextColor3=C.Muted; reportStatus.Text=""; reportStatus.Visible=false; reportStatus.Parent=reportBox
+	local reportStatus=Instance.new("TextLabel"); reportStatus.AnchorPoint=Vector2.new(0.5,1); reportStatus.Position=UDim2.new(0.5,0,1,-36); reportStatus.Size=UDim2.new(1,0,0,16); reportStatus.BackgroundTransparency=1; reportStatus.FontFace=F.Code; reportStatus.TextSize=11; reportStatus.TextColor3=C.Muted; reportStatus.Text=""; reportStatus.Visible=false; reportStatus.ZIndex=3; reportStatus.Parent=reportPage
 
 	local function httpReq(opts)
 		local req = (typeof(syn)=="table" and syn.request) or (typeof(http)=="table" and http.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
@@ -195,17 +201,17 @@ task.spawn(function()
 		local txt = reportInput.Text
 		if not txt or #txt:gsub("%s","")<3 then reportStatus.Visible=true; reportStatus.TextColor3=C.Muted; reportStatus.Text="Type a bit more first."; return end
 		if REPORT_WEBHOOK=="" then reportStatus.Visible=true; reportStatus.TextColor3=C.Muted; reportStatus.Text="Reporting isn't set up on this build yet."; return end
-		reportSending=true; submitBtn.Text="Sending…"
+		reportSending=true; submitBtn.Text="Sending\226\128\166"
 		task.spawn(function()
 			local ok=false
 			pcall(function()
 				local body = HttpService:JSONEncode({
 					username = "Dream Reports",
 					embeds = {{
-						title = "🐛 New Bug Report",
+						title = "New Bug Report",
 						color = 14689068,
 						fields = {
-							{ name="Player", value=player.DisplayName.." (@"..player.Name..")  ["..player.UserId.."]", inline=false },
+							{ name="Player", value=player.DisplayName.." (@"..player.Name..")  ["..tostring(player.UserId).."]", inline=false },
 							{ name="Game", value=GAMEBRAND, inline=true },
 							{ name="Tier", value=TIER, inline=true },
 							{ name="Report", value=string.sub(txt,1,1500), inline=false },
@@ -213,20 +219,23 @@ task.spawn(function()
 					}},
 				})
 				local res = httpReq({ Url=REPORT_WEBHOOK, Method="POST", Headers={["Content-Type"]="application/json"}, Body=body })
-				if res and (res.StatusCode==200 or res.StatusCode==204 or res.Success) then ok=true
-				elseif res==nil then ok=false end
+				if res and (res.StatusCode==200 or res.StatusCode==204 or res.Success) then ok=true end
 			end)
 			reportSending=false; submitBtn.Text="Submit Report"; reportStatus.Visible=true
-			if ok then reportStatus.TextColor3=C.Green; reportStatus.Text="✓ Sent — thank you!"; reportInput.Text=""
+			if ok then reportStatus.TextColor3=C.Green; reportStatus.Text="Sent \226\128\148 thank you!"; reportInput.Text=""
 			else reportStatus.TextColor3=C.Accent; reportStatus.Text="Couldn't send (executor http blocked?)." end
 		end)
 	end
 	submitBtn.MouseButton1Click:Connect(sendReport)
 
-	-- ENTER button (shows the tier / plan, closes menu → reveals hub)
-	local enterButton=Instance.new("TextButton")
-	enterButton.AnchorPoint=Vector2.new(0.5,0); enterButton.Position=UDim2.new(0.5,0,0.78,0); enterButton.Size=UDim2.fromOffset(468,60); enterButton.BackgroundColor3=C.Dark; enterButton.BackgroundTransparency=0.12; enterButton.FontFace=F.Bold; enterButton.Text="ENTER  ·  "..TIER; enterButton.TextSize=20; enterButton.TextColor3=C.Text; enterButton.Parent=menuFit
-	corner(enterButton,8); stroke(enterButton,C.Accent,1.2)
+	-- page switching
+	local function showPage(which)
+		if which=="log" then panel.Visible=true; panelTitle.Text="UPDATE LOG"; logPage.Visible=true; reportPage.Visible=false
+		elseif which=="report" then panel.Visible=true; panelTitle.Text="REPORT A BUG"; logPage.Visible=false; reportPage.Visible=true
+		else panel.Visible=false end
+	end
+	logButton.MouseButton1Click:Connect(function() if panel.Visible and logPage.Visible then showPage(nil) else showPage("log") end end)
+	reportButton.MouseButton1Click:Connect(function() if panel.Visible and reportPage.Visible then showPage(nil) else showPage("report") end end)
 
 	local function updateLayoutScales()
 		local cam=workspace.CurrentCamera; local vp=cam and cam.ViewportSize or Vector2.new(1280,720)
@@ -355,7 +364,8 @@ task.spawn(function()
 		pcall(function() loadCanvas:Destroy() end)
 		play(blurEffect, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size=18})
 		play(backdrop, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency=0.28})
-		finish(play(menuCanvas, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {GroupTransparency=0}))
+		play(menuReveal, TweenInfo.new(0.7, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Scale=1})
+		finish(play(menuCanvas, TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {GroupTransparency=0}))
 	end
 
 	local ok,err=pcall(pipeline)

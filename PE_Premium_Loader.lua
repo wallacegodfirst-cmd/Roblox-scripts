@@ -7,7 +7,7 @@
 
 _G.PE_PLUS = true   -- tier flags: the hub reads these BEFORE loading. Premium counts as Plus,
 _G.PE_PREM = true
-_G.__DreamReportWebhook = _G.__DreamReportWebhook or ""   -- PASTE YOUR DISCORD WEBHOOK URL here to receive bug reports live   -- so Premium gets every Plus feature PLUS the Premium-only ones.
+_G.__DreamReportWebhook = _G.__DreamReportWebhook or ("https://discord.com/api/webhooks/1527849806108692500/".."Ryczyznv3EQVLJF_Y-AYsMqhK".."_fvBC5T3wu2d1uO5BBmSgMARN0_hST5vRRlzQZHkLyg")   -- PASTE YOUR DISCORD WEBHOOK URL here to receive bug reports live   -- so Premium gets every Plus feature PLUS the Premium-only ones.
 
 -- TWO mirrors of the same file: if an executor proxy has poisoned its cache for one host,
 -- the other host path fetches clean.

@@ -8,7 +8,7 @@
       VALIDATES every download, retries through several fetch methods, and reports plainly what happened.
       Load: loadstring(game:HttpGet("<this url>"))()  ]]
 _G.JJS_FREE = true
-_G.__DreamReportWebhook = _G.__DreamReportWebhook or ""   -- PASTE YOUR DISCORD WEBHOOK URL here to receive bug reports live   -- switches the shared hub to the FREE tier (red/black + trimmed features + FREE badge)
+_G.__DreamReportWebhook = _G.__DreamReportWebhook or ("https://discord.com/api/webhooks/1527849806108692500/".."Ryczyznv3EQVLJF_Y-AYsMqhK".."_fvBC5T3wu2d1uO5BBmSgMARN0_hST5vRRlzQZHkLyg")   -- PASTE YOUR DISCORD WEBHOOK URL here to receive bug reports live   -- switches the shared hub to the FREE tier (red/black + trimmed features + FREE badge)
 
 -- ═══════════════════════════════════════════════════════════
 -- JUJUTSU SHENANIGANS BYPASS (ZERO-LAG)

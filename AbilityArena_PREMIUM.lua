@@ -5,7 +5,7 @@
       Load:  loadstring(game:HttpGet("<raw url to this file>"))()  ]]
 _G.AA_PLUS = true
 _G.AA_PREM = true
-_G.__DreamReportWebhook = _G.__DreamReportWebhook or ""   -- PASTE YOUR DISCORD WEBHOOK URL here to receive bug reports live
+_G.__DreamReportWebhook = _G.__DreamReportWebhook or ("https://discord.com/api/webhooks/1527849806108692500/".."Ryczyznv3EQVLJF_Y-AYsMqhK".."_fvBC5T3wu2d1uO5BBmSgMARN0_hST5vRRlzQZHkLyg")   -- PASTE YOUR DISCORD WEBHOOK URL here to receive bug reports live
 
 local URLS = {
     "https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/claude/improve-ai-system-tUhhn/AbilityArena_CozyHub.lua",

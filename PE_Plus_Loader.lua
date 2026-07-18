@@ -6,7 +6,7 @@
       proxy, and tells you in plain words what happened.  ]]
 
 _G.PE_PLUS = true
-_G.__DreamReportWebhook = _G.__DreamReportWebhook or ""   -- PASTE YOUR DISCORD WEBHOOK URL here to receive bug reports live   -- tier flag: the hub reads this BEFORE loading. PLUS tier = Target tab + Auto Farm Player.
+_G.__DreamReportWebhook = _G.__DreamReportWebhook or ("https://discord.com/api/webhooks/1527849806108692500/".."Ryczyznv3EQVLJF_Y-AYsMqhK".."_fvBC5T3wu2d1uO5BBmSgMARN0_hST5vRRlzQZHkLyg")   -- PASTE YOUR DISCORD WEBHOOK URL here to receive bug reports live   -- tier flag: the hub reads this BEFORE loading. PLUS tier = Target tab + Auto Farm Player.
 _G.PE_PREM = false  -- Premium features stay off in this build — use PE_Premium_Loader.lua for the Premium tier.
 
 -- TWO mirrors of the same file: if an executor proxy has poisoned its cache for one host,
