@@ -2851,6 +2851,11 @@ hook(LP.CharacterAdded, function(char)
     healPanic = false
     task.wait(0.2)
     pcall(applyCharacter, char)
+    -- PLUS/PREMIUM bypass: auto re-deploy into the fight after a respawn so Fly/Speed keeps you in play
+    if (_G.AA_PLUS or _G.AA_PREM) and (S.Fly or S.SpeedHack) then
+        pcall(function() char:WaitForChild("Humanoid", 5) end)
+        joltDeployNow()
+    end
     if activeAura then task.wait(0.4); pcall(function() applyAuraNow(activeAura) end) end
 end)
 if LP.Character then pcall(applyCharacter, LP.Character) end
@@ -2920,6 +2925,30 @@ hook(RunService.Stepped, function()
         end
     end
 end)
+
+-- ══════════ ANTI-CHEAT BYPASS (PLUS / PREMIUM only) — user method ══════════
+-- Holds your position so the game's anti-teleport snapback can't yank you while Fly / Speed Hack is active.
+-- Every Heartbeat: if you moved MORE than 10 studs since the last frame, that's the server snapping you back —
+-- so we restore your last good pivot. Normal fly/speed steps stay well under 10 studs/frame, so they record
+-- freely and you keep moving. Only ever runs on the PLUS/PREMIUM tiers and only while Fly or Speed is on, so it
+-- never fights a deliberate teleport in the lobby.
+do
+    local BYPASS_OK = (_G.AA_PLUS or _G.AA_PREM) and true or false
+    if BYPASS_OK then
+        local lastGood
+        hook(RunService.Heartbeat, function()
+            if not (S.Fly or S.SpeedHack) then lastGood = nil; return end
+            local ch = getChar(); if not ch then lastGood = nil; return end
+            local ok, piv = pcall(function() return ch:GetPivot() end)
+            if not ok or not piv then return end
+            if lastGood and (lastGood.Position - piv.Position).Magnitude > 10 then
+                pcall(function() ch:PivotTo(lastGood) end)
+            else
+                lastGood = piv
+            end
+        end)
+    end
+end
 
 local savedSpawnCF = nil
 local floatPart, lastSafeCF
@@ -4302,8 +4331,12 @@ TeleportsTab:CreateButton({Name="Clear Safe Spawn", Callback=function()
     Rayfield:Notify({Title="Dream Hub", Content="Safe spawn cleared.", Duration=3})
 end})
 
-MovementTab:CreateToggle({Name="Fly (WASD + Space/Ctrl)", CurrentValue=false, Flag="Fly", Callback=function(v) S.Fly=v end})
-MovementTab:CreateSlider({Name="Fly Speed", Range={10,250}, Increment=5, Suffix="spd", CurrentValue=60, Flag="FlySpeed", Callback=function(v) S.FlySpeed=v end})
+do
+    local BYPASS_OK = (_G.AA_PLUS or _G.AA_PREM) and true or false
+    MovementTab:CreateToggle({Name="Fly (WASD + Space/Ctrl)"..(BYPASS_OK and "  [bypass]" or ""), CurrentValue=false, Flag="Fly", Callback=function(v) S.Fly=v end})
+    MovementTab:CreateSlider({Name="Fly Speed", Range={10,250}, Increment=5, Suffix="spd", CurrentValue=60, Flag="FlySpeed", Callback=function(v) S.FlySpeed=v end})
+    if BYPASS_OK then MovementTab:CreateParagraph({Title="Anti-cheat bypass ACTIVE", Content="Fly + Speed Hack hold your position so the game can't snap you back. Auto re-deploys after respawn. (Plus/Premium)"}) end
+end
 MovementTab:CreateToggle({Name="Noclip", CurrentValue=false, Flag="Noclip", Callback=function(v)
     S.Noclip=v
     if not v then
