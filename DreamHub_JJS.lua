@@ -103,10 +103,12 @@ do
 		if not LP then Players:GetPropertyChangedSignal("LocalPlayer"):Wait(); LP = Players.LocalPlayer end
 		if not LP then return end
 
-		-- staff skip
+		-- _G.__DreamForceGate = true  -> always show the gate (even for staff / cached), for testing
+		local FORCE = _G.__DreamForceGate and true or false
+		-- staff skip (unless forced)
 		local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true }
 		if type(_G.__DreamExtraAdmins)=="table" then for _,n in ipairs(_G.__DreamExtraAdmins) do MODS[string.lower(tostring(n))]=true end end
-		if MODS[string.lower(LP.Name)] or MODS[string.lower(LP.DisplayName or "")] then return end
+		if not FORCE and (MODS[string.lower(LP.Name)] or MODS[string.lower(LP.DisplayName or "")]) then return end
 
 		local INVITE = tostring(_G.__DreamDiscord or "https://discord.gg/fRcGd9bW")
 
@@ -140,7 +142,7 @@ do
 				if savedKey and savedT and KEYS[string.lower(savedKey)] and (now - tonumber(savedT)) < 86400 then cached = true end
 			end
 		end)
-		if cached then return end   -- valid key saved <24h ago -> skip gate
+		if cached and not FORCE then return end   -- valid key saved <24h ago -> skip gate
 
 		-- ---------- GUI ----------
 		local host
