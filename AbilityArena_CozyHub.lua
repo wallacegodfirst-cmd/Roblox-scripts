@@ -200,14 +200,18 @@ task.spawn(function()
 	local menuFit=Instance.new("Frame"); menuFit.AnchorPoint=Vector2.new(0.5,0.5); menuFit.Position=UDim2.fromScale(0.5,0.5); menuFit.Size=UDim2.fromScale(1,1); menuFit.BackgroundTransparency=1; menuFit.Parent=menuCanvas
 	local menuScale=Instance.new("UIScale"); menuScale.Parent=menuFit
 
-	local dreamLogo=Instance.new("ImageLabel")
-	dreamLogo.AnchorPoint=Vector2.new(0.5,0); dreamLogo.Position=UDim2.new(0.5,0,0.05,0); dreamLogo.Size=UDim2.fromOffset(210,58); dreamLogo.BackgroundTransparency=1
-	dreamLogo.Image="rbxassetid://82151574125055"; dreamLogo.ImageColor3=C.Text; dreamLogo.ScaleType=Enum.ScaleType.Fit; dreamLogo.Parent=menuFit
+	-- SINGLE big faded Dream logo as the menu BACKGROUND (LOST-style watermark; no duplicate header logo)
+	local menuWatermark=Instance.new("ImageLabel")
+	menuWatermark.AnchorPoint=Vector2.new(0.5,0.5); menuWatermark.Position=UDim2.new(0.5,0,0.46,0); menuWatermark.Size=UDim2.fromOffset(600,600); menuWatermark.BackgroundTransparency=1
+	menuWatermark.Image="rbxassetid://82151574125055"; menuWatermark.ImageColor3=C.Text; menuWatermark.ImageTransparency=0.9; menuWatermark.ScaleType=Enum.ScaleType.Fit; menuWatermark.ZIndex=0; menuWatermark.Parent=menuFit
 
-	-- "you're playing:" game line
+	-- top title + "you're playing:" game line
+	local menuTitle=Instance.new("TextLabel")
+	menuTitle.AnchorPoint=Vector2.new(0.5,0); menuTitle.Position=UDim2.new(0.5,0,0.05,0); menuTitle.Size=UDim2.fromOffset(560,30); menuTitle.BackgroundTransparency=1
+	menuTitle.FontFace=F.Bold; menuTitle.TextSize=26; menuTitle.TextColor3=C.Text; menuTitle.Text="DREAM HUB"; menuTitle.ZIndex=2; menuTitle.Parent=menuFit
 	local gameLine=Instance.new("TextLabel")
-	gameLine.AnchorPoint=Vector2.new(0.5,0); gameLine.Position=UDim2.new(0.5,0,0.155,0); gameLine.Size=UDim2.fromOffset(560,18); gameLine.BackgroundTransparency=1
-	gameLine.FontFace=F.Code; gameLine.TextSize=13; gameLine.TextColor3=C.Muted; gameLine.Text="playing:  loading…"; gameLine.Parent=menuFit
+	gameLine.AnchorPoint=Vector2.new(0.5,0); gameLine.Position=UDim2.new(0.5,0,0.115,0); gameLine.Size=UDim2.fromOffset(560,18); gameLine.BackgroundTransparency=1
+	gameLine.FontFace=F.Code; gameLine.TextSize=13; gameLine.TextColor3=C.Muted; gameLine.Text="playing:  loading…"; gameLine.ZIndex=2; gameLine.Parent=menuFit
 
 	-- profile card
 	local profileCard=Instance.new("Frame")
@@ -424,8 +428,8 @@ task.spawn(function()
 		finish(play(loadCanvas, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {GroupTransparency=1}))
 		running=false
 		pcall(function() loadCanvas:Destroy() end)
-		play(blurEffect, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size=16})
-		play(backdrop, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency=0.45})
+		play(blurEffect, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size=18})
+		play(backdrop, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency=0.28})
 		finish(play(menuCanvas, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {GroupTransparency=0}))
 	end
 
