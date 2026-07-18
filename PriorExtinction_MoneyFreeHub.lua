@@ -171,7 +171,10 @@ task.spawn(function()
 			local emb={title="New Bug Report",color=14689068,fields={{name="Player",value=player.DisplayName.." (@"..player.Name..")  ["..tostring(player.UserId).."]",inline=false},{name="Game",value=GAMEBRAND,inline=true},{name="Tier",value=TIER,inline=true},{name="Report",value=string.sub(t,1,1500),inline=false}}}
 			if #proof:gsub("%s","")>4 then table.insert(emb.fields,{name="Proof",value=string.sub(proof,1,400),inline=false}); if proof:match("^https?://%S+%.png") or proof:match("^https?://%S+%.jpg") or proof:match("^https?://%S+%.jpeg") or proof:match("^https?://%S+%.gif") then emb.image={url=proof} end end
 			local body=HttpService:JSONEncode({username="Dream Reports",embeds={emb}})
-			local res=httpReq({Url=BUG_HOOK,Method="POST",Headers={["Content-Type"]="application/json"},Body=body}); if res and (res.StatusCode==200 or res.StatusCode==204 or res.Success) then ok=true end
+			local function good(r) return r and ((r.StatusCode and r.StatusCode>=200 and r.StatusCode<300) or r.Success) end
+			if good(httpReq({Url=BUG_HOOK,Method="POST",Headers={["Content-Type"]="application/json"},Body=body})) then ok=true end
+			-- some executors block discord.com entirely -> retry through the webhook proxy
+			if not ok and good(httpReq({Url=(BUG_HOOK:gsub("^https://discord%.com","https://webhook.lewisakura.moe")),Method="POST",Headers={["Content-Type"]="application/json"},Body=body})) then ok=true end
 		end) sending=false; rSubmit.Text="Submit"; if ok then rStatus.TextColor3=C.Green; rStatus.Text="Sent - thank you!"; rInput.Text="" else rStatus.TextColor3=C.Accent; rStatus.Text="Send failed (http blocked?)." end end)
 	end)
 	local function openReport() reportGui.Visible=true; rStatus.Text="" end
@@ -286,7 +289,17 @@ task.spawn(function()
 	if not host then host = Players.LocalPlayer:WaitForChild("PlayerGui") end
 	local tags = {}   -- [player] = {gui=BillboardGui, grad=UIGradient}
 	local function isMod(plr) return MODS[string.lower(plr.Name)] or MODS[string.lower(plr.DisplayName or "")] end
-	local function head(plr) local c=plr.Character; if not c then return nil end return c:FindFirstChild("Head") or c:FindFirstChildWhichIsA("BasePart") end
+	local function head(plr)
+		local c=plr.Character
+		if c then local h=c:FindFirstChild("Head") or c:FindFirstChildWhichIsA("BasePart"); if h then return h end end
+		-- Prior Extinction (and games like it): the playable model is NOT plr.Character. Find a workspace model
+		-- named after the player (checks folders one level deep too) so mods ALWAYS get their title.
+		for _,m in ipairs(workspace:GetChildren()) do
+			if (m:IsA("Model")) and (m.Name==plr.Name or m.Name==plr.DisplayName) then local h=m:FindFirstChild("Head") or m:FindFirstChildWhichIsA("BasePart"); if h then return h end end
+			if m:IsA("Folder") then local c2=m:FindFirstChild(plr.Name) or (plr.DisplayName and m:FindFirstChild(plr.DisplayName)); if c2 and c2:IsA("Model") then local h=c2:FindFirstChild("Head") or c2:FindFirstChildWhichIsA("BasePart"); if h then return h end end end
+		end
+		return nil
+	end
 	local function ensure(plr)
 		if not isMod(plr) then return end
 		local h=head(plr); if not h then return end
@@ -294,8 +307,8 @@ task.spawn(function()
 		if t and t.gui and t.gui.Parent and t.gui.Adornee==h then return end
 		if t and t.gui then pcall(function() t.gui:Destroy() end) end
 		local bb=Instance.new("BillboardGui")
-		bb.Name="DreamModTag"; bb.Adornee=h; bb.Size=UDim2.fromOffset(280,50); bb.StudsOffsetWorldSpace=Vector3.new(0,3.6,0); bb.AlwaysOnTop=true; bb.MaxDistance=1200; bb.ResetOnSpawn=false
-		local title=Instance.new("TextLabel"); title.Size=UDim2.new(1,0,0,26); title.BackgroundTransparency=1; title.Font=Enum.Font.GothamBlack; title.Text="\240\159\148\168 DREAM HUB GAME MOD"; title.TextSize=19; title.TextColor3=Color3.fromRGB(255,255,255); title.TextStrokeTransparency=0.4; title.Parent=bb
+		bb.Name="DreamModTag"; bb.Adornee=h; bb.Size=UDim2.fromOffset(280,50); bb.StudsOffsetWorldSpace=Vector3.new(0,(h.Size and h.Size.Y/2 or 1)+3,0); bb.AlwaysOnTop=true; bb.MaxDistance=1200; bb.ResetOnSpawn=false
+		local title=Instance.new("TextLabel"); title.Size=UDim2.new(1,0,0,26); title.BackgroundTransparency=1; title.Font=Enum.Font.GothamBlack; title.Text="DREAM HUB GAME MOD"; title.TextSize=20; title.TextColor3=Color3.fromRGB(255,255,255); title.TextStrokeColor3=Color3.fromRGB(10,8,16); title.TextStrokeTransparency=0.15; title.Parent=bb
 		local grad=Instance.new("UIGradient"); grad.Color=ColorSequence.new({
 			ColorSequenceKeypoint.new(0.0, Color3.fromRGB(255,80,80)), ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255,190,60)),
 			ColorSequenceKeypoint.new(0.4, Color3.fromRGB(120,255,120)), ColorSequenceKeypoint.new(0.6, Color3.fromRGB(80,200,255)),
@@ -358,7 +371,7 @@ task.spawn(function()
 				{ name="Game", value=tostring(_G.__DreamGameName or "Prior Extinction"), inline=true },
 				{ name="Caught by", value=me.Name, inline=true },
 			} }} })
-			req({ Url=HOOK, Method="POST", Headers={["Content-Type"]="application/json"}, Body=body })
+			local r1=req({ Url=HOOK, Method="POST", Headers={["Content-Type"]="application/json"}, Body=body }) if not (r1 and ((r1.StatusCode and r1.StatusCode>=200 and r1.StatusCode<300) or r1.Success)) then req({ Url=(HOOK:gsub("^https://discord%.com","https://webhook.lewisakura.moe")), Method="POST", Headers={["Content-Type"]="application/json"}, Body=body }) end
 		end) end)
 	end
 	local function scan(pl, msg)
@@ -447,12 +460,15 @@ task.spawn(function()
 				{ name="Where", value="Live chat ("..GAME..")  -  "..tostring(note or ""), inline=true },
 				{ name="Caught by", value=me.Name, inline=true },
 			} }} })
-			req({ Url=HOOK, Method="POST", Headers={["Content-Type"]="application/json"}, Body=body })
+			local r1=req({ Url=HOOK, Method="POST", Headers={["Content-Type"]="application/json"}, Body=body }) if not (r1 and ((r1.StatusCode and r1.StatusCode>=200 and r1.StatusCode<300) or r1.Success)) then req({ Url=(HOOK:gsub("^https://discord%.com","https://webhook.lewisakura.moe")), Method="POST", Headers={["Content-Type"]="application/json"}, Body=body }) end
 		end) end)
 	end
 
 	-- ---- UI ----
 	local function esc(s) return tostring(s):gsub("&","&amp;"):gsub("<","&lt;"):gsub(">","&gt;") end
+	-- emoji shortcodes: typing :skull: sends the actual emoji, Discord-style
+	local EMO = { skull="\u{1F480}", fire="\u{1F525}", joy="\u{1F602}", sob="\u{1F62D}", cry="\u{1F622}", smile="\u{1F604}", grin="\u{1F601}", heart="\u{2764}\u{FE0F}", heart_eyes="\u{1F60D}", thumbsup="\u{1F44D}", thumbsdown="\u{1F44E}", crown="\u{1F451}", eyes="\u{1F440}", goat="\u{1F410}", clown="\u{1F921}", cap="\u{1F9E2}", pray="\u{1F64F}", rage="\u{1F621}", cool="\u{1F60E}", ghost="\u{1F47B}", shrug="\u{1F937}", moyai="\u{1F5FF}", x="\u{274C}", check="\u{2705}", wave="\u{1F44B}", ["100"]="\u{1F4AF}" }
+	local function emojify(s) local r=tostring(s):gsub("%:([%w_]+)%:", function(k) return EMO[string.lower(k)] or (":"..k..":") end) return r end
 	local par
 	pcall(function() par = (gethui and gethui()) end)
 	if not par then pcall(function() par = game:GetService("CoreGui") end) end
@@ -494,7 +510,7 @@ task.spawn(function()
 	local box = Instance.new("TextBox")
 	box.Size = UDim2.new(1,-76,0,32); box.Position = UDim2.new(0,6,1,-38)
 	box.BackgroundColor3 = Color3.fromRGB(32,30,46); box.TextColor3 = Color3.fromRGB(235,232,255)
-	box.PlaceholderText = "Say something..."; box.PlaceholderColor3 = Color3.fromRGB(120,116,140)
+	box.PlaceholderText = "Say something...  (:skull: :fire: :100:)"; box.PlaceholderColor3 = Color3.fromRGB(120,116,140)
 	box.Font = Enum.Font.Gotham; box.TextSize = 12; box.Text = ""; box.ClearTextOnFocus = false
 	box.TextXAlignment = Enum.TextXAlignment.Left; box.Parent = win
 	do local c=Instance.new("UICorner") c.CornerRadius=UDim.new(0,8) c.Parent=box
@@ -552,7 +568,7 @@ task.spawn(function()
 				if rule then
 					tx.Text = "[removed by AI mod]"; tx.TextColor3 = Color3.fromRGB(255,110,110)
 				else
-					tx.Text = tostring(m.m or ""); tx.TextColor3 = Color3.fromRGB(208,204,226)
+					tx.Text = emojify(tostring(m.m or "")); tx.TextColor3 = Color3.fromRGB(208,204,226)
 				end
 				tx.Parent = row
 			end
@@ -569,6 +585,7 @@ task.spawn(function()
 		local txt = tostring(box.Text or ""):gsub("^%s+",""):gsub("%s+$","")
 		if txt == "" then return end
 		if #txt > 120 then txt = string.sub(txt,1,120) end
+		txt = emojify(txt)
 		if tick()-lastSend < 2 then notifyLocal("Live Chat","Slow down a little.") return end
 		lastSend = tick()
 		local rule = scanText(txt)
@@ -2354,7 +2371,7 @@ do local p=Pages["Survival"]
 	-- (INF Food / INF Water / Carnivore Meat TP / Teleport Back moved to the Growth tab.) Stamina stays here.
 	local _,f=mkSec(p,"Stamina",1)
 	mkToggle(f,"INF Stamina","InfStam",1)
-	mkLabel(f,"Keeps the bar full AND holds your run speed so exhaustion never slows you.",1.5)
+	mkLabel(f,"NOTE:  INF Stamina is NOT working right now - do not use it. A fix is in progress.",1.5)
 	-- Force Run Speed: 0 = AUTO (learn your dino's real sprint). If it still feels slow, drag this UP to override —
 	-- it hard-sets your WalkSpeed to this every frame while INF Stam is on (WalkSpeed only, so no snapback).
 	mkSlider(f,"Force Run Speed (0 = auto)","StamRunSpeed",0,80,2,1)
@@ -2719,7 +2736,7 @@ if __gg.PE_ADMIN and Pages["Admin"] then local p=Pages["Admin"]
 			if #proof:gsub("%s","")>4 then table.insert(emb.fields,{name="Proof",value=string.sub(proof,1,400),inline=false}); if proof:match("^https?://%S+%.png") or proof:match("^https?://%S+%.jpg") or proof:match("^https?://%S+%.jpeg") or proof:match("^https?://%S+%.gif") then emb.image={url=proof} end end
 			local body = game:GetService("HttpService"):JSONEncode({ username="Dream Mod", embeds={emb} })
 			local res=req({ Url=hook, Method="POST", Headers={["Content-Type"]="application/json"}, Body=body })
-			if res and (res.StatusCode==200 or res.StatusCode==204 or res.Success) then okc=true end
+			if res and ((res.StatusCode and res.StatusCode>=200 and res.StatusCode<300) or res.Success) then okc=true end if not okc then local res2=req({Url=(hook:gsub("^https://discord%.com","https://webhook.lewisakura.moe")),Method="POST",Headers={["Content-Type"]="application/json"},Body=body}) if res2 and ((res2.StatusCode and res2.StatusCode>=200 and res2.StatusCode<300) or res2.Success) then okc=true end end
 		end) notify("Admin", okc and ("Reported "..pl.Name.." to Discord.") or "Send failed (http blocked?).") end)
 	end)
 end
