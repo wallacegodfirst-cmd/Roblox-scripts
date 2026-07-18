@@ -11,10 +11,9 @@ __gg.__PRIOR_EXT_HUB = nil
 _G.__DreamGameName = "PRIOR EXTINCTION"
 _G.__DreamTier = (_G.PE_PREMIUM and "PREMIUM") or (_G.PE_PREM and "PREMIUM") or (_G.PE_PLUS and "PLUS") or "FREE"
 -- ═══════════════════ DREAM HUB — LOADING SCREEN ═══════════════════
--- Obsidian Cinematic Suite: starfield loading → zoom-through → blurred main menu (profile, game, tier, update
--- log, live bug-report). Self-contained; runs in task.spawn so the hub builds underneath. Reads:
---   _G.__DreamGameName / _G.__DreamTier            (set by each loader)
---   _G.__DreamReportWebhook                          (Discord webhook the owner reads — set in the loader)
+-- Black theme. Sequence: black SPOTS bloom until the screen is fully black -> logo + loading bar (checking game,
+-- listing game / user / plan / profile) -> DONE -> the black cover PEELS OFF like scales -> big black main menu
+-- (logo header, faded full-logo background, big side profile, Update Log + Report). Self-contained; task.spawn.
 task.spawn(function()
 	local Players = game:GetService("Players")
 	local TweenService = game:GetService("TweenService")
@@ -33,13 +32,15 @@ task.spawn(function()
 	local REPORT_WEBHOOK = tostring(_G.__DreamReportWebhook or ("https://discord.com/api/webhooks/1527849806108692500/".."Ryczyznv3EQVLJF_Y-AYsMqhK".."_fvBC5T3wu2d1uO5BBmSgMARN0_hST5vRRlzQZHkLyg"))
 
 	local C = {
-		Black = Color3.fromRGB(0,0,0), Dark = Color3.fromRGB(16,16,18), Panel = Color3.fromRGB(20,20,24),
-		Accent = Color3.fromRGB(226,34,44), Green = Color3.fromRGB(45,120,60),
-		Text = Color3.fromRGB(255,255,255), Muted = Color3.fromRGB(175,175,182), Border = Color3.fromRGB(38,38,44),
+		Black = Color3.fromRGB(0,0,0), BG = Color3.fromRGB(9,9,11), Panel = Color3.fromRGB(17,17,21), Panel2 = Color3.fromRGB(24,24,29),
+		Accent = Color3.fromRGB(226,34,44), Accent2 = Color3.fromRGB(120,18,24), Green = Color3.fromRGB(60,180,80),
+		Text = Color3.fromRGB(255,255,255), Muted = Color3.fromRGB(165,165,174), Border = Color3.fromRGB(40,40,48),
 	}
-	local F = { Main = Font.fromEnum(Enum.Font.Gotham), Bold = Font.fromEnum(Enum.Font.GothamBold), Code = Font.fromEnum(Enum.Font.Code) }
+	local F = { Main = Font.fromEnum(Enum.Font.Gotham), Bold = Font.fromEnum(Enum.Font.GothamBold), Black = Font.fromEnum(Enum.Font.GothamBlack), Code = Font.fromEnum(Enum.Font.Code) }
+	local LOGO = "rbxassetid://82151574125055"
+	local HEAD = "rbxthumb://type=AvatarHeadShot&id="..player.UserId.."&w=180&h=180"
 
-	local running, destroyed, statusVisible = true, false, false
+	local destroyed, running = false, true
 	local activeTweens, connections = {}, {}
 	local gui, blurEffect
 	local function rand(a,b) return a + math.random()*(b-a) end
@@ -61,327 +62,259 @@ task.spawn(function()
 		table.clear(activeTweens)
 		pcall(function() if gui then gui:Destroy() end if blurEffect then blurEffect:Destroy() end end)
 	end
-	local function graphemesOf(text)
-		local pieces={}
-		local ok=pcall(function() for a,b in utf8.graphemes(text) do table.insert(pieces, string.sub(text,a,b)) end end)
-		if not ok or #pieces==0 then table.clear(pieces); for i=1,#text do pieces[i]=string.sub(text,i,i) end end
-		return pieces
-	end
-	local function corner(o,r) local u=Instance.new("UICorner"); u.CornerRadius=UDim.new(0,r or 6); u.Parent=o; return u end
+	local function corner(o,r) local u=Instance.new("UICorner"); u.CornerRadius=UDim.new(0,r or 8); u.Parent=o; return u end
 	local function stroke(o,col,th) local u=Instance.new("UIStroke"); u.Color=col or C.Border; u.Thickness=th or 1; u.Parent=o; return u end
+	local TI=TweenInfo.new
 
 	gui = Instance.new("ScreenGui")
-	gui.Name = "DreamLoader"; gui.IgnoreGuiInset=true; gui.DisplayOrder=2000000; gui.ResetOnSpawn=false; gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
-	blurEffect = Instance.new("BlurEffect"); blurEffect.Size=0; blurEffect.Name="DreamMenuBlur"; pcall(function() blurEffect.Parent=Lighting end)
+	gui.Name="DreamLoader"; gui.IgnoreGuiInset=true; gui.DisplayOrder=2000000; gui.ResetOnSpawn=false; gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
+	pcall(function() gui.Parent = (typeof(gethui)=="function" and gethui()) or game:GetService("CoreGui") end)
+	if not gui.Parent then pcall(function() gui.Parent = player:WaitForChild("PlayerGui",5) end) end
+	if not gui.Parent then return end
+	blurEffect = Instance.new("BlurEffect"); blurEffect.Size=0; blurEffect.Name="DreamBlur"; pcall(function() blurEffect.Parent=Lighting end)
 
-	local backdrop = Instance.new("Frame")
-	backdrop.Size=UDim2.fromScale(1,1); backdrop.BackgroundColor3=C.Black; backdrop.BorderSizePixel=0; backdrop.ZIndex=1; backdrop.Parent=gui
+	-- ===== layers =====
+	local spotLayer = Instance.new("Frame"); spotLayer.Size=UDim2.fromScale(1,1); spotLayer.BackgroundTransparency=1; spotLayer.BorderSizePixel=0; spotLayer.ZIndex=10; spotLayer.Parent=gui
+	local backdrop = Instance.new("Frame"); backdrop.Size=UDim2.fromScale(1,1); backdrop.BackgroundColor3=C.Black; backdrop.BackgroundTransparency=1; backdrop.BorderSizePixel=0; backdrop.ZIndex=11; backdrop.Parent=gui
 
-	-- ===== LOADING STAGE =====
-	local loadCanvas = Instance.new("CanvasGroup")
-	loadCanvas.Name="LoadStage"; loadCanvas.Size=UDim2.fromScale(1,1); loadCanvas.BackgroundTransparency=1; loadCanvas.ZIndex=2; loadCanvas.Parent=gui
-	local punchScale=Instance.new("UIScale"); punchScale.Parent=loadCanvas
-	local sparkleLayer=Instance.new("Frame"); sparkleLayer.Size=UDim2.fromScale(1,1); sparkleLayer.BackgroundTransparency=1; sparkleLayer.Parent=loadCanvas
-	local loadComp=Instance.new("Frame"); loadComp.AnchorPoint=Vector2.new(0.5,0.5); loadComp.Position=UDim2.fromScale(0.5,0.5); loadComp.Size=UDim2.fromScale(1,1); loadComp.BackgroundTransparency=1; loadComp.Parent=loadCanvas
-	local loadFit=Instance.new("UIScale"); loadFit.Parent=loadComp
+	-- MENU (built now, hidden behind the black cover; revealed by the peel) -------------------------------------
+	local menuCanvas = Instance.new("CanvasGroup"); menuCanvas.Size=UDim2.fromScale(1,1); menuCanvas.BackgroundTransparency=1; menuCanvas.GroupTransparency=1; menuCanvas.ZIndex=5; menuCanvas.Parent=gui
+	local menuBGf = Instance.new("Frame"); menuBGf.Size=UDim2.fromScale(1,1); menuBGf.BackgroundColor3=C.BG; menuBGf.BackgroundTransparency=0.06; menuBGf.BorderSizePixel=0; menuBGf.ZIndex=1; menuBGf.Parent=menuCanvas
+	local menuFit = Instance.new("Frame"); menuFit.AnchorPoint=Vector2.new(0.5,0.5); menuFit.Position=UDim2.fromScale(0.5,0.5); menuFit.Size=UDim2.fromScale(1,1); menuFit.BackgroundTransparency=1; menuFit.ZIndex=2; menuFit.Parent=menuCanvas
+	local menuScale = Instance.new("UIScale"); menuScale.Parent=menuFit
 
-	local av0 = Instance.new("ImageLabel")
-	av0.AnchorPoint=Vector2.new(0.5,0.5); av0.Size=UDim2.fromOffset(64,64); av0.Position=UDim2.new(0.5,0,0.18,16)
-	av0.BackgroundColor3=C.Panel; av0.Image="rbxthumb://type=AvatarHeadShot&id="..player.UserId.."&w=150&h=150"; av0.ImageTransparency=1; av0.Parent=loadComp
-	corner(av0,999); local av0s=stroke(av0,C.Muted,1.2); av0s.Transparency=1
+	-- big faded FULL logo as background (centered), with a dark vignette so it's "very black" around it
+	local bgLogo = Instance.new("ImageLabel")
+	bgLogo.AnchorPoint=Vector2.new(0.5,0.5); bgLogo.Position=UDim2.new(0.5,0,0.5,0); bgLogo.Size=UDim2.fromOffset(760,760); bgLogo.BackgroundTransparency=1
+	bgLogo.Image=LOGO; bgLogo.ImageColor3=C.Text; bgLogo.ImageTransparency=0.9; bgLogo.ScaleType=Enum.ScaleType.Fit; bgLogo.ZIndex=1; bgLogo.Parent=menuFit
+	local vignette = Instance.new("ImageLabel")   -- radial dark edge (uses a built-in gradient asset)
+	vignette.Size=UDim2.fromScale(1,1); vignette.BackgroundTransparency=1; vignette.Image="rbxassetid://5028857472"; vignette.ImageColor3=C.Black; vignette.ImageTransparency=0.15; vignette.ScaleType=Enum.ScaleType.Stretch; vignette.ZIndex=1; vignette.Parent=menuFit
 
-	local logo=Instance.new("ImageLabel")
-	logo.BackgroundTransparency=1; logo.AnchorPoint=Vector2.new(0.5,0.5); logo.Size=UDim2.fromOffset(190,190); logo.Position=UDim2.new(0.5,0,0.42,16)
-	logo.Image="rbxassetid://82151574125055"; logo.ScaleType=Enum.ScaleType.Fit; logo.ImageTransparency=1; logo.Parent=loadComp
-	local breathScale=Instance.new("UIScale"); breathScale.Parent=logo
+	-- header LOGO (replaces the text title)
+	local headLogo = Instance.new("ImageLabel")
+	headLogo.AnchorPoint=Vector2.new(0.5,0); headLogo.Position=UDim2.new(0.5,0,0.045,0); headLogo.Size=UDim2.fromOffset(300,86); headLogo.BackgroundTransparency=1
+	headLogo.Image=LOGO; headLogo.ImageColor3=C.Text; headLogo.ScaleType=Enum.ScaleType.Fit; headLogo.ZIndex=3; headLogo.Parent=menuFit
+	local gameLine = Instance.new("TextLabel")
+	gameLine.AnchorPoint=Vector2.new(0.5,0); gameLine.Position=UDim2.new(0.5,0,0.19,0); gameLine.Size=UDim2.fromOffset(620,20); gameLine.BackgroundTransparency=1
+	gameLine.FontFace=F.Code; gameLine.TextSize=14; gameLine.TextColor3=C.Muted; gameLine.Text="playing:  loading\226\128\166"; gameLine.ZIndex=3; gameLine.Parent=menuFit
 
-	local barBack=Instance.new("Frame")
-	barBack.AnchorPoint=Vector2.new(0.5,0.5); barBack.Position=UDim2.new(0.5,0,0.60,16); barBack.Size=UDim2.fromOffset(340,8)
-	barBack.BackgroundColor3=Color3.fromRGB(12,12,14); barBack.BackgroundTransparency=1; barBack.BorderSizePixel=0; barBack.ClipsDescendants=true; barBack.Parent=loadComp
-	corner(barBack,999); local barStroke=stroke(barBack,C.Border,1); barStroke.Transparency=1
-	local barFill=Instance.new("Frame"); barFill.Size=UDim2.fromScale(0,1); barFill.BackgroundColor3=C.Text; barFill.BorderSizePixel=0; barFill.Parent=barBack; corner(barFill,999)
-	local shine=Instance.new("Frame"); shine.AnchorPoint=Vector2.new(0.5,0); shine.Size=UDim2.new(0,46,1,0); shine.Position=UDim2.new(-0.2,0,0,0); shine.BackgroundColor3=C.Text; shine.BackgroundTransparency=1; shine.BorderSizePixel=0; shine.Parent=barBack
-	local sg=Instance.new("UIGradient"); sg.Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,1),NumberSequenceKeypoint.new(0.5,0.35),NumberSequenceKeypoint.new(1,1)}); sg.Parent=shine
-
-	local percentLabel=Instance.new("TextLabel")
-	percentLabel.AnchorPoint=Vector2.new(1,0); percentLabel.Position=UDim2.new(0.5,170,0.60,12); percentLabel.Size=UDim2.fromOffset(80,14); percentLabel.BackgroundTransparency=1
-	percentLabel.FontFace=F.Code; percentLabel.TextSize=13; percentLabel.TextColor3=C.Muted; percentLabel.TextTransparency=1; percentLabel.TextXAlignment=Enum.TextXAlignment.Right; percentLabel.Text="0%"; percentLabel.Parent=loadComp
-
-	local statusLabel=Instance.new("TextLabel")
-	statusLabel.AnchorPoint=Vector2.new(0,0.5); statusLabel.Position=UDim2.new(0.5,-240,0.68,0); statusLabel.Size=UDim2.fromOffset(480,22); statusLabel.BackgroundTransparency=1
-	statusLabel.FontFace=F.Code; statusLabel.TextSize=14; statusLabel.TextColor3=Color3.fromRGB(232,232,236); statusLabel.TextTransparency=1; statusLabel.TextXAlignment=Enum.TextXAlignment.Left; statusLabel.Text=""; statusLabel.Parent=loadComp
-	local cursor=Instance.new("Frame"); cursor.AnchorPoint=Vector2.new(0,0.5); cursor.Size=UDim2.fromOffset(7,14); cursor.BackgroundColor3=C.Text; cursor.BackgroundTransparency=1; cursor.BorderSizePixel=0; cursor.Parent=statusLabel
-	track(statusLabel:GetPropertyChangedSignal("TextBounds"):Connect(function() cursor.Position=UDim2.new(0,statusLabel.TextBounds.X+4,0.5,0) end))
-
-	local brand=Instance.new("TextLabel")
-	brand.AnchorPoint=Vector2.new(0.5,0.5); brand.Position=UDim2.new(0.5,0,0.9,0); brand.Size=UDim2.fromOffset(520,16); brand.BackgroundTransparency=1
-	brand.FontFace=F.Code; brand.TextSize=12; brand.TextColor3=C.Muted; brand.TextTransparency=1; brand.Text="DREAM HUB   ·   "..GAMEBRAND.."   ·   "..TIER; brand.Parent=loadComp
-
-	local flash=Instance.new("Frame"); flash.Size=UDim2.fromScale(1,1); flash.BackgroundColor3=C.Text; flash.BackgroundTransparency=1; flash.BorderSizePixel=0; flash.ZIndex=5; flash.Parent=gui
-
-	-- ===== MENU STAGE (LOST-style) =====
-	local menuCanvas=Instance.new("CanvasGroup")
-	menuCanvas.Name="MenuStage"; menuCanvas.Size=UDim2.fromScale(1,1); menuCanvas.BackgroundTransparency=1; menuCanvas.GroupTransparency=1; menuCanvas.ZIndex=3; menuCanvas.Parent=gui
-	local menuFit=Instance.new("Frame"); menuFit.AnchorPoint=Vector2.new(0.5,0.5); menuFit.Position=UDim2.fromScale(0.5,0.5); menuFit.Size=UDim2.fromScale(1,1); menuFit.BackgroundTransparency=1; menuFit.Parent=menuCanvas
-	local menuScale=Instance.new("UIScale"); menuScale.Parent=menuFit
-	local menuReveal=Instance.new("UIScale"); menuReveal.Scale=1.06; menuReveal.Parent=menuFit   -- scale-in on reveal
-
-	-- big faded Dream logo as the BACKGROUND (right-side watermark, LOST-style)
-	local menuWatermark=Instance.new("ImageLabel")
-	menuWatermark.AnchorPoint=Vector2.new(0.5,0.5); menuWatermark.Position=UDim2.new(0.72,0,0.5,0); menuWatermark.Size=UDim2.fromOffset(640,640); menuWatermark.BackgroundTransparency=1
-	menuWatermark.Image="rbxassetid://82151574125055"; menuWatermark.ImageColor3=C.Text; menuWatermark.ImageTransparency=0.9; menuWatermark.ScaleType=Enum.ScaleType.Fit; menuWatermark.ZIndex=0; menuWatermark.Parent=menuFit
-
-	-- top-left title + game name
-	local menuTitle=Instance.new("TextLabel")
-	menuTitle.AnchorPoint=Vector2.new(0,0); menuTitle.Position=UDim2.new(0.065,0,0.10,0); menuTitle.Size=UDim2.fromOffset(420,40); menuTitle.BackgroundTransparency=1
-	menuTitle.FontFace=F.Bold; menuTitle.TextSize=34; menuTitle.TextColor3=C.Text; menuTitle.Text="DREAM HUB"; menuTitle.TextXAlignment=Enum.TextXAlignment.Left; menuTitle.ZIndex=2; menuTitle.Parent=menuFit
-	local gameLine=Instance.new("TextLabel")
-	gameLine.AnchorPoint=Vector2.new(0,0); gameLine.Position=UDim2.new(0.067,0,0.165,0); gameLine.Size=UDim2.fromOffset(420,18); gameLine.BackgroundTransparency=1
-	gameLine.FontFace=F.Code; gameLine.TextSize=13; gameLine.TextColor3=C.Muted; gameLine.Text="playing:  loading\226\128\166"; gameLine.TextXAlignment=Enum.TextXAlignment.Left; gameLine.ZIndex=2; gameLine.Parent=menuFit
-
-	-- LOST-style vertical button column
-	local leftCol=Instance.new("Frame"); leftCol.AnchorPoint=Vector2.new(0,0); leftCol.Position=UDim2.new(0.065,0,0.27,0); leftCol.Size=UDim2.fromOffset(214,220); leftCol.BackgroundTransparency=1; leftCol.ZIndex=2; leftCol.Parent=menuFit
-	local colList=Instance.new("UIListLayout"); colList.Padding=UDim.new(0,10); colList.SortOrder=Enum.SortOrder.LayoutOrder; colList.Parent=leftCol
-	local function menuBtn(text, order, accent)
-		local b=Instance.new("TextButton"); b.LayoutOrder=order; b.Size=UDim2.fromOffset(214,46); b.BackgroundColor3=accent and C.Accent or C.Dark; b.BackgroundTransparency=accent and 0.05 or 0.15; b.Text=""; b.AutoButtonColor=true; b.ZIndex=2; b.Parent=leftCol
-		corner(b,7); stroke(b, accent and C.Accent or C.Border, 1)
-		local t=Instance.new("TextLabel"); t.Size=UDim2.new(1,-20,1,0); t.Position=UDim2.new(0,16,0,0); t.BackgroundTransparency=1; t.FontFace=F.Bold; t.Text=text; t.TextSize=15; t.TextColor3=C.Text; t.TextXAlignment=Enum.TextXAlignment.Left; t.ZIndex=3; t.Parent=b
-		return b
+	-- panel builder
+	local function bigPanel(title, x, w)
+		local box = Instance.new("Frame"); box.AnchorPoint=Vector2.new(0.5,0); box.Position=UDim2.new(x,0,0.27,0); box.Size=UDim2.fromOffset(w,300); box.BackgroundColor3=C.Panel; box.BackgroundTransparency=0.08; box.ZIndex=3; box.Parent=menuFit
+		corner(box,12); stroke(box,C.Border,1)
+		local hd=Instance.new("TextLabel"); hd.Position=UDim2.new(0,16,0,14); hd.Size=UDim2.new(1,-32,0,22); hd.BackgroundTransparency=1; hd.FontFace=F.Bold; hd.Text=string.upper(title); hd.TextSize=15; hd.TextColor3=C.Text; hd.TextXAlignment=Enum.TextXAlignment.Left; hd.ZIndex=4; hd.Parent=box
+		local accentLine=Instance.new("Frame"); accentLine.Position=UDim2.new(0,16,0,40); accentLine.Size=UDim2.fromOffset(34,3); accentLine.BackgroundColor3=C.Accent; accentLine.BorderSizePixel=0; accentLine.ZIndex=4; accentLine.Parent=box; corner(accentLine,999)
+		return box
 	end
-	local enterButton = menuBtn("Enter Hub   \226\128\162   "..TIER, 1, true)
-	local logButton    = menuBtn("Update Log", 2, false)
-	local reportButton = menuBtn("Report a Bug", 3, false)
 
-	-- profile chip bottom-left
-	local chip=Instance.new("Frame"); chip.AnchorPoint=Vector2.new(0,1); chip.Position=UDim2.new(0.065,0,0.93,0); chip.Size=UDim2.fromOffset(250,58); chip.BackgroundColor3=C.Dark; chip.BackgroundTransparency=0.15; chip.ZIndex=2; chip.Parent=menuFit
-	corner(chip,9); stroke(chip,C.Border,1)
-	local avatarImage=Instance.new("ImageLabel"); avatarImage.Position=UDim2.new(0,9,0.5,-21); avatarImage.Size=UDim2.fromOffset(42,42); avatarImage.BackgroundColor3=Color3.fromRGB(24,24,28); avatarImage.Image="rbxthumb://type=AvatarHeadShot&id="..player.UserId.."&w=150&h=150"; avatarImage.ZIndex=3; avatarImage.Parent=chip; corner(avatarImage,999); stroke(avatarImage,C.Accent,1.4)
-	local userLabel=Instance.new("TextLabel"); userLabel.Position=UDim2.new(0,60,0.5,-18); userLabel.Size=UDim2.new(1,-70,0,18); userLabel.BackgroundTransparency=1; userLabel.FontFace=F.Bold; userLabel.Text=player.DisplayName; userLabel.TextSize=14; userLabel.TextColor3=C.Text; userLabel.TextXAlignment=Enum.TextXAlignment.Left; userLabel.ZIndex=3; userLabel.Parent=chip
-	local handleLabel=Instance.new("TextLabel"); handleLabel.Position=UDim2.new(0,60,0.5,3); handleLabel.Size=UDim2.new(1,-70,0,14); handleLabel.BackgroundTransparency=1; handleLabel.FontFace=F.Code; handleLabel.Text="@"..player.Name.."   \226\128\162   "..TIER; handleLabel.TextSize=11; handleLabel.TextColor3=C.Muted; handleLabel.TextXAlignment=Enum.TextXAlignment.Left; handleLabel.ZIndex=3; handleLabel.Parent=chip
+	-- LEFT: big profile card (bigger, on the side)
+	local profile = bigPanel("Profile", 0.19, 320)
+	local pAvatar = Instance.new("ImageLabel"); pAvatar.AnchorPoint=Vector2.new(0.5,0); pAvatar.Position=UDim2.new(0.5,0,0,58); pAvatar.Size=UDim2.fromOffset(96,96); pAvatar.BackgroundColor3=C.Panel2; pAvatar.Image=HEAD; pAvatar.ZIndex=4; pAvatar.Parent=profile; corner(pAvatar,999); stroke(pAvatar,C.Accent,2)
+	local pName = Instance.new("TextLabel"); pName.AnchorPoint=Vector2.new(0.5,0); pName.Position=UDim2.new(0.5,0,0,164); pName.Size=UDim2.new(1,-20,0,24); pName.BackgroundTransparency=1; pName.FontFace=F.Bold; pName.Text=player.DisplayName; pName.TextSize=20; pName.TextColor3=C.Text; pName.ZIndex=4; pName.Parent=profile
+	local pHandle = Instance.new("TextLabel"); pHandle.AnchorPoint=Vector2.new(0.5,0); pHandle.Position=UDim2.new(0.5,0,0,190); pHandle.Size=UDim2.new(1,-20,0,18); pHandle.BackgroundTransparency=1; pHandle.FontFace=F.Code; pHandle.Text="@"..player.Name; pHandle.TextSize=13; pHandle.TextColor3=C.Muted; pHandle.ZIndex=4; pHandle.Parent=profile
+	local pBadge = Instance.new("Frame"); pBadge.AnchorPoint=Vector2.new(0.5,0); pBadge.Position=UDim2.new(0.5,0,0,222); pBadge.Size=UDim2.fromOffset(150,34); pBadge.BackgroundColor3=C.Accent; pBadge.BackgroundTransparency=0.05; pBadge.ZIndex=4; pBadge.Parent=profile; corner(pBadge,999)
+	local pBadgeT = Instance.new("TextLabel"); pBadgeT.Size=UDim2.fromScale(1,1); pBadgeT.BackgroundTransparency=1; pBadgeT.FontFace=F.Bold; pBadgeT.Text=TIER.." PLAN"; pBadgeT.TextSize=14; pBadgeT.TextColor3=C.Text; pBadgeT.ZIndex=5; pBadgeT.Parent=pBadge
 
-	-- ===== side panel (Update Log / Report) =====
-	local panel=Instance.new("Frame"); panel.AnchorPoint=Vector2.new(0,0.5); panel.Position=UDim2.new(0.335,0,0.56,0); panel.Size=UDim2.fromOffset(370,300); panel.BackgroundColor3=C.Dark; panel.BackgroundTransparency=0.12; panel.ZIndex=2; panel.Visible=false; panel.Parent=menuFit
-	corner(panel,10); stroke(panel,C.Border,1)
-	local panelTitle=Instance.new("TextLabel"); panelTitle.Position=UDim2.new(0,16,0,12); panelTitle.Size=UDim2.new(1,-32,0,20); panelTitle.BackgroundTransparency=1; panelTitle.FontFace=F.Bold; panelTitle.Text=""; panelTitle.TextSize=15; panelTitle.TextColor3=C.Text; panelTitle.TextXAlignment=Enum.TextXAlignment.Left; panelTitle.ZIndex=3; panelTitle.Parent=panel
-
-	-- log page
-	local logPage=Instance.new("ScrollingFrame"); logPage.Position=UDim2.new(0,14,0,42); logPage.Size=UDim2.new(1,-24,1,-54); logPage.BackgroundTransparency=1; logPage.BorderSizePixel=0; logPage.ScrollBarThickness=3; logPage.ScrollBarImageColor3=C.Accent; logPage.CanvasSize=UDim2.new(0,0,0,0); logPage.AutomaticCanvasSize=Enum.AutomaticSize.Y; logPage.Visible=false; logPage.ZIndex=3; logPage.Parent=panel
-	local logList=Instance.new("UIListLayout"); logList.Padding=UDim.new(0,6); logList.SortOrder=Enum.SortOrder.LayoutOrder; logList.Parent=logPage
+	-- MIDDLE: Update Log (bigger)
+	local logBox = bigPanel("Update Log", 0.5, 340)
+	local logScroll=Instance.new("ScrollingFrame"); logScroll.Position=UDim2.new(0,16,0,52); logScroll.Size=UDim2.new(1,-26,1,-64); logScroll.BackgroundTransparency=1; logScroll.BorderSizePixel=0; logScroll.ScrollBarThickness=4; logScroll.ScrollBarImageColor3=C.Accent; logScroll.CanvasSize=UDim2.new(0,0,0,0); logScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; logScroll.ZIndex=4; logScroll.Parent=logBox
+	local logList=Instance.new("UIListLayout"); logList.Padding=UDim.new(0,7); logList.SortOrder=Enum.SortOrder.LayoutOrder; logList.Parent=logScroll
 	local UPDATE_LOG = {
-		"v6.4  \226\128\162  Cinematic loading + LOST-style main menu (this screen).",
-		"NEW: Live bug report \226\128\148 sends straight to the Dream team.",
+		"v6.5  \226\128\162  New cinematic loading + black main menu.",
+		"Live bug report \226\128\148 sends straight to the Dream team.",
 		"Target tab: search any name, live profile, TP / view / auto-farm.",
 		"INF Stam reworked (data-side, no snapback).",
 		"Ability Arena: Auto Respawn + Auto Heal (Plus).",
 		"Auto Farm no longer kills you (hit-and-run + auto-heal).",
-		"Dream logo across all hubs; duplicate logos removed.",
+		"Loading + menu redesigned; bigger, cleaner, black theme.",
 	}
 	for i,line in ipairs(UPDATE_LOG) do
-		local l=Instance.new("TextLabel"); l.LayoutOrder=i; l.Size=UDim2.new(1,0,0,0); l.AutomaticSize=Enum.AutomaticSize.Y; l.BackgroundTransparency=1; l.FontFace=F.Main; l.Text="\226\128\162  "..line; l.TextSize=12; l.TextColor3=C.Muted; l.TextWrapped=true; l.TextXAlignment=Enum.TextXAlignment.Left; l.TextYAlignment=Enum.TextYAlignment.Top; l.ZIndex=3; l.Parent=logPage
+		local l=Instance.new("TextLabel"); l.LayoutOrder=i; l.Size=UDim2.new(1,0,0,0); l.AutomaticSize=Enum.AutomaticSize.Y; l.BackgroundTransparency=1; l.FontFace=F.Main; l.Text="\226\128\162  "..line; l.TextSize=13; l.TextColor3=C.Muted; l.TextWrapped=true; l.TextXAlignment=Enum.TextXAlignment.Left; l.TextYAlignment=Enum.TextYAlignment.Top; l.ZIndex=4; l.Parent=logScroll
 	end
 
-	-- report page
-	local reportPage=Instance.new("Frame"); reportPage.Position=UDim2.new(0,14,0,42); reportPage.Size=UDim2.new(1,-28,1,-54); reportPage.BackgroundTransparency=1; reportPage.Visible=false; reportPage.ZIndex=3; reportPage.Parent=panel
+	-- RIGHT: Report a Bug (bigger)
+	local reportBox = bigPanel("Report a Bug", 0.81, 320)
 	local reportInput=Instance.new("TextBox")
-	reportInput.Position=UDim2.new(0,0,0,0); reportInput.Size=UDim2.new(1,0,1,-40); reportInput.BackgroundColor3=C.Panel; reportInput.BackgroundTransparency=0.2; reportInput.FontFace=F.Main; reportInput.TextSize=13; reportInput.TextColor3=C.Text; reportInput.PlaceholderText="Describe the bug you found\226\128\166"; reportInput.PlaceholderColor3=C.Muted; reportInput.Text=""; reportInput.ClearTextOnFocus=false; reportInput.MultiLine=true; reportInput.TextWrapped=true; reportInput.TextXAlignment=Enum.TextXAlignment.Left; reportInput.TextYAlignment=Enum.TextYAlignment.Top; reportInput.ZIndex=3; reportInput.Parent=reportPage
-	corner(reportInput,6); stroke(reportInput,C.Border,1)
-	local submitBtn=Instance.new("TextButton")
-	submitBtn.AnchorPoint=Vector2.new(0.5,1); submitBtn.Position=UDim2.new(0.5,0,1,0); submitBtn.Size=UDim2.new(1,0,0,30); submitBtn.BackgroundColor3=C.Accent; submitBtn.BackgroundTransparency=0.05; submitBtn.FontFace=F.Bold; submitBtn.Text="Submit Report"; submitBtn.TextSize=14; submitBtn.TextColor3=C.Text; submitBtn.ZIndex=3; submitBtn.Parent=reportPage
-	corner(submitBtn,6)
-	local reportStatus=Instance.new("TextLabel"); reportStatus.AnchorPoint=Vector2.new(0.5,1); reportStatus.Position=UDim2.new(0.5,0,1,-36); reportStatus.Size=UDim2.new(1,0,0,16); reportStatus.BackgroundTransparency=1; reportStatus.FontFace=F.Code; reportStatus.TextSize=11; reportStatus.TextColor3=C.Muted; reportStatus.Text=""; reportStatus.Visible=false; reportStatus.ZIndex=3; reportStatus.Parent=reportPage
+	reportInput.Position=UDim2.new(0,16,0,54); reportInput.Size=UDim2.new(1,-32,1,-104); reportInput.BackgroundColor3=C.Panel2; reportInput.BackgroundTransparency=0.15; reportInput.FontFace=F.Main; reportInput.TextSize=14; reportInput.TextColor3=C.Text; reportInput.PlaceholderText="Describe the bug you found\226\128\166"; reportInput.PlaceholderColor3=C.Muted; reportInput.Text=""; reportInput.ClearTextOnFocus=false; reportInput.MultiLine=true; reportInput.TextWrapped=true; reportInput.TextXAlignment=Enum.TextXAlignment.Left; reportInput.TextYAlignment=Enum.TextYAlignment.Top; reportInput.ZIndex=4; reportInput.Parent=reportBox
+	corner(reportInput,8); stroke(reportInput,C.Border,1)
+	local submitBtn=Instance.new("TextButton"); submitBtn.AnchorPoint=Vector2.new(0.5,1); submitBtn.Position=UDim2.new(0.5,0,1,-38); submitBtn.Size=UDim2.new(1,-32,0,34); submitBtn.BackgroundColor3=C.Accent; submitBtn.BackgroundTransparency=0.05; submitBtn.FontFace=F.Bold; submitBtn.Text="Submit Report"; submitBtn.TextSize=15; submitBtn.TextColor3=C.Text; submitBtn.AutoButtonColor=true; submitBtn.ZIndex=4; submitBtn.Parent=reportBox
+	corner(submitBtn,8)
+	local reportStatus=Instance.new("TextLabel"); reportStatus.AnchorPoint=Vector2.new(0.5,1); reportStatus.Position=UDim2.new(0.5,0,1,-14); reportStatus.Size=UDim2.new(1,-32,0,18); reportStatus.BackgroundTransparency=1; reportStatus.FontFace=F.Code; reportStatus.TextSize=12; reportStatus.TextColor3=C.Muted; reportStatus.Text=""; reportStatus.ZIndex=4; reportStatus.Parent=reportBox
+
+	-- big ENTER HUB button
+	local enterButton=Instance.new("TextButton")
+	enterButton.AnchorPoint=Vector2.new(0.5,1); enterButton.Position=UDim2.new(0.5,0,0.94,0); enterButton.Size=UDim2.fromOffset(560,74); enterButton.BackgroundColor3=C.Accent; enterButton.BackgroundTransparency=0.04; enterButton.FontFace=F.Black; enterButton.Text="ENTER HUB    \226\128\162    "..TIER; enterButton.TextSize=26; enterButton.TextColor3=C.Text; enterButton.AutoButtonColor=true; enterButton.ZIndex=3; enterButton.Parent=menuFit
+	corner(enterButton,12); stroke(enterButton,Color3.fromRGB(255,120,128),1.4)
 
 	local function httpReq(opts)
 		local req = (typeof(syn)=="table" and syn.request) or (typeof(http)=="table" and http.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
-		if req then return req(opts) end
-		return nil
+		if req then return req(opts) end return nil
 	end
 	local reportSending=false
 	local function sendReport()
 		if reportSending then return end
-		local txt = reportInput.Text
-		if not txt or #txt:gsub("%s","")<3 then reportStatus.Visible=true; reportStatus.TextColor3=C.Muted; reportStatus.Text="Type a bit more first."; return end
-		if REPORT_WEBHOOK=="" then reportStatus.Visible=true; reportStatus.TextColor3=C.Muted; reportStatus.Text="Reporting isn't set up on this build yet."; return end
+		local txt=reportInput.Text
+		if not txt or #txt:gsub("%s","")<3 then reportStatus.TextColor3=C.Muted; reportStatus.Text="Type a bit more first."; return end
+		if REPORT_WEBHOOK=="" then reportStatus.TextColor3=C.Muted; reportStatus.Text="Reporting isn't set up on this build yet."; return end
 		reportSending=true; submitBtn.Text="Sending\226\128\166"
 		task.spawn(function()
 			local ok=false
 			pcall(function()
-				local body = HttpService:JSONEncode({
-					username = "Dream Reports",
-					embeds = {{
-						title = "New Bug Report",
-						color = 14689068,
-						fields = {
-							{ name="Player", value=player.DisplayName.." (@"..player.Name..")  ["..tostring(player.UserId).."]", inline=false },
-							{ name="Game", value=GAMEBRAND, inline=true },
-							{ name="Tier", value=TIER, inline=true },
-							{ name="Report", value=string.sub(txt,1,1500), inline=false },
-						},
-					}},
-				})
-				local res = httpReq({ Url=REPORT_WEBHOOK, Method="POST", Headers={["Content-Type"]="application/json"}, Body=body })
+				local body=HttpService:JSONEncode({ username="Dream Reports", embeds={{ title="New Bug Report", color=14689068, fields={
+					{name="Player", value=player.DisplayName.." (@"..player.Name..")  ["..tostring(player.UserId).."]", inline=false},
+					{name="Game", value=GAMEBRAND, inline=true}, {name="Tier", value=TIER, inline=true},
+					{name="Report", value=string.sub(txt,1,1500), inline=false} } }} })
+				local res=httpReq({ Url=REPORT_WEBHOOK, Method="POST", Headers={["Content-Type"]="application/json"}, Body=body })
 				if res and (res.StatusCode==200 or res.StatusCode==204 or res.Success) then ok=true end
 			end)
-			reportSending=false; submitBtn.Text="Submit Report"; reportStatus.Visible=true
+			reportSending=false; submitBtn.Text="Submit Report"
 			if ok then reportStatus.TextColor3=C.Green; reportStatus.Text="Sent \226\128\148 thank you!"; reportInput.Text=""
 			else reportStatus.TextColor3=C.Accent; reportStatus.Text="Couldn't send (executor http blocked?)." end
 		end)
 	end
 	submitBtn.MouseButton1Click:Connect(sendReport)
 
-	-- page switching
-	local function showPage(which)
-		if which=="log" then panel.Visible=true; panelTitle.Text="UPDATE LOG"; logPage.Visible=true; reportPage.Visible=false
-		elseif which=="report" then panel.Visible=true; panelTitle.Text="REPORT A BUG"; logPage.Visible=false; reportPage.Visible=true
-		else panel.Visible=false end
-	end
-	logButton.MouseButton1Click:Connect(function() if panel.Visible and logPage.Visible then showPage(nil) else showPage("log") end end)
-	reportButton.MouseButton1Click:Connect(function() if panel.Visible and reportPage.Visible then showPage(nil) else showPage("report") end end)
+	-- ===== LOADING UI (on top of the black cover) =====
+	local loadRoot = Instance.new("Frame"); loadRoot.Size=UDim2.fromScale(1,1); loadRoot.BackgroundTransparency=1; loadRoot.ZIndex=12; loadRoot.Parent=gui
+	local loadFit = Instance.new("UIScale"); loadFit.Parent=loadRoot
+	local logo=Instance.new("ImageLabel"); logo.AnchorPoint=Vector2.new(0.5,0.5); logo.Position=UDim2.new(0.5,0,0.35,0); logo.Size=UDim2.fromOffset(200,200); logo.BackgroundTransparency=1; logo.Image=LOGO; logo.ImageColor3=C.Text; logo.ImageTransparency=1; logo.ScaleType=Enum.ScaleType.Fit; logo.ZIndex=12; logo.Parent=loadRoot
+	local logoScale=Instance.new("UIScale"); logoScale.Scale=0.9; logoScale.Parent=logo
+	local barBack=Instance.new("Frame"); barBack.AnchorPoint=Vector2.new(0.5,0.5); barBack.Position=UDim2.new(0.5,0,0.56,0); barBack.Size=UDim2.fromOffset(360,8); barBack.BackgroundColor3=Color3.fromRGB(28,28,32); barBack.BackgroundTransparency=1; barBack.BorderSizePixel=0; barBack.ClipsDescendants=true; barBack.ZIndex=12; barBack.Parent=loadRoot
+	corner(barBack,999)
+	local barFill=Instance.new("Frame"); barFill.Size=UDim2.fromScale(0,1); barFill.BackgroundColor3=C.Accent; barFill.BorderSizePixel=0; barFill.ZIndex=13; barFill.Parent=barBack; corner(barFill,999)
+	local fg=Instance.new("UIGradient"); fg.Color=ColorSequence.new(C.Accent2, Color3.fromRGB(255,120,128)); fg.Parent=barFill
+	local pctLabel=Instance.new("TextLabel"); pctLabel.AnchorPoint=Vector2.new(0.5,0); pctLabel.Position=UDim2.new(0.5,0,0.585,0); pctLabel.Size=UDim2.fromOffset(120,16); pctLabel.BackgroundTransparency=1; pctLabel.FontFace=F.Code; pctLabel.TextSize=13; pctLabel.TextColor3=C.Muted; pctLabel.TextTransparency=1; pctLabel.Text="0%"; pctLabel.ZIndex=12; pctLabel.Parent=loadRoot
+	local statusLabel=Instance.new("TextLabel"); statusLabel.AnchorPoint=Vector2.new(0.5,0); statusLabel.Position=UDim2.new(0.5,0,0.625,0); statusLabel.Size=UDim2.fromOffset(520,20); statusLabel.BackgroundTransparency=1; statusLabel.FontFace=F.Code; statusLabel.TextSize=14; statusLabel.TextColor3=Color3.fromRGB(230,230,236); statusLabel.TextTransparency=1; statusLabel.Text=""; statusLabel.ZIndex=12; statusLabel.Parent=loadRoot
+	-- progressive profile row (fills as loading proceeds)
+	local pRow=Instance.new("Frame"); pRow.AnchorPoint=Vector2.new(0.5,0); pRow.Position=UDim2.new(0.5,0,0.70,0); pRow.Size=UDim2.fromOffset(300,50); pRow.BackgroundTransparency=1; pRow.ZIndex=12; pRow.Parent=loadRoot
+	local lAv=Instance.new("ImageLabel"); lAv.AnchorPoint=Vector2.new(0.5,0); lAv.Position=UDim2.new(0.5,-110,0,0); lAv.Size=UDim2.fromOffset(46,46); lAv.BackgroundColor3=C.Panel2; lAv.Image=HEAD; lAv.ImageTransparency=1; lAv.ZIndex=12; lAv.Parent=pRow; corner(lAv,999); local lAvS=stroke(lAv,C.Accent,1.5); lAvS.Transparency=1
+	local lName=Instance.new("TextLabel"); lName.AnchorPoint=Vector2.new(0,0.5); lName.Position=UDim2.new(0.5,-78,0,12); lName.Size=UDim2.fromOffset(220,18); lName.BackgroundTransparency=1; lName.FontFace=F.Bold; lName.Text=player.DisplayName; lName.TextSize=15; lName.TextColor3=C.Text; lName.TextTransparency=1; lName.TextXAlignment=Enum.TextXAlignment.Left; lName.ZIndex=12; lName.Parent=pRow
+	local lPlan=Instance.new("TextLabel"); lPlan.AnchorPoint=Vector2.new(0,0.5); lPlan.Position=UDim2.new(0.5,-78,0,32); lPlan.Size=UDim2.fromOffset(220,16); lPlan.BackgroundTransparency=1; lPlan.FontFace=F.Code; lPlan.Text="@"..player.Name.."  \226\128\162  "..TIER.." plan"; lPlan.TextSize=12; lPlan.TextColor3=C.Muted; lPlan.TextTransparency=1; lPlan.TextXAlignment=Enum.TextXAlignment.Left; lPlan.ZIndex=12; lPlan.Parent=pRow
 
-	local function updateLayoutScales()
+	local function fitScale()
 		local cam=workspace.CurrentCamera; local vp=cam and cam.ViewportSize or Vector2.new(1280,720)
-		local s=math.clamp(math.min(vp.X/980, vp.Y/700), 0.5, 1)
+		local s=math.clamp(math.min(vp.X/1120, vp.Y/720), 0.5, 1)
 		loadFit.Scale=s; menuScale.Scale=s
 	end
-	pcall(updateLayoutScales)
-	if workspace.CurrentCamera then track(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(updateLayoutScales)) end
-
-	-- cursor parallax (only after loading canvas is gone)
-	track(RunService.RenderStepped:Connect(function(dt)
-		if destroyed or menuClosed or loadCanvas.Parent~=nil then return end
-		local cam=workspace.CurrentCamera; if not cam then return end
-		local ml=UserInputService:GetMouseLocation(); local vp=cam.ViewportSize
-		if vp.X==0 or vp.Y==0 then return end
-		local cx,cy=vp.X/2, vp.Y/2
-		local ox,oy=(ml.X-cx)/cx, (ml.Y-cy)/cy
-		menuFit.Position=menuFit.Position:Lerp(UDim2.new(0.5+ox*0.02,0,0.5+oy*0.02,0), math.clamp(dt*7.5,0,1))
-	end))
-
-	-- particles
-	local function spawnDot(tier)
-		if not running then return end
-		local far=tier=="far"; local px=far and math.random(2,3) or math.random(4,6)
-		local peak=far and rand(0.5,0.7) or rand(0.1,0.4); local life=far and rand(1.8,2.8) or rand(0.8,1.6); local drift=far and 0.03 or 0.1
-		local dot=Instance.new("Frame"); dot.AnchorPoint=Vector2.new(0.5,0.5); dot.Size=UDim2.fromOffset(px,px); dot.Position=UDim2.fromScale(rand(0.01,0.99),rand(0.01,0.99))
-		dot.BackgroundColor3=C.Text; dot.BackgroundTransparency=1; dot.BorderSizePixel=0; corner(dot,999); dot.Parent=sparkleLayer
-		task.spawn(function()
-			local target=UDim2.fromScale(math.clamp(dot.Position.X.Scale+rand(-drift,drift),0,1), math.clamp(dot.Position.Y.Scale+rand(-drift,drift),0,1))
-			play(dot, TweenInfo.new(life, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Position=target})
-			local st=finish(play(dot, TweenInfo.new(life*0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency=peak}))
-			if st~=Enum.PlaybackState.Completed or not running then return end
-			st=finish(play(dot, TweenInfo.new(life*0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {BackgroundTransparency=1}))
-			if st==Enum.PlaybackState.Completed and running then dot:Destroy() end
-		end)
-	end
-	task.spawn(function()
-		for _=1,12 do spawnDot("far") end
-		while running and not destroyed do spawnDot(math.random()<0.6 and "far" or "near"); task.wait(rand(0.08,0.16)) end
-	end)
-
-	-- parenting
-	local parented=false
-	if typeof(gethui)=="function" then parented=pcall(function() local h=gethui(); assert(typeof(h)=="Instance"); gui.Parent=h end) end
-	if not parented then parented=pcall(function() gui.Parent=game:GetService("CoreGui") end) end
-	if not parented then parented=pcall(function() local pg=player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui",5); assert(typeof(pg)=="Instance"); gui.Parent=pg end) end
-	if not parented then cleanup(); return end
+	pcall(fitScale)
+	if workspace.CurrentCamera then track(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fitScale)) end
 
 	-- game name
 	local placeName="this experience"
 	task.spawn(function()
 		local ok,info=pcall(function() return MarketplaceService:GetProductInfo(game.PlaceId) end)
 		if ok and type(info)=="table" and type(info.Name)=="string" and #info.Name>0 then
-			local pieces=graphemesOf(info.Name)
-			placeName = #pieces>34 and (table.concat(pieces,"",1,31).."...") or info.Name
+			placeName = (#info.Name>40 and string.sub(info.Name,1,37).."...") or info.Name
 		end
 		pcall(function() gameLine.Text="playing:  "..placeName end)
 	end)
 
-	local writeToken=0
-	local function setStatus(text)
-		writeToken+=1; local token=writeToken; statusVisible=true
-		task.spawn(function()
-			finish(play(statusLabel, TweenInfo.new(0.05, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextTransparency=1}))
-			if token~=writeToken or not running then return end
-			statusLabel.Text=""; statusLabel.TextTransparency=0.1
-			for _,ch in graphemesOf(text) do
-				if token~=writeToken or not running then return end
-				statusLabel.Text = statusLabel.Text..ch
-				task.wait(math.random()<0.06 and rand(0.04,0.1) or 0.014)
-			end
-		end)
-	end
-	task.spawn(function()
-		local blink=true
-		while running and not destroyed do cursor.BackgroundTransparency=(statusVisible and blink) and 0.1 or 1; blink=not blink; task.wait(0.38) end
-	end)
-
+	-- percent smoothing
 	local shownPct=0
-	local percentConn=RunService.RenderStepped:Connect(function(dt)
+	local pctConn=RunService.RenderStepped:Connect(function(dt)
 		if destroyed then return end
 		shownPct += (barFill.Size.X.Scale-shownPct)*math.min(dt*12,1)
-		percentLabel.Text=string.format("%d%%", math.floor(shownPct*100+0.5))
+		pctLabel.Text=string.format("%d%%", math.floor(shownPct*100+0.5))
 	end)
-	track(percentConn)
-	local function fillTo(target)
-		while running and barFill.Size.X.Scale < target-0.001 do
-			local nx=math.min(target, barFill.Size.X.Scale+rand(0.05,0.12))
-			finish(play(barFill, TweenInfo.new(rand(0.1,0.2), Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size=UDim2.fromScale(nx,1)}))
+	track(pctConn)
+	local function fillTo(t)
+		while running and barFill.Size.X.Scale < t-0.001 do
+			local nx=math.min(t, barFill.Size.X.Scale+rand(0.05,0.13))
+			finish(play(barFill, TI(rand(0.1,0.2), Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size=UDim2.fromScale(nx,1)}))
 			task.wait(rand(0.01,0.05))
 		end
 	end
+	local function setStatus(txt) pcall(function() statusLabel.Text=txt end) end
 
-	local function pipeline()
-		task.wait(1.1)
-		local entries={
-			{inst=av0, props={ImageTransparency=0, Position=UDim2.new(0.5,0,0.18,0)}},
-			{inst=av0s, props={Transparency=0.4}},
-			{inst=logo, props={ImageTransparency=0, Position=UDim2.new(0.5,0,0.42,0)}},
-			{inst=barBack, props={BackgroundTransparency=0.3, Position=UDim2.new(0.5,0,0.60,0)}},
-			{inst=barStroke, props={Transparency=0.5}},
-			{inst=shine, props={BackgroundTransparency=0.78}},
-			{inst=percentLabel, props={TextTransparency=0.2}},
-			{inst=brand, props={TextTransparency=0.3}},
-		}
-		for i,d in entries do play(d.inst, TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, false, (i-1)*0.04), d.props) end
-		task.wait(0.62)
-		play(breathScale, TweenInfo.new(1.7, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Scale=1.04})
-		play(shine, TweenInfo.new(1.35, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, false, 0.15), {Position=UDim2.new(1.1,0,0,0)})
-		local steps={
-			{text=("Welcome, %s (@%s)"):format(player.DisplayName, player.Name), target=0.16},
-			{text="Loading into: "..placeName, target=0.36},
-			{text="Dream Hub "..TIER.." verified", target=0.56},
-			{text="Building interface…", target=0.78},
-			{text="Finalizing…", target=1.0},
-		}
-		for _,s in steps do setStatus(s.text); fillTo(s.target); task.wait(rand(0.08,0.16)) end
-		if percentConn.Connected then percentConn:Disconnect() end
-		percentLabel.Text="100%"; statusVisible=false; cursor.BackgroundTransparency=1
-		task.wait(0.15)
-		flash.BackgroundTransparency=0.2
-		play(flash, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency=1})
-		play(punchScale, TweenInfo.new(0.6, Enum.EasingStyle.Exponential, Enum.EasingDirection.In), {Scale=26})
-		finish(play(loadCanvas, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {GroupTransparency=1}))
-		running=false
-		pcall(function() loadCanvas:Destroy() end)
-		play(blurEffect, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size=18})
-		play(backdrop, TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency=0.28})
-		play(menuReveal, TweenInfo.new(0.7, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Scale=1})
-		finish(play(menuCanvas, TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {GroupTransparency=0}))
+	-- ===== STAGE 1: black SPOTS bloom until fully black =====
+	local function spotsBlackout()
+		local dots={}
+		for i=1,46 do
+			local d=Instance.new("Frame"); d.AnchorPoint=Vector2.new(0.5,0.5); d.Position=UDim2.fromScale(rand(0.03,0.97), rand(0.03,0.97))
+			d.Size=UDim2.fromOffset(0,0); d.BackgroundColor3=C.Black; d.BorderSizePixel=0; d.ZIndex=10; d.Parent=spotLayer
+			corner(d,999); dots[i]=d
+		end
+		for i,d in ipairs(dots) do
+			task.spawn(function()
+				task.wait((i-1)*0.012 + rand(0,0.08))
+				local sz=rand(220,420)
+				play(d, TI(rand(0.45,0.75), Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size=UDim2.fromOffset(sz,sz)})
+			end)
+		end
+		task.wait(0.7)
+		play(backdrop, TI(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency=0})  -- guarantee full black
+		task.wait(0.36)
+		pcall(function() spotLayer:Destroy() end)
 	end
 
-	local ok,err=pcall(pipeline)
-	if not ok then warn("[DreamLoader] "..tostring(err)); cleanup(); return end
+	-- ===== STAGE 3: crocodile-skin PEEL reveal =====
+	local function peelReveal()
+		-- fade menu in behind, then peel a grid of black tiles off
+		play(blurEffect, TI(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size=18})
+		play(menuCanvas, TI(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {GroupTransparency=0})
+		local COLS,ROWS=8,5
+		local tiles={}
+		for r=0,ROWS-1 do for c=0,COLS-1 do
+			local t=Instance.new("Frame"); t.AnchorPoint=Vector2.new(0,0); t.Position=UDim2.fromScale(c/COLS, r/ROWS); t.Size=UDim2.fromScale(1/COLS+0.004, 1/ROWS+0.004)
+			t.BackgroundColor3=C.Black; t.BorderSizePixel=0; t.ZIndex=13; t.Parent=gui
+			tiles[#tiles+1]={f=t,r=r,c=c}
+		end end
+		backdrop.BackgroundTransparency=1   -- tiles now cover the screen
+		for _,tl in ipairs(tiles) do
+			task.spawn(function()
+				task.wait((tl.r + tl.c)*0.03 + rand(0,0.05))
+				local f=tl.f
+				f.AnchorPoint=Vector2.new(0.5,0.5); f.Position=UDim2.new(f.Position.X.Scale+ (1/COLS)/2, 0, f.Position.Y.Scale + (1/ROWS)/2, 0)
+				play(f, TI(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.In), {Position=UDim2.new(f.Position.X.Scale, 0, 1.3, 0), Rotation=rand(-40,40), BackgroundTransparency=1})
+				task.wait(0.6); pcall(function() f:Destroy() end)
+			end)
+		end
+		task.wait(0.3 + (COLS+ROWS)*0.03 + 0.6)
+	end
 
-	-- ENTER → close menu, reveal the hub underneath
+	-- ===== RUN =====
+	local ok = pcall(function()
+		spotsBlackout()
+		-- logo in
+		play(logo, TI(0.9), {ImageTransparency=0})
+		play(logoScale, TI(1.0, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Scale=1})
+		task.wait(0.5)
+		play(barBack, TI(0.5), {BackgroundTransparency=0.25})
+		play(pctLabel, TI(0.5), {TextTransparency=0.2})
+		play(statusLabel, TI(0.5), {TextTransparency=0})
+		-- sequence
+		setStatus("loading files\226\128\166"); fillTo(0.28); task.wait(0.15)
+		setStatus("checking game\226\128\166"); fillTo(0.46); task.wait(0.15)
+		setStatus("game:  "..placeName); fillTo(0.6)
+		-- reveal profile row bit by bit
+		play(lAv, TI(0.4), {ImageTransparency=0}); play(lAvS, TI(0.4), {Transparency=0.2}); task.wait(0.15)
+		setStatus("verifying account\226\128\166"); play(lName, TI(0.4), {TextTransparency=0}); fillTo(0.74); task.wait(0.15)
+		setStatus("applying "..TIER.." plan\226\128\166"); play(lPlan, TI(0.4), {TextTransparency=0}); fillTo(0.9); task.wait(0.2)
+		setStatus("finishing up\226\128\166"); fillTo(1.0); task.wait(0.25)
+		if pctConn.Connected then pctConn:Disconnect() end
+		pctLabel.Text="100%"; setStatus("done")
+		task.wait(0.45)
+		-- fade loading UI out
+		for _,o in ipairs({logo}) do play(o, TI(0.4), {ImageTransparency=1}) end
+		for _,o in ipairs({lAv}) do play(o, TI(0.4), {ImageTransparency=1}) end
+		for _,o in ipairs({pctLabel,statusLabel,lName,lPlan}) do play(o, TI(0.4), {TextTransparency=1}) end
+		play(barBack, TI(0.4), {BackgroundTransparency=1}); play(barFill, TI(0.4), {BackgroundTransparency=1})
+		play(lAvS, TI(0.4), {Transparency=1})
+		task.wait(0.42)
+		pcall(function() loadRoot:Destroy() end)
+		peelReveal()
+	end)
+	if not ok then cleanup(); return end
+
+	-- ENTER → reveal the hub
 	enterButton.MouseButton1Click:Connect(function()
 		if menuClosed then return end
 		menuClosed=true
-		play(blurEffect, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Size=0})
-		play(backdrop, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {BackgroundTransparency=1})
-		finish(play(menuCanvas, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {GroupTransparency=1}))
+		play(blurEffect, TI(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Size=0})
+		finish(play(menuCanvas, TI(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {GroupTransparency=1}))
 		cleanup()
 	end)
-	-- safety: auto-close after 90s so the menu can never trap the player
-	task.delay(90, function() if not menuClosed and not destroyed then menuClosed=true; cleanup() end end)
+	task.delay(120, function() if not menuClosed and not destroyed then menuClosed=true; cleanup() end end)
 end)
 -- ═══════════════════ END LOADING SCREEN ═══════════════════
 
