@@ -88,10 +88,10 @@ end
 _G.__DreamGameName = "JUJUTSU SHENANIGANS"
 _G.__DreamTier = (_G.JJS_PREMIUM and "PREMIUM") or (_G.JJS_PREM and "PREMIUM") or (_G.JJS_PLUS and "PLUS") or (_G.JJS_FREE and "FREE") or "FULL"
 -- ═══════════════════ DREAM HUB — LOADING SCREEN ═══════════════════
--- Premium build: animated aurora background + drifting embers + vignette -> dual counter-rotating rings with a
--- glowing logo + gradient progress bar with a moving sheen -> DONE -> cinematic reveal into a glassy 3-column
--- dashboard (Profile / Update Log / Quick Actions) with a glossy ENTER HUB. Self-contained; reads _G.__DreamTier /
--- __DreamGameName / hooks. Tuned to stay light (small particle counts) so it never freezes weaker executors.
+-- Clean premium build, ZERO decorative image assets (only the logo + avatar thumbnails, which always load).
+-- Everything else is gradients / strokes / shapes so nothing can render as a broken colored box on any executor.
+-- Loading: dual counter-rotating rings + wordmark + gradient bar -> cinematic reveal into a glassy 3-column
+-- dashboard (Profile / Update Log / Quick Actions) with a gradient ENTER HUB. Reads _G.__DreamTier / hooks.
 task.spawn(function()
 	local Players = game:GetService("Players")
 	local Tween = game:GetService("TweenService")
@@ -115,15 +115,13 @@ task.spawn(function()
 	local MYROLE = __roleMap[string.lower(player.Name)] or __roleMap[string.lower(player.DisplayName or "")] or "GAME MOD"
 
 	local C = {
-		Black=Color3.fromRGB(0,0,0), BG=Color3.fromRGB(9,9,12), Panel=Color3.fromRGB(20,19,25), Panel2=Color3.fromRGB(28,27,34),
-		Accent=Color3.fromRGB(232,38,52), Accent2=Color3.fromRGB(255,120,72), Deep=Color3.fromRGB(120,18,28), Green=Color3.fromRGB(74,214,124),
-		Text=Color3.fromRGB(255,255,255), Muted=Color3.fromRGB(158,156,170), Faint=Color3.fromRGB(110,108,124), Border=Color3.fromRGB(46,44,56),
+		Black=Color3.fromRGB(0,0,0), BG=Color3.fromRGB(9,9,12), Panel=Color3.fromRGB(19,18,24), Panel2=Color3.fromRGB(27,26,33),
+		Accent=Color3.fromRGB(232,38,52), Accent2=Color3.fromRGB(255,116,70), Green=Color3.fromRGB(74,214,124),
+		Text=Color3.fromRGB(255,255,255), Muted=Color3.fromRGB(158,156,170), Faint=Color3.fromRGB(108,106,122), Border=Color3.fromRGB(45,43,54),
 	}
 	local F = { Main=Font.fromEnum(Enum.Font.Gotham), Bold=Font.fromEnum(Enum.Font.GothamBold), Black=Font.fromEnum(Enum.Font.GothamBlack), Med=Font.fromEnum(Enum.Font.GothamMedium), Code=Font.fromEnum(Enum.Font.Code) }
 	local LOGO = "rbxassetid://82151574125055"
 	local HEAD = "rbxthumb://type=AvatarHeadShot&id="..player.UserId.."&w=180&h=180"
-	local SHADOW = "rbxassetid://6014261993"   -- soft 9-slice drop shadow (invisible if it fails to load)
-	local GLOWIMG = "rbxassetid://5028857472"  -- soft radial glow
 
 	local destroyed, running, menuClosed = false, true, false
 	local activeTweens, connections = {}, {}
@@ -145,7 +143,6 @@ task.spawn(function()
 	local function stroke(o,col,th,tr) local u=Instance.new("UIStroke"); u.Color=col or C.Border; u.Thickness=th or 1; u.Transparency=tr or 0; u.Parent=o; return u end
 	local function txt(parent,s,size,color,font,xa) local l=Instance.new("TextLabel"); l.BackgroundTransparency=1; l.Text=s; l.TextSize=size; l.TextColor3=color or C.Text; l.FontFace=font or F.Main; l.TextXAlignment=xa or Enum.TextXAlignment.Left; l.Parent=parent; return l end
 	local function gradient(o, cols, rot) local g=Instance.new("UIGradient"); g.Color=cols; g.Rotation=rot or 0; g.Parent=o; return g end
-	local function shadow(parent, spread, trans, col) local s=Instance.new("ImageLabel"); s.BackgroundTransparency=1; s.Image=SHADOW; s.ScaleType=Enum.ScaleType.Slice; s.SliceCenter=Rect.new(49,49,450,450); s.ImageColor3=col or C.Black; s.ImageTransparency=trans or 0.45; s.AnchorPoint=Vector2.new(0.5,0.5); s.Position=UDim2.fromScale(0.5,0.5); s.Size=UDim2.new(1,spread or 40,1,spread or 40); s.ZIndex=(parent.ZIndex or 1)-1; s.Parent=parent; return s end
 
 	gui = Instance.new("ScreenGui")
 	gui.Name="DreamLoader"; gui.IgnoreGuiInset=true; gui.DisplayOrder=2000000; gui.ResetOnSpawn=false; gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
@@ -156,31 +153,24 @@ task.spawn(function()
 
 	-- ===================== BACKGROUND (shared by loading + menu) =====================
 	local backdrop=Instance.new("Frame"); backdrop.Size=UDim2.fromScale(1,1); backdrop.BackgroundColor3=C.BG; backdrop.BackgroundTransparency=1; backdrop.BorderSizePixel=0; backdrop.ZIndex=1; backdrop.Parent=gui
-	local bgGrad=gradient(backdrop, ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(30,10,14)),ColorSequenceKeypoint.new(0.5,Color3.fromRGB(11,10,14)),ColorSequenceKeypoint.new(1,Color3.fromRGB(3,3,6))}), 25)
-	-- slow aurora glow that drifts behind everything
-	local aurora=Instance.new("ImageLabel"); aurora.BackgroundTransparency=1; aurora.Image=GLOWIMG; aurora.ImageColor3=C.Accent; aurora.ImageTransparency=0.86; aurora.AnchorPoint=Vector2.new(0.5,0.5); aurora.Position=UDim2.fromScale(0.3,0.35); aurora.Size=UDim2.fromScale(1.1,1.1); aurora.ZIndex=1; aurora.Parent=backdrop
-	local aurora2=Instance.new("ImageLabel"); aurora2.BackgroundTransparency=1; aurora2.Image=GLOWIMG; aurora2.ImageColor3=C.Accent2; aurora2.ImageTransparency=0.9; aurora2.AnchorPoint=Vector2.new(0.5,0.5); aurora2.Position=UDim2.fromScale(0.75,0.7); aurora2.Size=UDim2.fromScale(0.95,0.95); aurora2.ZIndex=1; aurora2.Parent=backdrop
-	-- vignette (darkens edges)
-	local vig=Instance.new("ImageLabel"); vig.BackgroundTransparency=1; vig.Image=SHADOW; vig.ScaleType=Enum.ScaleType.Slice; vig.SliceCenter=Rect.new(49,49,450,450); vig.ImageColor3=C.Black; vig.ImageTransparency=0.15; vig.Size=UDim2.fromScale(1,1); vig.ZIndex=2; vig.Parent=backdrop
-	-- drifting embers (kept small = light)
+	local bgGrad=gradient(backdrop, ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(26,10,14)),ColorSequenceKeypoint.new(0.5,Color3.fromRGB(11,10,14)),ColorSequenceKeypoint.new(1,Color3.fromRGB(4,4,7))}), 30)
+	-- drifting embers (plain rounded frames — always render)
 	local emberHost=Instance.new("Frame"); emberHost.Size=UDim2.fromScale(1,1); emberHost.BackgroundTransparency=1; emberHost.ZIndex=2; emberHost.Parent=backdrop
 	local embers={}
 	for i=1,12 do
-		local e=Instance.new("Frame"); e.Size=UDim2.fromOffset(3+ (i%3), 3+(i%3)); e.BackgroundColor3=(i%2==0) and C.Accent or C.Accent2; e.BorderSizePixel=0; e.BackgroundTransparency=1; e.ZIndex=2; e.Parent=emberHost; corner(e,999)
+		local e=Instance.new("Frame"); e.Size=UDim2.fromOffset(3+(i%3),3+(i%3)); e.BackgroundColor3=(i%2==0) and C.Accent or C.Accent2; e.BorderSizePixel=0; e.BackgroundTransparency=1; e.ZIndex=2; e.Parent=emberHost; corner(e,999)
 		embers[i]={o=e, x=(i*0.083)%1, y=1+(i%5)*0.12, sp=0.02+(i%4)*0.01, drift=(i%2==0) and 1 or -1}
 	end
 	track(RunService.RenderStepped:Connect(function(dt)
 		if destroyed then return end
 		local tk=tick()
-		pcall(function() bgGrad.Rotation=25+math.sin(tk*0.15)*10 end)
-		pcall(function() aurora.Position=UDim2.fromScale(0.3+math.sin(tk*0.12)*0.06, 0.35+math.cos(tk*0.1)*0.05) end)
-		pcall(function() aurora2.Position=UDim2.fromScale(0.72+math.cos(tk*0.09)*0.06, 0.68+math.sin(tk*0.11)*0.05) end)
-		local vis = (1-backdrop.BackgroundTransparency)
+		pcall(function() bgGrad.Rotation=30+math.sin(tk*0.12)*12 end)
+		local vis=(1-backdrop.BackgroundTransparency)
 		for _,em in ipairs(embers) do
 			em.y=em.y-em.sp*dt*3
 			if em.y<-0.05 then em.y=1.05; em.x=(em.x+0.37)%1 end
 			local px=(em.x+math.sin(tk*0.5+em.y*6)*0.02*em.drift)
-			pcall(function() em.o.Position=UDim2.fromScale(px, em.y); em.o.BackgroundTransparency=math.clamp(1-vis*0.55*(0.4+0.6*math.sin(em.y*math.pi)),0,1) end)
+			pcall(function() em.o.Position=UDim2.fromScale(px, em.y); em.o.BackgroundTransparency=math.clamp(1-vis*0.5*(0.4+0.6*math.sin(em.y*math.pi)),0,1) end)
 		end
 	end))
 
@@ -190,33 +180,26 @@ task.spawn(function()
 	local menuScale=Instance.new("UIScale"); menuScale.Parent=menuFit
 	local menuReveal=Instance.new("UIScale"); menuReveal.Scale=1.06; menuReveal.Parent=menuFit
 
-	-- faded background wordmark logo
-	local bgLogo=Instance.new("ImageLabel"); bgLogo.AnchorPoint=Vector2.new(0.5,0.5); bgLogo.Position=UDim2.new(0.5,0,0.54,0); bgLogo.Size=UDim2.fromOffset(760,760); bgLogo.BackgroundTransparency=1; bgLogo.Image=LOGO; bgLogo.ImageColor3=C.Accent; bgLogo.ImageTransparency=0.94; bgLogo.ScaleType=Enum.ScaleType.Fit; bgLogo.ZIndex=1; bgLogo.Parent=menuFit
-	track(RunService.RenderStepped:Connect(function() if bgLogo.Parent then pcall(function() bgLogo.Rotation=math.sin(tick()*0.1)*3 end) end end))
+	-- faded background wordmark (logo image — known good)
+	local bgLogo=Instance.new("ImageLabel"); bgLogo.AnchorPoint=Vector2.new(0.5,0.5); bgLogo.Position=UDim2.new(0.5,0,0.54,0); bgLogo.Size=UDim2.fromOffset(740,740); bgLogo.BackgroundTransparency=1; bgLogo.Image=LOGO; bgLogo.ImageColor3=C.Accent; bgLogo.ImageTransparency=0.95; bgLogo.ScaleType=Enum.ScaleType.Fit; bgLogo.ZIndex=1; bgLogo.Parent=menuFit
 
-	-- header wordmark + tagline
-	local headWrap=Instance.new("Frame"); headWrap.AnchorPoint=Vector2.new(0.5,0); headWrap.Position=UDim2.new(0.5,0,0.045,0); headWrap.Size=UDim2.fromOffset(360,54); headWrap.BackgroundTransparency=1; headWrap.ZIndex=3; headWrap.Parent=menuFit
-	local headLogo=Instance.new("ImageLabel"); headLogo.AnchorPoint=Vector2.new(0.5,0.5); headLogo.Position=UDim2.fromScale(0.5,0.5); headLogo.Size=UDim2.fromOffset(210,64); headLogo.BackgroundTransparency=1; headLogo.Image=LOGO; headLogo.ImageColor3=C.Text; headLogo.ScaleType=Enum.ScaleType.Fit; headLogo.ZIndex=3; headLogo.Parent=headWrap
-	local tagline=txt(menuFit,"E L E V A T E   Y O U R   E X P E R I E N C E",12,C.Muted,F.Code,Enum.TextXAlignment.Center); tagline.AnchorPoint=Vector2.new(0.5,0); tagline.Position=UDim2.new(0.5,0,0.125,0); tagline.Size=UDim2.fromOffset(460,16); tagline.ZIndex=3
+	-- header logo + tagline
+	local headLogo=Instance.new("ImageLabel"); headLogo.AnchorPoint=Vector2.new(0.5,0); headLogo.Position=UDim2.new(0.5,0,0.04,0); headLogo.Size=UDim2.fromOffset(220,66); headLogo.BackgroundTransparency=1; headLogo.Image=LOGO; headLogo.ImageColor3=C.Text; headLogo.ScaleType=Enum.ScaleType.Fit; headLogo.ZIndex=3; headLogo.Parent=menuFit
+	local tagline=txt(menuFit,"E L E V A T E   Y O U R   E X P E R I E N C E",12,C.Muted,F.Code,Enum.TextXAlignment.Center); tagline.AnchorPoint=Vector2.new(0.5,0); tagline.Position=UDim2.new(0.5,0,0.128,0); tagline.Size=UDim2.fromOffset(460,16); tagline.ZIndex=3
 
-	-- status pill (glassy)
-	local pill=Instance.new("Frame"); pill.AnchorPoint=Vector2.new(0.5,0); pill.Position=UDim2.new(0.5,0,0.172,0); pill.Size=UDim2.fromOffset(540,30); pill.BackgroundColor3=C.Panel; pill.BackgroundTransparency=0.15; pill.ZIndex=3; pill.Parent=menuFit; corner(pill,999); stroke(pill,C.Border,1,0.2)
-	gradient(pill, ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(34,24,28)),ColorSequenceKeypoint.new(1,Color3.fromRGB(18,17,22))}), 90)
+	-- status pill
+	local pill=Instance.new("Frame"); pill.AnchorPoint=Vector2.new(0.5,0); pill.Position=UDim2.new(0.5,0,0.174,0); pill.Size=UDim2.fromOffset(540,30); pill.BackgroundColor3=C.Panel; pill.BackgroundTransparency=0.12; pill.ZIndex=3; pill.Parent=menuFit; corner(pill,999); stroke(pill,C.Border,1,0.25)
 	local pdot=Instance.new("Frame"); pdot.AnchorPoint=Vector2.new(0,0.5); pdot.Position=UDim2.new(0,18,0.5,0); pdot.Size=UDim2.fromOffset(9,9); pdot.BackgroundColor3=C.Green; pdot.BorderSizePixel=0; pdot.ZIndex=4; pdot.Parent=pill; corner(pdot,999)
-	local pdotGlow=Instance.new("UIStroke"); pdotGlow.Color=C.Green; pdotGlow.Thickness=3; pdotGlow.Transparency=0.5; pdotGlow.Parent=pdot
+	local pdotGlow=stroke(pdot,C.Green,3,0.5)
 	track(RunService.RenderStepped:Connect(function() if pdot.Parent then pcall(function() pdotGlow.Transparency=0.4+math.abs(math.sin(tick()*2))*0.5 end) end end))
 	local pillTxt=txt(pill,"Playing: loading   |   -- Players",12,C.Muted,F.Code,Enum.TextXAlignment.Left); pillTxt.Position=UDim2.new(0,34,0,0); pillTxt.Size=UDim2.new(1,-44,1,0); pillTxt.ZIndex=4
 
-	-- ---- glassy column panel builder (with entrance animation) ----
+	-- ---- panel builder (glassy: gradient + stroke, no images) ----
 	local panels={}
 	local function panel(title, x, w, viewAll)
-		local box=Instance.new("Frame"); box.AnchorPoint=Vector2.new(0.5,0); box.Position=UDim2.new(x,0,0.255,0); box.Size=UDim2.fromOffset(w,320); box.BackgroundColor3=C.Panel; box.BackgroundTransparency=0.05; box.ZIndex=3; box.Parent=menuFit
-		corner(box,14); stroke(box,C.Border,1.2,0.1)
-		shadow(box, 46, 0.55)
-		gradient(box, ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(30,28,36)),ColorSequenceKeypoint.new(1,Color3.fromRGB(17,16,21))}), 90)
-		-- top accent hairline
-		local top=Instance.new("Frame"); top.Position=UDim2.new(0,0,0,0); top.Size=UDim2.new(1,0,0,2); top.BorderSizePixel=0; top.BackgroundColor3=C.Accent; top.ZIndex=4; top.Parent=box
-		gradient(top, ColorSequence.new({ColorSequenceKeypoint.new(0,C.Accent2),ColorSequenceKeypoint.new(1,C.Accent)}), 0)
+		local box=Instance.new("Frame"); box.AnchorPoint=Vector2.new(0.5,0); box.Position=UDim2.new(x,0,0.255,0); box.Size=UDim2.fromOffset(w,320); box.BackgroundColor3=C.Panel; box.BackgroundTransparency=0.04; box.ZIndex=3; box.Parent=menuFit
+		corner(box,14); stroke(box,C.Border,1.2,0.15)
+		gradient(box, ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(31,29,37)),ColorSequenceKeypoint.new(1,Color3.fromRGB(16,15,20))}), 90)
 		local hd=txt(box,string.upper(title),14,C.Text,F.Bold); hd.Position=UDim2.new(0,18,0,15); hd.Size=UDim2.new(1,-90,0,20); hd.ZIndex=5
 		local ln=Instance.new("Frame"); ln.Position=UDim2.new(0,18,0,39); ln.Size=UDim2.fromOffset(34,3); ln.BackgroundColor3=C.Accent; ln.BorderSizePixel=0; ln.ZIndex=5; ln.Parent=box; corner(ln,999)
 		gradient(ln, ColorSequence.new({ColorSequenceKeypoint.new(0,C.Accent2),ColorSequenceKeypoint.new(1,C.Accent)}), 0)
@@ -227,23 +210,20 @@ task.spawn(function()
 
 	-- LEFT: PROFILE
 	local pf=panel("Profile", 0.185, 300)
-	local pavWrap=Instance.new("Frame"); pavWrap.AnchorPoint=Vector2.new(0.5,0); pavWrap.Position=UDim2.new(0.5,0,0,54); pavWrap.Size=UDim2.fromOffset(88,88); pavWrap.BackgroundTransparency=1; pavWrap.ZIndex=4; pavWrap.Parent=pf
-	local pavGlow=Instance.new("ImageLabel"); pavGlow.BackgroundTransparency=1; pavGlow.Image=GLOWIMG; pavGlow.ImageColor3=C.Accent; pavGlow.ImageTransparency=0.4; pavGlow.AnchorPoint=Vector2.new(0.5,0.5); pavGlow.Position=UDim2.fromScale(0.5,0.5); pavGlow.Size=UDim2.fromScale(1.8,1.8); pavGlow.ZIndex=3; pavGlow.Parent=pavWrap
-	local pav=Instance.new("ImageLabel"); pav.AnchorPoint=Vector2.new(0.5,0.5); pav.Position=UDim2.fromScale(0.5,0.5); pav.Size=UDim2.fromOffset(84,84); pav.BackgroundColor3=C.Panel2; pav.Image=HEAD; pav.ZIndex=4; pav.Parent=pavWrap; corner(pav,999)
+	local pav=Instance.new("ImageLabel"); pav.AnchorPoint=Vector2.new(0.5,0); pav.Position=UDim2.new(0.5,0,0,52); pav.Size=UDim2.fromOffset(84,84); pav.BackgroundColor3=C.Panel2; pav.Image=HEAD; pav.ZIndex=4; pav.Parent=pf; corner(pav,999)
 	local pavRing=stroke(pav,C.Accent,2.5,0)
-	track(RunService.RenderStepped:Connect(function() if pav.Parent then pcall(function() pavGlow.ImageTransparency=0.35+math.abs(math.sin(tick()*1.5))*0.25 end) end end))
+	track(RunService.RenderStepped:Connect(function() if pav.Parent then pcall(function() pavRing.Transparency=0.05+math.abs(math.sin(tick()*1.4))*0.35 end) end end))
 	if IS_MOD then
-		local mt=txt(pf,"DREAM HUB  "..MYROLE,13,C.Text,F.Black,Enum.TextXAlignment.Center); mt.AnchorPoint=Vector2.new(0.5,0); mt.Position=UDim2.new(0.5,0,0,148); mt.Size=UDim2.new(1,-14,0,18); mt.ZIndex=5
+		local mt=txt(pf,"DREAM HUB  "..MYROLE,13,C.Text,F.Black,Enum.TextXAlignment.Center); mt.AnchorPoint=Vector2.new(0.5,0); mt.Position=UDim2.new(0.5,0,0,146); mt.Size=UDim2.new(1,-14,0,18); mt.ZIndex=5
 		local rg=gradient(mt, ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(255,80,80)),ColorSequenceKeypoint.new(0.25,Color3.fromRGB(255,190,60)),ColorSequenceKeypoint.new(0.5,Color3.fromRGB(120,255,120)),ColorSequenceKeypoint.new(0.75,Color3.fromRGB(90,190,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(210,120,255))}), 0)
 		track(RunService.RenderStepped:Connect(function() if mt.Parent then rg.Offset=Vector2.new(((tick()*0.4)%2)-1,0) end end))
 	end
-	local pnm=txt(pf,player.DisplayName,20,C.Text,F.Bold,Enum.TextXAlignment.Center); pnm.AnchorPoint=Vector2.new(0.5,0); pnm.Position=UDim2.new(0.5,0,0,IS_MOD and 168 or 152); pnm.Size=UDim2.new(1,-16,0,24); pnm.ZIndex=4
-	local phd=txt(pf,"@"..player.Name,12,C.Muted,F.Code,Enum.TextXAlignment.Center); phd.AnchorPoint=Vector2.new(0.5,0); phd.Position=UDim2.new(0.5,0,0,IS_MOD and 192 or 178); phd.Size=UDim2.new(1,-16,0,16); phd.ZIndex=4
-	local pbg=Instance.new("Frame"); pbg.AnchorPoint=Vector2.new(0.5,0); pbg.Position=UDim2.new(0.5,0,0,IS_MOD and 214 or 202); pbg.Size=UDim2.fromOffset(148,32); pbg.BackgroundColor3=C.Accent; pbg.BackgroundTransparency=0; pbg.ZIndex=4; pbg.Parent=pf; corner(pbg,999)
+	local pnm=txt(pf,player.DisplayName,20,C.Text,F.Bold,Enum.TextXAlignment.Center); pnm.AnchorPoint=Vector2.new(0.5,0); pnm.Position=UDim2.new(0.5,0,0,IS_MOD and 166 or 150); pnm.Size=UDim2.new(1,-16,0,24); pnm.ZIndex=4
+	local phd=txt(pf,"@"..player.Name,12,C.Muted,F.Code,Enum.TextXAlignment.Center); phd.AnchorPoint=Vector2.new(0.5,0); phd.Position=UDim2.new(0.5,0,0,IS_MOD and 190 or 176); phd.Size=UDim2.new(1,-16,0,16); phd.ZIndex=4
+	local pbg=Instance.new("Frame"); pbg.AnchorPoint=Vector2.new(0.5,0); pbg.Position=UDim2.new(0.5,0,0,IS_MOD and 212 or 200); pbg.Size=UDim2.fromOffset(148,32); pbg.BackgroundColor3=C.Accent; pbg.ZIndex=4; pbg.Parent=pf; corner(pbg,999)
 	gradient(pbg, ColorSequence.new({ColorSequenceKeypoint.new(0,C.Accent2),ColorSequenceKeypoint.new(1,C.Accent)}), 25)
 	txt(pbg,(IS_MOD and "MOD" or TIER).." PLAN",13,C.Text,F.Black,Enum.TextXAlignment.Center).Size=UDim2.fromScale(1,1)
-	-- member since + session timer
-	local since=Instance.new("Frame"); since.AnchorPoint=Vector2.new(0.5,1); since.Position=UDim2.new(0.5,0,1,-14); since.Size=UDim2.new(1,-28,0,46); since.BackgroundColor3=C.Panel2; since.BackgroundTransparency=0.15; since.ZIndex=4; since.Parent=pf; corner(since,10); stroke(since,C.Border,1,0.4)
+	local since=Instance.new("Frame"); since.AnchorPoint=Vector2.new(0.5,1); since.Position=UDim2.new(0.5,0,1,-14); since.Size=UDim2.new(1,-28,0,46); since.BackgroundColor3=C.Panel2; since.BackgroundTransparency=0.12; since.ZIndex=4; since.Parent=pf; corner(since,10); stroke(since,C.Border,1,0.4)
 	local sinceT=txt(since,"Member for -- days",12,C.Muted,F.Main,Enum.TextXAlignment.Center); sinceT.Size=UDim2.fromScale(1,0.5)
 	local timerT=txt(since,"Session 00:00",13,C.Text,F.Bold,Enum.TextXAlignment.Center); timerT.Position=UDim2.fromScale(0,0.5); timerT.Size=UDim2.fromScale(1,0.5)
 	pcall(function() sinceT.Text="Member for "..tostring(math.floor(player.AccountAge)).." days" end)
@@ -257,7 +237,7 @@ task.spawn(function()
 		{"Staff got 60+ chat commands (?cmds), a warning tracker + msg delete.","new"},
 		{"AI mod watches chat + auto-reports rule breaks to staff.","new"},
 		{"Prior Ex: hitbox now works on every dino. no-damage click fixed.","new"},
-		{"Redone loading + menu. glassy, animated, way cleaner.","today"},
+		{"Redone loading + menu. clean, animated, no clutter.","today"},
 		{"Reports send even when your executor blocks discord.","2d"},
 		{"Target: type any name, see their stuff, tp / view / farm.","6d"},
 		{"Added the mod tools + rules tab. read the rules pls.","8d"},
@@ -274,26 +254,25 @@ task.spawn(function()
 	local qlist=Instance.new("Frame"); qlist.Position=UDim2.new(0,16,0,52); qlist.Size=UDim2.new(1,-32,1,-64); qlist.BackgroundTransparency=1; qlist.ZIndex=4; qlist.Parent=qa
 	local qll=Instance.new("UIListLayout"); qll.Padding=UDim.new(0,9); qll.SortOrder=Enum.SortOrder.LayoutOrder; qll.Parent=qlist
 	local function action(label, order, cb)
-		local b=Instance.new("TextButton"); b.LayoutOrder=order; b.Size=UDim2.new(1,0,0,42); b.BackgroundColor3=C.Panel2; b.BackgroundTransparency=0.1; b.Text=""; b.AutoButtonColor=false; b.ZIndex=4; b.Parent=qlist; corner(b,10); stroke(b,C.Border,1,0.2)
+		local b=Instance.new("TextButton"); b.LayoutOrder=order; b.Size=UDim2.new(1,0,0,42); b.BackgroundColor3=C.Panel2; b.BackgroundTransparency=0.08; b.Text=""; b.AutoButtonColor=false; b.ZIndex=4; b.Parent=qlist; corner(b,10); stroke(b,C.Border,1,0.25)
 		local accent=Instance.new("Frame"); accent.Position=UDim2.new(0,0,0.5,0); accent.AnchorPoint=Vector2.new(0,0.5); accent.Size=UDim2.fromOffset(3,0); accent.BackgroundColor3=C.Accent; accent.BorderSizePixel=0; accent.ZIndex=5; accent.Parent=b; corner(accent,999)
 		local t=txt(b,label,14,C.Text,F.Med); t.Position=UDim2.new(0,16,0,0); t.Size=UDim2.new(1,-42,1,0); t.ZIndex=5
 		local ar=txt(b,">",16,C.Accent,F.Bold,Enum.TextXAlignment.Right); ar.AnchorPoint=Vector2.new(1,0.5); ar.Position=UDim2.new(1,-14,0.5,0); ar.Size=UDim2.fromOffset(16,16); ar.ZIndex=5
 		b.MouseButton1Click:Connect(function() pcall(cb) end)
-		b.MouseEnter:Connect(function() pcall(function() tw(b,0.15,{BackgroundColor3=Color3.fromRGB(40,30,36),BackgroundTransparency=0}); tw(accent,0.18,{Size=UDim2.fromOffset(3,26)}); tw(ar,0.15,{Position=UDim2.new(1,-10,0.5,0)}) end) end)
-		b.MouseLeave:Connect(function() pcall(function() tw(b,0.22,{BackgroundColor3=C.Panel2,BackgroundTransparency=0.1}); tw(accent,0.22,{Size=UDim2.fromOffset(3,0)}); tw(ar,0.2,{Position=UDim2.new(1,-14,0.5,0)}) end) end)
+		b.MouseEnter:Connect(function() pcall(function() tw(b,0.15,{BackgroundColor3=Color3.fromRGB(41,31,37),BackgroundTransparency=0}); tw(accent,0.18,{Size=UDim2.fromOffset(3,26)}); tw(ar,0.15,{Position=UDim2.new(1,-10,0.5,0)}) end) end)
+		b.MouseLeave:Connect(function() pcall(function() tw(b,0.22,{BackgroundColor3=C.Panel2,BackgroundTransparency=0.08}); tw(accent,0.22,{Size=UDim2.fromOffset(3,0)}); tw(ar,0.2,{Position=UDim2.new(1,-14,0.5,0)}) end) end)
 		return b
 	end
 
 	-- report popup (used by Report a Bug / Give Feedback)
-	local reportGui=Instance.new("Frame"); reportGui.AnchorPoint=Vector2.new(0.5,0.5); reportGui.Position=UDim2.new(0.5,0,0.5,0); reportGui.Size=UDim2.fromOffset(440,308); reportGui.BackgroundColor3=C.Panel; reportGui.BackgroundTransparency=0.02; reportGui.Visible=false; reportGui.ZIndex=20; reportGui.Parent=menuFit; corner(reportGui,14); stroke(reportGui,C.Accent,1.4,0.1)
-	shadow(reportGui, 60, 0.4)
-	gradient(reportGui, ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(30,20,24)),ColorSequenceKeypoint.new(1,Color3.fromRGB(16,15,20))}), 90)
+	local reportGui=Instance.new("Frame"); reportGui.AnchorPoint=Vector2.new(0.5,0.5); reportGui.Position=UDim2.new(0.5,0,0.5,0); reportGui.Size=UDim2.fromOffset(440,308); reportGui.BackgroundColor3=C.Panel; reportGui.BackgroundTransparency=0.02; reportGui.Visible=false; reportGui.ZIndex=20; reportGui.Parent=menuFit; corner(reportGui,14); stroke(reportGui,C.Accent,1.4,0.15)
+	gradient(reportGui, ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(30,21,25)),ColorSequenceKeypoint.new(1,Color3.fromRGB(15,14,19))}), 90)
 	txt(reportGui,"REPORT A BUG",15,C.Text,F.Bold).Position=UDim2.new(0,18,0,16)
-	local rInput=Instance.new("TextBox"); rInput.Position=UDim2.new(0,18,0,46); rInput.Size=UDim2.new(1,-36,0,120); rInput.BackgroundColor3=C.Panel2; rInput.BackgroundTransparency=0.1; rInput.FontFace=F.Main; rInput.TextSize=14; rInput.TextColor3=C.Text; rInput.PlaceholderText="Describe the bug you found..."; rInput.PlaceholderColor3=C.Muted; rInput.Text=""; rInput.ClearTextOnFocus=false; rInput.MultiLine=true; rInput.TextWrapped=true; rInput.TextXAlignment=Enum.TextXAlignment.Left; rInput.TextYAlignment=Enum.TextYAlignment.Top; rInput.ZIndex=21; rInput.Parent=reportGui; corner(rInput,10); stroke(rInput,C.Border,1,0.2)
-	local rProof=Instance.new("TextBox"); rProof.Position=UDim2.new(0,18,0,174); rProof.Size=UDim2.new(1,-36,0,34); rProof.BackgroundColor3=C.Panel2; rProof.BackgroundTransparency=0.1; rProof.FontFace=F.Main; rProof.TextSize=13; rProof.TextColor3=C.Text; rProof.PlaceholderText="Proof image link (optional) - imgur/gyazo/medal"; rProof.PlaceholderColor3=C.Muted; rProof.Text=""; rProof.ClearTextOnFocus=false; rProof.TextXAlignment=Enum.TextXAlignment.Left; rProof.ZIndex=21; rProof.Parent=reportGui; corner(rProof,10); stroke(rProof,C.Border,1,0.2)
-	local rSubmit=Instance.new("TextButton"); rSubmit.AnchorPoint=Vector2.new(0,1); rSubmit.Position=UDim2.new(0,18,1,-16); rSubmit.Size=UDim2.new(1,-120,0,34); rSubmit.BackgroundColor3=C.Accent; rSubmit.BackgroundTransparency=0; rSubmit.FontFace=F.Bold; rSubmit.Text="Submit"; rSubmit.TextSize=14; rSubmit.TextColor3=C.Text; rSubmit.ZIndex=21; rSubmit.Parent=reportGui; corner(rSubmit,10)
+	local rInput=Instance.new("TextBox"); rInput.Position=UDim2.new(0,18,0,46); rInput.Size=UDim2.new(1,-36,0,120); rInput.BackgroundColor3=C.Panel2; rInput.BackgroundTransparency=0.08; rInput.FontFace=F.Main; rInput.TextSize=14; rInput.TextColor3=C.Text; rInput.PlaceholderText="Describe the bug you found..."; rInput.PlaceholderColor3=C.Muted; rInput.Text=""; rInput.ClearTextOnFocus=false; rInput.MultiLine=true; rInput.TextWrapped=true; rInput.TextXAlignment=Enum.TextXAlignment.Left; rInput.TextYAlignment=Enum.TextYAlignment.Top; rInput.ZIndex=21; rInput.Parent=reportGui; corner(rInput,10); stroke(rInput,C.Border,1,0.25)
+	local rProof=Instance.new("TextBox"); rProof.Position=UDim2.new(0,18,0,174); rProof.Size=UDim2.new(1,-36,0,34); rProof.BackgroundColor3=C.Panel2; rProof.BackgroundTransparency=0.08; rProof.FontFace=F.Main; rProof.TextSize=13; rProof.TextColor3=C.Text; rProof.PlaceholderText="Proof image link (optional) - imgur/gyazo/medal"; rProof.PlaceholderColor3=C.Muted; rProof.Text=""; rProof.ClearTextOnFocus=false; rProof.TextXAlignment=Enum.TextXAlignment.Left; rProof.ZIndex=21; rProof.Parent=reportGui; corner(rProof,10); stroke(rProof,C.Border,1,0.25)
+	local rSubmit=Instance.new("TextButton"); rSubmit.AnchorPoint=Vector2.new(0,1); rSubmit.Position=UDim2.new(0,18,1,-16); rSubmit.Size=UDim2.new(1,-120,0,34); rSubmit.BackgroundColor3=C.Accent; rSubmit.FontFace=F.Bold; rSubmit.Text="Submit"; rSubmit.TextSize=14; rSubmit.TextColor3=C.Text; rSubmit.ZIndex=21; rSubmit.Parent=reportGui; corner(rSubmit,10)
 	gradient(rSubmit, ColorSequence.new({ColorSequenceKeypoint.new(0,C.Accent2),ColorSequenceKeypoint.new(1,C.Accent)}), 25)
-	local rClose=Instance.new("TextButton"); rClose.AnchorPoint=Vector2.new(1,1); rClose.Position=UDim2.new(1,-18,1,-16); rClose.Size=UDim2.fromOffset(88,34); rClose.BackgroundColor3=C.Panel2; rClose.FontFace=F.Bold; rClose.Text="Close"; rClose.TextSize=14; rClose.TextColor3=C.Muted; rClose.ZIndex=21; rClose.Parent=reportGui; corner(rClose,10); stroke(rClose,C.Border,1,0.2)
+	local rClose=Instance.new("TextButton"); rClose.AnchorPoint=Vector2.new(1,1); rClose.Position=UDim2.new(1,-18,1,-16); rClose.Size=UDim2.fromOffset(88,34); rClose.BackgroundColor3=C.Panel2; rClose.FontFace=F.Bold; rClose.Text="Close"; rClose.TextSize=14; rClose.TextColor3=C.Muted; rClose.ZIndex=21; rClose.Parent=reportGui; corner(rClose,10); stroke(rClose,C.Border,1,0.25)
 	local rStatus=txt(reportGui,"",11,C.Muted,F.Code); rStatus.AnchorPoint=Vector2.new(0.5,1); rStatus.Position=UDim2.new(0.5,0,1,-54); rStatus.Size=UDim2.new(1,-36,0,14); rStatus.TextXAlignment=Enum.TextXAlignment.Center; rStatus.ZIndex=21
 	rClose.MouseButton1Click:Connect(function() reportGui.Visible=false end)
 	local function httpReq(o) local req=(typeof(syn)=="table" and syn.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request; if req then return req(o) end end
@@ -321,17 +300,13 @@ task.spawn(function()
 	action("Copy Game Link", 4, function() pcall(function() setclipboard("https://www.roblox.com/games/"..game.PlaceId) end) end)
 	action("Copy Discord", 5, function() pcall(function() setclipboard("discord.gg/dreamhub") end) end)
 
-	-- ENTER HUB (glossy, animated sheen)
-	local enterButton=Instance.new("TextButton"); enterButton.AnchorPoint=Vector2.new(0.5,1); enterButton.Position=UDim2.new(0.5,0,0.955,0); enterButton.Size=UDim2.fromOffset(560,70); enterButton.BackgroundColor3=C.Accent; enterButton.BackgroundTransparency=0; enterButton.FontFace=F.Black; enterButton.Text="ENTER HUB   -   "..TIER; enterButton.TextSize=25; enterButton.TextColor3=C.Text; enterButton.AutoButtonColor=false; enterButton.ClipsDescendants=true; enterButton.ZIndex=4; enterButton.Parent=menuFit
-	corner(enterButton,14); stroke(enterButton,Color3.fromRGB(255,150,140),1.4,0.1)
-	shadow(enterButton, 44, 0.4, C.Accent)
-	gradient(enterButton, ColorSequence.new({ColorSequenceKeypoint.new(0,C.Accent2),ColorSequenceKeypoint.new(1,C.Accent)}), 20)
-	-- moving sheen
-	local sheen=Instance.new("Frame"); sheen.Size=UDim2.new(0,90,2,0); sheen.Position=UDim2.new(-0.3,0,-0.5,0); sheen.Rotation=18; sheen.BackgroundColor3=Color3.fromRGB(255,255,255); sheen.BackgroundTransparency=0.82; sheen.BorderSizePixel=0; sheen.ZIndex=5; sheen.Parent=enterButton
-	gradient(sheen, ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(255,255,255)),ColorSequenceKeypoint.new(0.5,Color3.fromRGB(255,255,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(255,255,255))}))
-	track(RunService.RenderStepped:Connect(function() if sheen.Parent then pcall(function() local p=((tick()*0.35)%1.4)-0.3; sheen.Position=UDim2.new(p,0,-0.5,0) end) end end))
-	enterButton.MouseEnter:Connect(function() pcall(function() tw(enterButton,0.15,{Size=UDim2.fromOffset(574,72)}) end) end)
-	enterButton.MouseLeave:Connect(function() pcall(function() tw(enterButton,0.22,{Size=UDim2.fromOffset(560,70)}) end) end)
+	-- ENTER HUB (gradient + animated shine via gradient offset — no extra frames, nothing can break)
+	local enterButton=Instance.new("TextButton"); enterButton.AnchorPoint=Vector2.new(0.5,1); enterButton.Position=UDim2.new(0.5,0,0.955,0); enterButton.Size=UDim2.fromOffset(560,70); enterButton.BackgroundColor3=C.Accent; enterButton.FontFace=F.Black; enterButton.Text="ENTER HUB   -   "..TIER; enterButton.TextSize=25; enterButton.TextColor3=C.Text; enterButton.AutoButtonColor=false; enterButton.ZIndex=4; enterButton.Parent=menuFit
+	corner(enterButton,14); local ebStroke=stroke(enterButton,Color3.fromRGB(255,150,140),1.4,0.15)
+	local ebGrad=gradient(enterButton, ColorSequence.new({ColorSequenceKeypoint.new(0,C.Accent2),ColorSequenceKeypoint.new(0.45,C.Accent),ColorSequenceKeypoint.new(0.55,Color3.fromRGB(255,90,96)),ColorSequenceKeypoint.new(0.65,C.Accent),ColorSequenceKeypoint.new(1,Color3.fromRGB(196,26,40))}), 15)
+	track(RunService.RenderStepped:Connect(function() if enterButton.Parent then pcall(function() ebGrad.Offset=Vector2.new(((tick()*0.3)%2)-1,0) end) end end))
+	enterButton.MouseEnter:Connect(function() pcall(function() tw(enterButton,0.15,{Size=UDim2.fromOffset(574,72)}); tw(ebStroke,0.15,{Transparency=0}) end) end)
+	enterButton.MouseLeave:Connect(function() pcall(function() tw(enterButton,0.22,{Size=UDim2.fromOffset(560,70)}); tw(ebStroke,0.22,{Transparency=0.15}) end) end)
 
 	-- fit + session timer + player count
 	local function fitScale()
@@ -350,9 +325,7 @@ task.spawn(function()
 
 	-- ===================== LOADING UI =====================
 	local loadRoot=Instance.new("Frame"); loadRoot.Size=UDim2.fromScale(1,1); loadRoot.BackgroundTransparency=1; loadRoot.ZIndex=12; loadRoot.Parent=gui
-	-- glow behind the logo
-	local lglow=Instance.new("ImageLabel"); lglow.AnchorPoint=Vector2.new(0.5,0.5); lglow.Position=UDim2.new(0.5,0,0.36,0); lglow.Size=UDim2.fromOffset(260,260); lglow.BackgroundTransparency=1; lglow.Image=GLOWIMG; lglow.ImageColor3=C.Accent; lglow.ImageTransparency=1; lglow.ZIndex=12; lglow.Parent=loadRoot
-	-- dual counter-rotating rings
+	-- dual counter-rotating rings (plain rounded frames)
 	local spin=Instance.new("Frame"); spin.AnchorPoint=Vector2.new(0.5,0.5); spin.Position=UDim2.new(0.5,0,0.36,0); spin.Size=UDim2.fromOffset(140,140); spin.BackgroundTransparency=1; spin.ZIndex=12; spin.Parent=loadRoot
 	local dots={}
 	for i=0,11 do
@@ -364,16 +337,15 @@ task.spawn(function()
 		local ang=(i/8)*math.pi*2
 		local d=Instance.new("Frame"); d.AnchorPoint=Vector2.new(0.5,0.5); d.Position=UDim2.new(0.5, math.cos(ang)*38, 0.5, math.sin(ang)*38); d.Size=UDim2.fromOffset(6,6); d.BackgroundColor3=C.Accent2; d.BackgroundTransparency=1; d.BorderSizePixel=0; d.ZIndex=13; d.Parent=spin; corner(d,999); dots2[i+1]=d
 	end
-	local logo=Instance.new("ImageLabel"); logo.AnchorPoint=Vector2.new(0.5,0.5); logo.Position=UDim2.new(0.5,0,0.36,0); logo.Size=UDim2.fromOffset(60,60); logo.BackgroundTransparency=1; logo.Image=LOGO; logo.ImageColor3=C.Text; logo.ImageTransparency=1; logo.ScaleType=Enum.ScaleType.Fit; logo.ZIndex=14; logo.Parent=loadRoot
-	-- wordmark
+	local logo=Instance.new("ImageLabel"); logo.AnchorPoint=Vector2.new(0.5,0.5); logo.Position=UDim2.new(0.5,0,0.36,0); logo.Size=UDim2.fromOffset(58,58); logo.BackgroundTransparency=1; logo.Image=LOGO; logo.ImageColor3=C.Text; logo.ImageTransparency=1; logo.ScaleType=Enum.ScaleType.Fit; logo.ZIndex=14; logo.Parent=loadRoot
+	-- wordmark with sweeping gradient
 	local brand=txt(loadRoot,"D R E A M   H U B",26,C.Text,F.Black,Enum.TextXAlignment.Center); brand.AnchorPoint=Vector2.new(0.5,0.5); brand.Position=UDim2.new(0.5,0,0.475,0); brand.Size=UDim2.fromOffset(520,30); brand.TextTransparency=1; brand.ZIndex=13
 	local brandGrad=gradient(brand, ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(255,150,110)),ColorSequenceKeypoint.new(0.5,Color3.fromRGB(255,255,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(255,110,120))}), 0)
 	track(RunService.RenderStepped:Connect(function() if brand.Parent then pcall(function() brandGrad.Offset=Vector2.new(((tick()*0.35)%2)-1,0) end) end end))
 	local barBack=Instance.new("Frame"); barBack.AnchorPoint=Vector2.new(0.5,0.5); barBack.Position=UDim2.new(0.5,0,0.56,0); barBack.Size=UDim2.fromOffset(380,8); barBack.BackgroundColor3=Color3.fromRGB(30,28,34); barBack.BackgroundTransparency=1; barBack.BorderSizePixel=0; barBack.ClipsDescendants=true; barBack.ZIndex=12; barBack.Parent=loadRoot; corner(barBack,999)
 	local barFill=Instance.new("Frame"); barFill.Size=UDim2.fromScale(0,1); barFill.BackgroundColor3=C.Accent; barFill.BorderSizePixel=0; barFill.ZIndex=13; barFill.Parent=barBack; corner(barFill,999)
-	gradient(barFill, ColorSequence.new({ColorSequenceKeypoint.new(0,C.Accent2),ColorSequenceKeypoint.new(1,C.Accent)}), 0)
-	local barSheen=Instance.new("Frame"); barSheen.Size=UDim2.new(0,40,1,0); barSheen.BackgroundColor3=Color3.fromRGB(255,255,255); barSheen.BackgroundTransparency=0.55; barSheen.BorderSizePixel=0; barSheen.ZIndex=14; barSheen.Parent=barFill
-	track(RunService.RenderStepped:Connect(function() if barSheen.Parent then pcall(function() barSheen.Position=UDim2.new(((tick()*0.6)%1.3)-0.15,0,0,0) end) end end))
+	local bfGrad=gradient(barFill, ColorSequence.new({ColorSequenceKeypoint.new(0,C.Accent2),ColorSequenceKeypoint.new(0.5,Color3.fromRGB(255,96,88)),ColorSequenceKeypoint.new(1,C.Accent)}), 0)
+	track(RunService.RenderStepped:Connect(function() if barFill.Parent then pcall(function() bfGrad.Offset=Vector2.new(((tick()*0.5)%2)-1,0) end) end end))
 	local pct=txt(loadRoot,"0%",13,C.Muted,F.Code,Enum.TextXAlignment.Center); pct.AnchorPoint=Vector2.new(0.5,0); pct.Position=UDim2.new(0.5,0,0.585,0); pct.Size=UDim2.fromOffset(120,16); pct.TextTransparency=1; pct.ZIndex=12
 	local status=txt(loadRoot,"",14,Color3.fromRGB(232,232,240),F.Code,Enum.TextXAlignment.Center); status.AnchorPoint=Vector2.new(0.5,0); status.Position=UDim2.new(0.5,0,0.625,0); status.Size=UDim2.fromOffset(520,20); status.TextTransparency=1; status.ZIndex=12
 	-- user card
@@ -383,14 +355,13 @@ task.spawn(function()
 	local lnm=txt(card,player.DisplayName,15,C.Text,F.Bold); lnm.AnchorPoint=Vector2.new(0,0.5); lnm.Position=UDim2.new(0,60,0.5,-9); lnm.Size=UDim2.fromOffset(190,18); lnm.TextTransparency=1; lnm.ZIndex=13
 	local lpl=txt(card,"@"..player.Name.."  -  "..TIER.." plan",12,C.Muted,F.Code); lpl.AnchorPoint=Vector2.new(0,0.5); lpl.Position=UDim2.new(0,60,0.5,10); lpl.Size=UDim2.fromOffset(190,16); lpl.TextTransparency=1; lpl.ZIndex=13
 
-	-- spinner animation (both rings, opposite directions)
+	-- spinner animation (rings spin opposite ways)
 	track(RunService.RenderStepped:Connect(function()
 		if not spin.Parent then return end
 		local head=(tick()*1.1)%1
 		for i=1,12 do local phase=((i-1)/12); local dd=math.abs((phase-head+1)%1); dots[i].BackgroundTransparency=(dd<0.4) and (0.9-(0.4-dd)/0.4*0.85) or 0.9 end
 		local head2=(-tick()*1.4)%1
 		for i=1,8 do local phase=((i-1)/8); local dd=math.abs((phase-head2+1)%1); dots2[i].BackgroundTransparency=(dd<0.45) and (0.92-(0.45-dd)/0.45*0.8) or 0.92 end
-		pcall(function() lglow.ImageTransparency=math.clamp(0.6+math.sin(tick()*2)*0.15, 0.5, 0.85) end)
 	end))
 
 	local shown=0
@@ -408,7 +379,7 @@ task.spawn(function()
 	local ok=pcall(function()
 		tw(backdrop,0.6,{BackgroundTransparency=0})
 		task.wait(0.4)
-		tw(logo,0.7,{ImageTransparency=0}); tw(lglow,0.7,{ImageTransparency=0.6}); tw(brand,0.7,{TextTransparency=0})
+		tw(logo,0.7,{ImageTransparency=0}); tw(brand,0.7,{TextTransparency=0})
 		tw(barBack,0.5,{BackgroundTransparency=0.2}); tw(pct,0.5,{TextTransparency=0.2}); tw(status,0.5,{TextTransparency=0})
 		tw(card,0.5,{BackgroundTransparency=0.25}); tw(cardStroke,0.5,{Transparency=0.4})
 		status.Text="loading files..."; fillTo(0.26); task.wait(0.1)
@@ -422,8 +393,8 @@ task.spawn(function()
 		pct.Text="100%"; status.Text="welcome, "..player.DisplayName; tw(status,0.3,{TextColor3=C.Green}); task.wait(0.5)
 		-- fade loading out, reveal menu
 		for _,o in ipairs({pct,status,lnm,lpl,brand}) do tw(o,0.4,{TextTransparency=1}) end
-		tw(logo,0.4,{ImageTransparency=1}); tw(lglow,0.4,{ImageTransparency=1}); tw(lav,0.4,{ImageTransparency=1}); tw(lavS,0.4,{Transparency=1})
-		tw(barBack,0.4,{BackgroundTransparency=1}); tw(barFill,0.4,{BackgroundTransparency=1}); tw(barSheen,0.3,{BackgroundTransparency=1}); tw(cardStroke,0.4,{Transparency=1}); tw(card,0.4,{BackgroundTransparency=1})
+		tw(logo,0.4,{ImageTransparency=1}); tw(lav,0.4,{ImageTransparency=1}); tw(lavS,0.4,{Transparency=1})
+		tw(barBack,0.4,{BackgroundTransparency=1}); tw(barFill,0.4,{BackgroundTransparency=1}); tw(cardStroke,0.4,{Transparency=1}); tw(card,0.4,{BackgroundTransparency=1})
 		for _,d in ipairs(dots) do tw(d,0.4,{BackgroundTransparency=1}) end
 		for _,d in ipairs(dots2) do tw(d,0.4,{BackgroundTransparency=1}) end
 		task.wait(0.42); running=false; pcall(function() loadRoot:Destroy() end)
@@ -436,7 +407,6 @@ task.spawn(function()
 			pn.Position=base+UDim2.fromOffset(0,34)
 			task.delay(0.08*i, function() if not destroyed then tw(pn,0.5,{Position=base},Enum.EasingStyle.Quint) end end)
 		end
-		finish(tw(enterButton,0.5,{Position=UDim2.new(0.5,0,0.955,0)}))
 	end)
 	if not ok then cleanup(); return end
 
