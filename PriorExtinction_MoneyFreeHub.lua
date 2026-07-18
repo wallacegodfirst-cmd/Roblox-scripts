@@ -2565,6 +2565,53 @@ conn(RunService.RenderStepped:Connect(function()
 		end
 	end)
 end))
+
+-- ═══ INF STAM — MOVEMENT-CONTROLLER PIN (the missing lever) ═══ Every previous attempt wrote values the game's
+-- client Movement controller only READS FROM (stamina data, WalkSpeed) — then the controller recomputes your speed
+-- scalar from stamina EVERY FRAME and overrides us. This pins the scalar ON THE CONTROLLER ITSELF
+-- (CharacterState.Movement, the live object the decompiled Growth class calls :UpdateTurnValues() on), which is the
+-- SOURCE, so there's no per-frame re-slow to lose to. Pure client-object writes: no velocity, no CFrame, no snapback.
+--   • numeric speed-ish fields (Speed/CurrentSpeed/MaxSpeed/Multiplier/RunSpeed/…) → held at their highest-seen value
+--   • exhaustion booleans (Exhausted/Tired/Fatigued/Winded/Slowed/Depleted/StaminaEmpty) → forced false
+--   • permission booleans (CanRun/CanSprint/Sprinting) → forced true
+-- Also forces those same exhaustion flags false on Stats + the Wellbeing replica (a LATCHED flag stays true even
+-- when the bar is full — clearing it is what maxing stamina alone never did).
+conn(RunService.Stepped:Connect(function()
+	if not (CFG.InfStam and alive()) then return end
+	pcall(function()
+		local mc = CharacterState and CharacterState.Movement
+		if type(mc)=="table" then
+			__gg.MH_mcPeak = __gg.MH_mcPeak or {}
+			local function tryset(t,k,v) local ok=pcall(function() t[k]=v end); if not ok and rawset then pcall(function() rawset(t,k,v) end) end end
+			for k,v in pairs(mc) do
+				if type(v)=="number" then
+					local kl=string.lower(tostring(k))
+					if (kl:find("speed",1,true) or kl:find("multiplier",1,true) or kl:find("run",1,true) or kl:find("sprint",1,true)) and not kl:find("turn",1,true) and not kl:find("time",1,true) and not kl:find("stamina",1,true) then
+						if v > (__gg.MH_mcPeak[k] or -1) then __gg.MH_mcPeak[k]=v end
+						if __gg.MH_mcPeak[k] and v < __gg.MH_mcPeak[k] - 0.001 then tryset(mc,k,__gg.MH_mcPeak[k]) end
+					end
+				elseif type(v)=="boolean" then
+					local kl=string.lower(tostring(k))
+					if kl:find("exhaust",1,true) or kl:find("tired",1,true) or kl:find("fatigu",1,true) or kl:find("winded",1,true) or kl:find("slow",1,true) or kl:find("deplet",1,true) or kl=="staminaempty" then
+						if v then tryset(mc,k,false) end
+					elseif kl=="canrun" or kl=="cansprint" or kl=="sprinting" or kl=="running" then
+						if not v then tryset(mc,k,true) end
+					end
+				end
+			end
+		end
+		-- clear latched exhaustion flags on the stat replicas too
+		local st = csStats()
+		if st then for _,k in ipairs({"Exhausted","IsExhausted","Tired","Fatigued","Winded","Slowed","Depleted","StaminaEmpty","Recovering"}) do
+			if type(st[k])=="boolean" and st[k] then st[k]=false end
+		end
+		if type(st.CanSprint)=="boolean" then st.CanSprint=true end
+		if type(st.CanRun)=="boolean" then st.CanRun=true end end
+		local rep=__gg.MH_wellbeing
+		local ws = rep and rep.Data and rep.Data.SavableStats and rep.Data.SavableStats.Stats
+		if ws then for _,k in ipairs({"Exhausted","Tired","Fatigued","Depleted"}) do if type(ws[k])=="boolean" and ws[k] then ws[k]=false end end end
+	end)
+end))
 -- Also pin stamina on Stepped + Heartbeat (not just RenderStepped) so whichever loop the game reads stamina on,
 -- it sees full — closes the last timing gap that let the slow flicker in.
 local function stamPinNow()
@@ -5363,6 +5410,36 @@ task.spawn(function() while RUNNING do task.wait(0.3); pcall(function()
 	lines[#lines+1]="MyID: "..tostring(myReplicaId or seenIds[1] or "nil (move/look around)")
 	lines[#lines+1]="Sound: "..(getSoundRemote() and "found" or "MISSING")
 	local tg=nearestTarget(300,true); lines[#lines+1]="Target: "..(tg and tg.Name or "none")
+	-- ═══ INF STAM DIAGNOSTIC — tells us the REAL speed lever (send me these lines if stam is still slow) ═══
+	lines[#lines+1]="── STAM DEBUG ──"
+	lines[#lines+1]="CharState: "..(CharacterState and "OK" or "NIL (data pins do nothing!)")
+	pcall(function()
+		local mc = CharacterState and CharacterState.Movement
+		lines[#lines+1]="Movement obj: "..(type(mc)=="table" and "table" or tostring(mc))
+		if type(mc)=="table" then
+			local shown=0
+			for k,v in pairs(mc) do
+				if (type(v)=="number" or type(v)=="boolean") and shown<8 then
+					local kl=string.lower(tostring(k))
+					if kl:find("speed",1,true) or kl:find("run",1,true) or kl:find("sprint",1,true) or kl:find("exhaust",1,true) or kl:find("multiplier",1,true) or kl:find("tired",1,true) or kl:find("stam",1,true) then
+						lines[#lines+1]="  mv."..tostring(k).."="..tostring(v); shown=shown+1
+					end
+				end
+			end
+		end
+	end)
+	pcall(function()
+		local mdl=(WS:FindFirstChild("Characters") and WS.Characters:FindFirstChild(LP.Name)) or char()
+		local hh=mdl and mdl:FindFirstChildOfClass("Humanoid")
+		local root=mdl and (mdl.PrimaryPart or mdl:FindFirstChild("HumanoidRootPart"))
+		lines[#lines+1]="Humanoid: "..(hh and "yes WS="..tostring(math.floor((hh.WalkSpeed or 0)+0.5)) or "NO (WalkSpeed is useless)")
+		if root then lines[#lines+1]="LinVel: "..tostring(math.floor(root.AssemblyLinearVelocity.Magnitude+0.5)) end
+		local movers={}
+		if mdl then for _,dd in ipairs(mdl:GetDescendants()) do
+			if dd:IsA("LinearVelocity") or dd:IsA("BodyVelocity") or dd:IsA("AlignPosition") or dd:IsA("VectorForce") then movers[#movers+1]=dd.ClassName; if #movers>=3 then break end end
+		end end
+		lines[#lines+1]="Movers: "..(#movers>0 and table.concat(movers,",") or "none (velocity-driven)")
+	end)
 	ESP.dbg.Text=table.concat(lines,"\n")
 end) end end)
 local function destroyESP() for m,o in pairs(ESP.objs) do pcall(function() if o[1] then o[1]:Destroy() end if o[2] then o[2]:Destroy() end end) end ESP.objs={} end
