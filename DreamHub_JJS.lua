@@ -201,12 +201,12 @@ task.spawn(function()
 	local scr=Instance.new("ScrollingFrame"); scr.Position=UDim2.new(0,14,0,50); scr.Size=UDim2.new(1,-22,1,-62); scr.BackgroundTransparency=1; scr.BorderSizePixel=0; scr.ScrollBarThickness=4; scr.ScrollBarImageColor3=C.Accent; scr.CanvasSize=UDim2.new(0,0,0,0); scr.AutomaticCanvasSize=Enum.AutomaticSize.Y; scr.ZIndex=4; scr.Parent=ul
 	local sl=Instance.new("UIListLayout"); sl.Padding=UDim.new(0,8); sl.SortOrder=Enum.SortOrder.LayoutOrder; sl.Parent=scr
 	local LOGS={
-		{"New cinematic loading + dashboard menu.","Today"},
-		{"Live bug report -> straight to the Dream team.","Today"},
-		{"Target tab: search any name, live profile, TP / view / farm.","2d"},
-		{"INF Stam reworked (data-side, no snapback).","4d"},
-		{"Auto Farm no longer kills you (hit-and-run + heal).","5d"},
-		{"Admin panel: warn / teleport / fly / report to Discord.","6d"},
+		{"Reworked the whole menu + loading. way cleaner now.","Today"},
+		{"You can report bugs straight from here now (with proof).","Today"},
+		{"Fixed inf stam getting you slowed / snapped back.","2d"},
+		{"Auto farm wasn't feeding you to death anymore.","3d"},
+		{"Target: type any name, see their stuff, tp/view/farm.","5d"},
+		{"Added the mod tools + rules tab. read the rules pls.","6d"},
 	}
 	for i,e in ipairs(LOGS) do
 		local row=Instance.new("Frame"); row.LayoutOrder=i; row.Size=UDim2.new(1,0,0,0); row.AutomaticSize=Enum.AutomaticSize.Y; row.BackgroundTransparency=1; row.ZIndex=4; row.Parent=scr
@@ -228,9 +228,10 @@ task.spawn(function()
 	end
 
 	-- report popup (used by Report a Bug / Give Feedback)
-	local reportGui=Instance.new("Frame"); reportGui.AnchorPoint=Vector2.new(0.5,0.5); reportGui.Position=UDim2.new(0.5,0,0.5,0); reportGui.Size=UDim2.fromOffset(420,260); reportGui.BackgroundColor3=C.Panel; reportGui.BackgroundTransparency=0.02; reportGui.Visible=false; reportGui.ZIndex=20; reportGui.Parent=menuFit; corner(reportGui,12); stroke(reportGui,C.Accent,1.4)
+	local reportGui=Instance.new("Frame"); reportGui.AnchorPoint=Vector2.new(0.5,0.5); reportGui.Position=UDim2.new(0.5,0,0.5,0); reportGui.Size=UDim2.fromOffset(430,300); reportGui.BackgroundColor3=C.Panel; reportGui.BackgroundTransparency=0.02; reportGui.Visible=false; reportGui.ZIndex=20; reportGui.Parent=menuFit; corner(reportGui,12); stroke(reportGui,C.Accent,1.4)
 	txt(reportGui,"REPORT A BUG",15,C.Text,F.Bold).Position=UDim2.new(0,16,0,14)
-	local rInput=Instance.new("TextBox"); rInput.Position=UDim2.new(0,16,0,44); rInput.Size=UDim2.new(1,-32,1,-96); rInput.BackgroundColor3=C.Panel2; rInput.BackgroundTransparency=0.15; rInput.FontFace=F.Main; rInput.TextSize=14; rInput.TextColor3=C.Text; rInput.PlaceholderText="Describe the bug you found..."; rInput.PlaceholderColor3=C.Muted; rInput.Text=""; rInput.ClearTextOnFocus=false; rInput.MultiLine=true; rInput.TextWrapped=true; rInput.TextXAlignment=Enum.TextXAlignment.Left; rInput.TextYAlignment=Enum.TextYAlignment.Top; rInput.ZIndex=21; rInput.Parent=reportGui; corner(rInput,8); stroke(rInput,C.Border,1)
+	local rInput=Instance.new("TextBox"); rInput.Position=UDim2.new(0,16,0,44); rInput.Size=UDim2.new(1,-32,0,120); rInput.BackgroundColor3=C.Panel2; rInput.BackgroundTransparency=0.15; rInput.FontFace=F.Main; rInput.TextSize=14; rInput.TextColor3=C.Text; rInput.PlaceholderText="Describe the bug you found..."; rInput.PlaceholderColor3=C.Muted; rInput.Text=""; rInput.ClearTextOnFocus=false; rInput.MultiLine=true; rInput.TextWrapped=true; rInput.TextXAlignment=Enum.TextXAlignment.Left; rInput.TextYAlignment=Enum.TextYAlignment.Top; rInput.ZIndex=21; rInput.Parent=reportGui; corner(rInput,8); stroke(rInput,C.Border,1)
+	local rProof=Instance.new("TextBox"); rProof.Position=UDim2.new(0,16,0,172); rProof.Size=UDim2.new(1,-32,0,34); rProof.BackgroundColor3=C.Panel2; rProof.BackgroundTransparency=0.15; rProof.FontFace=F.Main; rProof.TextSize=13; rProof.TextColor3=C.Text; rProof.PlaceholderText="Proof image link (optional) - imgur/gyazo/medal"; rProof.PlaceholderColor3=C.Muted; rProof.Text=""; rProof.ClearTextOnFocus=false; rProof.TextXAlignment=Enum.TextXAlignment.Left; rProof.ZIndex=21; rProof.Parent=reportGui; corner(rProof,8); stroke(rProof,C.Border,1)
 	local rSubmit=Instance.new("TextButton"); rSubmit.AnchorPoint=Vector2.new(0,1); rSubmit.Position=UDim2.new(0,16,1,-14); rSubmit.Size=UDim2.new(1,-116,0,34); rSubmit.BackgroundColor3=C.Accent; rSubmit.BackgroundTransparency=0.05; rSubmit.FontFace=F.Bold; rSubmit.Text="Submit"; rSubmit.TextSize=14; rSubmit.TextColor3=C.Text; rSubmit.ZIndex=21; rSubmit.Parent=reportGui; corner(rSubmit,8)
 	local rClose=Instance.new("TextButton"); rClose.AnchorPoint=Vector2.new(1,1); rClose.Position=UDim2.new(1,-16,1,-14); rClose.Size=UDim2.fromOffset(84,34); rClose.BackgroundColor3=C.Panel2; rClose.FontFace=F.Bold; rClose.Text="Close"; rClose.TextSize=14; rClose.TextColor3=C.Muted; rClose.ZIndex=21; rClose.Parent=reportGui; corner(rClose,8); stroke(rClose,C.Border,1)
 	local rStatus=txt(reportGui,"",11,C.Muted,F.Code); rStatus.AnchorPoint=Vector2.new(0.5,1); rStatus.Position=UDim2.new(0.5,0,1,-52); rStatus.Size=UDim2.new(1,-32,0,14); rStatus.TextXAlignment=Enum.TextXAlignment.Center; rStatus.ZIndex=21
@@ -243,7 +244,10 @@ task.spawn(function()
 		if not t or #t:gsub("%s","")<3 then rStatus.TextColor3=C.Muted; rStatus.Text="Type a bit more first." return end
 		sending=true; rSubmit.Text="Sending..."
 		task.spawn(function() local ok=false pcall(function()
-			local body=HttpService:JSONEncode({username="Dream Reports",embeds={{title="New Bug Report",color=14689068,fields={{name="Player",value=player.DisplayName.." (@"..player.Name..")  ["..tostring(player.UserId).."]",inline=false},{name="Game",value=GAMEBRAND,inline=true},{name="Tier",value=TIER,inline=true},{name="Report",value=string.sub(t,1,1500),inline=false}}}}})
+			local proof=rProof.Text or ""
+			local emb={title="New Bug Report",color=14689068,fields={{name="Player",value=player.DisplayName.." (@"..player.Name..")  ["..tostring(player.UserId).."]",inline=false},{name="Game",value=GAMEBRAND,inline=true},{name="Tier",value=TIER,inline=true},{name="Report",value=string.sub(t,1,1500),inline=false}}}
+			if #proof:gsub("%s","")>4 then table.insert(emb.fields,{name="Proof",value=string.sub(proof,1,400),inline=false}); if proof:match("^https?://%S+%.png") or proof:match("^https?://%S+%.jpg") or proof:match("^https?://%S+%.jpeg") or proof:match("^https?://%S+%.gif") then emb.image={url=proof} end end
+			local body=HttpService:JSONEncode({username="Dream Reports",embeds={emb}})
 			local res=httpReq({Url=BUG_HOOK,Method="POST",Headers={["Content-Type"]="application/json"},Body=body}); if res and (res.StatusCode==200 or res.StatusCode==204 or res.Success) then ok=true end
 		end) sending=false; rSubmit.Text="Submit"; if ok then rStatus.TextColor3=C.Green; rStatus.Text="Sent - thank you!"; rInput.Text="" else rStatus.TextColor3=C.Accent; rStatus.Text="Send failed (http blocked?)." end end)
 	end)
@@ -10789,17 +10793,41 @@ do
             aAct:Toggle({ Name = "Fly", Callback = function(b) if FlyApi then pcall(function() FlyApi.set(b) end) end end })
             aAct:Button({ Name = "Copy Username", Callback = function() local p=targ(); if not p then toast("Load a user first.") return end pcall(function() setclipboard(p.Name) end) toast("Copied @"..p.Name) end })
             aAct:Button({ Name = "Copy UserId", Callback = function() local p=targ(); if not p then toast("Load a user first.") return end pcall(function() setclipboard(tostring(p.UserId)) end) toast("Copied "..p.UserId) end })
-            local reason=""
+            local reason,proof="",""
             aAct:Textbox({ Name = "Report reason", Placeholder = "what they did", Default = "", Callback = function(v) reason = v or "" end })
+            aAct:Textbox({ Name = "Proof image link", Placeholder = "https://... (imgur/gyazo)", Default = "", Callback = function(v) proof = v or "" end })
             aAct:Button({ Name = "Send Report to Discord", Callback = function()
                 local p=targ(); if not p then toast("Load a user first.") return end
                 if #tostring(reason):gsub("%s","")<2 then toast("Type a reason first.") return end
                 local hook=("https://discord.com/api/webhooks/1527860474488688732/".."ObBmSPJv0jp9nZHbIoJryLOPrsuyQsTr".."tuwVVwdQ0c759WQa6X0g0j-G4n-VCH-CMH7a")
                 local req=(typeof(syn)=="table" and syn.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
                 if not req then toast("No http on this executor.") return end
-                task.spawn(function() local okc=false pcall(function() local body=game:GetService("HttpService"):JSONEncode({username="Dream Mod",embeds={{title="Player Reported",color=14689068,fields={{name="Target",value=p.DisplayName.." (@"..p.Name..")  ["..tostring(p.UserId).."]",inline=false},{name="Profile",value="https://www.roblox.com/users/"..p.UserId.."/profile",inline=false},{name="Reason",value=string.sub(tostring(reason),1,1500),inline=false},{name="Reported by",value=me.Name,inline=false}}}}}) local res=req({Url=hook,Method="POST",Headers={["Content-Type"]="application/json"},Body=body}); if res and (res.StatusCode==200 or res.StatusCode==204 or res.Success) then okc=true end end) toast(okc and ("Reported "..p.Name..".") or "Send failed.") end)
+                task.spawn(function() local okc=false pcall(function() local emb={title="Player Reported",color=14689068,fields={{name="Target",value=p.DisplayName.." (@"..p.Name..")  ["..tostring(p.UserId).."]",inline=false},{name="Profile",value="https://www.roblox.com/users/"..p.UserId.."/profile",inline=false},{name="Reason",value=string.sub(tostring(reason),1,1500),inline=false},{name="Reported by",value=me.Name,inline=false}}}; local pf=tostring(proof); if #pf:gsub("%s","")>4 then table.insert(emb.fields,{name="Proof",value=string.sub(pf,1,400),inline=false}); if pf:match("^https?://%S+%.png") or pf:match("^https?://%S+%.jpg") or pf:match("^https?://%S+%.jpeg") or pf:match("^https?://%S+%.gif") then emb.image={url=pf} end end local body=game:GetService("HttpService"):JSONEncode({username="Dream Mod",embeds={emb}}) local res=req({Url=hook,Method="POST",Headers={["Content-Type"]="application/json"},Body=body}); if res and (res.StatusCode==200 or res.StatusCode==204 or res.Success) then okc=true end end) toast(okc and ("Reported "..p.Name..".") or "Send failed.") end)
             end })
         end
+    end
+
+
+    do
+        local RulesPage = Window:Page({ Name = "Rules", Icon = "settings" })
+        local rSub = RulesPage:SubPage({ Name = "Rules", Columns = 1 })
+        local rSec = rSub:Section({ Name = "Community Rules", Side = 1 })
+        pcall(function() rSec:Label("Break a rule and the action beside it applies. Staff decisions are final; appeal in the Discord.") end)
+        pcall(function() rSec:Label("1.  No harassment, bullying, or targeting other players.   ->   Kick  (repeat = Ban)") end)
+        pcall(function() rSec:Label("2.  No slurs, hate speech, racism, or discrimination.   ->   Instant Ban") end)
+        pcall(function() rSec:Label("3.  No NSFW, gore, or inappropriate content of any kind.   ->   Instant Ban") end)
+        pcall(function() rSec:Label("4.  No threats, doxxing, or sharing anyone's personal info.   ->   Instant Ban") end)
+        pcall(function() rSec:Label("5.  No scamming, fake trades, or fake giveaways.   ->   Ban") end)
+        pcall(function() rSec:Label("6.  Do not impersonate Dream Hub staff or other users.   ->   Kick") end)
+        pcall(function() rSec:Label("7.  No advertising other hubs, servers, scripts, or discords.   ->   Warn -> Kick") end)
+        pcall(function() rSec:Label("8.  No leaking, cracking, or reselling paid Dream Hub scripts.   ->   Ban") end)
+        pcall(function() rSec:Label("9.  No spamming chat, sounds, tags, or requests.   ->   Warn -> Kick") end)
+        pcall(function() rSec:Label("10.  Don't use bugs/glitches to grief or ruin others' games.   ->   Kick") end)
+        pcall(function() rSec:Label("11.  No intentionally lagging, freezing, or crashing servers.   ->   Kick -> Ban") end)
+        pcall(function() rSec:Label("12.  No evading a punishment with alt accounts.   ->   Ban all alts") end)
+        pcall(function() rSec:Label("13.  Don't beg for admin, roles, or free premium.   ->   Warn") end)
+        pcall(function() rSec:Label("14.  Respect staff decisions - appeal calmly in the Discord.   ->   Warn") end)
+        pcall(function() rSec:Label("15.  Don't abuse the report system with false/joke reports.   ->   Warn -> Kick") end)
     end
 
     _G.VX_HUB_READY = true   -- tells the loading screen the GUI is built -> it fades out and reveals the hub
