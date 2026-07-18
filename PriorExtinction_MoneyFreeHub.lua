@@ -381,6 +381,280 @@ task.spawn(function()
 	Players.PlayerAdded:Connect(function(pl) if pl~=me then bind(pl) end end)
 end)
 -- ═══ END AI RULE WATCHER ═══
+-- ═══ DREAM HUB — LIVE CHAT + AI MOD (all script users) ═══
+-- Cross-server chat for everyone running Dream Hub, shared across all supported games. Backed by a tiny
+-- public key-value relay (textdb.online): every client polls it and appends its messages, so ONLY people
+-- running the hub can see or talk in it. Each row shows the player's avatar, username and plan, plus a MOD
+-- badge for staff. The AI mod lives in here too — your message is scanned BEFORE it sends (blocked +
+-- reported if it breaks a rule) and incoming messages are censored on arrival. Staff warns are delivered
+-- through the same relay and pop up as a NOTIFICATION + warning card (not chat).
+-- Honest limit: this can only reach players who are running the hub — it's a relay, not a Roblox feature.
+task.spawn(function()
+	local Players = game:GetService("Players")
+	local HttpService = game:GetService("HttpService")
+	local StarterGui = game:GetService("StarterGui")
+	local UIS = game:GetService("UserInputService")
+	local me = Players.LocalPlayer
+	if not me then return end
+	local GAME = "Prior Extinction"
+	local TIER = tostring(_G.__DreamTier or "FREE")
+	local KEY, WKEY = "dreamhub_lc_v1", "dreamhub_warn_v1"
+	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true }
+	if type(_G.__DreamExtraAdmins)=="table" then for _,n in ipairs(_G.__DreamExtraAdmins) do MODS[string.lower(tostring(n))]=true end end
+	local IS_MOD = (MODS[string.lower(me.Name)] or MODS[string.lower(me.DisplayName or "")]) and true or false
+	local req = (typeof(syn)=="table" and syn.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
+	local HOOK = ("https://discord.com/api/webhooks/1527860474488688732/".."ObBmSPJv0jp9nZHbIoJryLOPrsuyQsTr".."tuwVVwdQ0c759WQa6X0g0j-G4n-VCH-CMH7a")
+
+	-- ---- relay helpers ----
+	local function readKey(k)
+		local ok, r = pcall(function() return game:HttpGet("https://textdb.online/"..k) end)
+		if ok and type(r)=="string" and r~="" then
+			local ok2, d = pcall(function() return HttpService:JSONDecode(r) end)
+			if ok2 and type(d)=="table" then return d end
+		end
+		return nil
+	end
+	local function writeKey(k, tbl)
+		local body
+		pcall(function() body = "key="..k.."&value="..HttpService:UrlEncode(HttpService:JSONEncode(tbl)) end)
+		if not body then return end
+		if req then pcall(function() req({ Url="https://textdb.online/update/", Method="POST", Headers={["Content-Type"]="application/x-www-form-urlencoded"}, Body=body }) end)
+		else pcall(function() game:HttpGet("https://textdb.online/update/?"..body) end) end
+	end
+
+	-- ---- AI mod (same rules as the in-game watcher) ----
+	local HATE = { "nigg","fagg","retard","kike","tranny","chink","spic" }
+	if type(_G.__DreamBadWords)=="table" then for _,w in ipairs(_G.__DreamBadWords) do HATE[#HATE+1]=string.lower(tostring(w)) end end
+	local CATS = {
+		{ "Rule 2 - hate speech / slur", HATE },
+		{ "Rule 7 - advertising", { "discord.gg","join my","my server","buy script","selling script","dm to buy","cheap robux","i sell " } },
+		{ "Rule 5 - scam", { "free robux","robux generator","robux gen","tinyurl.com","bit.ly/","claim your","gift card code","freerobux" } },
+		{ "Rule 1/4 - threats / harassment", { "kys","kill yourself","neck yourself","gonna dox","i'll dox","get cancer","you should die" } },
+	}
+	local function scanText(msg)
+		local low = string.lower(tostring(msg or ""))
+		for _,c in ipairs(CATS) do for _,w in ipairs(c[2]) do if w~="" and low:find(w,1,true) then return c[1] end end end
+		return nil
+	end
+	local function reportMsg(uname, uid, msg, rule, note)
+		if not req then return end
+		task.spawn(function() pcall(function()
+			local body = HttpService:JSONEncode({ username="Dream AI Mod", embeds={{ title="Auto-flag: rule break in LIVE CHAT", color=15158332, fields={
+				{ name="Player", value=tostring(uname).."  ["..tostring(uid).."]", inline=false },
+				{ name="Rule", value=tostring(rule), inline=false },
+				{ name="Message (evidence)", value=string.sub(tostring(msg),1,900), inline=false },
+				{ name="Profile", value="https://www.roblox.com/users/"..tostring(uid).."/profile", inline=false },
+				{ name="Where", value="Live chat ("..GAME..")  -  "..tostring(note or ""), inline=true },
+				{ name="Caught by", value=me.Name, inline=true },
+			} }} })
+			req({ Url=HOOK, Method="POST", Headers={["Content-Type"]="application/json"}, Body=body })
+		end) end)
+	end
+
+	-- ---- UI ----
+	local function esc(s) return tostring(s):gsub("&","&amp;"):gsub("<","&lt;"):gsub(">","&gt;") end
+	local par
+	pcall(function() par = (gethui and gethui()) end)
+	if not par then pcall(function() par = game:GetService("CoreGui") end) end
+	if not par then par = me:WaitForChild("PlayerGui") end
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "DH_LC_"..tostring(math.floor(tick()%97))
+	gui.ResetOnSpawn = false
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	gui.Parent = par
+
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(0,86,0,30); btn.Position = UDim2.new(1,-96,1,-120)
+	btn.BackgroundColor3 = Color3.fromRGB(28,26,40); btn.TextColor3 = Color3.fromRGB(235,232,255)
+	btn.Font = Enum.Font.GothamBold; btn.TextSize = 12; btn.Text = "CHAT"; btn.AutoButtonColor = true; btn.Parent = gui
+	do local c=Instance.new("UICorner") c.CornerRadius=UDim.new(0,8) c.Parent=btn
+	   local st=Instance.new("UIStroke") st.Color=Color3.fromRGB(120,90,255) st.Thickness=1 st.Parent=btn end
+
+	local win = Instance.new("Frame")
+	win.Size = UDim2.new(0,320,0,400); win.Position = UDim2.new(1,-340,1,-540)
+	win.BackgroundColor3 = Color3.fromRGB(22,20,32); win.Visible = false; win.Active = true; win.Parent = gui
+	do local c=Instance.new("UICorner") c.CornerRadius=UDim.new(0,10) c.Parent=win
+	   local st=Instance.new("UIStroke") st.Color=Color3.fromRGB(120,90,255) st.Thickness=1 st.Parent=win end
+
+	local head = Instance.new("TextLabel")
+	head.Size = UDim2.new(1,-34,0,32); head.BackgroundTransparency = 1
+	head.Font = Enum.Font.GothamBold; head.TextSize = 13; head.TextXAlignment = Enum.TextXAlignment.Left
+	head.Text = "   DREAM HUB  -  LIVE CHAT"; head.TextColor3 = Color3.fromRGB(235,232,255); head.Parent = win
+	local hide = Instance.new("TextButton")
+	hide.Size = UDim2.new(0,26,0,26); hide.Position = UDim2.new(1,-30,0,3)
+	hide.BackgroundTransparency = 1; hide.Font = Enum.Font.GothamBold; hide.TextSize = 16
+	hide.Text = "-"; hide.TextColor3 = Color3.fromRGB(200,196,220); hide.Parent = win
+
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Size = UDim2.new(1,-12,1,-78); scroll.Position = UDim2.new(0,6,0,34)
+	scroll.BackgroundTransparency = 1; scroll.BorderSizePixel = 0; scroll.ScrollBarThickness = 4
+	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y; scroll.CanvasSize = UDim2.new(0,0,0,0); scroll.Parent = win
+	local lay = Instance.new("UIListLayout") lay.Padding = UDim.new(0,6) lay.SortOrder = Enum.SortOrder.LayoutOrder lay.Parent = scroll
+
+	local box = Instance.new("TextBox")
+	box.Size = UDim2.new(1,-76,0,32); box.Position = UDim2.new(0,6,1,-38)
+	box.BackgroundColor3 = Color3.fromRGB(32,30,46); box.TextColor3 = Color3.fromRGB(235,232,255)
+	box.PlaceholderText = "Say something..."; box.PlaceholderColor3 = Color3.fromRGB(120,116,140)
+	box.Font = Enum.Font.Gotham; box.TextSize = 12; box.Text = ""; box.ClearTextOnFocus = false
+	box.TextXAlignment = Enum.TextXAlignment.Left; box.Parent = win
+	do local c=Instance.new("UICorner") c.CornerRadius=UDim.new(0,8) c.Parent=box
+	   local pd=Instance.new("UIPadding") pd.PaddingLeft=UDim.new(0,8) pd.PaddingRight=UDim.new(0,8) pd.Parent=box end
+	local send = Instance.new("TextButton")
+	send.Size = UDim2.new(0,58,0,32); send.Position = UDim2.new(1,-64,1,-38)
+	send.BackgroundColor3 = Color3.fromRGB(120,90,255); send.TextColor3 = Color3.fromRGB(255,255,255)
+	send.Font = Enum.Font.GothamBold; send.TextSize = 12; send.Text = "SEND"; send.Parent = win
+	do local c=Instance.new("UICorner") c.CornerRadius=UDim.new(0,8) c.Parent=send end
+
+	-- drag by header
+	do
+		local dragging, dragStart, startPos
+		head.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true dragStart=i.Position startPos=win.Position end end)
+		UIS.InputChanged:Connect(function(i) if dragging and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then local d=i.Position-dragStart win.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+d.X,startPos.Y.Scale,startPos.Y.Offset+d.Y) end end)
+		UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=false end end)
+	end
+
+	local function notifyLocal(t, m)
+		pcall(function() StarterGui:SetCore("SendNotification", { Title=t, Text=m, Duration=6 }) end)
+	end
+
+	-- ---- render ----
+	local cache = {}
+	local function tierChip(m)
+		if m.md then return '<font color="#ff5c5c">[MOD]</font>' end
+		local t = string.upper(tostring(m.t or "FREE"))
+		if t == "FREE" then return '<font color="#9a96b0">[FREE]</font>' end
+		return '<font color="#ffc85a">['..esc(t)..']</font>'
+	end
+	local function render()
+		for _,c in ipairs(scroll:GetChildren()) do if c:IsA("Frame") then c:Destroy() end end
+		for i,m in ipairs(cache) do
+			if type(m)=="table" then
+				local row = Instance.new("Frame")
+				row.BackgroundTransparency = 1; row.Size = UDim2.new(1,-6,0,36)
+				row.AutomaticSize = Enum.AutomaticSize.Y; row.LayoutOrder = i; row.Parent = scroll
+				local av = Instance.new("ImageLabel")
+				av.Size = UDim2.new(0,26,0,26); av.Position = UDim2.new(0,0,0,2)
+				av.BackgroundColor3 = Color3.fromRGB(40,38,56); av.Image = "rbxthumb://type=AvatarHeadShot&id="..tostring(tonumber(m.id) or 1).."&w=48&h=48"
+				av.Parent = row
+				do local c2=Instance.new("UICorner") c2.CornerRadius=UDim.new(1,0) c2.Parent=av end
+				local nm = Instance.new("TextLabel")
+				nm.Size = UDim2.new(1,-34,0,14); nm.Position = UDim2.new(0,32,0,0)
+				nm.BackgroundTransparency = 1; nm.RichText = true; nm.Font = Enum.Font.GothamBold; nm.TextSize = 11
+				nm.TextXAlignment = Enum.TextXAlignment.Left; nm.TextColor3 = Color3.fromRGB(235,232,255)
+				nm.Text = esc(m.u or "?").."  "..tierChip(m)..'  <font color="#6f6a88">'..esc(m.g or "")..'</font>'
+				nm.Parent = row
+				local tx = Instance.new("TextLabel")
+				tx.Size = UDim2.new(1,-34,0,0); tx.Position = UDim2.new(0,32,0,15)
+				tx.AutomaticSize = Enum.AutomaticSize.Y; tx.BackgroundTransparency = 1
+				tx.Font = Enum.Font.Gotham; tx.TextSize = 12; tx.TextWrapped = true
+				tx.TextXAlignment = Enum.TextXAlignment.Left
+				local rule = scanText(m.m)
+				if rule then
+					tx.Text = "[removed by AI mod]"; tx.TextColor3 = Color3.fromRGB(255,110,110)
+				else
+					tx.Text = tostring(m.m or ""); tx.TextColor3 = Color3.fromRGB(208,204,226)
+				end
+				tx.Parent = row
+			end
+		end
+		task.defer(function() pcall(function() scroll.CanvasPosition = Vector2.new(0, math.max(0, lay.AbsoluteContentSize.Y)) end) end)
+	end
+
+	btn.MouseButton1Click:Connect(function() win.Visible = not win.Visible; btn.Text = "CHAT"; if win.Visible then render() end end)
+	hide.MouseButton1Click:Connect(function() win.Visible = false end)
+
+	-- ---- send ----
+	local lastSend = 0
+	local function doSend()
+		local txt = tostring(box.Text or ""):gsub("^%s+",""):gsub("%s+$","")
+		if txt == "" then return end
+		if #txt > 120 then txt = string.sub(txt,1,120) end
+		if tick()-lastSend < 2 then notifyLocal("Live Chat","Slow down a little.") return end
+		lastSend = tick()
+		local rule = scanText(txt)
+		if rule then
+			box.Text = ""
+			notifyLocal("AI Mod","Message blocked ("..rule..") and reported to staff.")
+			reportMsg(me.Name, me.UserId, txt, rule, "blocked before send")
+			return
+		end
+		box.Text = ""
+		local c = readKey(KEY) or {}
+		c[#c+1] = { u=me.Name, id=me.UserId, t=TIER, g=GAME, m=txt, ts=os.time(), md=IS_MOD and 1 or nil }
+		while #c > 20 do table.remove(c,1) end
+		cache = c; writeKey(KEY, c); render()
+	end
+	send.MouseButton1Click:Connect(doSend)
+	box.FocusLost:Connect(function(enter) if enter then doSend() end end)
+
+	-- ---- warn delivery (relay -> popup notification, NOT chat) ----
+	_G.__DreamWarnSend = function(target, msg)
+		local w = readKey(WKEY) or {}
+		w[#w+1] = { to=tostring(target), m=tostring(msg), by=me.Name, ts=os.time() }
+		while #w > 10 do table.remove(w,1) end
+		writeKey(WKEY, w)
+		return true
+	end
+	local boot = os.time()
+	local shownW = {}
+	local function handleWarn(x)
+		if type(x) ~= "table" then return end
+		local id = tostring(x.ts or 0)..string.lower(tostring(x.to or ""))
+		if shownW[id] then return end
+		shownW[id] = true
+		if string.lower(tostring(x.to or "")) ~= string.lower(me.Name) then return end
+		if (tonumber(x.ts) or 0) < boot - 60 then return end  -- ignore warns from before this session
+		notifyLocal("ADMIN WARNING", tostring(x.m))
+		pcall(function()
+			local card = Instance.new("Frame")
+			card.Size = UDim2.new(0,380,0,110); card.Position = UDim2.new(0.5,-190,0.22,0)
+			card.BackgroundColor3 = Color3.fromRGB(30,16,18); card.Parent = gui
+			local c=Instance.new("UICorner") c.CornerRadius=UDim.new(0,12) c.Parent=card
+			local st=Instance.new("UIStroke") st.Color=Color3.fromRGB(255,80,80) st.Thickness=2 st.Parent=card
+			local t1=Instance.new("TextLabel") t1.Size=UDim2.new(1,-20,0,30) t1.Position=UDim2.new(0,10,0,10)
+			t1.BackgroundTransparency=1 t1.Font=Enum.Font.GothamBold t1.TextSize=16
+			t1.TextColor3=Color3.fromRGB(255,110,110) t1.Text="WARNING FROM STAFF ("..tostring(x.by or "?")..")" t1.Parent=card
+			local t2=Instance.new("TextLabel") t2.Size=UDim2.new(1,-20,0,56) t2.Position=UDim2.new(0,10,0,44)
+			t2.BackgroundTransparency=1 t2.Font=Enum.Font.Gotham t2.TextSize=13 t2.TextWrapped=true
+			t2.TextColor3=Color3.fromRGB(235,220,222) t2.Text=tostring(x.m) t2.Parent=card
+			task.delay(7, function() pcall(function() card:Destroy() end) end)
+		end)
+	end
+
+	-- ---- poll loop ----
+	local lastJson = ""
+	local reported = {}
+	while true do
+		task.wait(4)
+		if not gui.Parent then break end
+		local w = readKey(WKEY)
+		if w then for _,x in ipairs(w) do handleWarn(x) end end
+		local c = readKey(KEY)
+		if c then
+			local j = ""
+			pcall(function() j = HttpService:JSONEncode(c) end)
+			if j ~= lastJson then
+				lastJson = j
+				cache = c
+				if win.Visible then render() else btn.Text = "CHAT  •" end
+				-- mods auto-report NEW flagged messages that slipped into the feed
+				if IS_MOD then
+					for _,m in ipairs(c) do
+						if type(m)=="table" and (tonumber(m.ts) or 0) >= boot then
+							local rid = tostring(m.ts or 0)..tostring(m.u or "")
+							if not reported[rid] then
+								local rule = scanText(m.m)
+								if rule then reported[rid]=true reportMsg(m.u, m.id, m.m, rule, "seen in feed") end
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+end)
+-- ═══ END LIVE CHAT ═══
+
 
 
 
@@ -2385,14 +2659,15 @@ if __gg.PE_ADMIN and Pages["Admin"] then local p=Pages["Admin"]
 	mkLabel(s,"Whitelisted for @"..LP.Name..".")
 	local dd = mkDropdown(s,"Load User", function() return adminNames() end, function() return sel or "" end, function(o) sel=(type(o)=="table" and o[1]) or o end)
 	mkBtn(s,"Refresh Players", function() if dd and dd.refresh then dd.refresh() end end)
-	mkTextbox(s,"Add admins (comma-sep usernames — saved, reload to apply)","AdminExtra",1.5,false)
 
 	local _,a=mkSec(p,"Actions",2)
 	mkTextbox(a,"Warn text (type, then press Send Warn)","AdminWarnMsg",1,false)
 	mkBtn(a,"Send Warn", function()
 		local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end
-		local ok=sendChat("[ADMIN → @"..pl.Name.."] "..tostring(CFG.AdminWarnMsg~="" and CFG.AdminWarnMsg or "Follow the rules or you'll be removed."))
-		notify("Admin", ok and ("Warned "..pl.Name.." in chat.") or "This game blocks chat sends.")
+		local msg=tostring(CFG.AdminWarnMsg~="" and CFG.AdminWarnMsg or "Follow the rules or you'll be removed.")
+		-- delivered through the Dream Hub relay: pops up as a NOTIFICATION + warning card on their screen (no chat)
+		if _G.__DreamWarnSend then _G.__DreamWarnSend(pl.Name, msg); notify("Admin","Warning sent to "..pl.Name.." (popup on their screen if they run Dream Hub).")
+		else notify("Admin","Warn relay not ready yet — try again in a few seconds.") end
 	end)
 	mkBtn(a,"Teleport To User", function()
 		local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end
