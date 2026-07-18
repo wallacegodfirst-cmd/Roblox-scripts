@@ -195,7 +195,7 @@ task.spawn(function()
 	local function hairline(parent, y, x0, x1, z)
 		local s=Instance.new("Frame"); s.BorderSizePixel=0; s.BackgroundColor3=Color3.fromRGB(255,255,255); s.BackgroundTransparency=0.93; s.Position=UDim2.new(0,x0,0,y); s.Size=UDim2.new(0,x1-x0,0,1); s.ZIndex=z or 5; s.Parent=parent
 		-- fade the ends for a soft separator
-		gradient(s, ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(255,255,255))}), 0).Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,1),NumberSequenceKeypoint.new(0.15,0),NumberSequenceKeypoint.new(0.85,0),NumberSequenceKeypoint.new(1,1)})
+		gradient(s, ColorSequence.new(Color3.fromRGB(255,255,255)), 0).Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,1),NumberSequenceKeypoint.new(0.15,0),NumberSequenceKeypoint.new(0.85,0),NumberSequenceKeypoint.new(1,1)})
 		return s
 	end
 	local function statusBadge(parent, kind, x, y)
@@ -259,7 +259,7 @@ task.spawn(function()
 
 	-- faint vertical rhythm line between profile and update log
 	local vline=Instance.new("Frame"); vline.Position=UDim2.new(0,340,0,150); vline.Size=UDim2.fromOffset(1,290); vline.BackgroundColor3=Color3.fromRGB(255,255,255); vline.BackgroundTransparency=0.94; vline.BorderSizePixel=0; vline.ZIndex=5; vline.Parent=content
-	gradient(vline, ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(255,255,255))}), 90).Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,1),NumberSequenceKeypoint.new(0.2,0),NumberSequenceKeypoint.new(0.8,0),NumberSequenceKeypoint.new(1,1)})
+	gradient(vline, ColorSequence.new(Color3.fromRGB(255,255,255)), 90).Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,1),NumberSequenceKeypoint.new(0.2,0),NumberSequenceKeypoint.new(0.8,0),NumberSequenceKeypoint.new(1,1)})
 
 	-- ══════════ RIGHT — UPDATE LOG (the centrepiece) ══════════
 	local RX=372
