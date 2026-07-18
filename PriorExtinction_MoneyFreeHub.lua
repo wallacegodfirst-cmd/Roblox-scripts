@@ -317,6 +317,71 @@ task.spawn(function()
 	end)
 end)
 -- ═══ END MOD OVERHEAD TITLE ═══
+-- ═══ DREAM HUB — AI RULE WATCHER (admin clients only) ═══
+-- Watches public chat locally on a moderator's client. When a message trips a rule, it auto-reports to the admin
+-- Discord with the player + the EXACT message as evidence. (Roblox scripts can't capture/upload a real image
+-- screenshot, so the verbatim chat line is the proof — cleaner than a screenshot anyway.) Per-player cooldown so
+-- it never spams. Only runs for whitelisted admins, so no duplicate reports from normal users.
+-- Add your own flagged words:  _G.__DreamBadWords = {"word1","word2"}   before loading.
+task.spawn(function()
+	local Players = game:GetService("Players")
+	local HttpService = game:GetService("HttpService")
+	local TextChatService = game:GetService("TextChatService")
+	local me = Players.LocalPlayer
+	if not me then return end
+	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true }
+	if type(_G.__DreamExtraAdmins)=="table" then for _,n in ipairs(_G.__DreamExtraAdmins) do MODS[string.lower(tostring(n))]=true end end
+	if not (MODS[string.lower(me.Name)] or MODS[string.lower(me.DisplayName or "")]) then return end
+	local HOOK = ("https://discord.com/api/webhooks/1527860474488688732/".."ObBmSPJv0jp9nZHbIoJryLOPrsuyQsTr".."tuwVVwdQ0c759WQa6X0g0j-G4n-VCH-CMH7a")
+
+	local HATE = { "nigg","fagg","retard","kike","tranny","chink","spic" }
+	if type(_G.__DreamBadWords)=="table" then for _,w in ipairs(_G.__DreamBadWords) do HATE[#HATE+1]=string.lower(tostring(w)) end end
+	local CATS = {
+		{ "Rule 2 - hate speech / slur", HATE },
+		{ "Rule 7 - advertising", { "discord.gg","join my","my server","buy script","selling script","dm to buy","cheap robux","i sell " } },
+		{ "Rule 5 - scam", { "free robux","robux generator","robux gen","tinyurl.com","bit.ly/","claim your","gift card code","rbx.","freerobux" } },
+		{ "Rule 1/4 - threats / harassment", { "kys","kill yourself","neck yourself","gonna dox","i'll dox","get cancer","you should die" } },
+	}
+	local cooldown = {}
+	local req = (typeof(syn)=="table" and syn.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
+	local function report(pl, msg, rule)
+		local uid = (pl and pl.UserId) or 0
+		if cooldown[uid] and tick()-cooldown[uid] < 8 then return end
+		cooldown[uid] = tick()
+		if not req then return end
+		task.spawn(function() pcall(function()
+			local body = HttpService:JSONEncode({ username="Dream AI Mod", embeds={{ title="Auto-flag: possible rule break in chat", color=15158332, fields={
+				{ name="Player", value=(pl and (pl.DisplayName.." (@"..pl.Name..")  ["..tostring(pl.UserId).."]")) or "?", inline=false },
+				{ name="Rule", value=rule, inline=false },
+				{ name="Message (evidence)", value=string.sub(tostring(msg),1,900), inline=false },
+				{ name="Profile", value=(pl and ("https://www.roblox.com/users/"..tostring(pl.UserId).."/profile")) or "-", inline=false },
+				{ name="Game", value=tostring(_G.__DreamGameName or "Prior Extinction"), inline=true },
+				{ name="Caught by", value=me.Name, inline=true },
+			} }} })
+			req({ Url=HOOK, Method="POST", Headers={["Content-Type"]="application/json"}, Body=body })
+		end) end)
+	end
+	local function scan(pl, msg)
+		if not msg or msg=="" or pl==me then return end
+		local low = string.lower(msg)
+		for _,c in ipairs(CATS) do for _,w in ipairs(c[2]) do if w~="" and low:find(w,1,true) then report(pl, msg, c[1]); return end end end
+	end
+	-- modern TextChatService
+	pcall(function()
+		local function hook(ch) if ch:IsA("TextChannel") then ch.MessageReceived:Connect(function(m)
+			local pl; pcall(function() local src=m.TextSource; if src then pl=Players:GetPlayerByUserId(src.UserId) end end)
+			scan(pl, m.Text)
+		end) end end
+		for _,d in ipairs(TextChatService:GetDescendants()) do hook(d) end
+		TextChatService.DescendantAdded:Connect(hook)
+	end)
+	-- legacy Chatted (works when the game still uses the old chat)
+	local function bind(pl) pcall(function() pl.Chatted:Connect(function(msg) scan(pl, msg) end) end) end
+	for _,pl in ipairs(Players:GetPlayers()) do if pl~=me then bind(pl) end end
+	Players.PlayerAdded:Connect(function(pl) if pl~=me then bind(pl) end end)
+end)
+-- ═══ END AI RULE WATCHER ═══
+
 
 
 pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", {Title="Dream Hub", Text="Prior Extinction loading... press RightShift for the menu", Duration=6}) end)
@@ -2299,7 +2364,19 @@ if __gg.PE_ADMIN and Pages["Admin"] then local p=Pages["Admin"]
 	local function adminStopSpectate() local cam=workspace.CurrentCamera; local mc=LP.Character; local h=mc and mc:FindFirstChildOfClass("Humanoid"); if cam then pcall(function() cam.CameraSubject=h end) end if __gg.MH_Target then __gg.MH_Target.viewing=false end end
 	local function sendChat(txt)
 		local ok=false
-		pcall(function() local TCS=game:GetService("TextChatService"); local tc=TCS:FindFirstChild("TextChannels"); local gen=tc and (tc:FindFirstChild("RBXGeneral") or tc:FindFirstChildWhichIsA("TextChannel")); if gen then gen:SendAsync(txt); ok=true end end)
+		-- modern TextChatService: try EVERY TextChannel we can find (RBXGeneral first), not just one
+		pcall(function()
+			local TCS=game:GetService("TextChatService")
+			local order={}
+			local tc=TCS:FindFirstChild("TextChannels")
+			if tc then local g=tc:FindFirstChild("RBXGeneral"); if g then order[#order+1]=g end end
+			for _,d in ipairs(TCS:GetDescendants()) do if d:IsA("TextChannel") and d~=order[1] then order[#order+1]=d end end
+			for _,ch in ipairs(order) do
+				local sent=pcall(function() ch:SendAsync(txt) end)
+				if sent then ok=true break end
+			end
+		end)
+		-- legacy chat fallback
 		if not ok then pcall(function() local ev=RS:FindFirstChild("DefaultChatSystemChatEvents"); local say=ev and ev:FindFirstChild("SayMessageRequest"); if say then say:FireServer(txt,"All"); ok=true end end) end
 		return ok
 	end
