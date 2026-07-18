@@ -10766,8 +10766,9 @@ do
         local me = Players.LocalPlayer
         if ADM[string.lower(me.Name)] or ADM[string.lower(me.DisplayName or "")] then
             local sel
-            local function names() local t={} for _,pl in ipairs(Players:GetPlayers()) do if pl~=me then t[#t+1]=pl.Name end end return t end
-            local function targ() return sel and Players:FindFirstChild(sel) or nil end
+            local function names() local t={ me.Name.."  (you)" } for _,pl in ipairs(Players:GetPlayers()) do if pl~=me then t[#t+1]=pl.Name end end return t end
+            local function targ() if not sel then return nil end local nm=tostring(sel):gsub("%s+%(you%)$",""); return Players:FindFirstChild(nm) end
+            local function spectate(pl) local cam=workspace.CurrentCamera; local c=pl.Character; local h=c and c:FindFirstChildOfClass("Humanoid"); if cam and h then cam.CameraSubject=h; return true end local pt=c and c:FindFirstChildWhichIsA("BasePart"); if cam and pt then cam.CameraSubject=pt; return true end return false end
             local function toast(m) if VX_NOTIFY then VX_NOTIFY(m) end end
             local function sendChat(txt) local ok=false pcall(function() local TCS=game:GetService("TextChatService"); local tc=TCS:FindFirstChild("TextChannels"); local gen=tc and (tc:FindFirstChild("RBXGeneral") or tc:FindFirstChildWhichIsA("TextChannel")); if gen then gen:SendAsync(txt); ok=true end end) return ok end
             local warnMsg="Follow the rules or you'll be removed."
@@ -10783,6 +10784,8 @@ do
                 local okg=false; pcall(function() local mc=me.Character; local mr=mc and (mc:FindFirstChild("HumanoidRootPart") or mc.PrimaryPart or mc:FindFirstChildWhichIsA("BasePart")); local tc=p.Character; local tr=tc and (tc:FindFirstChild("HumanoidRootPart") or tc.PrimaryPart or tc:FindFirstChildWhichIsA("BasePart")); if mr and tr then mr.CFrame=tr.CFrame*CFrame.new(0,0,-4); okg=true end end)
                 if not okg and TargetApi then pcall(function() TargetApi.setName(p.Name) end); pcall(function() TargetApi.tpTo() end) end
                 toast("Teleporting to "..p.Name) end })
+            aAct:Button({ Name = "View Player", Callback = function() local p=targ(); if not p then toast("Load a user first.") return end toast(spectate(p) and ("Viewing "..p.Name) or "They aren't loaded in.") end })
+            aAct:Button({ Name = "Stop Viewing", Callback = function() local cam=workspace.CurrentCamera; local mc=me.Character; local h=mc and mc:FindFirstChildOfClass("Humanoid"); if cam then pcall(function() cam.CameraSubject=h end) end toast("Camera back on you.") end })
             aAct:Toggle({ Name = "Fly", Callback = function(b) if FlyApi then pcall(function() FlyApi.set(b) end) end end })
             aAct:Button({ Name = "Copy Username", Callback = function() local p=targ(); if not p then toast("Load a user first.") return end pcall(function() setclipboard(p.Name) end) toast("Copied @"..p.Name) end })
             aAct:Button({ Name = "Copy UserId", Callback = function() local p=targ(); if not p then toast("Load a user first.") return end pcall(function() setclipboard(tostring(p.UserId)) end) toast("Copied "..p.UserId) end })

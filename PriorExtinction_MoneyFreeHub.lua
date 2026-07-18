@@ -2289,8 +2289,10 @@ end
 -- on your side / your Discord).
 if __gg.PE_ADMIN and Pages["Admin"] then local p=Pages["Admin"]
 	local sel
-	local function adminNames() local t={} for _,pl in ipairs(Players:GetPlayers()) do if pl~=LP then t[#t+1]=pl.Name end end return t end
-	local function adminTarget() if not sel or sel=="" then return nil end return Players:FindFirstChild(sel) end
+	local function adminNames() local t={ LP.Name.."  (you)" } for _,pl in ipairs(Players:GetPlayers()) do if pl~=LP then t[#t+1]=pl.Name end end return t end
+	local function adminTarget() if not sel or sel=="" then return nil end local nm=sel:gsub("%s+%(you%)$",""); return Players:FindFirstChild(nm) end
+	local function adminSpectate(pl) local cam=workspace.CurrentCamera; local c=pl.Character; local h=c and c:FindFirstChildOfClass("Humanoid"); if cam and h then cam.CameraSubject=h; return true end local pt=c and c:FindFirstChildWhichIsA("BasePart"); if cam and pt then cam.CameraSubject=pt; return true end return false end
+	local function adminStopSpectate() local cam=workspace.CurrentCamera; local mc=LP.Character; local h=mc and mc:FindFirstChildOfClass("Humanoid"); if cam then pcall(function() cam.CameraSubject=h end) end if __gg.MH_Target then __gg.MH_Target.viewing=false end end
 	local function sendChat(txt)
 		local ok=false
 		pcall(function() local TCS=game:GetService("TextChatService"); local tc=TCS:FindFirstChild("TextChannels"); local gen=tc and (tc:FindFirstChild("RBXGeneral") or tc:FindFirstChildWhichIsA("TextChannel")); if gen then gen:SendAsync(txt); ok=true end end)
@@ -2326,6 +2328,14 @@ if __gg.PE_ADMIN and Pages["Admin"] then local p=Pages["Admin"]
 		if __gg.MH_targetTeleport and __gg.MH_targetTeleport() then notify("Admin","Teleported to "..pl.Name..".")
 		else notify("Admin","Can't reach them — they aren't loaded in your client.") end
 	end)
+	mkBtn(a,"View Player", function()
+		local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end
+		-- generic spectate; also flag PE's follow-cam if it's their dino
+		if pl~=LP then __gg.MH_Target=__gg.MH_Target or {}; __gg.MH_Target.plr=pl; __gg.MH_Target.model=nil; __gg.MH_Target.viewing=true end
+		if adminSpectate(pl) then notify("Admin","Viewing "..pl.Name..".")
+		else notify("Admin","Can't view — they aren't loaded in your client.") end
+	end)
+	mkBtn(a,"Stop Viewing", function() adminStopSpectate(); notify("Admin","Camera back on you.") end)
 	mkToggle(a,"Fly","Fly")
 
 	local _,id=mkSec(p,"Their Roblox Identity (to ban on your side)",3)

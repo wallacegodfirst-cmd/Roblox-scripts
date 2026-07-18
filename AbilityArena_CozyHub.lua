@@ -3787,8 +3787,9 @@ do
     if ADM[string.lower(LP.Name)] or ADM[string.lower(LP.DisplayName or "")] then
         local AdminTab = Window:CreateTab("Admin","shield")
         local sel
-        local function names() local t={} for _,pl in ipairs(Players:GetPlayers()) do if pl~=LP then t[#t+1]=pl.Name end end return t end
-        local function targ() return sel and Players:FindFirstChild(sel) or nil end
+        local function names() local t={ LP.Name.."  (you)" } for _,pl in ipairs(Players:GetPlayers()) do if pl~=LP then t[#t+1]=pl.Name end end return t end
+        local function targ() if not sel then return nil end local nm=tostring(sel):gsub("%s+%(you%)$",""); return Players:FindFirstChild(nm) end
+        local function spectate(pl) local cam=workspace.CurrentCamera; local c=pl.Character; local h=c and c:FindFirstChildOfClass("Humanoid"); if cam and h then cam.CameraSubject=h; return true end local pt=c and c:FindFirstChildWhichIsA("BasePart"); if cam and pt then cam.CameraSubject=pt; return true end return false end
         local function toast(m) pcall(function() game:GetService("StarterGui"):SetCore("SendNotification",{Title="Admin",Text=m,Duration=4}) end) end
         local function sendChat(txt) local ok=false pcall(function() local TCS=game:GetService("TextChatService"); local tc=TCS:FindFirstChild("TextChannels"); local gen=tc and (tc:FindFirstChild("RBXGeneral") or tc:FindFirstChildWhichIsA("TextChannel")); if gen then gen:SendAsync(txt); ok=true end end) return ok end
         local warnMsg="Follow the rules or you'll be removed."
@@ -3802,6 +3803,8 @@ do
             local okg=false; pcall(function() local mc=LP.Character; local mr=mc and (mc:FindFirstChild("HumanoidRootPart") or mc.PrimaryPart or mc:FindFirstChildWhichIsA("BasePart")); local tc=p.Character; local tr=tc and (tc:FindFirstChild("HumanoidRootPart") or tc.PrimaryPart or tc:FindFirstChildWhichIsA("BasePart")); if mr and tr then mr.CFrame=tr.CFrame*CFrame.new(0,0,-4); okg=true end end)
             if not okg then pcall(function() tpToPlayer(p.Name, false) end) end
             toast("Teleported to "..p.Name) end})
+        AdminTab:CreateButton({Name="View Player", Callback=function() local p=targ(); if not p then toast("Load a user first.") return end toast(spectate(p) and ("Viewing "..p.Name) or "They aren't loaded in.") end})
+        AdminTab:CreateButton({Name="Stop Viewing", Callback=function() local cam=workspace.CurrentCamera; local mc=LP.Character; local h=mc and mc:FindFirstChildOfClass("Humanoid"); if cam then pcall(function() cam.CameraSubject=h end) end toast("Camera back on you.") end})
         AdminTab:CreateToggle({Name="Fly", CurrentValue=false, Callback=function(v) S.Fly=v end})
         AdminTab:CreateSection("Their Roblox Identity")
         AdminTab:CreateButton({Name="Copy Username", Callback=function() local p=targ(); if not p then toast("Load a user first.") return end pcall(function() setclipboard(p.Name) end) toast("Copied @"..p.Name) end})
