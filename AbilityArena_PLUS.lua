@@ -3,6 +3,7 @@
       This is a thin loader: it flips the PLUS flag, then loads the shared Ability Arena hub.
       Load:  loadstring(game:HttpGet("<raw url to this file>"))()  ]]
 _G.AA_PLUS = true
+_G.__DreamReportWebhook = _G.__DreamReportWebhook or ""   -- PASTE YOUR DISCORD WEBHOOK URL here to receive bug reports live
 
 local URLS = {
     "https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/claude/improve-ai-system-tUhhn/AbilityArena_CozyHub.lua",

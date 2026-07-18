@@ -6,7 +6,8 @@
       proxy, and tells you in plain words what happened.  ]]
 
 _G.PE_PLUS = true   -- tier flags: the hub reads these BEFORE loading. Premium counts as Plus,
-_G.PE_PREM = true   -- so Premium gets every Plus feature PLUS the Premium-only ones.
+_G.PE_PREM = true
+_G.__DreamReportWebhook = _G.__DreamReportWebhook or ""   -- PASTE YOUR DISCORD WEBHOOK URL here to receive bug reports live   -- so Premium gets every Plus feature PLUS the Premium-only ones.
 
 -- TWO mirrors of the same file: if an executor proxy has poisoned its cache for one host,
 -- the other host path fetches clean.
