@@ -237,24 +237,23 @@ task.spawn(function()
 	end
 	local function setStatus(txt) pcall(function() statusLabel.Text=txt end) end
 
-	-- ===== STAGE 1: black SPOTS bloom until fully black =====
+	-- ===== STAGE 1: black SPOTS bloom until fully black (light — no freeze) =====
 	local function spotsBlackout()
-		local dots={}
-		for i=1,46 do
+		-- fewer, bigger dots = the same look with a fraction of the instances (46 -> 20), so no stutter/freeze
+		for i=1,20 do
 			local d=Instance.new("Frame"); d.AnchorPoint=Vector2.new(0.5,0.5); d.Position=UDim2.fromScale(rand(0.03,0.97), rand(0.03,0.97))
 			d.Size=UDim2.fromOffset(0,0); d.BackgroundColor3=C.Black; d.BorderSizePixel=0; d.ZIndex=10; d.Parent=spotLayer
-			corner(d,999); dots[i]=d
-		end
-		for i,d in ipairs(dots) do
+			corner(d,999)
 			task.spawn(function()
-				task.wait((i-1)*0.012 + rand(0,0.08))
-				local sz=rand(220,420)
-				play(d, TI(rand(0.45,0.75), Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size=UDim2.fromOffset(sz,sz)})
+				task.wait((i-1)*0.02 + rand(0,0.05))
+				local sz=rand(360,560)
+				play(d, TI(rand(0.4,0.6), Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size=UDim2.fromOffset(sz,sz)})
 			end)
+			if i%5==0 then RunService.Heartbeat:Wait() end   -- yield while creating so the frame never hitches
 		end
-		task.wait(0.7)
-		play(backdrop, TI(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency=0})  -- guarantee full black
-		task.wait(0.36)
+		task.wait(0.55)
+		play(backdrop, TI(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency=0})  -- guarantee full black
+		task.wait(0.3)
 		pcall(function() spotLayer:Destroy() end)
 	end
 
@@ -263,7 +262,7 @@ task.spawn(function()
 		-- fade menu in behind, then peel a grid of black tiles off
 		play(blurEffect, TI(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size=18})
 		play(menuCanvas, TI(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {GroupTransparency=0})
-		local COLS,ROWS=8,5
+		local COLS,ROWS=6,4
 		local tiles={}
 		for r=0,ROWS-1 do for c=0,COLS-1 do
 			local t=Instance.new("Frame"); t.AnchorPoint=Vector2.new(0,0); t.Position=UDim2.fromScale(c/COLS, r/ROWS); t.Size=UDim2.fromScale(1/COLS+0.004, 1/ROWS+0.004)
@@ -2296,8 +2295,9 @@ if Pages["Target"] then local p=Pages["Target"]
 	end
 end
 
--- ═══ ADMIN TAB (whitelisted user only) ═══ Honest about the client limit: you can't force-freeze/kick OTHER
--- players from a client script (that's server-authoritative). These are the actions that DO work through the game.
+-- ═══ ADMIN TAB (whitelisted user only) ═══ Trimmed set: warn, teleport, fly, and copy the target's Roblox
+-- identity (Roblox has NO way to read a Discord username — use their Roblox name / UserId / profile to ban them
+-- on your side / your Discord).
 if __gg.PE_ADMIN and Pages["Admin"] then local p=Pages["Admin"]
 	local sel
 	local function adminNames() local t={} for _,pl in ipairs(Players:GetPlayers()) do if pl~=LP then t[#t+1]=pl.Name end end return t end
@@ -2310,50 +2310,43 @@ if __gg.PE_ADMIN and Pages["Admin"] then local p=Pages["Admin"]
 	end
 
 	local _,s=mkSec(p,"Admin — Load User",1)
-	mkLabel(s,"Whitelisted for @"..LP.Name..". Client-side commands act THROUGH the game — freezing/kicking OTHER players isn't possible from an exploit.")
+	mkLabel(s,"Whitelisted for @"..LP.Name..".")
 	local dd = mkDropdown(s,"Load User", function() return adminNames() end, function() return sel or "" end, function(o) sel=(type(o)=="table" and o[1]) or o end)
 	mkBtn(s,"Refresh Players", function() if dd and dd.refresh then dd.refresh() end end)
 
 	local _,a=mkSec(p,"Actions",2)
-	mkBtn(a,"View / Spectate", function()
+	mkTextbox(a,"Warn message","AdminWarnMsg",1,false)
+	mkBtn(a,"Send Warn", function()
 		local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end
-		__gg.MH_Target=__gg.MH_Target or {}; __gg.MH_Target.plr=pl; __gg.MH_Target.model=nil; __gg.MH_Target.viewing=true
-		notify("Admin","Viewing "..pl.Name..".")
+		local ok=sendChat("[ADMIN → @"..pl.Name.."] "..tostring(CFG.AdminWarnMsg~="" and CFG.AdminWarnMsg or "Follow the rules or you'll be removed."))
+		notify("Admin", ok and ("Warned "..pl.Name.." in chat.") or "This game blocks chat sends.")
 	end)
-	mkBtn(a,"Stop Viewing", function() if __gg.MH_Target then __gg.MH_Target.viewing=false end notify("Admin","Camera back on you.") end)
 	mkBtn(a,"Teleport To User", function()
 		local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end
 		__gg.MH_Target=__gg.MH_Target or {}; __gg.MH_Target.plr=pl
 		if __gg.MH_targetTeleport and __gg.MH_targetTeleport() then notify("Admin","Teleported to "..pl.Name..".")
 		else notify("Admin","Can't reach them — their dino isn't loaded in.") end
 	end)
-	mkBtn(a,"Warn User (public chat)", function()
-		local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end
-		local ok=sendChat("[ADMIN WARNING] @"..pl.Name.." — follow the rules or you'll be removed.")
-		notify("Admin", ok and ("Warned "..pl.Name.." in chat.") or "This game blocks chat sends.")
-	end)
-	mkBtn(a,"Warn User (custom message)", function()
-		local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end
-		local ok=sendChat("[ADMIN → @"..pl.Name.."] "..tostring(CFG.AdminWarnMsg or "Please follow the rules."))
-		notify("Admin", ok and ("Sent to chat.") or "This game blocks chat sends.")
-	end)
-	mkTextbox(a,"Custom warn text","AdminWarnMsg",1,false)
+	mkToggle(a,"Fly","Fly")
 
-	local _,mg=mkSec(p,"Mod Game",3)
-	mkLabel(mg,"Your private moderation game. This teleports YOU there (a client can't force other players to teleport).")
-	mkTextbox(mg,"Mod game link / place id","AdminModGame",1,false)
-	mkBtn(mg,"Teleport Me to Mod Game", function()
-		local raw=tostring(CFG.AdminModGame or ""):gsub("%s","")
-		local id=tonumber(raw) or tonumber(raw:match("games/(%d+)")) or tonumber(raw:match("(%d+)"))
-		if not id then notify("Admin","Paste a valid Roblox game link or place id first.") return end
-		notify("Admin","Teleporting you to the mod game…")
-		pcall(function() game:GetService("TeleportService"):Teleport(id, LP) end)
+	local _,id=mkSec(p,"Their Roblox Identity (to ban on your side)",3)
+	mkLabel(id,"Roblox can't give a Discord username — nothing links the two. Use their Roblox info below to identify/ban them wherever YOU moderate.")
+	mkBtn(id,"Copy Username", function() local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end local ok=pcall(function() setclipboard(pl.Name) end); notify("Admin", ok and ("Copied @"..pl.Name) or ("@"..pl.Name.." (no clipboard on this executor)")) end)
+	mkBtn(id,"Copy UserId", function() local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end local ok=pcall(function() setclipboard(tostring(pl.UserId)) end); notify("Admin", ok and ("Copied "..pl.UserId) or (tostring(pl.UserId).." (no clipboard)")) end)
+	mkBtn(id,"Copy Profile Link", function() local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end local link="https://www.roblox.com/users/"..pl.UserId.."/profile"; local ok=pcall(function() setclipboard(link) end); notify("Admin", ok and "Copied profile link." or link) end)
+	mkBtn(id,"Report to Dream Discord", function()
+		local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end
+		local hook = _G.__DreamReportWebhook or ("https://discord.com/api/webhooks/1527849806108692500/".."Ryczyznv3EQVLJF_Y-AYsMqhK".."_fvBC5T3wu2d1uO5BBmSgMARN0_hST5vRRlzQZHkLyg")
+		local req = (typeof(syn)=="table" and syn.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
+		if not req then notify("Admin","Executor has no http request.") return end
+		task.spawn(function() pcall(function()
+			local body = game:GetService("HttpService"):JSONEncode({ username="Dream Mod", embeds={{ title="Player flagged by "..LP.Name, color=14689068, fields={
+				{name="Target", value=pl.DisplayName.." (@"..pl.Name..")  ["..tostring(pl.UserId).."]", inline=false},
+				{name="Profile", value="https://www.roblox.com/users/"..pl.UserId.."/profile", inline=false},
+				{name="Note", value=tostring(CFG.AdminWarnMsg~="" and CFG.AdminWarnMsg or "flagged from the admin panel"), inline=false} } }} })
+			req({ Url=hook, Method="POST", Headers={["Content-Type"]="application/json"}, Body=body })
+		end) notify("Admin","Sent "..pl.Name.." to the Dream Discord.") end)
 	end)
-
-	local _,sf=mkSec(p,"Self",4)
-	mkBtn(sf,"Freeze Me", function() pcall(function() local m=getMyModel(); local r=m and (m.PrimaryPart or m:FindFirstChild("HumanoidRootPart")) or hrp(); if r then r.Anchored=true; r.AssemblyLinearVelocity=Vector3.zero end end) notify("Admin","Frozen (you).") end)
-	mkBtn(sf,"Unfreeze Me", function() pcall(function() local m=getMyModel(); local r=m and (m.PrimaryPart or m:FindFirstChild("HumanoidRootPart")) or hrp(); if r then r.Anchored=false end end) notify("Admin","Unfrozen.") end)
-	mkLabel(sf,"Real server-side admin (freeze/jail/kick ANYONE) needs an admin script inside YOUR OWN game — that's a separate file, ask for it.")
 end
 
 do local p=Pages["Teleport"]

@@ -312,24 +312,23 @@ task.spawn(function()
 	end
 	local function setStatus(txt) pcall(function() statusLabel.Text=txt end) end
 
-	-- ===== STAGE 1: black SPOTS bloom until fully black =====
+	-- ===== STAGE 1: black SPOTS bloom until fully black (light — no freeze) =====
 	local function spotsBlackout()
-		local dots={}
-		for i=1,46 do
+		-- fewer, bigger dots = the same look with a fraction of the instances (46 -> 20), so no stutter/freeze
+		for i=1,20 do
 			local d=Instance.new("Frame"); d.AnchorPoint=Vector2.new(0.5,0.5); d.Position=UDim2.fromScale(rand(0.03,0.97), rand(0.03,0.97))
 			d.Size=UDim2.fromOffset(0,0); d.BackgroundColor3=C.Black; d.BorderSizePixel=0; d.ZIndex=10; d.Parent=spotLayer
-			corner(d,999); dots[i]=d
-		end
-		for i,d in ipairs(dots) do
+			corner(d,999)
 			task.spawn(function()
-				task.wait((i-1)*0.012 + rand(0,0.08))
-				local sz=rand(220,420)
-				play(d, TI(rand(0.45,0.75), Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size=UDim2.fromOffset(sz,sz)})
+				task.wait((i-1)*0.02 + rand(0,0.05))
+				local sz=rand(360,560)
+				play(d, TI(rand(0.4,0.6), Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size=UDim2.fromOffset(sz,sz)})
 			end)
+			if i%5==0 then RunService.Heartbeat:Wait() end   -- yield while creating so the frame never hitches
 		end
-		task.wait(0.7)
-		play(backdrop, TI(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency=0})  -- guarantee full black
-		task.wait(0.36)
+		task.wait(0.55)
+		play(backdrop, TI(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency=0})  -- guarantee full black
+		task.wait(0.3)
 		pcall(function() spotLayer:Destroy() end)
 	end
 
@@ -338,7 +337,7 @@ task.spawn(function()
 		-- fade menu in behind, then peel a grid of black tiles off
 		play(blurEffect, TI(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size=18})
 		play(menuCanvas, TI(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {GroupTransparency=0})
-		local COLS,ROWS=8,5
+		local COLS,ROWS=6,4
 		local tiles={}
 		for r=0,ROWS-1 do for c=0,COLS-1 do
 			local t=Instance.new("Frame"); t.AnchorPoint=Vector2.new(0,0); t.Position=UDim2.fromScale(c/COLS, r/ROWS); t.Size=UDim2.fromScale(1/COLS+0.004, 1/ROWS+0.004)
