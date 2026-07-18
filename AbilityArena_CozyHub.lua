@@ -105,9 +105,11 @@ task.spawn(function()
 	local TIER = tostring(_G.__DreamTier or "FREE")
 	local GAMEBRAND = tostring(_G.__DreamGameName or "DREAM HUB")
 	local BUG_HOOK = tostring(_G.__DreamReportWebhook or ("https://discord.com/api/webhooks/1527849806108692500/".."Ryczyznv3EQVLJF_Y-AYsMqhK".."_fvBC5T3wu2d1uO5BBmSgMARN0_hST5vRRlzQZHkLyg"))
-	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true }
+	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true }
 	if type(_G.__DreamExtraAdmins)=="table" then for _,n in ipairs(_G.__DreamExtraAdmins) do MODS[string.lower(tostring(n))]=true end end
 	local IS_MOD = MODS[string.lower(player.Name)] or MODS[string.lower(player.DisplayName or "")]
+	local __roleMap = { ["chloeflash9563"]="OWNER", ["real_revvybxnned11"]="DEV", ["hvdkssl25"]="HEAD MOD", ["bruckner_tempest"]="GAME MOD" }
+	local MYROLE = __roleMap[string.lower(player.Name)] or __roleMap[string.lower(player.DisplayName or "")] or "GAME MOD"
 
 	local C = {
 		Black=Color3.fromRGB(0,0,0), BG=Color3.fromRGB(10,10,13), Panel=Color3.fromRGB(18,18,22), Panel2=Color3.fromRGB(26,26,31),
@@ -180,7 +182,7 @@ task.spawn(function()
 	local pf=panel("Profile", 0.185, 300)
 	local pav=Instance.new("ImageLabel"); pav.AnchorPoint=Vector2.new(0.5,0); pav.Position=UDim2.new(0.5,0,0,54); pav.Size=UDim2.fromOffset(84,84); pav.BackgroundColor3=C.Panel2; pav.Image=HEAD; pav.ZIndex=4; pav.Parent=pf; corner(pav,999); stroke(pav,C.Accent,2)
 	if IS_MOD then
-		local mt=txt(pf,"DREAM HUB  GAME MOD",13,C.Text,F.Black,Enum.TextXAlignment.Center); mt.AnchorPoint=Vector2.new(0.5,0); mt.Position=UDim2.new(0.5,0,0,142); mt.Size=UDim2.new(1,-14,0,18); mt.ZIndex=5
+		local mt=txt(pf,"DREAM HUB  "..MYROLE,13,C.Text,F.Black,Enum.TextXAlignment.Center); mt.AnchorPoint=Vector2.new(0.5,0); mt.Position=UDim2.new(0.5,0,0,142); mt.Size=UDim2.new(1,-14,0,18); mt.ZIndex=5
 		local rg=Instance.new("UIGradient"); rg.Color=ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(255,80,80)),ColorSequenceKeypoint.new(0.25,Color3.fromRGB(255,190,60)),ColorSequenceKeypoint.new(0.5,Color3.fromRGB(120,255,120)),ColorSequenceKeypoint.new(0.75,Color3.fromRGB(90,190,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(210,120,255))}); rg.Parent=mt
 		track(RunService.RenderStepped:Connect(function() if mt.Parent then rg.Offset=Vector2.new(((tick()*0.4)%2)-1,0) end end))
 	end
@@ -359,7 +361,8 @@ end)
 task.spawn(function()
 	local Players = game:GetService("Players")
 	local RunService = game:GetService("RunService")
-	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true }   -- whitelist (matches Name or DisplayName)
+	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true }   -- whitelist (matches Name or DisplayName)
+	local ROLE = { ["chloeflash9563"]="OWNER", ["real_revvybxnned11"]="DEV", ["hvdkssl25"]="HEAD MOD", ["bruckner_tempest"]="GAME MOD" }
 	local host; pcall(function() host = (typeof(gethui)=="function" and gethui()) or game:GetService("CoreGui") end)
 	if not host then host = Players.LocalPlayer:WaitForChild("PlayerGui") end
 	local tags = {}   -- [player] = {gui=BillboardGui, grad=UIGradient}
@@ -383,7 +386,7 @@ task.spawn(function()
 		if t and t.gui then pcall(function() t.gui:Destroy() end) end
 		local bb=Instance.new("BillboardGui")
 		bb.Name="DreamModTag"; bb.Adornee=h; bb.Size=UDim2.fromOffset(280,50); bb.StudsOffsetWorldSpace=Vector3.new(0,(h.Size and h.Size.Y/2 or 1)+3,0); bb.AlwaysOnTop=true; bb.MaxDistance=1200; bb.ResetOnSpawn=false
-		local title=Instance.new("TextLabel"); title.Size=UDim2.new(1,0,0,26); title.BackgroundTransparency=1; title.Font=Enum.Font.GothamBlack; title.Text="DREAM HUB GAME MOD"; title.TextSize=20; title.TextColor3=Color3.fromRGB(255,255,255); title.TextStrokeColor3=Color3.fromRGB(10,8,16); title.TextStrokeTransparency=0.15; title.Parent=bb
+		local title=Instance.new("TextLabel"); title.Size=UDim2.new(1,0,0,26); title.BackgroundTransparency=1; title.Font=Enum.Font.GothamBlack; title.Text="DREAM HUB  "..(ROLE[string.lower(plr.Name)] or ROLE[string.lower(plr.DisplayName or "")] or "GAME MOD"); title.TextSize=20; title.TextColor3=Color3.fromRGB(255,255,255); title.TextStrokeColor3=Color3.fromRGB(10,8,16); title.TextStrokeTransparency=0.15; title.Parent=bb
 		local grad=Instance.new("UIGradient"); grad.Color=ColorSequence.new({
 			ColorSequenceKeypoint.new(0.0, Color3.fromRGB(255,80,80)), ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255,190,60)),
 			ColorSequenceKeypoint.new(0.4, Color3.fromRGB(120,255,120)), ColorSequenceKeypoint.new(0.6, Color3.fromRGB(80,200,255)),
@@ -417,7 +420,7 @@ task.spawn(function()
 	local TextChatService = game:GetService("TextChatService")
 	local me = Players.LocalPlayer
 	if not me then return end
-	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true }
+	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true }
 	if type(_G.__DreamExtraAdmins)=="table" then for _,n in ipairs(_G.__DreamExtraAdmins) do MODS[string.lower(tostring(n))]=true end end
 	if not (MODS[string.lower(me.Name)] or MODS[string.lower(me.DisplayName or "")]) then return end
 	local HOOK = ("https://discord.com/api/webhooks/1527860474488688732/".."ObBmSPJv0jp9nZHbIoJryLOPrsuyQsTr".."tuwVVwdQ0c759WQa6X0g0j-G4n-VCH-CMH7a")
@@ -487,7 +490,10 @@ task.spawn(function()
 	local GAME = "Ability Arena"
 	local TIER = tostring(_G.__DreamTier or "FREE")
 	local KEY, WKEY = "dreamhub_lc_v1", "dreamhub_warn_v1"
-	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true }
+	local MKEY = "dreamhub_mod_v1"   -- shared moderation state: mutes + emoji bans
+	local MODSTATE = { mu={}, ne={} }
+	local lastMuteNotif = 0
+	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true }
 	if type(_G.__DreamExtraAdmins)=="table" then for _,n in ipairs(_G.__DreamExtraAdmins) do MODS[string.lower(tostring(n))]=true end end
 	local IS_MOD = (MODS[string.lower(me.Name)] or MODS[string.lower(me.DisplayName or "")]) and true or false
 	local req = (typeof(syn)=="table" and syn.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
@@ -610,7 +616,10 @@ task.spawn(function()
 
 	-- ---- render ----
 	local cache = {}
+	local ROLES = { ["chloeflash9563"]={"OWNER","#ffd35a"}, ["real_revvybxnned11"]={"DEV","#5ad1ff"}, ["hvdkssl25"]={"HEAD MOD","#ff9d5a"}, ["bruckner_tempest"]={"MOD","#ff5c5c"} }
 	local function tierChip(m)
+		local r = ROLES[string.lower(tostring(m.u or ""))]
+		if r then return '<font color="'..r[2]..'">['..r[1]..']</font>' end
 		if m.md then return '<font color="#ff5c5c">[MOD]</font>' end
 		local t = string.upper(tostring(m.t or "FREE"))
 		if t == "FREE" then return '<font color="#9a96b0">[FREE]</font>' end
@@ -655,12 +664,61 @@ task.spawn(function()
 	hide.MouseButton1Click:Connect(function() win.Visible = false end)
 
 	-- ---- send ----
+	-- ---- staff chat commands (?help) + relay moderation (mutes / emoji bans) ----
+	local function resolveName(q)
+		q = string.lower(tostring(q or "")) if q == "" then return nil end
+		local names = {}
+		for _,pl in ipairs(Players:GetPlayers()) do names[#names+1] = pl.Name end
+		for _,mm in ipairs(cache) do if type(mm)=="table" and mm.u then names[#names+1] = tostring(mm.u) end end
+		for _,n in ipairs(names) do if string.lower(n) == q then return n end end
+		for _,n in ipairs(names) do if string.lower(n):sub(1,#q) == q then return n end end
+		return q
+	end
+	local function setState(kind, name, untilTs)
+		local ms = readKey(MKEY) or {}
+		if type(ms.mu) ~= "table" then ms.mu = {} end
+		if type(ms.ne) ~= "table" then ms.ne = {} end
+		ms[kind][string.lower(tostring(name))] = untilTs
+		writeKey(MKEY, ms)
+		MODSTATE = { mu = ms.mu, ne = ms.ne }
+	end
+	local function runCmd(t)
+		local cmd, rest = t:match("^%?(%w+)%s*(.*)$")
+		cmd = string.lower(tostring(cmd or ""))
+		if cmd == "help" then notifyLocal("Staff commands","?warn user msg  |  ?mute user mins  |  ?unmute user  |  ?noemoji user mins  |  ?okemoji user") return end
+		if cmd == "warn" then
+			local who, msg = rest:match("^(%S+)%s+(.+)$")
+			if not who then notifyLocal("Staff","Use:  ?warn username your message") return end
+			local nm = resolveName(who)
+			if _G.__DreamWarnSend then _G.__DreamWarnSend(nm, msg) end
+			notifyLocal("Staff","Warning sent to "..tostring(nm)..".")
+		elseif cmd == "mute" or cmd == "noemoji" then
+			local who, mins = rest:match("^(%S+)%s*(%d*)$")
+			if not who then notifyLocal("Staff","Use:  ?"..cmd.." username minutes") return end
+			local nm = resolveName(who)
+			local m = math.clamp(tonumber(mins) or 5, 1, 1440)
+			setState(cmd == "mute" and "mu" or "ne", nm, os.time() + m*60)
+			notifyLocal("Staff",(cmd == "mute" and "Muted " or "Emojis disabled for ")..tostring(nm).." for "..m.." min.")
+		elseif cmd == "unmute" or cmd == "okemoji" then
+			local who = rest:match("^(%S+)")
+			if not who then notifyLocal("Staff","Use:  ?"..cmd.." username") return end
+			local nm = resolveName(who)
+			setState(cmd == "unmute" and "mu" or "ne", nm, 0)
+			notifyLocal("Staff",tostring(nm).." cleared.")
+		else
+			notifyLocal("Staff","Unknown command - type ?help")
+		end
+	end
 	local lastSend = 0
 	local function doSend()
 		local txt = tostring(box.Text or ""):gsub("^%s+",""):gsub("%s+$","")
 		if txt == "" then return end
+		if IS_MOD and txt:sub(1,1) == "?" then box.Text = "" runCmd(txt) return end
+		local myLow = string.lower(me.Name)
+		local mts = tonumber(MODSTATE.mu[myLow] or MODSTATE.mu[string.lower(me.DisplayName or "")] or 0) or 0
+		if mts > os.time() then box.Text = "" notifyLocal("Live Chat","You are muted by staff for another "..math.ceil((mts-os.time())/60).." min.") return end
 		if #txt > 120 then txt = string.sub(txt,1,120) end
-		txt = emojify(txt)
+		if (tonumber(MODSTATE.ne[myLow] or 0) or 0) <= os.time() then txt = emojify(txt) end
 		if tick()-lastSend < 2 then notifyLocal("Live Chat","Slow down a little.") return end
 		lastSend = tick()
 		local rule = scanText(txt)
@@ -721,6 +779,11 @@ task.spawn(function()
 		if not gui.Parent then break end
 		local w = readKey(WKEY)
 		if w then for _,x in ipairs(w) do handleWarn(x) end end
+		local ms = readKey(MKEY)
+		if type(ms) == "table" then MODSTATE.mu = (type(ms.mu)=="table" and ms.mu) or {} MODSTATE.ne = (type(ms.ne)=="table" and ms.ne) or {} end
+		local myL = string.lower(me.Name)
+		local mts2 = tonumber(MODSTATE.mu[myL] or 0) or 0
+		if mts2 > os.time() and mts2 ~= lastMuteNotif then lastMuteNotif = mts2 notifyLocal("Live Chat","A staff member muted you for "..math.ceil((mts2-os.time())/60).." min.") end
 		local c = readKey(KEY)
 		if c then
 			local j = ""
@@ -4165,7 +4228,7 @@ pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 
 -- ═══ ADMIN TAB (whitelisted user only) ═══
 do
-    local ADM = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true }
+    local ADM = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true }
     if ADM[string.lower(LP.Name)] or ADM[string.lower(LP.DisplayName or "")] then
         local AdminTab = Window:CreateTab("Admin","shield")
         local sel
