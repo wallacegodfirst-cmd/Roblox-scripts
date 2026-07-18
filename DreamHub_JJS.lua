@@ -185,12 +185,23 @@ task.spawn(function()
 	end
 
 	-- LEFT: big profile card (bigger, on the side)
+	local IS_MOD = (string.lower(player.Name)=="chloeflash9563")
 	local profile = bigPanel("Profile", 0.19, 320)
-	local pAvatar = Instance.new("ImageLabel"); pAvatar.AnchorPoint=Vector2.new(0.5,0); pAvatar.Position=UDim2.new(0.5,0,0,58); pAvatar.Size=UDim2.fromOffset(96,96); pAvatar.BackgroundColor3=C.Panel2; pAvatar.Image=HEAD; pAvatar.ZIndex=4; pAvatar.Parent=profile; corner(pAvatar,999); stroke(pAvatar,C.Accent,2)
-	local pName = Instance.new("TextLabel"); pName.AnchorPoint=Vector2.new(0.5,0); pName.Position=UDim2.new(0.5,0,0,164); pName.Size=UDim2.new(1,-20,0,24); pName.BackgroundTransparency=1; pName.FontFace=F.Bold; pName.Text=player.DisplayName; pName.TextSize=20; pName.TextColor3=C.Text; pName.ZIndex=4; pName.Parent=profile
-	local pHandle = Instance.new("TextLabel"); pHandle.AnchorPoint=Vector2.new(0.5,0); pHandle.Position=UDim2.new(0.5,0,0,190); pHandle.Size=UDim2.new(1,-20,0,18); pHandle.BackgroundTransparency=1; pHandle.FontFace=F.Code; pHandle.Text="@"..player.Name; pHandle.TextSize=13; pHandle.TextColor3=C.Muted; pHandle.ZIndex=4; pHandle.Parent=profile
-	local pBadge = Instance.new("Frame"); pBadge.AnchorPoint=Vector2.new(0.5,0); pBadge.Position=UDim2.new(0.5,0,0,222); pBadge.Size=UDim2.fromOffset(150,34); pBadge.BackgroundColor3=C.Accent; pBadge.BackgroundTransparency=0.05; pBadge.ZIndex=4; pBadge.Parent=profile; corner(pBadge,999)
-	local pBadgeT = Instance.new("TextLabel"); pBadgeT.Size=UDim2.fromScale(1,1); pBadgeT.BackgroundTransparency=1; pBadgeT.FontFace=F.Bold; pBadgeT.Text=TIER.." PLAN"; pBadgeT.TextSize=14; pBadgeT.TextColor3=C.Text; pBadgeT.ZIndex=5; pBadgeT.Parent=pBadge
+	local pAvatar = Instance.new("ImageLabel"); pAvatar.AnchorPoint=Vector2.new(0.5,0); pAvatar.Position=UDim2.new(0.5,0,0,52); pAvatar.Size=UDim2.fromOffset(88,88); pAvatar.BackgroundColor3=C.Panel2; pAvatar.Image=HEAD; pAvatar.ZIndex=4; pAvatar.Parent=profile; corner(pAvatar,999); stroke(pAvatar,C.Accent,2)
+	-- MOD title (rainbow, ban hammer) — only for whitelisted moderators
+	if IS_MOD then
+		local modTitle=Instance.new("TextLabel"); modTitle.AnchorPoint=Vector2.new(0.5,0); modTitle.Position=UDim2.new(0.5,0,0,144); modTitle.Size=UDim2.new(1,-14,0,20); modTitle.BackgroundTransparency=1; modTitle.FontFace=F.Black; modTitle.Text="\240\159\148\168  DREAM HUB GAME MOD"; modTitle.TextSize=15; modTitle.TextColor3=C.Text; modTitle.ZIndex=5; modTitle.Parent=profile
+		local rg=Instance.new("UIGradient"); rg.Color=ColorSequence.new({
+			ColorSequenceKeypoint.new(0.0, Color3.fromRGB(255,80,80)), ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255,190,60)),
+			ColorSequenceKeypoint.new(0.4, Color3.fromRGB(120,255,120)), ColorSequenceKeypoint.new(0.6, Color3.fromRGB(80,200,255)),
+			ColorSequenceKeypoint.new(0.8, Color3.fromRGB(180,120,255)), ColorSequenceKeypoint.new(1.0, Color3.fromRGB(255,90,180)),
+		}); rg.Parent=modTitle
+		track(RunService.RenderStepped:Connect(function() if modTitle.Parent then rg.Offset=Vector2.new(((tick()*0.4)%2)-1, 0) end end))
+	end
+	local pName = Instance.new("TextLabel"); pName.AnchorPoint=Vector2.new(0.5,0); pName.Position=UDim2.new(0.5,0,0,IS_MOD and 170 or 156); pName.Size=UDim2.new(1,-20,0,24); pName.BackgroundTransparency=1; pName.FontFace=F.Bold; pName.Text=player.DisplayName; pName.TextSize=20; pName.TextColor3=C.Text; pName.ZIndex=4; pName.Parent=profile
+	local pHandle = Instance.new("TextLabel"); pHandle.AnchorPoint=Vector2.new(0.5,0); pHandle.Position=UDim2.new(0.5,0,0,IS_MOD and 196 or 182); pHandle.Size=UDim2.new(1,-20,0,18); pHandle.BackgroundTransparency=1; pHandle.FontFace=F.Code; pHandle.Text="@"..player.Name; pHandle.TextSize=13; pHandle.TextColor3=C.Muted; pHandle.ZIndex=4; pHandle.Parent=profile
+	local pBadge = Instance.new("Frame"); pBadge.AnchorPoint=Vector2.new(0.5,0); pBadge.Position=UDim2.new(0.5,0,0,IS_MOD and 226 or 214); pBadge.Size=UDim2.fromOffset(150,34); pBadge.BackgroundColor3=C.Accent; pBadge.BackgroundTransparency=0.05; pBadge.ZIndex=4; pBadge.Parent=profile; corner(pBadge,999)
+	local pBadgeT = Instance.new("TextLabel"); pBadgeT.Size=UDim2.fromScale(1,1); pBadgeT.BackgroundTransparency=1; pBadgeT.FontFace=F.Bold; pBadgeT.Text=(IS_MOD and "MOD" or TIER).." PLAN"; pBadgeT.TextSize=14; pBadgeT.TextColor3=C.Text; pBadgeT.ZIndex=5; pBadgeT.Parent=pBadge
 
 	-- MIDDLE: Update Log (bigger)
 	local logBox = bigPanel("Update Log", 0.5, 340)
