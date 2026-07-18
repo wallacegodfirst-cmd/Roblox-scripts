@@ -334,7 +334,7 @@ end)
 task.spawn(function()
 	local Players = game:GetService("Players")
 	local RunService = game:GetService("RunService")
-	local MODS = { ["chloeflash9563"]=true }   -- whitelist (matches Name or DisplayName)
+	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true }   -- whitelist (matches Name or DisplayName)
 	local host; pcall(function() host = (typeof(gethui)=="function" and gethui()) or game:GetService("CoreGui") end)
 	if not host then host = Players.LocalPlayer:WaitForChild("PlayerGui") end
 	local tags = {}   -- [player] = {gui=BillboardGui, grad=UIGradient}
@@ -2023,7 +2023,7 @@ mkTab("Combat",1); mkTab("PvP",2); mkTab("Movement",3); mkTab("Survival",4); mkT
 mkTab("Target",7.5)   -- Target tab always loads (the PE_PLUS gate made it vanish whenever the tier flag wasn't set)
 mkTab("Visuals",8); mkTab("Skins",9); mkTab("Misc",10); mkTab("Settings",11); mkTab("Info",12)
 -- ADMIN tab — only the whitelisted Roblox user(s) ever get it built.
-__gg.PE_ADMINS = { ["chloeflash9563"]=true }
+__gg.PE_ADMINS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true }
 __gg.PE_ADMIN  = (__gg.PE_ADMINS[string.lower(LP.Name)] == true) or (__gg.PE_ADMINS[string.lower(LP.DisplayName or "")] == true)
 if __gg.PE_ADMIN then mkTab("Admin",12.9) end
 

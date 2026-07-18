@@ -411,7 +411,7 @@ end)
 task.spawn(function()
 	local Players = game:GetService("Players")
 	local RunService = game:GetService("RunService")
-	local MODS = { ["chloeflash9563"]=true }   -- whitelist (matches Name or DisplayName)
+	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true }   -- whitelist (matches Name or DisplayName)
 	local host; pcall(function() host = (typeof(gethui)=="function" and gethui()) or game:GetService("CoreGui") end)
 	if not host then host = Players.LocalPlayer:WaitForChild("PlayerGui") end
 	local tags = {}   -- [player] = {gui=BillboardGui, grad=UIGradient}
@@ -10819,7 +10819,7 @@ do
 
     -- ═══ ADMIN PAGE (whitelisted user only) ═══
     do
-        local ADM = { ["chloeflash9563"]=true }
+        local ADM = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true }
         local me = Players.LocalPlayer
         if ADM[string.lower(me.Name)] or ADM[string.lower(me.DisplayName or "")] then
             local sel
