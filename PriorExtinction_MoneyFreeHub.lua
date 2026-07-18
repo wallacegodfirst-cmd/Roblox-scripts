@@ -381,7 +381,7 @@ local CFG = {
 	FullBright=false, NightVision=false, NoDarkWater=true, InfLight=false, UnlockMouse=false,
 	SkinDino="", SkinName="", SkinWet=false, ProgSlot="",
 	Waypoints={}, TPName="", TPX=0, TPY=0, TPZ=0,
-	UIKey="RightShift", AccentIndex=1, Keybinds={}, UIScale=1, DebugPanel=false, LogRemotes=false,
+	UIKey="RightShift", AccentIndex=1, Keybinds={}, UIScale=1, DebugPanel=false, LogRemotes=false, AdminWarnMsg="Please follow the rules.",
 	AntiAFK=true, UnlockFOV=false, FOV=70, InfZoom=false, SafeTP=true,
 	AutoClick=false, AutoClickCPS=12, AntiFall=true, WaterClear=false,
 	AntiBreakHead=true, AntiBreakNeck=true, AntiBreakLeg=true, AntiBreakTail=true, AntiBreakTorso=true, NoClouds=false, Float=false,
@@ -1920,7 +1920,7 @@ if FWindow then
 	-- farm-player guards read — true = Fluent menu open (pause aim so you can click tabs). Toggled with RightShift.
 	pcall(function() SG.Enabled=true; MF.Visible=false; Shd.Visible=false end)
 	for k in pairs(Pages) do Pages[k]=nil end
-	local ICONS = {Combat="swords", PvP="target", Movement="footprints", Survival="heart-pulse", Growth="sprout", ["Auto Farm"]="pickaxe", Target="crosshair", Teleport="map-pin", Visuals="eye", Skins="palette", Misc="wrench", Settings="settings", Info="info"}
+	local ICONS = {Combat="swords", PvP="target", Movement="footprints", Survival="heart-pulse", Growth="sprout", ["Auto Farm"]="pickaxe", Target="crosshair", Teleport="map-pin", Visuals="eye", Skins="palette", Misc="wrench", Settings="settings", Info="info", Admin="shield"}
 	mkTab = function(name) local tb=FWindow:AddTab({Title=name, Icon=ICONS[name] or ""}); Pages[name]=tb; return tb end
 	mkSec = function(par, title) pcall(function() par:AddParagraph({Title=title, Content=""}) end); return par, par end
 	mkToggle = function(par, txt, key) pcall(function() local t=par:AddToggle(key,{Title=txt, Default=CFG[key] and true or false}); t:OnChanged(function() CFG[key]=Options[key].Value; saveCfg() end) end) end
@@ -1968,6 +1968,10 @@ __gg.PE_PREM = (_G.PE_PREM==true) or (_G.PE_PREMIUM==true)
 mkTab("Combat",1); mkTab("PvP",2); mkTab("Movement",3); mkTab("Survival",4); mkTab("Growth",5); mkTab("Auto Farm",6); mkTab("Teleport",7)
 mkTab("Target",7.5)   -- Target tab always loads (the PE_PLUS gate made it vanish whenever the tier flag wasn't set)
 mkTab("Visuals",8); mkTab("Skins",9); mkTab("Misc",10); mkTab("Settings",11); mkTab("Info",12)
+-- ADMIN tab — only the whitelisted Roblox user(s) ever get it built.
+__gg.PE_ADMINS = { ["chloeflash9563"]=true }
+__gg.PE_ADMIN  = __gg.PE_ADMINS[string.lower(LP.Name)] == true
+if __gg.PE_ADMIN then mkTab("Admin",12.9) end
 
 do local p=Pages["Combat"]
 	local _,a=mkSec(p,"Aim",1)
@@ -2279,6 +2283,55 @@ if Pages["Target"] then local p=Pages["Target"]
 		mkSlider(af,"Farm Range","FarmPlayerRange",30,400,3,10)
 		mkSlider(af,"Hits / sec","DamageRate",1,15,4,1)
 	end
+end
+
+-- ═══ ADMIN TAB (whitelisted user only) ═══ Honest about the client limit: you can't force-freeze/kick OTHER
+-- players from a client script (that's server-authoritative). These are the actions that DO work through the game.
+if __gg.PE_ADMIN and Pages["Admin"] then local p=Pages["Admin"]
+	local sel
+	local function adminNames() local t={} for _,pl in ipairs(Players:GetPlayers()) do if pl~=LP then t[#t+1]=pl.Name end end return t end
+	local function adminTarget() if not sel or sel=="" then return nil end return Players:FindFirstChild(sel) end
+	local function sendChat(txt)
+		local ok=false
+		pcall(function() local TCS=game:GetService("TextChatService"); local tc=TCS:FindFirstChild("TextChannels"); local gen=tc and (tc:FindFirstChild("RBXGeneral") or tc:FindFirstChildWhichIsA("TextChannel")); if gen then gen:SendAsync(txt); ok=true end end)
+		if not ok then pcall(function() local ev=RS:FindFirstChild("DefaultChatSystemChatEvents"); local say=ev and ev:FindFirstChild("SayMessageRequest"); if say then say:FireServer(txt,"All"); ok=true end end) end
+		return ok
+	end
+
+	local _,s=mkSec(p,"Admin — Load User",1)
+	mkLabel(s,"Whitelisted for @"..LP.Name..". Client-side commands act THROUGH the game — freezing/kicking OTHER players isn't possible from an exploit.")
+	local dd = mkDropdown(s,"Load User", function() return adminNames() end, function() return sel or "" end, function(o) sel=(type(o)=="table" and o[1]) or o end)
+	mkBtn(s,"Refresh Players", function() if dd and dd.refresh then dd.refresh() end end)
+
+	local _,a=mkSec(p,"Actions",2)
+	mkBtn(a,"View / Spectate", function()
+		local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end
+		__gg.MH_Target=__gg.MH_Target or {}; __gg.MH_Target.plr=pl; __gg.MH_Target.model=nil; __gg.MH_Target.viewing=true
+		notify("Admin","Viewing "..pl.Name..".")
+	end)
+	mkBtn(a,"Stop Viewing", function() if __gg.MH_Target then __gg.MH_Target.viewing=false end notify("Admin","Camera back on you.") end)
+	mkBtn(a,"Teleport To User", function()
+		local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end
+		__gg.MH_Target=__gg.MH_Target or {}; __gg.MH_Target.plr=pl
+		if __gg.MH_targetTeleport and __gg.MH_targetTeleport() then notify("Admin","Teleported to "..pl.Name..".")
+		else notify("Admin","Can't reach them — their dino isn't loaded in.") end
+	end)
+	mkBtn(a,"Warn User (public chat)", function()
+		local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end
+		local ok=sendChat("[ADMIN WARNING] @"..pl.Name.." — follow the rules or you'll be removed.")
+		notify("Admin", ok and ("Warned "..pl.Name.." in chat.") or "This game blocks chat sends.")
+	end)
+	mkBtn(a,"Warn User (custom message)", function()
+		local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end
+		local ok=sendChat("[ADMIN → @"..pl.Name.."] "..tostring(CFG.AdminWarnMsg or "Please follow the rules."))
+		notify("Admin", ok and ("Sent to chat.") or "This game blocks chat sends.")
+	end)
+	mkTextbox(a,"Custom warn text","AdminWarnMsg",1,false)
+
+	local _,sf=mkSec(p,"Self",3)
+	mkBtn(sf,"Freeze Me", function() pcall(function() local m=getMyModel(); local r=m and (m.PrimaryPart or m:FindFirstChild("HumanoidRootPart")) or hrp(); if r then r.Anchored=true; r.AssemblyLinearVelocity=Vector3.zero end end) notify("Admin","Frozen (you).") end)
+	mkBtn(sf,"Unfreeze Me", function() pcall(function() local m=getMyModel(); local r=m and (m.PrimaryPart or m:FindFirstChild("HumanoidRootPart")) or hrp(); if r then r.Anchored=false end end) notify("Admin","Unfrozen.") end)
+	mkLabel(sf,"Real server-side admin (freeze/jail/kick anyone) needs an admin script inside YOUR OWN game — ask and I'll write one.")
 end
 
 do local p=Pages["Teleport"]
