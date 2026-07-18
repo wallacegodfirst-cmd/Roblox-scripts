@@ -402,6 +402,50 @@ task.spawn(function()
 	task.delay(120, function() if not menuClosed and not destroyed then menuClosed=true; cleanup() end end)
 end)
 -- ═══════════════════ END LOADING SCREEN ═══════════════════
+-- ═══ DREAM HUB — MOD OVERHEAD TITLE (only script-users see it) ═══
+-- Rendered LOCALLY by every Dream Hub client: your script draws a floating rainbow title above any whitelisted
+-- moderator in the server. Because ONLY people running the script execute this, only they see it — exactly
+-- "only people using my scripts can see it". Non-users see nothing. Follows respawns; cheap single loop.
+task.spawn(function()
+	local Players = game:GetService("Players")
+	local RunService = game:GetService("RunService")
+	local MODS = { ["chloeflash9563"]=true }   -- whitelist (matches Name or DisplayName)
+	local host; pcall(function() host = (typeof(gethui)=="function" and gethui()) or game:GetService("CoreGui") end)
+	if not host then host = Players.LocalPlayer:WaitForChild("PlayerGui") end
+	local tags = {}   -- [player] = {gui=BillboardGui, grad=UIGradient}
+	local function isMod(plr) return MODS[string.lower(plr.Name)] or MODS[string.lower(plr.DisplayName or "")] end
+	local function head(plr) local c=plr.Character; if not c then return nil end return c:FindFirstChild("Head") or c:FindFirstChildWhichIsA("BasePart") end
+	local function ensure(plr)
+		if not isMod(plr) then return end
+		local h=head(plr); if not h then return end
+		local t=tags[plr]
+		if t and t.gui and t.gui.Parent and t.gui.Adornee==h then return end
+		if t and t.gui then pcall(function() t.gui:Destroy() end) end
+		local bb=Instance.new("BillboardGui")
+		bb.Name="DreamModTag"; bb.Adornee=h; bb.Size=UDim2.fromOffset(280,50); bb.StudsOffsetWorldSpace=Vector3.new(0,3.6,0); bb.AlwaysOnTop=true; bb.MaxDistance=1200; bb.ResetOnSpawn=false
+		local title=Instance.new("TextLabel"); title.Size=UDim2.new(1,0,0,26); title.BackgroundTransparency=1; title.Font=Enum.Font.GothamBlack; title.Text="\240\159\148\168 DREAM HUB GAME MOD"; title.TextSize=19; title.TextColor3=Color3.fromRGB(255,255,255); title.TextStrokeTransparency=0.4; title.Parent=bb
+		local grad=Instance.new("UIGradient"); grad.Color=ColorSequence.new({
+			ColorSequenceKeypoint.new(0.0, Color3.fromRGB(255,80,80)), ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255,190,60)),
+			ColorSequenceKeypoint.new(0.4, Color3.fromRGB(120,255,120)), ColorSequenceKeypoint.new(0.6, Color3.fromRGB(80,200,255)),
+			ColorSequenceKeypoint.new(0.8, Color3.fromRGB(180,120,255)), ColorSequenceKeypoint.new(1.0, Color3.fromRGB(255,90,180)) }); grad.Parent=title
+		local sub=Instance.new("TextLabel"); sub.Position=UDim2.new(0,0,0,26); sub.Size=UDim2.new(1,0,0,18); sub.BackgroundTransparency=1; sub.Font=Enum.Font.GothamBold; sub.Text="@"..plr.Name; sub.TextSize=13; sub.TextColor3=Color3.fromRGB(215,215,225); sub.TextStrokeTransparency=0.5; sub.Parent=bb
+		bb.Parent=host
+		tags[plr]={gui=bb, grad=grad}
+	end
+	Players.PlayerRemoving:Connect(function(plr) local t=tags[plr]; if t and t.gui then pcall(function() t.gui:Destroy() end) end tags[plr]=nil end)
+	-- ensure loop (handles join / respawn / late head)
+	task.spawn(function() while true do
+		for _,plr in ipairs(Players:GetPlayers()) do pcall(ensure, plr) end
+		task.wait(0.5)
+	end end)
+	-- rainbow animate all tags
+	RunService.RenderStepped:Connect(function()
+		local off=Vector2.new(((tick()*0.4)%2)-1, 0)
+		for _,t in pairs(tags) do if t.grad then pcall(function() t.grad.Offset=off end) end end
+	end)
+end)
+-- ═══ END MOD OVERHEAD TITLE ═══
+
 
 local LP = Players.LocalPlayer
     local function isAC(o)
@@ -3793,4 +3837,38 @@ if _G.AA_PLUS then
 end
 
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
+
+-- ═══ ADMIN TAB (whitelisted user only) ═══
+do
+    local ADM = { ["chloeflash9563"]=true }
+    if ADM[string.lower(LP.Name)] or ADM[string.lower(LP.DisplayName or "")] then
+        local AdminTab = Window:CreateTab("Admin","shield")
+        local sel
+        local function names() local t={} for _,pl in ipairs(Players:GetPlayers()) do if pl~=LP then t[#t+1]=pl.Name end end return t end
+        local function targ() return sel and Players:FindFirstChild(sel) or nil end
+        local function toast(m) pcall(function() game:GetService("StarterGui"):SetCore("SendNotification",{Title="Admin",Text=m,Duration=4}) end) end
+        local function sendChat(txt) local ok=false pcall(function() local TCS=game:GetService("TextChatService"); local tc=TCS:FindFirstChild("TextChannels"); local gen=tc and (tc:FindFirstChild("RBXGeneral") or tc:FindFirstChildWhichIsA("TextChannel")); if gen then gen:SendAsync(txt); ok=true end end) return ok end
+        local warnMsg="Follow the rules or you'll be removed."
+        AdminTab:CreateSection("Load User")
+        local dd = AdminTab:CreateDropdown({Name="Load User", Options=names(), CurrentOption={}, Callback=function(o) sel=(type(o)=="table" and o[1]) or o end})
+        AdminTab:CreateButton({Name="Refresh Players", Callback=function() pcall(function() dd:Refresh(names()) end) end})
+        AdminTab:CreateSection("Actions")
+        AdminTab:CreateInput({Name="Warn message", PlaceholderText="warning text", Callback=function(t) if t and t~="" then warnMsg=t end end})
+        AdminTab:CreateButton({Name="Send Warn", Callback=function() local p=targ(); if not p then toast("Load a user first.") return end local ok=sendChat("[ADMIN -> @"..p.Name.."] "..warnMsg); toast(ok and ("Warned "..p.Name) or "Chat blocked.") end})
+        AdminTab:CreateButton({Name="Teleport To User", Callback=function() local p=targ(); if not p then toast("Load a user first.") return end tpToPlayer(p.Name, false); toast("Teleported to "..p.Name) end})
+        AdminTab:CreateToggle({Name="Fly", CurrentValue=false, Callback=function(v) S.Fly=v end})
+        AdminTab:CreateSection("Their Roblox Identity")
+        AdminTab:CreateButton({Name="Copy Username", Callback=function() local p=targ(); if not p then toast("Load a user first.") return end pcall(function() setclipboard(p.Name) end) toast("Copied @"..p.Name) end})
+        AdminTab:CreateButton({Name="Copy UserId", Callback=function() local p=targ(); if not p then toast("Load a user first.") return end pcall(function() setclipboard(tostring(p.UserId)) end) toast("Copied "..p.UserId) end})
+        AdminTab:CreateButton({Name="Copy Profile Link", Callback=function() local p=targ(); if not p then toast("Load a user first.") return end pcall(function() setclipboard("https://www.roblox.com/users/"..p.UserId.."/profile") end) toast("Copied profile link.") end})
+        AdminTab:CreateButton({Name="Report to Dream Discord", Callback=function()
+            local p=targ(); if not p then toast("Load a user first.") return end
+            local hook=("https://discord.com/api/webhooks/1527860474488688732/".."ObBmSPJv0jp9nZHbIoJryLOPrsuyQsTr".."tuwVVwdQ0c759WQa6X0g0j-G4n-VCH-CMH7a")
+            local req=(typeof(syn)=="table" and syn.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
+            if not req then toast("No http on this executor.") return end
+            task.spawn(function() pcall(function() local body=game:GetService("HttpService"):JSONEncode({username="Dream Mod",embeds={{title="Player flagged by "..LP.Name,color=14689068,fields={{name="Target",value=p.DisplayName.." (@"..p.Name..")  ["..tostring(p.UserId).."]",inline=false},{name="Profile",value="https://www.roblox.com/users/"..p.UserId.."/profile",inline=false},{name="Note",value=warnMsg,inline=false}}}}}) req({Url=hook,Method="POST",Headers={["Content-Type"]="application/json"},Body=body}) end) toast("Sent "..p.Name.." to Discord.") end)
+        end})
+    end
+end
+
 Rayfield:Notify({Title="Dream Hub", Content="Loaded.", Duration=5})

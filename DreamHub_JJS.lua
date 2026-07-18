@@ -404,6 +404,50 @@ task.spawn(function()
 	task.delay(120, function() if not menuClosed and not destroyed then menuClosed=true; cleanup() end end)
 end)
 -- ═══════════════════ END LOADING SCREEN ═══════════════════
+-- ═══ DREAM HUB — MOD OVERHEAD TITLE (only script-users see it) ═══
+-- Rendered LOCALLY by every Dream Hub client: your script draws a floating rainbow title above any whitelisted
+-- moderator in the server. Because ONLY people running the script execute this, only they see it — exactly
+-- "only people using my scripts can see it". Non-users see nothing. Follows respawns; cheap single loop.
+task.spawn(function()
+	local Players = game:GetService("Players")
+	local RunService = game:GetService("RunService")
+	local MODS = { ["chloeflash9563"]=true }   -- whitelist (matches Name or DisplayName)
+	local host; pcall(function() host = (typeof(gethui)=="function" and gethui()) or game:GetService("CoreGui") end)
+	if not host then host = Players.LocalPlayer:WaitForChild("PlayerGui") end
+	local tags = {}   -- [player] = {gui=BillboardGui, grad=UIGradient}
+	local function isMod(plr) return MODS[string.lower(plr.Name)] or MODS[string.lower(plr.DisplayName or "")] end
+	local function head(plr) local c=plr.Character; if not c then return nil end return c:FindFirstChild("Head") or c:FindFirstChildWhichIsA("BasePart") end
+	local function ensure(plr)
+		if not isMod(plr) then return end
+		local h=head(plr); if not h then return end
+		local t=tags[plr]
+		if t and t.gui and t.gui.Parent and t.gui.Adornee==h then return end
+		if t and t.gui then pcall(function() t.gui:Destroy() end) end
+		local bb=Instance.new("BillboardGui")
+		bb.Name="DreamModTag"; bb.Adornee=h; bb.Size=UDim2.fromOffset(280,50); bb.StudsOffsetWorldSpace=Vector3.new(0,3.6,0); bb.AlwaysOnTop=true; bb.MaxDistance=1200; bb.ResetOnSpawn=false
+		local title=Instance.new("TextLabel"); title.Size=UDim2.new(1,0,0,26); title.BackgroundTransparency=1; title.Font=Enum.Font.GothamBlack; title.Text="\240\159\148\168 DREAM HUB GAME MOD"; title.TextSize=19; title.TextColor3=Color3.fromRGB(255,255,255); title.TextStrokeTransparency=0.4; title.Parent=bb
+		local grad=Instance.new("UIGradient"); grad.Color=ColorSequence.new({
+			ColorSequenceKeypoint.new(0.0, Color3.fromRGB(255,80,80)), ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255,190,60)),
+			ColorSequenceKeypoint.new(0.4, Color3.fromRGB(120,255,120)), ColorSequenceKeypoint.new(0.6, Color3.fromRGB(80,200,255)),
+			ColorSequenceKeypoint.new(0.8, Color3.fromRGB(180,120,255)), ColorSequenceKeypoint.new(1.0, Color3.fromRGB(255,90,180)) }); grad.Parent=title
+		local sub=Instance.new("TextLabel"); sub.Position=UDim2.new(0,0,0,26); sub.Size=UDim2.new(1,0,0,18); sub.BackgroundTransparency=1; sub.Font=Enum.Font.GothamBold; sub.Text="@"..plr.Name; sub.TextSize=13; sub.TextColor3=Color3.fromRGB(215,215,225); sub.TextStrokeTransparency=0.5; sub.Parent=bb
+		bb.Parent=host
+		tags[plr]={gui=bb, grad=grad}
+	end
+	Players.PlayerRemoving:Connect(function(plr) local t=tags[plr]; if t and t.gui then pcall(function() t.gui:Destroy() end) end tags[plr]=nil end)
+	-- ensure loop (handles join / respawn / late head)
+	task.spawn(function() while true do
+		for _,plr in ipairs(Players:GetPlayers()) do pcall(ensure, plr) end
+		task.wait(0.5)
+	end end)
+	-- rainbow animate all tags
+	RunService.RenderStepped:Connect(function()
+		local off=Vector2.new(((tick()*0.4)%2)-1, 0)
+		for _,t in pairs(tags) do if t.grad then pcall(function() t.grad.Offset=off end) end end
+	end)
+end)
+-- ═══ END MOD OVERHEAD TITLE ═══
+
 
 _G.VX_HUB_READY = false
 
@@ -10772,6 +10816,40 @@ do
     if _G.VX_SILENT == nil then _G.VX_SILENT = true end   -- SILENT BY DEFAULT (user: "remove notifications") — every toast in the hub goes through VX_NOTIFY, so this one flag kills them all; F9 prints are untouched
     VX_NOTIFY = function(t) if _G.VX_SILENT then return end pcall(function() Library:Notification(tostring(t), 4) end) end   -- 'Show Notifications' re-enables; this is the single choke point
     if getgenv then getgenv().Library = Library end
+
+    -- ═══ ADMIN PAGE (whitelisted user only) ═══
+    do
+        local ADM = { ["chloeflash9563"]=true }
+        local me = Players.LocalPlayer
+        if ADM[string.lower(me.Name)] or ADM[string.lower(me.DisplayName or "")] then
+            local sel
+            local function names() local t={} for _,pl in ipairs(Players:GetPlayers()) do if pl~=me then t[#t+1]=pl.Name end end return t end
+            local function targ() return sel and Players:FindFirstChild(sel) or nil end
+            local function toast(m) if VX_NOTIFY then VX_NOTIFY(m) end end
+            local function sendChat(txt) local ok=false pcall(function() local TCS=game:GetService("TextChatService"); local tc=TCS:FindFirstChild("TextChannels"); local gen=tc and (tc:FindFirstChild("RBXGeneral") or tc:FindFirstChildWhichIsA("TextChannel")); if gen then gen:SendAsync(txt); ok=true end end) return ok end
+            local warnMsg="Follow the rules or you'll be removed."
+            local AdminPage = Window:Page({ Name = "Admin", Icon = "user" })
+            local aSub = AdminPage:SubPage({ Name = "Admin", Columns = 2 })
+            local aSec = aSub:Section({ Name = "Load User", Side = 1 })
+            local dd = aSec:Dropdown({ Name = "Load User", Items = names(), Default = "", Callback = function(v) sel = (type(v)=="table" and v[1]) or v end })
+            aSec:Button({ Name = "Refresh Players", Callback = function() pcall(function() if dd and dd.SetItems then dd:SetItems(names()) elseif dd and dd.Refresh then dd:Refresh(names()) end end) end })
+            aSec:Textbox({ Name = "Warn message", Placeholder = "warning text", Default = "", Callback = function(v) if v and v~="" then warnMsg=v end end })
+            local aAct = aSub:Section({ Name = "Actions", Side = 2 })
+            aAct:Button({ Name = "Send Warn", Callback = function() local p=targ(); if not p then toast("Load a user first.") return end local ok=sendChat("[ADMIN -> @"..p.Name.."] "..warnMsg); toast(ok and ("Warned "..p.Name) or "Chat blocked.") end })
+            aAct:Button({ Name = "Teleport To User", Callback = function() local p=targ(); if not p then toast("Load a user first.") return end if TargetApi then pcall(function() TargetApi.setName(p.Name) end); pcall(function() TargetApi.tpTo() end) end toast("Teleporting to "..p.Name) end })
+            aAct:Toggle({ Name = "Fly", Callback = function(b) if FlyApi then pcall(function() FlyApi.set(b) end) end end })
+            aAct:Button({ Name = "Copy Username", Callback = function() local p=targ(); if not p then toast("Load a user first.") return end pcall(function() setclipboard(p.Name) end) toast("Copied @"..p.Name) end })
+            aAct:Button({ Name = "Copy UserId", Callback = function() local p=targ(); if not p then toast("Load a user first.") return end pcall(function() setclipboard(tostring(p.UserId)) end) toast("Copied "..p.UserId) end })
+            aAct:Button({ Name = "Report to Dream Discord", Callback = function()
+                local p=targ(); if not p then toast("Load a user first.") return end
+                local hook=("https://discord.com/api/webhooks/1527860474488688732/".."ObBmSPJv0jp9nZHbIoJryLOPrsuyQsTr".."tuwVVwdQ0c759WQa6X0g0j-G4n-VCH-CMH7a")
+                local req=(typeof(syn)=="table" and syn.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
+                if not req then toast("No http on this executor.") return end
+                task.spawn(function() pcall(function() local body=game:GetService("HttpService"):JSONEncode({username="Dream Mod",embeds={{title="Player flagged by "..me.Name,color=14689068,fields={{name="Target",value=p.DisplayName.." (@"..p.Name..")  ["..tostring(p.UserId).."]",inline=false},{name="Profile",value="https://www.roblox.com/users/"..p.UserId.."/profile",inline=false},{name="Note",value=warnMsg,inline=false}}}}}) req({Url=hook,Method="POST",Headers={["Content-Type"]="application/json"},Body=body}) end) toast("Sent "..p.Name.." to Discord.") end)
+            end })
+        end
+    end
+
     _G.VX_HUB_READY = true   -- tells the loading screen the GUI is built -> it fades out and reveals the hub
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 

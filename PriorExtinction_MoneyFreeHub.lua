@@ -327,6 +327,50 @@ task.spawn(function()
 	task.delay(120, function() if not menuClosed and not destroyed then menuClosed=true; cleanup() end end)
 end)
 -- ═══════════════════ END LOADING SCREEN ═══════════════════
+-- ═══ DREAM HUB — MOD OVERHEAD TITLE (only script-users see it) ═══
+-- Rendered LOCALLY by every Dream Hub client: your script draws a floating rainbow title above any whitelisted
+-- moderator in the server. Because ONLY people running the script execute this, only they see it — exactly
+-- "only people using my scripts can see it". Non-users see nothing. Follows respawns; cheap single loop.
+task.spawn(function()
+	local Players = game:GetService("Players")
+	local RunService = game:GetService("RunService")
+	local MODS = { ["chloeflash9563"]=true }   -- whitelist (matches Name or DisplayName)
+	local host; pcall(function() host = (typeof(gethui)=="function" and gethui()) or game:GetService("CoreGui") end)
+	if not host then host = Players.LocalPlayer:WaitForChild("PlayerGui") end
+	local tags = {}   -- [player] = {gui=BillboardGui, grad=UIGradient}
+	local function isMod(plr) return MODS[string.lower(plr.Name)] or MODS[string.lower(plr.DisplayName or "")] end
+	local function head(plr) local c=plr.Character; if not c then return nil end return c:FindFirstChild("Head") or c:FindFirstChildWhichIsA("BasePart") end
+	local function ensure(plr)
+		if not isMod(plr) then return end
+		local h=head(plr); if not h then return end
+		local t=tags[plr]
+		if t and t.gui and t.gui.Parent and t.gui.Adornee==h then return end
+		if t and t.gui then pcall(function() t.gui:Destroy() end) end
+		local bb=Instance.new("BillboardGui")
+		bb.Name="DreamModTag"; bb.Adornee=h; bb.Size=UDim2.fromOffset(280,50); bb.StudsOffsetWorldSpace=Vector3.new(0,3.6,0); bb.AlwaysOnTop=true; bb.MaxDistance=1200; bb.ResetOnSpawn=false
+		local title=Instance.new("TextLabel"); title.Size=UDim2.new(1,0,0,26); title.BackgroundTransparency=1; title.Font=Enum.Font.GothamBlack; title.Text="\240\159\148\168 DREAM HUB GAME MOD"; title.TextSize=19; title.TextColor3=Color3.fromRGB(255,255,255); title.TextStrokeTransparency=0.4; title.Parent=bb
+		local grad=Instance.new("UIGradient"); grad.Color=ColorSequence.new({
+			ColorSequenceKeypoint.new(0.0, Color3.fromRGB(255,80,80)), ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255,190,60)),
+			ColorSequenceKeypoint.new(0.4, Color3.fromRGB(120,255,120)), ColorSequenceKeypoint.new(0.6, Color3.fromRGB(80,200,255)),
+			ColorSequenceKeypoint.new(0.8, Color3.fromRGB(180,120,255)), ColorSequenceKeypoint.new(1.0, Color3.fromRGB(255,90,180)) }); grad.Parent=title
+		local sub=Instance.new("TextLabel"); sub.Position=UDim2.new(0,0,0,26); sub.Size=UDim2.new(1,0,0,18); sub.BackgroundTransparency=1; sub.Font=Enum.Font.GothamBold; sub.Text="@"..plr.Name; sub.TextSize=13; sub.TextColor3=Color3.fromRGB(215,215,225); sub.TextStrokeTransparency=0.5; sub.Parent=bb
+		bb.Parent=host
+		tags[plr]={gui=bb, grad=grad}
+	end
+	Players.PlayerRemoving:Connect(function(plr) local t=tags[plr]; if t and t.gui then pcall(function() t.gui:Destroy() end) end tags[plr]=nil end)
+	-- ensure loop (handles join / respawn / late head)
+	task.spawn(function() while true do
+		for _,plr in ipairs(Players:GetPlayers()) do pcall(ensure, plr) end
+		task.wait(0.5)
+	end end)
+	-- rainbow animate all tags
+	RunService.RenderStepped:Connect(function()
+		local off=Vector2.new(((tick()*0.4)%2)-1, 0)
+		for _,t in pairs(tags) do if t.grad then pcall(function() t.grad.Offset=off end) end end
+	end)
+end)
+-- ═══ END MOD OVERHEAD TITLE ═══
+
 
 pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", {Title="Dream Hub", Text="Prior Extinction loading... press RightShift for the menu", Duration=6}) end)
 -- LOAD-STAGE CHECKPOINTS (debug): OFF by default. If a load ever dies with no UI, run `_G.PE_STAGES = true`
@@ -2334,9 +2378,9 @@ if __gg.PE_ADMIN and Pages["Admin"] then local p=Pages["Admin"]
 	mkBtn(id,"Copy Username", function() local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end local ok=pcall(function() setclipboard(pl.Name) end); notify("Admin", ok and ("Copied @"..pl.Name) or ("@"..pl.Name.." (no clipboard on this executor)")) end)
 	mkBtn(id,"Copy UserId", function() local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end local ok=pcall(function() setclipboard(tostring(pl.UserId)) end); notify("Admin", ok and ("Copied "..pl.UserId) or (tostring(pl.UserId).." (no clipboard)")) end)
 	mkBtn(id,"Copy Profile Link", function() local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end local link="https://www.roblox.com/users/"..pl.UserId.."/profile"; local ok=pcall(function() setclipboard(link) end); notify("Admin", ok and "Copied profile link." or link) end)
-	mkBtn(id,"Report to Dream Discord", function()
+	mkBtn(id,"Report to Dream Discord (admin)", function()
 		local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end
-		local hook = _G.__DreamReportWebhook or ("https://discord.com/api/webhooks/1527849806108692500/".."Ryczyznv3EQVLJF_Y-AYsMqhK".."_fvBC5T3wu2d1uO5BBmSgMARN0_hST5vRRlzQZHkLyg")
+		local hook = ("https://discord.com/api/webhooks/1527860474488688732/".."ObBmSPJv0jp9nZHbIoJryLOPrsuyQsTr".."tuwVVwdQ0c759WQa6X0g0j-G4n-VCH-CMH7a")   -- ADMIN webhook
 		local req = (typeof(syn)=="table" and syn.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
 		if not req then notify("Admin","Executor has no http request.") return end
 		task.spawn(function() pcall(function()
