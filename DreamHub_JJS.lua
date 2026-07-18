@@ -88,205 +88,440 @@ end
 _G.__DreamGameName = "JUJUTSU SHENANIGANS"
 _G.__DreamTier = (_G.JJS_PREMIUM and "PREMIUM") or (_G.JJS_PREM and "PREMIUM") or (_G.JJS_PLUS and "PLUS") or (_G.JJS_FREE and "FREE") or "FULL"
 -- ═══════════════════ DREAM HUB — LOADING SCREEN ═══════════════════
--- Premium YUB-X-style intro: blurred backdrop, drifting particles, a glowing logo that springs in, gradient
--- title, tier pill, your profile card, and a shimmering progress bar with cycling status text. Fades out when
--- the hub finishes building (or a safety timeout) so it can never get stuck.
-pcall(function()
-	local Players  = game:GetService("Players")
-	local Tween    = game:GetService("TweenService")
-	local Lighting = game:GetService("Lighting")
-	local LP       = Players.LocalPlayer
-	if not LP then return end
-	local accent  = Color3.fromRGB(226, 34, 44)     -- Dream red
-	local accent2 = Color3.fromRGB(120, 20, 26)
-	local GAME = _G.__DreamGameName or "DREAM HUB"
-	local TIER = _G.__DreamTier or ""
-	local TI = TweenInfo.new
-	local function tw(o, t, props, style, dir) return Tween:Create(o, TI(t, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out), props) end
+-- Obsidian Starfield Punch: cinematic startup splash (monochrome, starfield, zoom-punch). Shows your username,
+-- avatar profile pic, the Roblox game you're in (MarketplaceService), and the Dream Hub tier. Runs concurrently
+-- with the hub build (task.spawn) and self-destroys. Tier/game come from _G.__DreamTier / _G.__DreamGameName.
+task.spawn(function()
+	local Players = game:GetService("Players")
+	local TweenService = game:GetService("TweenService")
+	local RunService = game:GetService("RunService")
+	local MarketplaceService = game:GetService("MarketplaceService")
 
-	local gui = Instance.new("ScreenGui")
-	gui.Name = "DreamLoader"; gui.IgnoreGuiInset = true; gui.ResetOnSpawn = false
-	gui.DisplayOrder = 2000000; gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	pcall(function() gui.Parent = (typeof(gethui)=="function" and gethui()) or game:GetService("CoreGui") end)
-	if not gui.Parent then pcall(function() gui.Parent = LP:WaitForChild("PlayerGui") end) end
+	local player = Players.LocalPlayer
+	if not player then
+		Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+		player = Players.LocalPlayer
+	end
+	if not player then return end
 
-	-- backdrop blur (real Lighting blur = the premium frosted look), fades in then out
-	local blur = Instance.new("BlurEffect"); blur.Size = 0; pcall(function() blur.Parent = Lighting end)
-	tw(blur, 0.9, {Size = 24}):Play()
+	local WHITE = Color3.fromRGB(255, 255, 255)
+	local SILVER = Color3.fromRGB(195, 195, 205)
+	local BLACK = Color3.fromRGB(0, 0, 0)
+	local LOGO_ID = "rbxassetid://82151574125055"
+	local DREAM_GAME = _G.__DreamGameName or "DREAM HUB"
+	local DREAM_TIER = _G.__DreamTier or ""
 
-	local bg = Instance.new("Frame")
-	bg.Size = UDim2.fromScale(1,1); bg.BackgroundColor3 = Color3.fromRGB(8,8,11)
-	bg.BackgroundTransparency = 0; bg.BorderSizePixel = 0; bg.ZIndex = 1; bg.Parent = gui
-	local bgGrad = Instance.new("UIGradient")
-	bgGrad.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, Color3.fromRGB(26,14,16)), ColorSequenceKeypoint.new(0.5, Color3.fromRGB(10,10,13)), ColorSequenceKeypoint.new(1, Color3.fromRGB(4,4,6))})
-	bgGrad.Rotation = 90; bgGrad.Parent = bg
+	local running = true
+	local destroyed = false
+	local statusVisible = false
+	local activeTweens = {}
+	local connections = {}
+	local gui
 
-	-- drifting particles
-	local particles = Instance.new("Frame"); particles.BackgroundTransparency = 1; particles.Size = UDim2.fromScale(1,1); particles.ZIndex = 2; particles.Parent = bg
-	local seeds = {13, 41, 77, 103, 149, 191, 233, 271, 317, 359, 401, 443}
-	for i, s in ipairs(seeds) do
+	local function rand(a, b) return a + math.random() * (b - a) end
+	local function track(conn) table.insert(connections, conn); return conn end
+
+	local function play(inst, info, props)
+		if destroyed then return nil end
+		local ok, tw = pcall(TweenService.Create, TweenService, inst, info, props)
+		if not ok or not tw then return nil end
+		activeTweens[tw] = true
+		tw.Completed:Once(function() activeTweens[tw] = nil end)
+		tw:Play()
+		return tw
+	end
+	local function finish(tw)
+		if tw then return tw.Completed:Wait() end
+		return Enum.PlaybackState.Cancelled
+	end
+	local function cancelAll()
+		local list = {}
+		for tw in activeTweens do table.insert(list, tw) end
+		table.clear(activeTweens)
+		for _, tw in list do pcall(function() tw:Cancel() end) end
+	end
+	local function cleanup()
+		if destroyed then return end
+		destroyed = true; running = false
+		for _, conn in connections do pcall(function() if conn.Connected then conn:Disconnect() end end) end
+		table.clear(connections)
+		cancelAll()
+		pcall(function() if gui then gui:Destroy() end end)
+	end
+	local function graphemesOf(text)
+		local pieces = {}
+		local ok = pcall(function() for first, last in utf8.graphemes(text) do table.insert(pieces, string.sub(text, first, last)) end end)
+		if not ok or #pieces == 0 then table.clear(pieces); for i = 1, #text do pieces[i] = string.sub(text, i, i) end end
+		return pieces
+	end
+
+	gui = Instance.new("ScreenGui")
+	gui.Name = "DreamLoader"; gui.IgnoreGuiInset = true; gui.DisplayOrder = 2000000; gui.ResetOnSpawn = false
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+	local backdrop = Instance.new("Frame")
+	backdrop.Name = "Backdrop"; backdrop.Size = UDim2.fromScale(1, 1); backdrop.BackgroundColor3 = BLACK
+	backdrop.BackgroundTransparency = 0; backdrop.BorderSizePixel = 0; backdrop.ZIndex = 1; backdrop.Parent = gui
+
+	local container = Instance.new("Frame")
+	container.Name = "Composition"; container.AnchorPoint = Vector2.new(0.5, 0.5); container.Position = UDim2.fromScale(0.5, 0.5)
+	container.Size = UDim2.fromScale(1, 1); container.BackgroundTransparency = 1; container.ZIndex = 2; container.Parent = gui
+
+	local punchScale = Instance.new("UIScale"); punchScale.Scale = 1; punchScale.Parent = container
+
+	local sparkleLayer = Instance.new("Frame")
+	sparkleLayer.Name = "Starfield"; sparkleLayer.Size = UDim2.fromScale(1, 1); sparkleLayer.BackgroundTransparency = 1
+	sparkleLayer.ZIndex = 1; sparkleLayer.Parent = container
+
+	local comp = Instance.new("Frame")
+	comp.Name = "Fit"; comp.AnchorPoint = Vector2.new(0.5, 0.5); comp.Position = UDim2.fromScale(0.5, 0.5)
+	comp.Size = UDim2.fromScale(1, 1); comp.BackgroundTransparency = 1; comp.ZIndex = 2; comp.Parent = container
+
+	local fitScale = Instance.new("UIScale"); fitScale.Scale = 1; fitScale.Parent = comp
+
+	local flash = Instance.new("Frame")
+	flash.Name = "Flash"; flash.Size = UDim2.fromScale(1, 1); flash.BackgroundColor3 = WHITE; flash.BackgroundTransparency = 1
+	flash.BorderSizePixel = 0; flash.ZIndex = 3; flash.Parent = gui
+
+	local function makeLogo(z)
+		local img = Instance.new("ImageLabel")
+		img.BackgroundTransparency = 1; img.AnchorPoint = Vector2.new(0.5, 0.5); img.Size = UDim2.fromOffset(210, 210)
+		img.Position = UDim2.new(0.5, 0, 0.4, 0); img.Image = LOGO_ID; img.ScaleType = Enum.ScaleType.Fit
+		img.ImageTransparency = 1; img.ZIndex = z; img.Parent = comp
+		return img
+	end
+	local ghostA = makeLogo(2)
+	local ghostB = makeLogo(2)
+	local logo = makeLogo(3)
+	logo.Position = UDim2.new(0.5, 0, 0.4, 16)
+	local breathScale = Instance.new("UIScale"); breathScale.Scale = 1; breathScale.Parent = logo
+
+	-- PROFILE AVATAR (added): circular headshot above the logo
+	local avatar = Instance.new("ImageLabel")
+	avatar.AnchorPoint = Vector2.new(0.5, 0.5); avatar.Size = UDim2.fromOffset(66, 66); avatar.Position = UDim2.new(0.5, 0, 0.16, 16)
+	avatar.BackgroundColor3 = Color3.fromRGB(18, 18, 22); avatar.Image = "rbxthumb://type=AvatarHeadShot&id=" .. player.UserId .. "&w=150&h=150"
+	avatar.ImageTransparency = 1; avatar.ZIndex = 3; avatar.Parent = comp
+	local avCorner = Instance.new("UICorner"); avCorner.CornerRadius = UDim.new(1, 0); avCorner.Parent = avatar
+	local avStroke = Instance.new("UIStroke"); avStroke.Color = SILVER; avStroke.Thickness = 1.2; avStroke.Transparency = 1; avStroke.Parent = avatar
+
+	local barBack = Instance.new("Frame")
+	barBack.AnchorPoint = Vector2.new(0.5, 0.5); barBack.Position = UDim2.new(0.5, 0, 0.585, 16); barBack.Size = UDim2.fromOffset(340, 10)
+	barBack.BackgroundColor3 = Color3.fromRGB(18, 18, 22); barBack.BackgroundTransparency = 1; barBack.BorderSizePixel = 0
+	barBack.ClipsDescendants = true; barBack.ZIndex = 3; barBack.Parent = comp
+	local barCorner = Instance.new("UICorner"); barCorner.CornerRadius = UDim.new(1, 0); barCorner.Parent = barBack
+	local barStroke = Instance.new("UIStroke"); barStroke.Color = SILVER; barStroke.Thickness = 1; barStroke.Transparency = 1; barStroke.Parent = barBack
+
+	local barFill = Instance.new("Frame")
+	barFill.Size = UDim2.fromScale(0, 1); barFill.BackgroundColor3 = WHITE; barFill.BorderSizePixel = 0; barFill.ZIndex = 4; barFill.Parent = barBack
+	local fillCorner = Instance.new("UICorner"); fillCorner.CornerRadius = UDim.new(1, 0); fillCorner.Parent = barFill
+	local fillGradient = Instance.new("UIGradient"); fillGradient.Color = ColorSequence.new(WHITE, SILVER); fillGradient.Parent = barFill
+
+	local shine = Instance.new("Frame")
+	shine.AnchorPoint = Vector2.new(0.5, 0); shine.Size = UDim2.new(0, 46, 1, 0); shine.Position = UDim2.new(-0.2, 0, 0, 0)
+	shine.BackgroundColor3 = WHITE; shine.BackgroundTransparency = 1; shine.BorderSizePixel = 0; shine.ZIndex = 5; shine.Parent = barBack
+	local shineGradient = Instance.new("UIGradient")
+	shineGradient.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.35), NumberSequenceKeypoint.new(1, 1)})
+	shineGradient.Parent = shine
+
+	local percentLabel = Instance.new("TextLabel")
+	percentLabel.AnchorPoint = Vector2.new(1, 0); percentLabel.Position = UDim2.new(0.5, 170, 0.585, 12); percentLabel.Size = UDim2.fromOffset(80, 14)
+	percentLabel.BackgroundTransparency = 1; percentLabel.FontFace = Font.fromEnum(Enum.Font.Code); percentLabel.TextSize = 13
+	percentLabel.TextColor3 = SILVER; percentLabel.TextTransparency = 1; percentLabel.TextXAlignment = Enum.TextXAlignment.Right
+	percentLabel.Text = "0%"; percentLabel.ZIndex = 3; percentLabel.Parent = comp
+
+	local statusLabel = Instance.new("TextLabel")
+	statusLabel.AnchorPoint = Vector2.new(0, 0.5); statusLabel.Position = UDim2.new(0.5, -240, 0.66, 0); statusLabel.Size = UDim2.fromOffset(480, 22)
+	statusLabel.BackgroundTransparency = 1; statusLabel.FontFace = Font.fromEnum(Enum.Font.Code); statusLabel.TextSize = 15
+	statusLabel.TextColor3 = Color3.fromRGB(232, 232, 236); statusLabel.TextTransparency = 1; statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+	statusLabel.Text = ""; statusLabel.ZIndex = 3; statusLabel.Parent = comp
+
+	local cursor = Instance.new("Frame")
+	cursor.AnchorPoint = Vector2.new(0, 0.5); cursor.Size = UDim2.fromOffset(8, 15); cursor.Position = UDim2.new(0, 4, 0.5, 0)
+	cursor.BackgroundColor3 = WHITE; cursor.BackgroundTransparency = 1; cursor.BorderSizePixel = 0; cursor.ZIndex = 4; cursor.Parent = statusLabel
+	track(statusLabel:GetPropertyChangedSignal("TextBounds"):Connect(function()
+		cursor.Position = UDim2.new(0, statusLabel.TextBounds.X + 4, 0.5, 0)
+	end))
+
+	-- DREAM TIER TAG (added): persistent bottom line, e.g. "DREAM HUB · PREMIUM"
+	local brand = Instance.new("TextLabel")
+	brand.AnchorPoint = Vector2.new(0.5, 0.5); brand.Position = UDim2.new(0.5, 0, 0.9, 0); brand.Size = UDim2.fromOffset(500, 18)
+	brand.BackgroundTransparency = 1; brand.FontFace = Font.fromEnum(Enum.Font.Code); brand.TextSize = 13
+	brand.TextColor3 = SILVER; brand.TextTransparency = 1; brand.TextXAlignment = Enum.TextXAlignment.Center
+	brand.Text = (DREAM_TIER ~= "" and ("DREAM HUB   ·   " .. DREAM_TIER)) or "DREAM HUB"
+	brand.ZIndex = 3; brand.Parent = comp
+
+	local ring = Instance.new("Frame")
+	ring.AnchorPoint = Vector2.new(0.5, 0.5); ring.Position = UDim2.fromScale(0.5, 0.5); ring.Size = UDim2.fromOffset(10, 10)
+	ring.BackgroundTransparency = 1; ring.ZIndex = 5; ring.Parent = comp
+	local ringCorner = Instance.new("UICorner"); ringCorner.CornerRadius = UDim.new(1, 0); ringCorner.Parent = ring
+	local ringStroke = Instance.new("UIStroke"); ringStroke.Color = WHITE; ringStroke.Thickness = 4; ringStroke.Transparency = 1; ringStroke.Parent = ring
+
+	local function updateFit()
+		local cam = workspace.CurrentCamera
+		local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
+		fitScale.Scale = math.clamp(math.min(vp.X / 900, vp.Y / 640), 0.55, 1)
+	end
+	pcall(updateFit)
+	do
+		local cam = workspace.CurrentCamera
+		if cam then track(cam:GetPropertyChangedSignal("ViewportSize"):Connect(updateFit)) end
+	end
+
+	local parented = false
+	if typeof(gethui) == "function" then
+		parented = pcall(function() local hui = gethui(); assert(typeof(hui) == "Instance"); gui.Parent = hui end)
+	end
+	if not parented then parented = pcall(function() gui.Parent = game:GetService("CoreGui") end) end
+	if not parented then
+		parented = pcall(function()
+			local pg = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5)
+			assert(typeof(pg) == "Instance"); gui.Parent = pg
+		end)
+	end
+	if not parented then cleanup(); return end
+
+	local function spawnDot(tier)
+		if not running then return end
+		local far = tier == "far"
+		local px = far and math.random(2, 3) or math.random(4, 7)
+		local peak = far and rand(0.55, 0.75) or rand(0.05, 0.35)
+		local life = far and rand(1.6, 2.8) or rand(0.7, 1.6)
+		local drift = far and 0.04 or 0.12
+		local shade = math.random(235, 255)
 		local dot = Instance.new("Frame")
-		local sz = 2 + (s % 4)
-		dot.Size = UDim2.fromOffset(sz, sz); dot.BackgroundColor3 = accent
-		dot.BackgroundTransparency = 0.4 + (s % 5) * 0.1; dot.BorderSizePixel = 0; dot.ZIndex = 2; dot.Parent = particles
-		Instance.new("UICorner", dot).CornerRadius = UDim.new(1,0)
-		local xs = (s * 61 % 100) / 100
+		dot.AnchorPoint = Vector2.new(0.5, 0.5); dot.Size = UDim2.fromOffset(px, px)
+		dot.Position = UDim2.fromScale(rand(0.02, 0.98), rand(0.02, 0.98))
+		dot.BackgroundColor3 = Color3.fromRGB(shade, shade, shade); dot.BackgroundTransparency = 1; dot.BorderSizePixel = 0
+		dot.ZIndex = far and 1 or 2
+		local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(1, 0); c.Parent = dot
+		dot.Parent = sparkleLayer
 		task.spawn(function()
-			while dot.Parent do
-				dot.Position = UDim2.new(xs, 0, 1.05, 0)
-				dot.BackgroundTransparency = 0.85
-				local dur = 5 + (s % 5)
-				tw(dot, dur, {Position = UDim2.new(xs, 0, -0.05, 0), BackgroundTransparency = 0.55}, Enum.EasingStyle.Linear):Play()
-				task.wait(dur + (i * 0.2))
+			local target = UDim2.fromScale(math.clamp(dot.Position.X.Scale + rand(-drift, drift), 0, 1), math.clamp(dot.Position.Y.Scale + rand(-drift, drift), 0, 1))
+			play(dot, TweenInfo.new(life, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), { Position = target })
+			local state = finish(play(dot, TweenInfo.new(life * 0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = peak }))
+			if state ~= Enum.PlaybackState.Completed or not running then return end
+			state = finish(play(dot, TweenInfo.new(life * 0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { BackgroundTransparency = 1 }))
+			if state == Enum.PlaybackState.Completed and running then dot:Destroy() end
+		end)
+	end
+
+	local function spawnGlint()
+		if not running then return end
+		local px = math.random(12, 22)
+		local star = Instance.new("Frame")
+		star.AnchorPoint = Vector2.new(0.5, 0.5); star.Size = UDim2.fromOffset(px, px)
+		star.Position = UDim2.fromScale(rand(0.05, 0.95), rand(0.05, 0.95)); star.BackgroundTransparency = 1
+		star.Rotation = rand(-30, 30); star.ZIndex = 2; star.Parent = sparkleLayer
+		local taper = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0), NumberSequenceKeypoint.new(1, 1)})
+		local barH = Instance.new("Frame")
+		barH.AnchorPoint = Vector2.new(0.5, 0.5); barH.Position = UDim2.fromScale(0.5, 0.5); barH.Size = UDim2.new(1, 0, 0, 1)
+		barH.BackgroundColor3 = WHITE; barH.BackgroundTransparency = 1; barH.BorderSizePixel = 0; barH.ZIndex = 2; barH.Parent = star
+		local gradH = Instance.new("UIGradient"); gradH.Transparency = taper; gradH.Parent = barH
+		local barV = Instance.new("Frame")
+		barV.AnchorPoint = Vector2.new(0.5, 0.5); barV.Position = UDim2.fromScale(0.5, 0.5); barV.Size = UDim2.new(0, 1, 1, 0)
+		barV.BackgroundColor3 = WHITE; barV.BackgroundTransparency = 1; barV.BorderSizePixel = 0; barV.ZIndex = 2; barV.Parent = star
+		local gradV = Instance.new("UIGradient"); gradV.Rotation = 90; gradV.Transparency = taper; gradV.Parent = barV
+		local core = Instance.new("Frame")
+		core.AnchorPoint = Vector2.new(0.5, 0.5); core.Position = UDim2.fromScale(0.5, 0.5); core.Size = UDim2.fromOffset(4, 4)
+		core.BackgroundColor3 = WHITE; core.BackgroundTransparency = 1; core.BorderSizePixel = 0; core.ZIndex = 3
+		local coreCorner = Instance.new("UICorner"); coreCorner.CornerRadius = UDim.new(1, 0); coreCorner.Parent = core
+		core.Parent = star
+		task.spawn(function()
+			local life = rand(1.2, 2.4)
+			play(star, TweenInfo.new(life, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+				Position = UDim2.fromScale(math.clamp(star.Position.X.Scale + rand(-0.06, 0.06), 0, 1), math.clamp(star.Position.Y.Scale + rand(-0.06, 0.06), 0, 1)),
+				Rotation = star.Rotation + rand(30, 70),
+			})
+			local tIn = TweenInfo.new(life * 0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+			play(barH, tIn, { BackgroundTransparency = 0.05 }); play(core, tIn, { BackgroundTransparency = 0.1 })
+			local state = finish(play(barV, tIn, { BackgroundTransparency = 0.05 }))
+			if state ~= Enum.PlaybackState.Completed or not running then return end
+			local tOut = TweenInfo.new(life * 0.65, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+			play(barH, tOut, { BackgroundTransparency = 1 }); play(core, tOut, { BackgroundTransparency = 1 })
+			state = finish(play(barV, tOut, { BackgroundTransparency = 1 }))
+			if state == Enum.PlaybackState.Completed and running then star:Destroy() end
+		end)
+	end
+
+	local function spawnStreak()
+		if not running then return end
+		local angle = rand(0, 2 * math.pi)
+		local dist = rand(0.16, 0.28)
+		local sx, sy = rand(0.1, 0.9), rand(0.08, 0.75)
+		local streak = Instance.new("Frame")
+		streak.AnchorPoint = Vector2.new(0.5, 0.5); streak.Position = UDim2.fromScale(sx, sy); streak.Size = UDim2.fromOffset(0, 2)
+		streak.Rotation = math.deg(angle); streak.BackgroundColor3 = WHITE; streak.BackgroundTransparency = 0.15; streak.BorderSizePixel = 0
+		streak.ZIndex = 2
+		local grad = Instance.new("UIGradient")
+		grad.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.35, 0.1), NumberSequenceKeypoint.new(1, 0)})
+		grad.Parent = streak
+		streak.Parent = sparkleLayer
+		task.spawn(function()
+			local ex = math.clamp(sx + math.cos(angle) * dist, 0, 1)
+			local ey = math.clamp(sy + math.sin(angle) * dist, 0, 1)
+			local state = finish(play(streak, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Size = UDim2.fromOffset(math.random(90, 150), 2), Position = UDim2.fromScale((sx + ex) / 2, (sy + ey) / 2),
+			}))
+			if state ~= Enum.PlaybackState.Completed or not running then return end
+			state = finish(play(streak, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+				Size = UDim2.fromOffset(0, 2), Position = UDim2.fromScale(ex, ey), BackgroundTransparency = 1,
+			}))
+			if state == Enum.PlaybackState.Completed and running then streak:Destroy() end
+		end)
+	end
+
+	task.spawn(function()
+		for _ = 1, 10 do spawnDot("far") end
+		for _ = 1, 6 do spawnDot("near") end
+		for _ = 1, 3 do spawnGlint() end
+		while running and not destroyed do
+			spawnDot(math.random() < 0.55 and "far" or "near")
+			if math.random() < 0.14 then spawnGlint() end
+			if math.random() < 0.05 then spawnStreak() end
+			task.wait(rand(0.05, 0.13))
+		end
+	end)
+
+	local placeName = "this experience"
+	task.spawn(function()
+		local ok, info = pcall(function() return MarketplaceService:GetProductInfo(game.PlaceId) end)
+		if ok and type(info) == "table" and type(info.Name) == "string" and #info.Name > 0 then
+			local pieces = graphemesOf(info.Name)
+			if #pieces > 30 then placeName = table.concat(pieces, "", 1, 27) .. "..." else placeName = info.Name end
+		end
+	end)
+
+	local writeToken = 0
+	local function setStatus(text)
+		writeToken += 1
+		local token = writeToken
+		statusVisible = true
+		task.spawn(function()
+			finish(play(statusLabel, TweenInfo.new(0.07, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { TextTransparency = 1 }))
+			if token ~= writeToken or not running then return end
+			statusLabel.Text = ""; statusLabel.TextTransparency = 0.08
+			for _, ch in graphemesOf(text) do
+				if token ~= writeToken or not running then return end
+				statusLabel.Text ..= ch
+				if math.random() < 0.08 then task.wait(rand(0.05, 0.12)) else task.wait(0.016) end
 			end
 		end)
 	end
 
-	-- center container
-	local center = Instance.new("Frame")
-	center.AnchorPoint = Vector2.new(0.5,0.5); center.Position = UDim2.new(0.5,0,0.44,0)
-	center.Size = UDim2.fromOffset(520, 360); center.BackgroundTransparency = 1; center.ZIndex = 3; center.Parent = bg
-
-	-- glow behind logo (pulsing)
-	local glow = Instance.new("Frame")
-	glow.AnchorPoint = Vector2.new(0.5,0.5); glow.Position = UDim2.new(0.5,0,0.24,0)
-	glow.Size = UDim2.fromOffset(150,150); glow.BackgroundColor3 = accent; glow.BackgroundTransparency = 1; glow.BorderSizePixel = 0; glow.ZIndex = 3; glow.Parent = center
-	Instance.new("UICorner", glow).CornerRadius = UDim.new(1,0)
-	task.delay(1.0, function()
-		task.spawn(function()
-			while glow.Parent do
-				tw(glow, 1.3, {Size = UDim2.fromOffset(190,190), BackgroundTransparency = 0.82}, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut):Play()
-				task.wait(1.3)
-				tw(glow, 1.3, {Size = UDim2.fromOffset(150,150), BackgroundTransparency = 0.9}, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut):Play()
-				task.wait(1.3)
-			end
-		end)
-	end)
-
-	-- logo (springs in)
-	local logo = Instance.new("ImageLabel")
-	logo.AnchorPoint = Vector2.new(0.5,0.5); logo.Position = UDim2.new(0.5,0,0.24,0)
-	logo.Size = UDim2.fromOffset(0,0); logo.BackgroundTransparency = 1
-	logo.Image = "rbxassetid://82151574125055"; logo.ImageColor3 = Color3.fromRGB(255,255,255)
-	logo.ImageTransparency = 1; logo.ScaleType = Enum.ScaleType.Fit; logo.ZIndex = 4; logo.Parent = center
-	tw(logo, 1.0, {ImageTransparency = 0}):Play()
-	Tween:Create(logo, TI(1.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = UDim2.fromOffset(132,132)}):Play()
-
-	-- title with gradient
-	local title = Instance.new("TextLabel")
-	title.AnchorPoint = Vector2.new(0.5,0.5); title.Position = UDim2.new(0.5,0,0.56,0)
-	title.Size = UDim2.fromOffset(520,44); title.BackgroundTransparency = 1
-	title.Text = "DREAM HUB"; title.TextColor3 = Color3.fromRGB(255,255,255)
-	title.Font = Enum.Font.GothamBlack; title.TextSize = 36; title.TextTransparency = 1; title.ZIndex = 4; title.Parent = center
-	local tGrad = Instance.new("UIGradient")
-	tGrad.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, Color3.fromRGB(255,255,255)), ColorSequenceKeypoint.new(1, Color3.fromRGB(255,150,155))})
-	tGrad.Rotation = 90; tGrad.Parent = title
-	tw(title, 0.9, {TextTransparency = 0}):Play()
-
-	-- tier pill
-	local pill = Instance.new("Frame")
-	pill.AnchorPoint = Vector2.new(0.5,0.5); pill.Position = UDim2.new(0.5,0,0.70,0)
-	pill.Size = UDim2.fromOffset(0,26); pill.BackgroundColor3 = accent; pill.BackgroundTransparency = 1; pill.BorderSizePixel = 0; pill.ZIndex = 4; pill.Parent = center
-	Instance.new("UICorner", pill).CornerRadius = UDim.new(1,0)
-	local pillTxt = Instance.new("TextLabel")
-	pillTxt.Size = UDim2.fromScale(1,1); pillTxt.BackgroundTransparency = 1
-	pillTxt.Text = (TIER ~= "" and (GAME.."  ·  "..TIER)) or GAME
-	pillTxt.TextColor3 = Color3.fromRGB(255,255,255); pillTxt.Font = Enum.Font.GothamBold; pillTxt.TextSize = 13; pillTxt.TextTransparency = 1; pillTxt.ZIndex = 5; pillTxt.Parent = pill
-	local pw = 120 + #pillTxt.Text * 6
-	task.delay(0.5, function()
-		tw(pill, 0.7, {Size = UDim2.fromOffset(pw, 26), BackgroundTransparency = 0.15}):Play()
-		tw(pillTxt, 0.8, {TextTransparency = 0}):Play()
-	end)
-
-	-- progress bar (with shimmer)
-	local track = Instance.new("Frame")
-	track.AnchorPoint = Vector2.new(0.5,0.5); track.Position = UDim2.new(0.5,0,0.86,0)
-	track.Size = UDim2.fromOffset(340,10); track.BackgroundColor3 = Color3.fromRGB(30,30,34); track.BorderSizePixel = 0; track.ClipsDescendants = true; track.ZIndex = 4; track.Parent = center
-	Instance.new("UICorner", track).CornerRadius = UDim.new(1,0)
-	local fill = Instance.new("Frame")
-	fill.Size = UDim2.new(0,0,1,0); fill.BackgroundColor3 = accent; fill.BorderSizePixel = 0; fill.ZIndex = 5; fill.Parent = track
-	Instance.new("UICorner", fill).CornerRadius = UDim.new(1,0)
-	local fGrad = Instance.new("UIGradient")
-	fGrad.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, accent2), ColorSequenceKeypoint.new(0.5, accent), ColorSequenceKeypoint.new(1, Color3.fromRGB(255,140,145))})
-	fGrad.Parent = fill
-	local shimmer = Instance.new("Frame")
-	shimmer.Size = UDim2.new(0,60,1,0); shimmer.BackgroundColor3 = Color3.fromRGB(255,255,255); shimmer.BackgroundTransparency = 0.55; shimmer.BorderSizePixel = 0; shimmer.ZIndex = 6; shimmer.Parent = track
-	local sGrad = Instance.new("UIGradient")
-	sGrad.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0,1), NumberSequenceKeypoint.new(0.5,0.3), NumberSequenceKeypoint.new(1,1)})
-	sGrad.Parent = shimmer
 	task.spawn(function()
-		while shimmer.Parent do
-			shimmer.Position = UDim2.new(-0.25,0,0,0)
-			tw(shimmer, 1.1, {Position = UDim2.new(1.05,0,0,0)}, Enum.EasingStyle.Linear):Play()
-			task.wait(1.6)
+		local on = true
+		while running and not destroyed do
+			cursor.BackgroundTransparency = (statusVisible and on) and 0.1 or 1
+			on = not on
+			task.wait(0.4)
 		end
+		if not destroyed then cursor.BackgroundTransparency = 1 end
 	end)
 
-	local status = Instance.new("TextLabel")
-	status.AnchorPoint = Vector2.new(0.5,0.5); status.Position = UDim2.new(0.5,0,0.93,0)
-	status.Size = UDim2.fromOffset(340,18); status.BackgroundTransparency = 1
-	status.Text = "Initializing…"; status.TextColor3 = Color3.fromRGB(170,170,178); status.Font = Enum.Font.Gotham; status.TextSize = 13; status.TextTransparency = 1; status.ZIndex = 4; status.Parent = center
-	tw(status, 0.9, {TextTransparency = 0}):Play()
-
-	-- profile card
-	local card = Instance.new("Frame")
-	card.AnchorPoint = Vector2.new(0.5,1); card.Position = UDim2.new(0.5,0,0.95,0)
-	card.Size = UDim2.fromOffset(276,58); card.BackgroundColor3 = Color3.fromRGB(18,18,22); card.BackgroundTransparency = 1; card.BorderSizePixel = 0; card.ZIndex = 3; card.Parent = bg
-	Instance.new("UICorner", card).CornerRadius = UDim.new(0,14)
-	local cStroke = Instance.new("UIStroke"); cStroke.Color = accent; cStroke.Transparency = 1; cStroke.Thickness = 1.2; cStroke.Parent = card
-	local av = Instance.new("ImageLabel")
-	av.AnchorPoint = Vector2.new(0,0.5); av.Position = UDim2.new(0,10,0.5,0); av.Size = UDim2.fromOffset(40,40)
-	av.BackgroundColor3 = Color3.fromRGB(34,34,40); av.Image = "rbxthumb://type=AvatarHeadShot&id="..LP.UserId.."&w=150&h=150"
-	av.ImageTransparency = 1; av.ZIndex = 4; av.Parent = card
-	Instance.new("UICorner", av).CornerRadius = UDim.new(1,0)
-	local avStroke = Instance.new("UIStroke"); avStroke.Color = accent; avStroke.Transparency = 1; avStroke.Thickness = 1.5; avStroke.Parent = av
-	local nm = Instance.new("TextLabel")
-	nm.AnchorPoint = Vector2.new(0,0.5); nm.Position = UDim2.new(0,60,0.34,0); nm.Size = UDim2.fromOffset(200,18)
-	nm.BackgroundTransparency = 1; nm.Text = LP.DisplayName; nm.TextColor3 = Color3.fromRGB(255,255,255); nm.Font = Enum.Font.GothamBold; nm.TextSize = 15; nm.TextXAlignment = Enum.TextXAlignment.Left; nm.TextTransparency = 1; nm.ZIndex = 4; nm.Parent = card
-	local un = Instance.new("TextLabel")
-	un.AnchorPoint = Vector2.new(0,0.5); un.Position = UDim2.new(0,60,0.68,0); un.Size = UDim2.fromOffset(200,16)
-	un.BackgroundTransparency = 1; un.Text = "@"..LP.Name; un.TextColor3 = Color3.fromRGB(150,150,160); un.Font = Enum.Font.Gotham; un.TextSize = 12; un.TextXAlignment = Enum.TextXAlignment.Left; un.TextTransparency = 1; un.ZIndex = 4; un.Parent = card
-	task.delay(0.6, function()
-		tw(card, 0.9, {BackgroundTransparency = 0.1}):Play(); tw(cStroke, 0.9, {Transparency = 0.5}):Play()
-		tw(av, 0.9, {ImageTransparency = 0}):Play(); tw(avStroke, 0.9, {Transparency = 0.2}):Play()
-		tw(nm, 0.9, {TextTransparency = 0}):Play(); tw(un, 0.9, {TextTransparency = 0}):Play()
+	local shownPct = 0
+	local percentConn = RunService.RenderStepped:Connect(function(dt)
+		if destroyed then return end
+		shownPct += (barFill.Size.X.Scale - shownPct) * math.min(dt * 10, 1)
+		percentLabel.Text = string.format("%d%%", math.floor(shownPct * 100 + 0.5))
 	end)
+	track(percentConn)
 
-	-- progress + cycling status
-	local done = false
-	local msgs = {"Initializing…", "Loading modules…", "Building interface…", "Applying tweaks…", "Almost there…"}
-	task.spawn(function()
-		local p, mi = 0, 1
-		while not done and p < 0.92 do
-			p = p + (0.92 - p) * 0.045 + 0.004
-			pcall(function() fill.Size = UDim2.new(math.clamp(p,0,0.92),0,1,0) end)
-			local nmi = math.min(#msgs, 1 + math.floor(p * #msgs))
-			if nmi ~= mi then mi = nmi; pcall(function()
-				tw(status, 0.2, {TextTransparency = 1}):Play(); task.wait(0.2)
-				status.Text = msgs[mi]; tw(status, 0.3, {TextTransparency = 0}):Play()
-			end) end
-			task.wait(0.05)
+	local function fillTo(target)
+		while running and barFill.Size.X.Scale < target - 0.001 do
+			local nextScale = math.min(target, barFill.Size.X.Scale + rand(0.04, 0.11))
+			finish(play(barFill, TweenInfo.new(rand(0.1, 0.22), Enum.EasingStyle.Quart, Enum.EasingDirection.Out), { Size = UDim2.fromScale(nextScale, 1) }))
+			task.wait(rand(0.02, 0.1))
 		end
-	end)
-
-	local function finish()
-		if done then return end
-		done = true
-		pcall(function() fill.Size = fill.Size; tw(fill, 0.4, {Size = UDim2.new(1,0,1,0)}):Play() end)
-		pcall(function() tw(status, 0.2, {TextTransparency = 1}):Play(); task.delay(0.22, function() status.Text = "Ready"; tw(status, 0.3, {TextTransparency = 0}):Play() end) end)
-		task.delay(0.65, function()
-			pcall(function()
-				for _,o in ipairs({title, pillTxt, status, nm, un}) do tw(o, 0.55, {TextTransparency = 1}):Play() end
-				tw(logo, 0.55, {ImageTransparency = 1}):Play(); tw(av, 0.55, {ImageTransparency = 1}):Play()
-				tw(glow, 0.5, {BackgroundTransparency = 1}):Play()
-				tw(bg, 0.7, {BackgroundTransparency = 1}):Play()
-				tw(blur, 0.7, {Size = 0}):Play()
-			end)
-			task.delay(0.8, function() pcall(function() gui:Destroy() end); pcall(function() blur:Destroy() end) end)
-		end)
 	end
-	_G.__DreamFinishLoad = finish
-	task.delay(16, finish)   -- safety: never stick even if the hub errors before calling finish
+
+	local function shake(duration, magnitude)
+		local start = os.clock()
+		local conn = RunService.RenderStepped:Connect(function()
+			if destroyed then return end
+			local elapsed = os.clock() - start
+			local decay = 1 - math.min(elapsed / duration, 1)
+			local m = magnitude * decay * decay
+			container.Position = UDim2.new(0.5, rand(-m, m), 0.5, rand(-m, m))
+			container.Rotation = rand(-2, 2) * decay
+		end)
+		track(conn)
+		task.wait(duration)
+		conn:Disconnect()
+		if not destroyed then container.Position = UDim2.fromScale(0.5, 0.5); container.Rotation = 0 end
+	end
+
+	local function fadeOutAll(root, dur)
+		local info = TweenInfo.new(dur, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		for _, obj in root:GetDescendants() do
+			if obj:IsA("GuiObject") and obj.BackgroundTransparency < 1 then play(obj, info, { BackgroundTransparency = 1 }) end
+			if obj:IsA("ImageLabel") and obj.ImageTransparency < 1 then play(obj, info, { ImageTransparency = 1 }) end
+			if obj:IsA("TextLabel") and obj.TextTransparency < 1 then play(obj, info, { TextTransparency = 1 }) end
+			if obj:IsA("UIStroke") and obj.Transparency < 1 then play(obj, info, { Transparency = 1 }) end
+		end
+	end
+
+	local function runSplash()
+		task.wait(1.2)
+		local reveal = {
+			{ inst = avatar, props = { ImageTransparency = 0, Position = UDim2.new(0.5, 0, 0.16, 0) } },
+			{ inst = avStroke, props = { Transparency = 0.4 } },
+			{ inst = logo, props = { ImageTransparency = 0, Position = UDim2.new(0.5, 0, 0.4, 0) } },
+			{ inst = barBack, props = { BackgroundTransparency = 0.25, Position = UDim2.new(0.5, 0, 0.585, 0) } },
+			{ inst = barStroke, props = { Transparency = 0.55 } },
+			{ inst = shine, props = { BackgroundTransparency = 0.78 } },
+			{ inst = percentLabel, props = { TextTransparency = 0.25 } },
+			{ inst = brand, props = { TextTransparency = 0.3 } },
+		}
+		for i, item in reveal do
+			play(item.inst, TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, false, (i - 1) * 0.045), item.props)
+		end
+		task.wait(0.62 + (#reveal - 1) * 0.045)
+		play(breathScale, TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Scale = 1.035 })
+		play(shine, TweenInfo.new(1.35, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, false, 0.15), { Position = UDim2.new(1.1, 0, 0, 0) })
+
+		local steps = {
+			{ text = ("Welcome, %s (@%s)"):format(player.DisplayName, player.Name), target = 0.14 },
+			{ text = "Loading into: " .. placeName, target = 0.32 },
+			{ text = "Dream Hub " .. (DREAM_TIER ~= "" and DREAM_TIER or "") .. " ready", target = 0.5 },
+			{ text = "Compiling code...", target = 0.66 },
+			{ text = "Checking files...", target = 0.8 },
+			{ text = "Finalizing...", target = 1 },
+		}
+		for _, step in steps do
+			setStatus(step.text)
+			fillTo(step.target)
+			task.wait(rand(0.05, 0.16))
+		end
+		if percentConn.Connected then percentConn:Disconnect() end
+		percentLabel.Text = "100%"; statusVisible = false; cursor.BackgroundTransparency = 1
+		task.wait(0.15)
+
+		flash.BackgroundTransparency = 0.25
+		play(flash, TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 })
+		ghostA.Position = UDim2.new(0.5, -9, 0.4, 0); ghostB.Position = UDim2.new(0.5, 9, 0.4, 0)
+		ghostA.ImageTransparency = 0.5; ghostB.ImageTransparency = 0.5
+		local ghostInfo = TweenInfo.new(0.26, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		play(ghostA, ghostInfo, { ImageTransparency = 1, Position = UDim2.new(0.5, -28, 0.4, 0) })
+		play(ghostB, ghostInfo, { ImageTransparency = 1, Position = UDim2.new(0.5, 28, 0.4, 0) })
+		ring.Size = UDim2.fromOffset(20, 20); ringStroke.Transparency = 0; ringStroke.Thickness = 5
+		play(ring, TweenInfo.new(0.55, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Size = UDim2.fromOffset(760, 760) })
+		play(ringStroke, TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Transparency = 1, Thickness = 1 })
+		shake(0.45, 16)
+
+		finish(play(punchScale, TweenInfo.new(0.13, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 0.96 }))
+		running = false
+		cancelAll()
+		flash.BackgroundTransparency = 0.55
+		play(flash, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 })
+		play(punchScale, TweenInfo.new(0.42, Enum.EasingStyle.Quart, Enum.EasingDirection.In), { Scale = 2.8 })
+		play(backdrop, TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { BackgroundTransparency = 1 })
+		fadeOutAll(container, 0.36)
+		task.wait(0.5)
+	end
+
+	local ok, err = pcall(runSplash)
+	cleanup()
+	if not ok then warn("[DreamLoader] " .. tostring(err)) end
 end)
 -- ═══════════════════ END LOADING SCREEN ═══════════════════
 
