@@ -435,7 +435,7 @@ local CFG = {
 	FullBright=false, NightVision=false, NoDarkWater=true, InfLight=false, UnlockMouse=false,
 	SkinDino="", SkinName="", SkinWet=false, ProgSlot="",
 	Waypoints={}, TPName="", TPX=0, TPY=0, TPZ=0,
-	UIKey="RightShift", AccentIndex=1, Keybinds={}, UIScale=1, DebugPanel=false, LogRemotes=false, AdminWarnMsg="Please follow the rules.", AdminModGame="",
+	UIKey="RightShift", AccentIndex=1, Keybinds={}, UIScale=1, DebugPanel=false, LogRemotes=false, AdminWarnMsg="Please follow the rules.", AdminModGame="", AdminReason="",
 	AntiAFK=true, UnlockFOV=false, FOV=70, InfZoom=false, SafeTP=true,
 	AutoClick=false, AutoClickCPS=12, AntiFall=true, WaterClear=false,
 	AntiBreakHead=true, AntiBreakNeck=true, AntiBreakLeg=true, AntiBreakTail=true, AntiBreakTorso=true, NoClouds=false, Float=false,
@@ -2378,18 +2378,24 @@ if __gg.PE_ADMIN and Pages["Admin"] then local p=Pages["Admin"]
 	mkBtn(id,"Copy Username", function() local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end local ok=pcall(function() setclipboard(pl.Name) end); notify("Admin", ok and ("Copied @"..pl.Name) or ("@"..pl.Name.." (no clipboard on this executor)")) end)
 	mkBtn(id,"Copy UserId", function() local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end local ok=pcall(function() setclipboard(tostring(pl.UserId)) end); notify("Admin", ok and ("Copied "..pl.UserId) or (tostring(pl.UserId).." (no clipboard)")) end)
 	mkBtn(id,"Copy Profile Link", function() local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end local link="https://www.roblox.com/users/"..pl.UserId.."/profile"; local ok=pcall(function() setclipboard(link) end); notify("Admin", ok and "Copied profile link." or link) end)
-	mkBtn(id,"Report to Dream Discord (admin)", function()
+	local _,rp=mkSec(p,"Report to Discord",4)
+	mkTextbox(rp,"Reason / what they did","AdminReason",1,false)
+	mkBtn(rp,"Send Report", function()
 		local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end
+		local reason = tostring(CFG.AdminReason or "")
+		if #reason:gsub("%s","")<2 then notify("Admin","Type a reason first.") return end
 		local hook = ("https://discord.com/api/webhooks/1527860474488688732/".."ObBmSPJv0jp9nZHbIoJryLOPrsuyQsTr".."tuwVVwdQ0c759WQa6X0g0j-G4n-VCH-CMH7a")   -- ADMIN webhook
 		local req = (typeof(syn)=="table" and syn.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
 		if not req then notify("Admin","Executor has no http request.") return end
-		task.spawn(function() pcall(function()
-			local body = game:GetService("HttpService"):JSONEncode({ username="Dream Mod", embeds={{ title="Player flagged by "..LP.Name, color=14689068, fields={
+		task.spawn(function() local okc=false pcall(function()
+			local body = game:GetService("HttpService"):JSONEncode({ username="Dream Mod", embeds={{ title="Player Reported", color=14689068, fields={
 				{name="Target", value=pl.DisplayName.." (@"..pl.Name..")  ["..tostring(pl.UserId).."]", inline=false},
 				{name="Profile", value="https://www.roblox.com/users/"..pl.UserId.."/profile", inline=false},
-				{name="Note", value=tostring(CFG.AdminWarnMsg~="" and CFG.AdminWarnMsg or "flagged from the admin panel"), inline=false} } }} })
-			req({ Url=hook, Method="POST", Headers={["Content-Type"]="application/json"}, Body=body })
-		end) notify("Admin","Sent "..pl.Name.." to the Dream Discord.") end)
+				{name="Reason", value=string.sub(reason,1,1500), inline=false},
+				{name="Reported by", value=LP.Name.."  (in "..tostring(_G.__DreamGameName or "game")..")", inline=false} } }} })
+			local res=req({ Url=hook, Method="POST", Headers={["Content-Type"]="application/json"}, Body=body })
+			if res and (res.StatusCode==200 or res.StatusCode==204 or res.Success) then okc=true end
+		end) notify("Admin", okc and ("Reported "..pl.Name.." to Discord.") or "Send failed (http blocked?).") end)
 	end)
 end
 

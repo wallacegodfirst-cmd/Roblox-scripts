@@ -10840,12 +10840,15 @@ do
             aAct:Toggle({ Name = "Fly", Callback = function(b) if FlyApi then pcall(function() FlyApi.set(b) end) end end })
             aAct:Button({ Name = "Copy Username", Callback = function() local p=targ(); if not p then toast("Load a user first.") return end pcall(function() setclipboard(p.Name) end) toast("Copied @"..p.Name) end })
             aAct:Button({ Name = "Copy UserId", Callback = function() local p=targ(); if not p then toast("Load a user first.") return end pcall(function() setclipboard(tostring(p.UserId)) end) toast("Copied "..p.UserId) end })
-            aAct:Button({ Name = "Report to Dream Discord", Callback = function()
+            local reason=""
+            aAct:Textbox({ Name = "Report reason", Placeholder = "what they did", Default = "", Callback = function(v) reason = v or "" end })
+            aAct:Button({ Name = "Send Report to Discord", Callback = function()
                 local p=targ(); if not p then toast("Load a user first.") return end
+                if #tostring(reason):gsub("%s","")<2 then toast("Type a reason first.") return end
                 local hook=("https://discord.com/api/webhooks/1527860474488688732/".."ObBmSPJv0jp9nZHbIoJryLOPrsuyQsTr".."tuwVVwdQ0c759WQa6X0g0j-G4n-VCH-CMH7a")
                 local req=(typeof(syn)=="table" and syn.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
                 if not req then toast("No http on this executor.") return end
-                task.spawn(function() pcall(function() local body=game:GetService("HttpService"):JSONEncode({username="Dream Mod",embeds={{title="Player flagged by "..me.Name,color=14689068,fields={{name="Target",value=p.DisplayName.." (@"..p.Name..")  ["..tostring(p.UserId).."]",inline=false},{name="Profile",value="https://www.roblox.com/users/"..p.UserId.."/profile",inline=false},{name="Note",value=warnMsg,inline=false}}}}}) req({Url=hook,Method="POST",Headers={["Content-Type"]="application/json"},Body=body}) end) toast("Sent "..p.Name.." to Discord.") end)
+                task.spawn(function() local okc=false pcall(function() local body=game:GetService("HttpService"):JSONEncode({username="Dream Mod",embeds={{title="Player Reported",color=14689068,fields={{name="Target",value=p.DisplayName.." (@"..p.Name..")  ["..tostring(p.UserId).."]",inline=false},{name="Profile",value="https://www.roblox.com/users/"..p.UserId.."/profile",inline=false},{name="Reason",value=string.sub(tostring(reason),1,1500),inline=false},{name="Reported by",value=me.Name,inline=false}}}}}) local res=req({Url=hook,Method="POST",Headers={["Content-Type"]="application/json"},Body=body}); if res and (res.StatusCode==200 or res.StatusCode==204 or res.Success) then okc=true end end) toast(okc and ("Reported "..p.Name..".") or "Send failed.") end)
             end })
         end
     end
