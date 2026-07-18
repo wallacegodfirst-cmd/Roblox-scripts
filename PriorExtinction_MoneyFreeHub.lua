@@ -126,12 +126,14 @@ task.spawn(function()
 	local scr=Instance.new("ScrollingFrame"); scr.Position=UDim2.new(0,14,0,50); scr.Size=UDim2.new(1,-22,1,-62); scr.BackgroundTransparency=1; scr.BorderSizePixel=0; scr.ScrollBarThickness=4; scr.ScrollBarImageColor3=C.Accent; scr.CanvasSize=UDim2.new(0,0,0,0); scr.AutomaticCanvasSize=Enum.AutomaticSize.Y; scr.ZIndex=4; scr.Parent=ul
 	local sl=Instance.new("UIListLayout"); sl.Padding=UDim.new(0,8); sl.SortOrder=Enum.SortOrder.LayoutOrder; sl.Parent=scr
 	local LOGS={
-		{"Reworked the whole menu + loading. way cleaner now.","Today"},
-		{"You can report bugs straight from here now (with proof).","Today"},
-		{"Fixed inf stam getting you slowed / snapped back.","2d"},
-		{"Auto farm wasn't feeding you to death anymore.","3d"},
-		{"Target: type any name, see their stuff, tp/view/farm.","5d"},
-		{"Added the mod tools + rules tab. read the rules pls.","6d"},
+		{"LIVE CHAT: talk to every hub user across all 3 games. roles + emoji.","Today"},
+		{"Staff got 60+ chat commands (?cmds), a warning tracker + msg delete.","Today"},
+		{"AI mod watches chat + auto-reports rule breaks to staff.","Today"},
+		{"Reworked the whole menu + loading. way cleaner now.","2d"},
+		{"You can report bugs straight from here now (with proof).","2d"},
+		{"Fixed inf stam getting you slowed / snapped back.","4d"},
+		{"Target: type any name, see their stuff, tp/view/farm.","7d"},
+		{"Added the mod tools + rules tab. read the rules pls.","8d"},
 	}
 	for i,e in ipairs(LOGS) do
 		local row=Instance.new("Frame"); row.LayoutOrder=i; row.Size=UDim2.new(1,0,0,0); row.AutomaticSize=Enum.AutomaticSize.Y; row.BackgroundTransparency=1; row.ZIndex=4; row.Parent=scr
@@ -149,6 +151,8 @@ task.spawn(function()
 		local t=txt(b,label,14,C.Text,F.Bold); t.Position=UDim2.new(0,14,0,0); t.Size=UDim2.new(1,-40,1,0); t.ZIndex=5
 		local ar=txt(b,">",16,C.Accent,F.Bold,Enum.TextXAlignment.Right); ar.AnchorPoint=Vector2.new(1,0.5); ar.Position=UDim2.new(1,-12,0.5,0); ar.Size=UDim2.fromOffset(16,16); ar.ZIndex=5
 		b.MouseButton1Click:Connect(function() pcall(cb) end)
+		b.MouseEnter:Connect(function() pcall(function() Tween:Create(b, TweenInfo.new(0.15, Enum.EasingStyle.Quad), {BackgroundTransparency=0.02}):Play() end) end)
+		b.MouseLeave:Connect(function() pcall(function() Tween:Create(b, TweenInfo.new(0.22, Enum.EasingStyle.Quad), {BackgroundTransparency=0.15}):Play() end) end)
 		return b
 	end
 
@@ -188,8 +192,11 @@ task.spawn(function()
 	action("Copy Discord", 5, function() pcall(function() setclipboard("discord.gg/dreamhub") end) end)
 
 	-- ENTER HUB
-	local enterButton=Instance.new("TextButton"); enterButton.AnchorPoint=Vector2.new(0.5,1); enterButton.Position=UDim2.new(0.5,0,0.955,0); enterButton.Size=UDim2.fromOffset(560,68); enterButton.BackgroundColor3=C.Accent; enterButton.BackgroundTransparency=0.03; enterButton.FontFace=F.Black; enterButton.Text="ENTER HUB      "..TIER; enterButton.TextSize=24; enterButton.TextColor3=C.Text; enterButton.AutoButtonColor=true; enterButton.ZIndex=4; enterButton.Parent=menuFit
+	local enterButton=Instance.new("TextButton"); enterButton.AnchorPoint=Vector2.new(0.5,1); enterButton.Position=UDim2.new(0.5,0,0.955,0); enterButton.Size=UDim2.fromOffset(560,68); enterButton.BackgroundColor3=C.Accent; enterButton.BackgroundTransparency=0.03; enterButton.FontFace=F.Black; enterButton.Text="ENTER HUB  -  "..TIER; enterButton.TextSize=24; enterButton.TextColor3=C.Text; enterButton.AutoButtonColor=true; enterButton.ZIndex=4; enterButton.Parent=menuFit
 	corner(enterButton,12); stroke(enterButton,Color3.fromRGB(255,120,128),1.4)
+	do local g=Instance.new("UIGradient") g.Rotation=90 g.Color=ColorSequence.new(Color3.fromRGB(255,255,255), Color3.fromRGB(196,196,196)) g.Parent=enterButton end
+	enterButton.MouseEnter:Connect(function() pcall(function() Tween:Create(enterButton, TweenInfo.new(0.15, Enum.EasingStyle.Quad), {BackgroundTransparency=0, Size=UDim2.fromOffset(572,70)}):Play() end) end)
+	enterButton.MouseLeave:Connect(function() pcall(function() Tween:Create(enterButton, TweenInfo.new(0.22, Enum.EasingStyle.Quad), {BackgroundTransparency=0.03, Size=UDim2.fromOffset(560,68)}):Play() end) end)
 
 	-- fit + session timer + player count
 	local function fitScale()
@@ -324,6 +331,17 @@ task.spawn(function()
 	-- ensure loop (handles join / respawn / late head)
 	task.spawn(function() while true do
 		for _,plr in ipairs(Players:GetPlayers()) do pcall(ensure, plr) end
+		local ov = _G.__DreamTitleOv
+		for plr,t in pairs(tags) do pcall(function()
+			local want
+			if type(ov) == "table" then want = ov[string.lower(plr.Name)] or ov[string.lower(plr.DisplayName or "")] end
+			local lbl = t.gui and t.gui:FindFirstChildOfClass("TextLabel")
+			if lbl then
+				local base = "DREAM HUB  "..(ROLE[string.lower(plr.Name)] or ROLE[string.lower(plr.DisplayName or "")] or "GAME MOD")
+				local goal = want or base
+				if lbl.Text ~= goal then lbl.Text = goal end
+			end
+		end) end
 		task.wait(0.5)
 	end end)
 	-- rainbow animate all tags
@@ -416,7 +434,8 @@ task.spawn(function()
 	local TIER = tostring(_G.__DreamTier or "FREE")
 	local KEY, WKEY = "dreamhub_lc_v1", "dreamhub_warn_v1"
 	local MKEY = "dreamhub_mod_v1"   -- shared moderation state: mutes + emoji bans
-	local MODSTATE = { mu={}, ne={} }
+	local LKEY = "dreamhub_warnlog_v1"   -- staff warning history (the tracker)
+	local MODSTATE = { mu={}, ne={}, sl=0, lk=0, bw={}, tt={} }
 	local lastMuteNotif = 0
 	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true }
 	if type(_G.__DreamExtraAdmins)=="table" then for _,n in ipairs(_G.__DreamExtraAdmins) do MODS[string.lower(tostring(n))]=true end end
@@ -453,6 +472,7 @@ task.spawn(function()
 	local function scanText(msg)
 		local low = string.lower(tostring(msg or ""))
 		for _,c in ipairs(CATS) do for _,w in ipairs(c[2]) do if w~="" and low:find(w,1,true) then return c[1] end end end
+		for _,w in ipairs(MODSTATE.bw or {}) do local lw=string.lower(tostring(w)) if lw~="" and low:find(lw,1,true) then return "staff filter" end end
 		return nil
 	end
 	local function reportMsg(uname, uid, msg, rule, note)
@@ -580,6 +600,20 @@ task.spawn(function()
 					tx.Text = emojify(tostring(m.m or "")); tx.TextColor3 = Color3.fromRGB(208,204,226)
 				end
 				tx.Parent = row
+				if IS_MOD then
+					local del = Instance.new("TextButton")
+					del.AnchorPoint = Vector2.new(1,0); del.Position = UDim2.new(1,-2,0,2); del.Size = UDim2.fromOffset(16,16)
+					del.BackgroundTransparency = 0.35; del.BackgroundColor3 = Color3.fromRGB(60,26,32)
+					del.Font = Enum.Font.GothamBold; del.TextSize = 10; del.Text = "x"; del.TextColor3 = Color3.fromRGB(255,120,120); del.ZIndex = 5; del.Parent = row
+					do local cc2 = Instance.new("UICorner") cc2.CornerRadius = UDim.new(0,4) cc2.Parent = del end
+					local mkey = tostring(m.ts or 0).."|"..tostring(m.u or "").."|"..tostring(m.m or "")
+					del.MouseButton1Click:Connect(function()
+						local cur = readKey(KEY) or {}
+						local kept = {}
+						for _,mm in ipairs(cur) do if type(mm)~="table" or (tostring(mm.ts or 0).."|"..tostring(mm.u or "").."|"..tostring(mm.m or "")) ~= mkey then kept[#kept+1]=mm end end
+						writeKey(KEY, kept); cache = kept; render()
+					end)
+				end
 			end
 		end
 		task.defer(function() pcall(function() scroll.CanvasPosition = Vector2.new(0, math.max(0, lay.AbsoluteContentSize.Y)) end) end)
@@ -589,7 +623,9 @@ task.spawn(function()
 	hide.MouseButton1Click:Connect(function() win.Visible = false end)
 
 	-- ---- send ----
-	-- ---- staff chat commands (?help) + relay moderation (mutes / emoji bans) ----
+	-- ---- staff chat commands (?cmds shows all of them) + relay moderation ----
+	local TeleS = game:GetService("TeleportService")
+	local Light = game:GetService("Lighting")
 	local function resolveName(q)
 		q = string.lower(tostring(q or "")) if q == "" then return nil end
 		local names = {}
@@ -599,40 +635,316 @@ task.spawn(function()
 		for _,n in ipairs(names) do if string.lower(n):sub(1,#q) == q then return n end end
 		return q
 	end
-	local function setState(kind, name, untilTs)
+	local function setState2(fn)
 		local ms = readKey(MKEY) or {}
 		if type(ms.mu) ~= "table" then ms.mu = {} end
 		if type(ms.ne) ~= "table" then ms.ne = {} end
-		ms[kind][string.lower(tostring(name))] = untilTs
+		if type(ms.bw) ~= "table" then ms.bw = {} end
+		if type(ms.tt) ~= "table" then ms.tt = {} end
+		ms.sl = tonumber(ms.sl) or 0
+		ms.lk = tonumber(ms.lk) or 0
+		fn(ms)
 		writeKey(MKEY, ms)
-		MODSTATE = { mu = ms.mu, ne = ms.ne }
+		MODSTATE = { mu=ms.mu, ne=ms.ne, sl=ms.sl, lk=ms.lk, bw=ms.bw, tt=ms.tt }
+		pcall(function() _G.__DreamTitleOv = ms.tt end)
 	end
+	local function makeListWin(titleTxt)
+		local w = Instance.new("Frame")
+		w.Size = UDim2.new(0,370,0,430); w.Position = UDim2.new(0.5,-185,0.5,-215)
+		w.BackgroundColor3 = Color3.fromRGB(22,20,32); w.Visible = false; w.Active = true; w.ZIndex = 30; w.Parent = gui
+		local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0,10) c.Parent = w
+		local st = Instance.new("UIStroke") st.Color = Color3.fromRGB(120,90,255) st.Thickness = 1 st.Parent = w
+		local h = Instance.new("TextLabel") h.Size = UDim2.new(1,-34,0,32) h.BackgroundTransparency = 1 h.Font = Enum.Font.GothamBold h.TextSize = 13 h.TextXAlignment = Enum.TextXAlignment.Left h.Text = "   "..titleTxt h.TextColor3 = Color3.fromRGB(235,232,255) h.ZIndex = 31 h.Parent = w
+		local xb = Instance.new("TextButton") xb.Size = UDim2.new(0,26,0,26) xb.Position = UDim2.new(1,-30,0,3) xb.BackgroundTransparency = 1 xb.Font = Enum.Font.GothamBold xb.TextSize = 16 xb.Text = "x" xb.TextColor3 = Color3.fromRGB(200,196,220) xb.ZIndex = 31 xb.Parent = w
+		xb.MouseButton1Click:Connect(function() w.Visible = false end)
+		local sc = Instance.new("ScrollingFrame") sc.Size = UDim2.new(1,-12,1,-40) sc.Position = UDim2.new(0,6,0,34) sc.BackgroundTransparency = 1 sc.BorderSizePixel = 0 sc.ScrollBarThickness = 4 sc.AutomaticCanvasSize = Enum.AutomaticSize.Y sc.CanvasSize = UDim2.new(0,0,0,0) sc.ZIndex = 31 sc.Parent = w
+		local ll = Instance.new("UIListLayout") ll.Padding = UDim.new(0,4) ll.SortOrder = Enum.SortOrder.LayoutOrder ll.Parent = sc
+		return { win=w, set=function(lines)
+			for _,c2 in ipairs(sc:GetChildren()) do if c2:IsA("TextLabel") then c2:Destroy() end end
+			for i,ln in ipairs(lines) do
+				local t = Instance.new("TextLabel") t.LayoutOrder = i t.Size = UDim2.new(1,-8,0,0) t.AutomaticSize = Enum.AutomaticSize.Y t.BackgroundTransparency = 1 t.Font = Enum.Font.Gotham t.TextSize = 11 t.TextWrapped = true t.RichText = true t.TextXAlignment = Enum.TextXAlignment.Left t.TextColor3 = Color3.fromRGB(208,204,226) t.Text = ln t.ZIndex = 32 t.Parent = sc
+			end
+		end }
+	end
+	local cmdsWin, warnsWin
+	local savedPos, spdOrig, jmpOrig = nil, nil, nil
+	local flyOn, clipOff, invisOn, brightOn = false, false, false, false
+	local lightSaved = nil
+	local function myRoot() local c = me.Character return c and (c:FindFirstChild("HumanoidRootPart") or c.PrimaryPart or c:FindFirstChildWhichIsA("BasePart")) end
+	local function myHum() local c = me.Character return c and c:FindFirstChildOfClass("Humanoid") end
+	local function findPlr(nm) nm = string.lower(tostring(nm or "")) for _,pl in ipairs(Players:GetPlayers()) do if string.lower(pl.Name) == nm or string.lower(pl.DisplayName or "") == nm then return pl end end end
+	local function tpToPlr(pl)
+		local c = pl and pl.Character; local tr = c and (c:FindFirstChild("HumanoidRootPart") or c.PrimaryPart or c:FindFirstChildWhichIsA("BasePart"))
+		local mr = myRoot(); if not (tr and mr) then return false end
+		savedPos = mr.CFrame
+		pcall(function() mr.AssemblyLinearVelocity = Vector3.zero end)
+		mr.CFrame = tr.CFrame * CFrame.new(0,0,-5)
+		return true
+	end
+	local function needPlr(rest) local who = tostring(rest or ""):match("^(%S+)") if not who then return nil, "Give a username." end local nm = resolveName(who) return findPlr(nm), nm end
+	local CMDS
+	CMDS = {
+		-- ============ MODERATION ============
+		warn = { "user msg", "red warning popup on their screen + logged in the tracker", function(rest)
+			local who, msg = rest:match("^(%S+)%s+(.+)$") if not who then return "Use:  ?warn user your message" end
+			local nm = resolveName(who) _G.__DreamWarnSend(nm, msg) return "Warned "..nm.."." end },
+		warnall = { "msg", "warning popup for EVERY hub user", function(rest)
+			if rest == "" then return "Use:  ?warnall message" end _G.__DreamWarnSend("*", rest) return "Warned everyone." end },
+		announce = { "msg", "blue announcement popup for every hub user", function(rest)
+			if rest == "" then return "Use:  ?announce message" end _G.__DreamWarnSend("*", rest, "a") return "Announced." end },
+		dm = { "user msg", "private popup only they see", function(rest)
+			local who, msg = rest:match("^(%S+)%s+(.+)$") if not who then return "Use:  ?dm user message" end
+			local nm = resolveName(who) _G.__DreamWarnSend(nm, msg, "d") return "DM sent to "..nm.."." end },
+		notify = { "user msg", "small corner notification only they see", function(rest)
+			local who, msg = rest:match("^(%S+)%s+(.+)$") if not who then return "Use:  ?notify user message" end
+			local nm = resolveName(who) _G.__DreamWarnSend(nm, msg, "n") return "Notified "..nm.."." end },
+		mute = { "user mins", "block them from live chat (cross-server)", function(rest)
+			local who, mins = rest:match("^(%S+)%s*(%d*)$") if not who then return "Use:  ?mute user minutes" end
+			local nm = resolveName(who) local m = math.clamp(tonumber(mins) or 5, 1, 1440)
+			setState2(function(ms) ms.mu[string.lower(nm)] = os.time() + m*60 end) return "Muted "..nm.." for "..m.." min." end },
+		unmute = { "user", "lift a mute early", function(rest)
+			local who = rest:match("^(%S+)") if not who then return "Use:  ?unmute user" end
+			local nm = resolveName(who) setState2(function(ms) ms.mu[string.lower(nm)] = 0 end) return nm.." unmuted." end },
+		noemoji = { "user mins", "their :codes: stop turning into emoji", function(rest)
+			local who, mins = rest:match("^(%S+)%s*(%d*)$") if not who then return "Use:  ?noemoji user minutes" end
+			local nm = resolveName(who) local m = math.clamp(tonumber(mins) or 5, 1, 1440)
+			setState2(function(ms) ms.ne[string.lower(nm)] = os.time() + m*60 end) return "Emojis off for "..nm.." ("..m.." min)." end },
+		okemoji = { "user", "give their emojis back", function(rest)
+			local who = rest:match("^(%S+)") if not who then return "Use:  ?okemoji user" end
+			local nm = resolveName(who) setState2(function(ms) ms.ne[string.lower(nm)] = 0 end) return "Emojis back for "..nm.."." end },
+		del = { "user", "delete that user's LAST chat message", function(rest)
+			local who = rest:match("^(%S+)") if not who then return "Use:  ?del user" end
+			local nm = string.lower(resolveName(who))
+			local cur = readKey(KEY) or {}
+			for i = #cur, 1, -1 do local mm = cur[i]
+				if type(mm)=="table" and string.lower(tostring(mm.u or "")) == nm then table.remove(cur, i) writeKey(KEY, cur) cache = cur render() return "Deleted "..nm.."'s last message." end
+			end
+			return "No message from "..nm.." in the feed." end },
+		delall = { "user", "delete EVERY message that user has in the feed", function(rest)
+			local who = rest:match("^(%S+)") if not who then return "Use:  ?delall user" end
+			local nm = string.lower(resolveName(who))
+			local cur = readKey(KEY) or {}
+			local kept, n = {}, 0
+			for _,mm in ipairs(cur) do if type(mm)=="table" and string.lower(tostring(mm.u or "")) == nm then n += 1 else kept[#kept+1] = mm end end
+			writeKey(KEY, kept) cache = kept render() return "Deleted "..n.." message"..(n==1 and "" or "s").." from "..nm.."." end },
+		clearchat = { "", "wipe the whole live chat feed", function()
+			writeKey(KEY, {}) cache = {} render() return "Chat cleared." end },
+		warns = { "", "open the warning tracker (who has warnings + reasons)", function()
+			local l = readKey(LKEY) or {}
+			local per, order = {}, {}
+			for _,e in ipairs(l) do if type(e)=="table" then
+				local k = string.lower(tostring(e.to or "?"))
+				if not per[k] then per[k] = { n=0, name=tostring(e.to or "?"), rs={} } order[#order+1] = k end
+				per[k].n += 1
+				table.insert(per[k].rs, 1, tostring(e.m or "").."  (by "..tostring(e.by or "?")..")")
+			end end
+			local lines = {}
+			for _,k in ipairs(order) do local p2 = per[k]
+				lines[#lines+1] = '<font color="#ff9d5a"><b>'..p2.name..'</b></font>   '..p2.n..' warning'..(p2.n==1 and "" or "s")
+				for i = 1, math.min(3, #p2.rs) do lines[#lines+1] = "      - "..p2.rs[i] end
+			end
+			if #lines == 0 then lines = { "No warnings on record." } end
+			if not warnsWin then warnsWin = makeListWin("WARNING TRACKER") end
+			warnsWin.set(lines) warnsWin.win.Visible = true
+			return "Warning tracker opened." end },
+		clearwarns = { "user", "remove a user's warnings from the tracker", function(rest)
+			local who = rest:match("^(%S+)") if not who then return "Use:  ?clearwarns user" end
+			local nm = string.lower(resolveName(who))
+			local l = readKey(LKEY) or {}
+			local kept, n = {}, 0
+			for _,e in ipairs(l) do if type(e)=="table" and string.lower(tostring(e.to or "")) == nm then n += 1 else kept[#kept+1] = e end end
+			writeKey(LKEY, kept) return "Removed "..n.." warning"..(n==1 and "" or "s").." for "..nm.."." end },
+		slowmode = { "secs", "everyone must wait N seconds between messages", function(rest)
+			local n = math.clamp(tonumber(rest:match("%d+")) or 10, 2, 300)
+			setState2(function(ms) ms.sl = n end) return "Slowmode: "..n.."s." end },
+		slowoff = { "", "turn slowmode off", function() setState2(function(ms) ms.sl = 0 end) return "Slowmode off." end },
+		lockchat = { "", "only staff can send in live chat", function() setState2(function(ms) ms.lk = 1 end) return "Chat locked (staff only)." end },
+		unlockchat = { "", "unlock live chat for everyone", function() setState2(function(ms) ms.lk = 0 end) return "Chat unlocked." end },
+		badword = { "word", "add a word to the AI filter (blocks + auto-reports)", function(rest)
+			local w = rest:match("^(%S+)") if not w then return "Use:  ?badword word" end
+			setState2(function(ms) ms.bw[#ms.bw+1] = string.lower(w) end) return "Added to the filter." end },
+		goodword = { "word", "remove a word from the staff filter", function(rest)
+			local w = string.lower(rest:match("^(%S+)") or "") if w == "" then return "Use:  ?goodword word" end
+			setState2(function(ms) for i = #ms.bw, 1, -1 do if string.lower(tostring(ms.bw[i])) == w then table.remove(ms.bw, i) end end end) return "Removed from the filter." end },
+		settitle = { "user text", "override someone's overhead title (hub users see it)", function(rest)
+			local who, txt2 = rest:match("^(%S+)%s+(.+)$") if not who then return "Use:  ?settitle user New Title" end
+			local nm = resolveName(who) setState2(function(ms) ms.tt[string.lower(nm)] = string.sub(txt2, 1, 40) end) return "Title set for "..nm.."." end },
+		cleartitle = { "user", "put their normal overhead title back", function(rest)
+			local who = rest:match("^(%S+)") if not who then return "Use:  ?cleartitle user" end
+			local nm = resolveName(who) setState2(function(ms) ms.tt[string.lower(nm)] = nil end) return "Title reset for "..nm.."." end },
+		-- ============ INFO ============
+		cmds = { "", "show every staff command", function()
+			local names = {}
+			for k in pairs(CMDS) do names[#names+1] = k end
+			table.sort(names)
+			local lines = { #names.." staff commands. Type them in the chat box:", "" }
+			for _,k in ipairs(names) do local e2 = CMDS[k]
+				lines[#lines+1] = '<font color="#a78bfa"><b>?'..k..(e2[1] ~= "" and (" "..e2[1]) or "")..'</b></font>   '..e2[2]
+			end
+			if not cmdsWin then cmdsWin = makeListWin("STAFF COMMANDS") end
+			cmdsWin.set(lines) cmdsWin.win.Visible = true
+			return "Command list opened." end },
+		who = { "user", "profile info about a player in your server", function(rest)
+			local pl = needPlr(rest) if not pl then return "They aren't in this server." end
+			return pl.DisplayName.."  (@"..pl.Name..")  id "..pl.UserId.."  |  account "..pl.AccountAge.." days old" end },
+		id = { "user", "their UserId", function(rest)
+			local pl = needPlr(rest) if not pl then return "They aren't in this server." end return pl.Name.." = "..pl.UserId end },
+		age = { "user", "their account age in days", function(rest)
+			local pl = needPlr(rest) if not pl then return "They aren't in this server." end return pl.Name.." is "..pl.AccountAge.." days old" end },
+		list = { "", "who is in this server", function()
+			local t = {}
+			for _,pl in ipairs(Players:GetPlayers()) do t[#t+1] = pl.Name end
+			return #t.." here: "..table.concat(t, ", ", 1, math.min(#t, 10))..(#t > 10 and " ..." or "") end },
+		staff = { "", "which staff are in this server", function()
+			local t = {}
+			for _,pl in ipairs(Players:GetPlayers()) do if MODS[string.lower(pl.Name)] or MODS[string.lower(pl.DisplayName or "")] then t[#t+1] = pl.Name end end
+			return #t == 0 and "No other staff here." or ("Staff here: "..table.concat(t, ", ")) end },
+		online = { "", "how many different people talked in chat recently", function()
+			local seen, n = {}, 0
+			for _,mm in ipairs(cache) do if type(mm)=="table" and mm.u and not seen[mm.u] then seen[mm.u] = true n += 1 end end
+			return n.." different hub user"..(n==1 and "" or "s").." in the recent feed." end },
+		server = { "", "place + job id of this server", function()
+			pcall(function() setclipboard(tostring(game.JobId)) end) return "Place "..game.PlaceId.."  |  JobId copied to clipboard." end },
+		ping = { "", "relay round-trip time", function()
+			local t0 = tick() readKey(KEY) return "Relay ping: "..math.floor((tick()-t0)*1000).."ms" end },
+		time = { "", "current UTC time", function() return os.date("!%H:%M:%S UTC  (%d %b)") end },
+		ver = { "", "game + your plan", function() return GAME.."  |  plan "..TIER end },
+		-- ============ SELF / UTILITY ============
+		tp = { "user", "teleport to a player in your server", function(rest)
+			local pl, nm = needPlr(rest) if not pl then return "They aren't in this server." end
+			return tpToPlr(pl) and ("Teleported to "..pl.Name..".  ?back to return.") or "No character to teleport to." end },
+		rtp = { "", "teleport to a RANDOM player", function()
+			local opts = {}
+			for _,pl in ipairs(Players:GetPlayers()) do if pl ~= me and pl.Character then opts[#opts+1] = pl end end
+			if #opts == 0 then return "Nobody else here." end
+			local pl = opts[math.random(#opts)]
+			return tpToPlr(pl) and ("Teleported to "..pl.Name..".  ?back to return.") or "Couldn't reach them." end },
+		back = { "", "return to where you were before ?tp / ?rtp", function()
+			local mr = myRoot() if not (savedPos and mr) then return "No saved spot." end
+			pcall(function() mr.AssemblyLinearVelocity = Vector3.zero end) mr.CFrame = savedPos return "Back." end },
+		view = { "user", "spectate a player", function(rest)
+			local pl = needPlr(rest) if not pl then return "They aren't in this server." end
+			local c = pl.Character; local h = c and c:FindFirstChildOfClass("Humanoid")
+			local cam = workspace.CurrentCamera
+			if cam and h then cam.CameraSubject = h return "Viewing "..pl.Name..".  ?unview to stop." end
+			local pt = c and c:FindFirstChildWhichIsA("BasePart")
+			if cam and pt then cam.CameraSubject = pt return "Viewing "..pl.Name..".  ?unview to stop." end
+			return "Their character isn't loaded for you." end },
+		unview = { "", "camera back on you", function()
+			local cam = workspace.CurrentCamera local h = myHum()
+			if cam then pcall(function() cam.CameraSubject = h end) end return "Camera back on you." end },
+		speed = { "n", "set your WalkSpeed", function(rest)
+			local n = tonumber(rest:match("%d+%.?%d*")) if not n then return "Use:  ?speed 32" end
+			local h = myHum() if not h then return "No humanoid." end
+			if spdOrig == nil then spdOrig = h.WalkSpeed end
+			h.WalkSpeed = math.clamp(n, 1, 500) return "Speed "..h.WalkSpeed.."." end },
+		speedreset = { "", "back to normal speed", function()
+			local h = myHum() if h and spdOrig then h.WalkSpeed = spdOrig end return "Speed reset." end },
+		jump = { "n", "set your JumpPower", function(rest)
+			local n = tonumber(rest:match("%d+%.?%d*")) if not n then return "Use:  ?jump 80" end
+			local h = myHum() if not h then return "No humanoid." end
+			if jmpOrig == nil then jmpOrig = h.JumpPower end
+			pcall(function() h.UseJumpPower = true end) h.JumpPower = math.clamp(n, 1, 500) return "Jump "..h.JumpPower.."." end },
+		jumpreset = { "", "back to normal jump", function()
+			local h = myHum() if h and jmpOrig then h.JumpPower = jmpOrig end return "Jump reset." end },
+		fly = { "", "simple fly (WASD + Space up / Ctrl down)", function()
+			if flyOn then return "Already flying - ?unfly to stop." end
+			flyOn = true
+			task.spawn(function()
+				while flyOn do
+					local r = myRoot()
+					if r then pcall(function()
+						local cam = workspace.CurrentCamera
+						local v = Vector3.zero
+						if cam then
+							if UIS:IsKeyDown(Enum.KeyCode.W) then v += cam.CFrame.LookVector end
+							if UIS:IsKeyDown(Enum.KeyCode.S) then v -= cam.CFrame.LookVector end
+							if UIS:IsKeyDown(Enum.KeyCode.D) then v += cam.CFrame.RightVector end
+							if UIS:IsKeyDown(Enum.KeyCode.A) then v -= cam.CFrame.RightVector end
+							if UIS:IsKeyDown(Enum.KeyCode.Space) then v += Vector3.new(0,1,0) end
+							if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then v -= Vector3.new(0,1,0) end
+						end
+						r.AssemblyLinearVelocity = (v.Magnitude > 0 and v.Unit * 60 or Vector3.zero)
+					end) end
+					task.wait()
+				end
+				local r = myRoot() if r then pcall(function() r.AssemblyLinearVelocity = Vector3.zero end) end
+			end)
+			return "Fly ON.  WASD + Space / Ctrl.  ?unfly to stop." end },
+		unfly = { "", "stop flying", function() flyOn = false return "Fly off." end },
+		noclip = { "", "walk through walls", function()
+			if clipOff then return "Noclip already on - ?clip to stop." end
+			clipOff = true
+			task.spawn(function()
+				while clipOff do
+					local c = me.Character
+					if c then pcall(function() for _,d in ipairs(c:GetDescendants()) do if d:IsA("BasePart") and d.CanCollide then d.CanCollide = false end end end) end
+					task.wait(0.1)
+				end
+			end)
+			return "Noclip ON.  ?clip to stop." end },
+		clip = { "", "collisions back on", function()
+			clipOff = false
+			local c = me.Character
+			if c then pcall(function() for _,d in ipairs(c:GetDescendants()) do if d:IsA("BasePart") then d.CanCollide = true end end end) end
+			return "Noclip off." end },
+		invis = { "", "your character goes see-through ON YOUR SCREEN only", function()
+			if invisOn then return "Already invisible - ?visible" end
+			invisOn = true
+			task.spawn(function()
+				while invisOn do
+					local c = me.Character
+					if c then pcall(function() for _,d in ipairs(c:GetDescendants()) do if d:IsA("BasePart") then d.LocalTransparencyModifier = 0.85 end end end) end
+					task.wait(0.25)
+				end
+				local c = me.Character
+				if c then pcall(function() for _,d in ipairs(c:GetDescendants()) do if d:IsA("BasePart") then d.LocalTransparencyModifier = 0 end end end) end
+			end)
+			return "Invisible (your screen only - others still see you)." end },
+		visible = { "", "stop being see-through", function() invisOn = false return "Visible again." end },
+		unstuck = { "", "nudge yourself up 8 studs", function()
+			local mr = myRoot() if not mr then return "No character." end
+			pcall(function() mr.AssemblyLinearVelocity = Vector3.zero end) mr.CFrame = mr.CFrame + Vector3.new(0,8,0) return "Nudged up." end },
+		sit = { "", "sit down", function() local h = myHum() if h then h.Sit = true end return "Sitting." end },
+		reset = { "", "reset your character", function()
+			local h = myHum() if h then pcall(function() h.Health = 0 end) end
+			pcall(function() me.Character:BreakJoints() end) return "Reset." end },
+		rejoin = { "", "rejoin THIS server", function()
+			pcall(function() TeleS:TeleportToPlaceInstance(game.PlaceId, game.JobId, me) end) return "Rejoining..." end },
+		hop = { "", "jump to a fresh server", function()
+			pcall(function() TeleS:Teleport(game.PlaceId, me) end) return "Hopping..." end },
+		fov = { "n", "camera field of view (10-120)", function(rest)
+			local n = tonumber(rest:match("%d+")) if not n then return "Use:  ?fov 90" end
+			pcall(function() workspace.CurrentCamera.FieldOfView = math.clamp(n, 10, 120) end) return "FOV "..math.clamp(n,10,120).."." end },
+		fovreset = { "", "normal FOV (70)", function()
+			pcall(function() workspace.CurrentCamera.FieldOfView = 70 end) return "FOV reset." end },
+		bright = { "", "fullbright (see in the dark)", function()
+			if not lightSaved then lightSaved = { b = Light.Brightness, c = Light.ClockTime, f = Light.FogEnd, g = Light.GlobalShadows } end
+			pcall(function() Light.Brightness = 2 Light.ClockTime = 14 Light.FogEnd = 1e6 Light.GlobalShadows = false end)
+			brightOn = true return "Fullbright ON.  ?unbright to undo." end },
+		unbright = { "", "normal lighting", function()
+			if lightSaved then pcall(function() Light.Brightness = lightSaved.b Light.ClockTime = lightSaved.c Light.FogEnd = lightSaved.f Light.GlobalShadows = lightSaved.g end) end
+			brightOn = false return "Lighting back to normal." end },
+		day = { "", "make it daytime (your screen only)", function() pcall(function() Light.ClockTime = 12 end) return "Daytime." end },
+		night = { "", "make it night (your screen only)", function() pcall(function() Light.ClockTime = 0 end) return "Night." end },
+		copyid = { "user", "copy their UserId", function(rest)
+			local pl = needPlr(rest) if not pl then return "They aren't in this server." end
+			pcall(function() setclipboard(tostring(pl.UserId)) end) return "Copied "..pl.UserId.."." end },
+		copyname = { "user", "copy their exact username", function(rest)
+			local pl = needPlr(rest) if not pl then return "They aren't in this server." end
+			pcall(function() setclipboard(pl.Name) end) return "Copied @"..pl.Name.."." end },
+		copyprofile = { "user", "copy their profile link", function(rest)
+			local pl = needPlr(rest) if not pl then return "They aren't in this server." end
+			pcall(function() setclipboard("https://www.roblox.com/users/"..pl.UserId.."/profile") end) return "Profile link copied." end },
+	}
 	local function runCmd(t)
 		local cmd, rest = t:match("^%?(%w+)%s*(.*)$")
 		cmd = string.lower(tostring(cmd or ""))
-		if cmd == "help" then notifyLocal("Staff commands","?warn user msg  |  ?mute user mins  |  ?unmute user  |  ?noemoji user mins  |  ?okemoji user") return end
-		if cmd == "warn" then
-			local who, msg = rest:match("^(%S+)%s+(.+)$")
-			if not who then notifyLocal("Staff","Use:  ?warn username your message") return end
-			local nm = resolveName(who)
-			if _G.__DreamWarnSend then _G.__DreamWarnSend(nm, msg) end
-			notifyLocal("Staff","Warning sent to "..tostring(nm)..".")
-		elseif cmd == "mute" or cmd == "noemoji" then
-			local who, mins = rest:match("^(%S+)%s*(%d*)$")
-			if not who then notifyLocal("Staff","Use:  ?"..cmd.." username minutes") return end
-			local nm = resolveName(who)
-			local m = math.clamp(tonumber(mins) or 5, 1, 1440)
-			setState(cmd == "mute" and "mu" or "ne", nm, os.time() + m*60)
-			notifyLocal("Staff",(cmd == "mute" and "Muted " or "Emojis disabled for ")..tostring(nm).." for "..m.." min.")
-		elseif cmd == "unmute" or cmd == "okemoji" then
-			local who = rest:match("^(%S+)")
-			if not who then notifyLocal("Staff","Use:  ?"..cmd.." username") return end
-			local nm = resolveName(who)
-			setState(cmd == "unmute" and "mu" or "ne", nm, 0)
-			notifyLocal("Staff",tostring(nm).." cleared.")
-		else
-			notifyLocal("Staff","Unknown command - type ?help")
-		end
+		if cmd == "help" then cmd = "cmds" end
+		local e = CMDS[cmd]
+		if not e then notifyLocal("Staff", "Unknown command - type  ?cmds") return end
+		local ok, res = pcall(e[3], rest or "")
+		notifyLocal("Staff", ok and tostring(res or "Done.") or "That command hit an error.")
 	end
 	local lastSend = 0
 	local function doSend()
@@ -643,8 +955,10 @@ task.spawn(function()
 		local mts = tonumber(MODSTATE.mu[myLow] or MODSTATE.mu[string.lower(me.DisplayName or "")] or 0) or 0
 		if mts > os.time() then box.Text = "" notifyLocal("Live Chat","You are muted by staff for another "..math.ceil((mts-os.time())/60).." min.") return end
 		if #txt > 120 then txt = string.sub(txt,1,120) end
+		if not IS_MOD and (tonumber(MODSTATE.lk) or 0) == 1 then box.Text = "" notifyLocal("Live Chat","Chat is locked by staff right now.") return end
 		if (tonumber(MODSTATE.ne[myLow] or 0) or 0) <= os.time() then txt = emojify(txt) end
-		if tick()-lastSend < 2 then notifyLocal("Live Chat","Slow down a little.") return end
+		local cool = IS_MOD and 2 or math.max(2, tonumber(MODSTATE.sl) or 0)
+		if tick()-lastSend < cool then notifyLocal("Live Chat","Slow down a little"..(cool > 2 and ("  (slowmode "..cool.."s)") or "")..".") return end
 		lastSend = tick()
 		local rule = scanText(txt)
 		if rule then
@@ -663,32 +977,45 @@ task.spawn(function()
 	box.FocusLost:Connect(function(enter) if enter then doSend() end end)
 
 	-- ---- warn delivery (relay -> popup notification, NOT chat) ----
-	_G.__DreamWarnSend = function(target, msg)
+	_G.__DreamWarnSend = function(target, msg, kind)
 		local w = readKey(WKEY) or {}
-		w[#w+1] = { to=tostring(target), m=tostring(msg), by=me.Name, ts=os.time() }
+		w[#w+1] = { to=tostring(target), m=tostring(msg), by=me.Name, ts=os.time(), k=kind }
 		while #w > 10 do table.remove(w,1) end
 		writeKey(WKEY, w)
+		if kind == nil or kind == "w" then   -- real warnings land in the tracker
+			local l = readKey(LKEY) or {}
+			l[#l+1] = { to=tostring(target), m=tostring(msg), by=me.Name, ts=os.time() }
+			while #l > 40 do table.remove(l,1) end
+			writeKey(LKEY, l)
+		end
 		return true
 	end
 	local boot = os.time()
 	local shownW = {}
 	local function handleWarn(x)
 		if type(x) ~= "table" then return end
-		local id = tostring(x.ts or 0)..string.lower(tostring(x.to or ""))
+		local id = tostring(x.ts or 0)..string.lower(tostring(x.to or ""))..tostring(x.k or "w")
 		if shownW[id] then return end
 		shownW[id] = true
-		if string.lower(tostring(x.to or "")) ~= string.lower(me.Name) then return end
-		if (tonumber(x.ts) or 0) < boot - 60 then return end  -- ignore warns from before this session
-		notifyLocal("ADMIN WARNING", tostring(x.m))
+		local tgt = string.lower(tostring(x.to or ""))
+		if tgt ~= "*" and tgt ~= string.lower(me.Name) then return end
+		if (tonumber(x.ts) or 0) < boot - 60 then return end  -- ignore anything from before this session
+		local kind = tostring(x.k or "w")
+		local head1, cAcc, cBg, nTitle
+		if kind == "a" then head1="ANNOUNCEMENT  ("..tostring(x.by or "staff")..")" cAcc=Color3.fromRGB(90,160,255) cBg=Color3.fromRGB(14,20,32) nTitle="ANNOUNCEMENT"
+		elseif kind == "d" then head1="DM FROM STAFF  ("..tostring(x.by or "?")..")" cAcc=Color3.fromRGB(180,150,255) cBg=Color3.fromRGB(22,18,34) nTitle="Staff DM"
+		elseif kind == "n" then notifyLocal("Message from staff", tostring(x.m)) return
+		else head1="WARNING FROM STAFF  ("..tostring(x.by or "?")..")" cAcc=Color3.fromRGB(255,80,80) cBg=Color3.fromRGB(30,16,18) nTitle="ADMIN WARNING" end
+		notifyLocal(nTitle, tostring(x.m))
 		pcall(function()
 			local card = Instance.new("Frame")
 			card.Size = UDim2.new(0,380,0,110); card.Position = UDim2.new(0.5,-190,0.22,0)
-			card.BackgroundColor3 = Color3.fromRGB(30,16,18); card.Parent = gui
+			card.BackgroundColor3 = cBg; card.Parent = gui
 			local c=Instance.new("UICorner") c.CornerRadius=UDim.new(0,12) c.Parent=card
-			local st=Instance.new("UIStroke") st.Color=Color3.fromRGB(255,80,80) st.Thickness=2 st.Parent=card
+			local st=Instance.new("UIStroke") st.Color=cAcc st.Thickness=2 st.Parent=card
 			local t1=Instance.new("TextLabel") t1.Size=UDim2.new(1,-20,0,30) t1.Position=UDim2.new(0,10,0,10)
 			t1.BackgroundTransparency=1 t1.Font=Enum.Font.GothamBold t1.TextSize=16
-			t1.TextColor3=Color3.fromRGB(255,110,110) t1.Text="WARNING FROM STAFF ("..tostring(x.by or "?")..")" t1.Parent=card
+			t1.TextColor3=cAcc t1.Text=head1 t1.Parent=card
 			local t2=Instance.new("TextLabel") t2.Size=UDim2.new(1,-20,0,56) t2.Position=UDim2.new(0,10,0,44)
 			t2.BackgroundTransparency=1 t2.Font=Enum.Font.Gotham t2.TextSize=13 t2.TextWrapped=true
 			t2.TextColor3=Color3.fromRGB(235,220,222) t2.Text=tostring(x.m) t2.Parent=card
@@ -705,7 +1032,15 @@ task.spawn(function()
 		local w = readKey(WKEY)
 		if w then for _,x in ipairs(w) do handleWarn(x) end end
 		local ms = readKey(MKEY)
-		if type(ms) == "table" then MODSTATE.mu = (type(ms.mu)=="table" and ms.mu) or {} MODSTATE.ne = (type(ms.ne)=="table" and ms.ne) or {} end
+		if type(ms) == "table" then
+			MODSTATE.mu = (type(ms.mu)=="table" and ms.mu) or {}
+			MODSTATE.ne = (type(ms.ne)=="table" and ms.ne) or {}
+			MODSTATE.sl = tonumber(ms.sl) or 0
+			MODSTATE.lk = tonumber(ms.lk) or 0
+			MODSTATE.bw = (type(ms.bw)=="table" and ms.bw) or {}
+			MODSTATE.tt = (type(ms.tt)=="table" and ms.tt) or {}
+			pcall(function() _G.__DreamTitleOv = MODSTATE.tt end)
+		end
 		local myL = string.lower(me.Name)
 		local mts2 = tonumber(MODSTATE.mu[myL] or 0) or 0
 		if mts2 > os.time() and mts2 ~= lastMuteNotif then lastMuteNotif = mts2 notifyLocal("Live Chat","A staff member muted you for "..math.ceil((mts2-os.time())/60).." min.") end
@@ -1180,14 +1515,21 @@ local function installHook()
 						-- Anti Fractured + Bone Protection actually stick (the local sweep alone only hid it client-side).
 						-- Broadened region keywords so a HEAD/skull break (SkullFracture/HeadTrauma/Concussion/JawBreak) is
 						-- caught by Anti Break Head too, not only Anti Fractured. Same for neck/leg/tail/torso protectors.
-						if action=="SetProperty" and typeof(a[3])=="string" then local lp=a[3]:lower()
-							if injHit(lp) then local v=a[4]; if v==true or (typeof(v)=="number" and v~=0) or typeof(v)=="table" then return end end
-						end
-						if action=="SetAction" and typeof(a[3])=="string" and a[4]==true then local lp=a[3]:lower()
-							if injHit(lp) then return end
-						end
-						do local la=action:lower()
-							if (CFG.AntiFracture or CFG.AntiBleed or CFG.BoneProtect) and (la:find("fractur",1,true) or la:find("bleed",1,true) or la:find("injur",1,true)) then return end
+						-- ATTACK-SAFE INJURY GATE: only swallow injury reports about YOUR OWN dino (self replica id),
+						-- and never anything attack-shaped. Before this, hitting another dino could fire an action whose
+						-- text matched the injury keywords (Crush/Blunt/Head/Bite...) -> the hit call was swallowed =
+						-- "when I click, I do no damage" while Anti Fractured was on. Your own protection is unchanged.
+						local selfRep = (myReplicaId == nil) or (id == myReplicaId)
+						local laG = action:lower()
+						local atk = laG:find("attack",1,true) or laG:find("register",1,true) or laG:find("hit",1,true) or laG:find("damage",1,true) or laG:find("bite",1,true) or laG:find("swing",1,true) or laG:find("claw",1,true)
+						if selfRep and not atk then
+							if action=="SetProperty" and typeof(a[3])=="string" then local lp=a[3]:lower()
+								if injHit(lp) then local v=a[4]; if v==true or (typeof(v)=="number" and v~=0) or typeof(v)=="table" then return end end
+							end
+							if action=="SetAction" and typeof(a[3])=="string" and a[4]==true then local lp=a[3]:lower()
+								if injHit(lp) then return end
+							end
+							if (CFG.AntiFracture or CFG.AntiBleed or CFG.BoneProtect) and (laG:find("fractur",1,true) or laG:find("bleed",1,true) or laG:find("injur",1,true)) then return end
 						end
 					end
 				end
@@ -1410,7 +1752,13 @@ __gg.MH_spawnRescue = function()
 				elseif (falling and tick()-t0>6) or (deepSea and tick()-t0>6) then
 					-- outside the map / open ocean: go to a REAL spawn point (or big land), not "on top of the water"
 					local dest
-					pcall(function() local sp=WS:FindFirstChildWhichIsA("SpawnLocation", true); if sp then dest=sp.Position+Vector3.new(0,8,0) end end)
+					-- RANDOM PLAYER FIRST: the rescue drops you next to a real player instead of an empty spawn
+					pcall(function()
+						local opts={}
+						for _,pl in ipairs(Players:GetPlayers()) do if pl~=LP then local c=pl.Character; local r2=c and (c:FindFirstChild("HumanoidRootPart") or c.PrimaryPart or c:FindFirstChildWhichIsA("BasePart")); if r2 and r2.Position.Y>-200 then opts[#opts+1]=r2.Position end end end
+						if #opts>0 then dest=opts[math.random(#opts)]+Vector3.new(0,8,0) end
+					end)
+					if not dest then pcall(function() local sp=WS:FindFirstChildWhichIsA("SpawnLocation", true); if sp then dest=sp.Position+Vector3.new(0,8,0) end end) end
 					if not dest then pcall(function()
 						local bf=WS:FindFirstChild("Biomes") or WS:FindFirstChild("Map")
 						if bf then for _,d in ipairs(bf:GetDescendants()) do if d:IsA("BasePart") and d.Size.Magnitude>50 then dest=d.Position+Vector3.new(0,20,0); break end end end
@@ -2741,7 +3089,7 @@ if __gg.PE_ADMIN and Pages["Admin"] then local p=Pages["Admin"]
 	mkBtn(s,"Refresh Players", function() if dd and dd.refresh then dd.refresh() end end)
 
 	local _,a=mkSec(p,"Actions",2)
-	mkTextbox(a,"Warn text (type, then press Send Warn)","AdminWarnMsg",1,false)
+	mkLabel(a,"Send Warn pops a standard warning on their screen. Custom message: type  ?warn username your text  in the live chat.",1)
 	mkBtn(a,"Send Warn", function()
 		local pl=adminTarget(); if not pl then notify("Admin","Load a user first.") return end
 		local msg=tostring(CFG.AdminWarnMsg~="" and CFG.AdminWarnMsg or "Follow the rules or you'll be removed.")
@@ -4214,8 +4562,12 @@ __gg.MH_hopMove=function(targetPos, localWrite)
 			local cf=CFrame.new(from:Lerp(targetPos, i/hops))
 			MH_hopFire(cf)
 			if localWrite~=false then
+				-- NO-GLIDE: your character SNAPS straight to the destination on your screen; only the REMOTE path
+				-- walks the believable 20-stud hops for the server. (The old version lerped your real character
+				-- along the whole path = "it glides me".)
 				local cc=getMyModel()
-				pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(cf) else local rr=hrp(); if rr then rr.CFrame=cf end end end)
+				local snap=CFrame.new(targetPos)
+				pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(snap) else local rr=hrp(); if rr then rr.CFrame=snap end end end)
 				local rr=hrp(); if rr then pcall(function() rr.AssemblyLinearVelocity=Vector3.zero end) end
 			end
 			task.wait(0.05)
