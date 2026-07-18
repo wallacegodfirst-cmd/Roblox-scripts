@@ -87,14 +87,12 @@ end
 -- Dream Hub loading screen
 _G.__DreamGameName = "JUJUTSU SHENANIGANS"
 _G.__DreamTier = (_G.JJS_PREMIUM and "PREMIUM") or (_G.JJS_PREM and "PREMIUM") or (_G.JJS_PLUS and "PLUS") or (_G.JJS_FREE and "FREE") or "FULL"
--- ═══════════════════ DREAM HUB — DISCORD KEY GATE (JJS) ═══════════════════
--- Blocks the whole script until the user joins the Discord and enters a valid key. Fully client-side, so it is a
--- deterrent (not unbreakable). Owner controls keys:
---   _G.__DreamJJSKeys = {"key1","key2"}   -- replace the valid-key list (case-insensitive)
---   _G.__DreamKey      = "single key"      -- add one more valid key
---   _G.__DreamNoGate   = true              -- skip the gate entirely
--- A DAILY key rotates every day (deterministic). Staff open F9 to see today's key and post it in the Discord.
--- Verified keys are cached to disk for 24h so returning users skip the gate.
+-- ═══════════════════ DREAM HUB — DISCORD GATE (JJS) ═══════════════════
+-- Simple join-gate: a popup with a "Copy Discord Link" button. The moment they copy the link, the popup fades
+-- and the hub loads. No key. Staff skip it. Owner options:
+--   _G.__DreamDiscord = "https://discord.gg/xxxx"   -- the invite that gets copied
+--   _G.__DreamNoGate  = true                          -- disable the gate
+--   _G.__DreamForceGate = true                        -- always show it (even for staff), for testing
 do
 	local ok, err = pcall(function()
 		if _G.__DreamNoGate then return end
@@ -103,116 +101,66 @@ do
 		if not LP then Players:GetPropertyChangedSignal("LocalPlayer"):Wait(); LP = Players.LocalPlayer end
 		if not LP then return end
 
-		-- _G.__DreamForceGate = true  -> always show the gate (even for staff / cached), for testing
 		local FORCE = _G.__DreamForceGate and true or false
-		-- staff skip (unless forced)
 		local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true }
 		if type(_G.__DreamExtraAdmins)=="table" then for _,n in ipairs(_G.__DreamExtraAdmins) do MODS[string.lower(tostring(n))]=true end end
 		if not FORCE and (MODS[string.lower(LP.Name)] or MODS[string.lower(LP.DisplayName or "")]) then return end
 
 		local INVITE = tostring(_G.__DreamDiscord or "https://discord.gg/fRcGd9bW")
 
-		-- valid keys (case-insensitive)
-		local KEYS = { ["dreamjjs"]=true }
-		if type(_G.__DreamJJSKeys)=="table" then KEYS={}; for _,k in ipairs(_G.__DreamJJSKeys) do KEYS[string.lower(tostring(k))]=true end end
-		if type(_G.__DreamKey)=="string" then KEYS[string.lower(_G.__DreamKey)]=true end
-		-- daily rotating key
-		local salt = tostring(_G.__DreamKeySalt or "dreamhub2026")
-		local d = os.date("!*t")
-		local h = (d.year*1000 + d.yday) % 2147483647
-		local function mix(n) return (n*1103515245 + 12345) % 2147483648 end
-		for i=1,#salt do h = mix(h + string.byte(salt,i)) end
-		local ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-		local dk = ""
-		for _=1,6 do h = mix(h); local idx=(h % #ALPHA)+1; dk = dk..string.sub(ALPHA, idx, idx) end
-		local DAILY = "DREAM-"..dk
-		KEYS[string.lower(DAILY)] = true
-
-		-- staff see today's key in F9 so they can post it
-		print("[Dream Hub] Discord key gate active. Today's key: "..DAILY)
-
-		-- 24h disk cache: skip the gate if a still-valid key was saved recently
-		local FILE = "dreamhub_jjs_key.txt"
-		local now = os.time()
-		local cached = false
-		pcall(function()
-			if readfile and isfile and isfile(FILE) then
-				local raw = readfile(FILE)
-				local savedKey, savedT = raw:match("^(.-)|(%d+)$")
-				if savedKey and savedT and KEYS[string.lower(savedKey)] and (now - tonumber(savedT)) < 86400 then cached = true end
-			end
-		end)
-		if cached and not FORCE then return end   -- valid key saved <24h ago -> skip gate
-
-		-- ---------- GUI ----------
 		local host
 		pcall(function() host = (typeof(gethui)=="function" and gethui()) or game:GetService("CoreGui") end)
 		if not host then host = LP:WaitForChild("PlayerGui") end
 		local gui = Instance.new("ScreenGui")
-		gui.Name = "DreamKeyGate"; gui.IgnoreGuiInset = true; gui.DisplayOrder = 3000000; gui.ResetOnSpawn = false
+		gui.Name = "DreamDiscordGate"; gui.IgnoreGuiInset = true; gui.DisplayOrder = 3000000; gui.ResetOnSpawn = false
 		gui.Parent = host
 
-		local dim = Instance.new("Frame"); dim.Size = UDim2.fromScale(1,1); dim.BackgroundColor3 = Color3.fromRGB(4,4,6); dim.BackgroundTransparency = 0.15; dim.BorderSizePixel = 0; dim.Parent = gui
+		local dim = Instance.new("Frame"); dim.Size = UDim2.fromScale(1,1); dim.BackgroundColor3 = Color3.fromRGB(4,4,6); dim.BackgroundTransparency = 0.2; dim.BorderSizePixel = 0; dim.Parent = gui
 
-		local card = Instance.new("Frame"); card.AnchorPoint = Vector2.new(0.5,0.5); card.Position = UDim2.fromScale(0.5,0.5); card.Size = UDim2.fromOffset(400,300); card.BackgroundColor3 = Color3.fromRGB(17,16,21); card.Parent = gui
+		local card = Instance.new("Frame"); card.AnchorPoint = Vector2.new(0.5,0.5); card.Position = UDim2.fromScale(0.5,0.5); card.Size = UDim2.fromOffset(400,230); card.BackgroundColor3 = Color3.fromRGB(17,16,21); card.Parent = gui
 		local cc = Instance.new("UICorner") cc.CornerRadius = UDim.new(0,16) cc.Parent = card
 		local cs = Instance.new("UIStroke") cs.Color = Color3.fromRGB(232,38,52) cs.Thickness = 1.4 cs.Transparency = 0.2 cs.Parent = card
-		local grad = Instance.new("UIGradient") grad.Rotation = 90 grad.Color = ColorSequence.new(Color3.fromRGB(28,20,24), Color3.fromRGB(13,12,16)) grad.Parent = card
+		local cg = Instance.new("UIGradient") cg.Rotation = 90 cg.Color = ColorSequence.new(Color3.fromRGB(28,20,24), Color3.fromRGB(13,12,16)) cg.Parent = card
 		local top = Instance.new("Frame") top.Size = UDim2.new(1,0,0,3) top.BackgroundColor3 = Color3.fromRGB(232,38,52) top.BorderSizePixel = 0 top.Parent = card
 		local tcc = Instance.new("UICorner") tcc.CornerRadius = UDim.new(0,16) tcc.Parent = top
 
-		local function label(txt, size, col, font, y, x, w, xa)
+		local function label(txt, size, col, font, y)
 			local l = Instance.new("TextLabel"); l.BackgroundTransparency = 1; l.Text = txt; l.TextSize = size; l.TextColor3 = col
-			l.Font = font; l.TextXAlignment = xa or Enum.TextXAlignment.Center; l.Position = UDim2.new(0,x or 0,0,y); l.Size = UDim2.new(0,w or 400,0,size+6); l.Parent = card
+			l.Font = font; l.TextXAlignment = Enum.TextXAlignment.Center; l.Position = UDim2.new(0,0,0,y); l.Size = UDim2.new(1,0,0,size+6); l.Parent = card
 			return l
 		end
-		label("DREAM HUB", 22, Color3.fromRGB(255,255,255), Enum.Font.GothamBlack, 22)
-		label("Jujutsu Shenanigans  -  Key required", 12, Color3.fromRGB(160,158,172), Enum.Font.Code, 50)
-		label("1. Join the Discord    2. Grab the key    3. Paste it below", 12, Color3.fromRGB(200,120,120), Enum.Font.Gotham, 78)
+		label("DREAM HUB", 24, Color3.fromRGB(255,255,255), Enum.Font.GothamBlack, 30)
+		label("Jujutsu Shenanigans", 12, Color3.fromRGB(160,158,172), Enum.Font.Code, 62)
+		label("Copy our Discord link to continue", 14, Color3.fromRGB(210,206,222), Enum.Font.Gotham, 96)
 
-		local box = Instance.new("TextBox"); box.Position = UDim2.new(0.5,-160,0,112); box.Size = UDim2.fromOffset(320,40); box.BackgroundColor3 = Color3.fromRGB(27,26,33); box.TextColor3 = Color3.fromRGB(255,255,255); box.PlaceholderText = "Enter your key..."; box.PlaceholderColor3 = Color3.fromRGB(120,118,134); box.Font = Enum.Font.Gotham; box.TextSize = 14; box.Text = ""; box.ClearTextOnFocus = false; box.Parent = card
-		local bcc = Instance.new("UICorner") bcc.CornerRadius = UDim.new(0,10) bcc.Parent = box
-		local bst = Instance.new("UIStroke") bst.Color = Color3.fromRGB(60,58,70) bst.Thickness = 1 bst.Parent = box
-		local bpad = Instance.new("UIPadding") bpad.PaddingLeft = UDim.new(0,12) bpad.Parent = box
+		local btn = Instance.new("TextButton"); btn.AnchorPoint = Vector2.new(0.5,0); btn.Position = UDim2.new(0.5,0,0,138); btn.Size = UDim2.fromOffset(320,46); btn.BackgroundColor3 = Color3.fromRGB(88,101,242); btn.TextColor3 = Color3.fromRGB(255,255,255); btn.Font = Enum.Font.GothamBold; btn.TextSize = 15; btn.Text = "Copy Discord Link"; btn.AutoButtonColor = true; btn.Parent = card
+		local bcc = Instance.new("UICorner") bcc.CornerRadius = UDim.new(0,12) bcc.Parent = btn
+		local status = label("", 11, Color3.fromRGB(120,200,255), Enum.Font.Code, 194)
 
-		local function mkBtn(text, x, w, y, bg, fg)
-			local b = Instance.new("TextButton"); b.Position = UDim2.new(0.5,x,0,y); b.Size = UDim2.fromOffset(w,38); b.BackgroundColor3 = bg; b.TextColor3 = fg; b.Font = Enum.Font.GothamBold; b.TextSize = 14; b.Text = text; b.AutoButtonColor = true; b.Parent = card
-			local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0,10) c.Parent = b
-			return b
-		end
-		local joinB = mkBtn("Join Discord", -160, 155, 164, Color3.fromRGB(88,101,242), Color3.fromRGB(255,255,255))
-		local getB  = mkBtn("Get Key", 5, 155, 164, Color3.fromRGB(40,38,48), Color3.fromRGB(220,218,232))
-		local verifyB = mkBtn("VERIFY  ->", -160, 320, 212, Color3.fromRGB(232,38,52), Color3.fromRGB(255,255,255))
-		local vgrad = Instance.new("UIGradient") vgrad.Color = ColorSequence.new(Color3.fromRGB(255,116,70), Color3.fromRGB(232,38,52)) vgrad.Rotation = 20 vgrad.Parent = verifyB
+		local done = false
+		btn.MouseButton1Click:Connect(function()
+			if done then return end
+			local copied = pcall(function() setclipboard(INVITE) end)
+			done = true
+			status.Text = copied and "Link copied - loading Dream Hub..." or (INVITE.."  (copy it manually)")
+			task.delay(copied and 0.5 or 2.5, function()
+				pcall(function()
+					local Tween = game:GetService("TweenService")
+					Tween:Create(dim, TweenInfo.new(0.35), {BackgroundTransparency=1}):Play()
+					Tween:Create(card, TweenInfo.new(0.35), {BackgroundTransparency=1}):Play()
+				end)
+				task.wait(0.36)
+				pcall(function() gui:Destroy() end)
+			end)
+		end)
 
-		local status = label("", 12, Color3.fromRGB(200,120,120), Enum.Font.Code, 260)
-
-		joinB.MouseButton1Click:Connect(function() pcall(function() setclipboard(INVITE) end); status.TextColor3 = Color3.fromRGB(120,200,255); status.Text = "Invite copied - paste it in your browser." end)
-		getB.MouseButton1Click:Connect(function() pcall(function() setclipboard(INVITE) end); status.TextColor3 = Color3.fromRGB(120,200,255); status.Text = "The key is posted in the Discord #keys channel." end)
-
-		local verified = false
-		local function tryKey()
-			local entered = string.lower((box.Text or ""):gsub("%s+",""))
-			if entered ~= "" and KEYS[entered] then
-				verified = true
-				pcall(function() if writefile then writefile(FILE, box.Text.."|"..tostring(now)) end end)
-				status.TextColor3 = Color3.fromRGB(90,220,120); status.Text = "Verified! Loading Dream Hub..."
-			else
-				status.TextColor3 = Color3.fromRGB(255,90,90); status.Text = "Invalid key. Join the Discord to get it."
-				pcall(function() local x0=card.Position; for i=1,6 do card.Position = x0 + UDim2.fromOffset((i%2==0 and 8 or -8),0); task.wait(0.03) end card.Position = x0 end)
-			end
-		end
-		verifyB.MouseButton1Click:Connect(tryKey)
-		box.FocusLost:Connect(function(enter) if enter then tryKey() end end)
-
-		-- BLOCK the whole script here until a valid key is entered
-		repeat task.wait() until verified
-		task.wait(0.35)
-		pcall(function() gui:Destroy() end)
+		-- BLOCK the whole script until they copy the link
+		repeat task.wait() until done
+		task.wait(0.4)
 	end)
-	if not ok then warn("[Dream Hub] key gate error: "..tostring(err)) end
+	if not ok then warn("[Dream Hub] discord gate error: "..tostring(err)) end
 end
--- ═══════════════════ END DISCORD KEY GATE ═══════════════════
+-- ═══════════════════ END DISCORD GATE ═══════════════════
 -- ═══════════════════ DREAM HUB — LOADING SCREEN ═══════════════════
 -- (Loading screen + menu removed by request - the hub loads straight in.)
 -- ═══════════════════ END LOADING SCREEN ═══════════════════
