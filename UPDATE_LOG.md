@@ -71,6 +71,9 @@
 - Dashboard menu + spinner loading screen
 
 ## Fixes
+- FIXED: Hitbox Expander now works on EVERY dino — the loop scanned only a couple folders and skipped
+  dinos in CharacterIgnore.LeftCharacters; it now uses the full model list (nearest-first) and triggers
+  the game's own hitbox builder for dinos that have no Hitbox part yet
 - FIXED: clicking did NO damage while Anti Fractured was on — the injury protection was eating your own
   attack remotes (crush/blunt/bite keywords). Attacks always pass through now; protection unchanged
 - FIXED: teleports "glided" you across the map — you now snap instantly; the server still sees a
