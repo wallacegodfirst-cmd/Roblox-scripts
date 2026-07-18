@@ -172,106 +172,148 @@ task.spawn(function()
 		end
 	end))
 
-	-- ===================== MENU (built now, hidden) =====================
+	-- ===================== MENU — single cohesive glass launcher (built now, hidden) =====================
+	-- One dashboard shell (not three floating boxes): a slim PROFILE rail on the left, the UPDATE LOG timeline as
+	-- the centre of gravity on the right, quick actions as compact rows, and a full-width ENTER HUB as the focal
+	-- point. Hierarchy through size + weight, separators instead of nested cards, ambient depth, no image assets.
 	local menuCanvas=Instance.new("CanvasGroup"); menuCanvas.Size=UDim2.fromScale(1,1); menuCanvas.BackgroundTransparency=1; menuCanvas.GroupTransparency=1; menuCanvas.ZIndex=5; menuCanvas.Parent=gui
 	local menuFit=Instance.new("Frame"); menuFit.AnchorPoint=Vector2.new(0.5,0.5); menuFit.Position=UDim2.fromScale(0.5,0.5); menuFit.Size=UDim2.fromScale(1,1); menuFit.BackgroundTransparency=1; menuFit.Parent=menuCanvas
 	local menuScale=Instance.new("UIScale"); menuScale.Parent=menuFit
 	local menuReveal=Instance.new("UIScale"); menuReveal.Scale=1.06; menuReveal.Parent=menuFit
 
-	-- faded background wordmark (logo image — known good)
-	local bgLogo=Instance.new("ImageLabel"); bgLogo.AnchorPoint=Vector2.new(0.5,0.5); bgLogo.Position=UDim2.new(0.5,0,0.54,0); bgLogo.Size=UDim2.fromOffset(740,740); bgLogo.BackgroundTransparency=1; bgLogo.Image=LOGO; bgLogo.ImageColor3=C.Accent; bgLogo.ImageTransparency=0.95; bgLogo.ScaleType=Enum.ScaleType.Fit; bgLogo.ZIndex=1; bgLogo.Parent=menuFit
+	-- ambient background wordmark (very faint, drifts)
+	local bgLogo=Instance.new("ImageLabel"); bgLogo.AnchorPoint=Vector2.new(0.5,0.5); bgLogo.Position=UDim2.new(0.5,0,0.5,0); bgLogo.Size=UDim2.fromOffset(900,900); bgLogo.BackgroundTransparency=1; bgLogo.Image=LOGO; bgLogo.ImageColor3=C.Accent; bgLogo.ImageTransparency=0.965; bgLogo.ScaleType=Enum.ScaleType.Fit; bgLogo.ZIndex=1; bgLogo.Parent=menuFit
+	track(RunService.RenderStepped:Connect(function() if bgLogo.Parent then pcall(function() bgLogo.Position=UDim2.new(0.5,math.sin(tick()*0.15)*14,0.5,math.cos(tick()*0.12)*10) end) end end))
 
-	-- header logo + tagline
-	local headLogo=Instance.new("ImageLabel"); headLogo.AnchorPoint=Vector2.new(0.5,0); headLogo.Position=UDim2.new(0.5,0,0.04,0); headLogo.Size=UDim2.fromOffset(220,66); headLogo.BackgroundTransparency=1; headLogo.Image=LOGO; headLogo.ImageColor3=C.Text; headLogo.ScaleType=Enum.ScaleType.Fit; headLogo.ZIndex=3; headLogo.Parent=menuFit
-	local tagline=txt(menuFit,"E L E V A T E   Y O U R   E X P E R I E N C E",12,C.Muted,F.Code,Enum.TextXAlignment.Center); tagline.AnchorPoint=Vector2.new(0.5,0); tagline.Position=UDim2.new(0.5,0,0.128,0); tagline.Size=UDim2.fromOffset(460,16); tagline.ZIndex=3
-
-	-- status pill
-	local pill=Instance.new("Frame"); pill.AnchorPoint=Vector2.new(0.5,0); pill.Position=UDim2.new(0.5,0,0.174,0); pill.Size=UDim2.fromOffset(540,30); pill.BackgroundColor3=C.Panel; pill.BackgroundTransparency=0.12; pill.ZIndex=3; pill.Parent=menuFit; corner(pill,999); stroke(pill,C.Border,1,0.25)
-	local pdot=Instance.new("Frame"); pdot.AnchorPoint=Vector2.new(0,0.5); pdot.Position=UDim2.new(0,18,0.5,0); pdot.Size=UDim2.fromOffset(9,9); pdot.BackgroundColor3=C.Green; pdot.BorderSizePixel=0; pdot.ZIndex=4; pdot.Parent=pill; corner(pdot,999)
-	local pdotGlow=stroke(pdot,C.Green,3,0.5)
-	track(RunService.RenderStepped:Connect(function() if pdot.Parent then pcall(function() pdotGlow.Transparency=0.4+math.abs(math.sin(tick()*2))*0.5 end) end end))
-	local pillTxt=txt(pill,"Playing: loading   |   -- Players",12,C.Muted,F.Code,Enum.TextXAlignment.Left); pillTxt.Position=UDim2.new(0,34,0,0); pillTxt.Size=UDim2.new(1,-44,1,0); pillTxt.ZIndex=4
-
-	-- ---- panel builder (glassy: gradient + stroke, no images) ----
-	local panels={}
-	local function panel(title, x, w, viewAll)
-		local box=Instance.new("Frame"); box.AnchorPoint=Vector2.new(0.5,0); box.Position=UDim2.new(x,0,0.255,0); box.Size=UDim2.fromOffset(w,320); box.BackgroundColor3=C.Panel; box.BackgroundTransparency=0.04; box.ZIndex=3; box.Parent=menuFit
-		corner(box,14); stroke(box,C.Border,1.2,0.15)
-		gradient(box, ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(31,29,37)),ColorSequenceKeypoint.new(1,Color3.fromRGB(16,15,20))}), 90)
-		local hd=txt(box,string.upper(title),14,C.Text,F.Bold); hd.Position=UDim2.new(0,18,0,15); hd.Size=UDim2.new(1,-90,0,20); hd.ZIndex=5
-		local ln=Instance.new("Frame"); ln.Position=UDim2.new(0,18,0,39); ln.Size=UDim2.fromOffset(34,3); ln.BackgroundColor3=C.Accent; ln.BorderSizePixel=0; ln.ZIndex=5; ln.Parent=box; corner(ln,999)
-		gradient(ln, ColorSequence.new({ColorSequenceKeypoint.new(0,C.Accent2),ColorSequenceKeypoint.new(1,C.Accent)}), 0)
-		if viewAll then local va=txt(box,"View All",12,C.Accent,F.Bold,Enum.TextXAlignment.Right); va.Position=UDim2.new(1,-78,0,15); va.Size=UDim2.fromOffset(60,20); va.ZIndex=5 end
-		table.insert(panels, box)
-		return box
+	-- reusable helpers
+	local function sep(parent, pos, sizeX, vertical, z)
+		local s=Instance.new("Frame"); s.BorderSizePixel=0; s.BackgroundColor3=Color3.fromRGB(255,255,255); s.BackgroundTransparency=0.92; s.Position=pos; s.ZIndex=z or 6; s.Parent=parent
+		s.Size=vertical and UDim2.new(0,1,0,sizeX) or UDim2.new(0,sizeX,0,1)
+		return s
 	end
-
-	-- LEFT: PROFILE
-	local pf=panel("Profile", 0.185, 300)
-	local pav=Instance.new("ImageLabel"); pav.AnchorPoint=Vector2.new(0.5,0); pav.Position=UDim2.new(0.5,0,0,52); pav.Size=UDim2.fromOffset(84,84); pav.BackgroundColor3=C.Panel2; pav.Image=HEAD; pav.ZIndex=4; pav.Parent=pf; corner(pav,999)
-	local pavRing=stroke(pav,C.Accent,2.5,0)
-	track(RunService.RenderStepped:Connect(function() if pav.Parent then pcall(function() pavRing.Transparency=0.05+math.abs(math.sin(tick()*1.4))*0.35 end) end end))
-	if IS_MOD then
-		local mt=txt(pf,"DREAM HUB  "..MYROLE,13,C.Text,F.Black,Enum.TextXAlignment.Center); mt.AnchorPoint=Vector2.new(0.5,0); mt.Position=UDim2.new(0.5,0,0,146); mt.Size=UDim2.new(1,-14,0,18); mt.ZIndex=5
-		local rg=gradient(mt, ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(255,80,80)),ColorSequenceKeypoint.new(0.25,Color3.fromRGB(255,190,60)),ColorSequenceKeypoint.new(0.5,Color3.fromRGB(120,255,120)),ColorSequenceKeypoint.new(0.75,Color3.fromRGB(90,190,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(210,120,255))}), 0)
-		track(RunService.RenderStepped:Connect(function() if mt.Parent then rg.Offset=Vector2.new(((tick()*0.4)%2)-1,0) end end))
-	end
-	local pnm=txt(pf,player.DisplayName,20,C.Text,F.Bold,Enum.TextXAlignment.Center); pnm.AnchorPoint=Vector2.new(0.5,0); pnm.Position=UDim2.new(0.5,0,0,IS_MOD and 166 or 150); pnm.Size=UDim2.new(1,-16,0,24); pnm.ZIndex=4
-	local phd=txt(pf,"@"..player.Name,12,C.Muted,F.Code,Enum.TextXAlignment.Center); phd.AnchorPoint=Vector2.new(0.5,0); phd.Position=UDim2.new(0.5,0,0,IS_MOD and 190 or 176); phd.Size=UDim2.new(1,-16,0,16); phd.ZIndex=4
-	local pbg=Instance.new("Frame"); pbg.AnchorPoint=Vector2.new(0.5,0); pbg.Position=UDim2.new(0.5,0,0,IS_MOD and 212 or 200); pbg.Size=UDim2.fromOffset(148,32); pbg.BackgroundColor3=C.Accent; pbg.ZIndex=4; pbg.Parent=pf; corner(pbg,999)
-	gradient(pbg, ColorSequence.new({ColorSequenceKeypoint.new(0,C.Accent2),ColorSequenceKeypoint.new(1,C.Accent)}), 25)
-	txt(pbg,(IS_MOD and "MOD" or TIER).." PLAN",13,C.Text,F.Black,Enum.TextXAlignment.Center).Size=UDim2.fromScale(1,1)
-	local since=Instance.new("Frame"); since.AnchorPoint=Vector2.new(0.5,1); since.Position=UDim2.new(0.5,0,1,-14); since.Size=UDim2.new(1,-28,0,46); since.BackgroundColor3=C.Panel2; since.BackgroundTransparency=0.12; since.ZIndex=4; since.Parent=pf; corner(since,10); stroke(since,C.Border,1,0.4)
-	local sinceT=txt(since,"Member for -- days",12,C.Muted,F.Main,Enum.TextXAlignment.Center); sinceT.Size=UDim2.fromScale(1,0.5)
-	local timerT=txt(since,"Session 00:00",13,C.Text,F.Bold,Enum.TextXAlignment.Center); timerT.Position=UDim2.fromScale(0,0.5); timerT.Size=UDim2.fromScale(1,0.5)
-	pcall(function() sinceT.Text="Member for "..tostring(math.floor(player.AccountAge)).." days" end)
-
-	-- MIDDLE: UPDATE LOG
-	local ul=panel("Update Log", 0.5, 340, true)
-	local scr=Instance.new("ScrollingFrame"); scr.Position=UDim2.new(0,16,0,52); scr.Size=UDim2.new(1,-26,1,-64); scr.BackgroundTransparency=1; scr.BorderSizePixel=0; scr.ScrollBarThickness=4; scr.ScrollBarImageColor3=C.Accent; scr.CanvasSize=UDim2.new(0,0,0,0); scr.AutomaticCanvasSize=Enum.AutomaticSize.Y; scr.ZIndex=4; scr.Parent=ul
-	local sl=Instance.new("UIListLayout"); sl.Padding=UDim.new(0,9); sl.SortOrder=Enum.SortOrder.LayoutOrder; sl.Parent=scr
-	local LOGS={
-		{"LIVE CHAT: talk to every hub user across all 3 games. roles + emoji.","new"},
-		{"Staff got 60+ chat commands (?cmds), a warning tracker + msg delete.","new"},
-		{"AI mod watches chat + auto-reports rule breaks to staff.","new"},
-		{"Prior Ex: hitbox now works on every dino. no-damage click fixed.","new"},
-		{"Redone loading + menu. clean, animated, no clutter.","today"},
-		{"Reports send even when your executor blocks discord.","2d"},
-		{"Target: type any name, see their stuff, tp / view / farm.","6d"},
-		{"Added the mod tools + rules tab. read the rules pls.","8d"},
-	}
-	for i,e in ipairs(LOGS) do
-		local row=Instance.new("Frame"); row.LayoutOrder=i; row.Size=UDim2.new(1,0,0,0); row.AutomaticSize=Enum.AutomaticSize.Y; row.BackgroundTransparency=1; row.ZIndex=4; row.Parent=scr
-		local dot=Instance.new("Frame"); dot.Position=UDim2.new(0,3,0,6); dot.Size=UDim2.fromOffset(7,7); dot.BackgroundColor3=(e[2]=="new") and C.Accent2 or C.Accent; dot.BorderSizePixel=0; dot.ZIndex=5; dot.Parent=row; corner(dot,999)
-		local t=txt(row,e[1],12.5,C.Muted,F.Main); t.Position=UDim2.new(0,20,0,0); t.Size=UDim2.new(1,-70,0,0); t.AutomaticSize=Enum.AutomaticSize.Y; t.TextWrapped=true; t.TextYAlignment=Enum.TextYAlignment.Top; t.ZIndex=5
-		local d=txt(row,e[2],10.5,(e[2]=="new") and C.Accent2 or C.Faint,F.Code,Enum.TextXAlignment.Right); d.AnchorPoint=Vector2.new(1,0); d.Position=UDim2.new(1,0,0,1); d.Size=UDim2.fromOffset(44,16); d.ZIndex=5
-	end
-
-	-- RIGHT: QUICK ACTIONS
-	local qa=panel("Quick Actions", 0.815, 300)
-	local qlist=Instance.new("Frame"); qlist.Position=UDim2.new(0,16,0,52); qlist.Size=UDim2.new(1,-32,1,-64); qlist.BackgroundTransparency=1; qlist.ZIndex=4; qlist.Parent=qa
-	local qll=Instance.new("UIListLayout"); qll.Padding=UDim.new(0,9); qll.SortOrder=Enum.SortOrder.LayoutOrder; qll.Parent=qlist
-	local function action(label, order, cb)
-		local b=Instance.new("TextButton"); b.LayoutOrder=order; b.Size=UDim2.new(1,0,0,42); b.BackgroundColor3=C.Panel2; b.BackgroundTransparency=0.08; b.Text=""; b.AutoButtonColor=false; b.ZIndex=4; b.Parent=qlist; corner(b,10); stroke(b,C.Border,1,0.25)
-		local accent=Instance.new("Frame"); accent.Position=UDim2.new(0,0,0.5,0); accent.AnchorPoint=Vector2.new(0,0.5); accent.Size=UDim2.fromOffset(3,0); accent.BackgroundColor3=C.Accent; accent.BorderSizePixel=0; accent.ZIndex=5; accent.Parent=b; corner(accent,999)
-		local t=txt(b,label,14,C.Text,F.Med); t.Position=UDim2.new(0,16,0,0); t.Size=UDim2.new(1,-42,1,0); t.ZIndex=5
-		local ar=txt(b,">",16,C.Accent,F.Bold,Enum.TextXAlignment.Right); ar.AnchorPoint=Vector2.new(1,0.5); ar.Position=UDim2.new(1,-14,0.5,0); ar.Size=UDim2.fromOffset(16,16); ar.ZIndex=5
-		b.MouseButton1Click:Connect(function() pcall(cb) end)
-		b.MouseEnter:Connect(function() pcall(function() tw(b,0.15,{BackgroundColor3=Color3.fromRGB(41,31,37),BackgroundTransparency=0}); tw(accent,0.18,{Size=UDim2.fromOffset(3,26)}); tw(ar,0.15,{Position=UDim2.new(1,-10,0.5,0)}) end) end)
-		b.MouseLeave:Connect(function() pcall(function() tw(b,0.22,{BackgroundColor3=C.Panel2,BackgroundTransparency=0.08}); tw(accent,0.22,{Size=UDim2.fromOffset(3,0)}); tw(ar,0.2,{Position=UDim2.new(1,-14,0.5,0)}) end) end)
+	local function badge(parent, kind)
+		local col = (kind=="NEW" and C.Accent2) or (kind=="FIXED" and C.Green) or (kind=="REWORKED" and Color3.fromRGB(90,160,255)) or C.Muted
+		local b=Instance.new("Frame"); b.Size=UDim2.fromOffset(kind=="REWORKED" and 74 or (kind=="FIXED" and 46 or 40),16); b.BackgroundColor3=col; b.BackgroundTransparency=0.82; b.BorderSizePixel=0; b.Parent=parent; corner(b,4); stroke(b,col,1,0.35)
+		local l=txt(b,kind,9.5,col,F.Bold,Enum.TextXAlignment.Center); l.Size=UDim2.fromScale(1,1); l.ZIndex=(parent.ZIndex or 6)+1
 		return b
 	end
 
+	-- THE SHELL (single glass container)
+	local SHELL_W, SHELL_H = 1000, 600
+	local shell=Instance.new("Frame"); shell.AnchorPoint=Vector2.new(0.5,0.5); shell.Position=UDim2.new(0.5,0,0.5,-14); shell.Size=UDim2.fromOffset(SHELL_W,SHELL_H); shell.BackgroundColor3=Color3.fromRGB(14,13,17); shell.BackgroundTransparency=0.04; shell.ZIndex=4; shell.Parent=menuFit
+	corner(shell,18); stroke(shell,C.Border,1,0.25)
+	gradient(shell, ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(22,18,23)),ColorSequenceKeypoint.new(0.5,Color3.fromRGB(13,12,16)),ColorSequenceKeypoint.new(1,Color3.fromRGB(9,8,11))}), 90)
+	-- top ambient accent hairline + soft red bloom line at the very top
+	local topLine=Instance.new("Frame"); topLine.Position=UDim2.new(0,0,0,0); topLine.Size=UDim2.new(1,0,0,2); topLine.BackgroundColor3=C.Accent; topLine.BorderSizePixel=0; topLine.ZIndex=6; topLine.Parent=shell
+	gradient(topLine, ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(40,10,14)),ColorSequenceKeypoint.new(0.5,C.Accent),ColorSequenceKeypoint.new(1,Color3.fromRGB(40,10,14))}), 0)
+	do local u=Instance.new("UICorner") u.CornerRadius=UDim.new(0,18) u.Parent=topLine end
+	local panels={}   -- sections that slide in on reveal
+
+	-- ══════════ LEFT RAIL — PROFILE + QUICK ACTIONS ══════════
+	local rail=Instance.new("Frame"); rail.Position=UDim2.new(0,0,0,0); rail.Size=UDim2.new(0,318,1,0); rail.BackgroundTransparency=1; rail.ZIndex=5; rail.Parent=shell
+	table.insert(panels, rail)
+	sep(rail, UDim2.new(1,0,0,26), SHELL_H-52, true, 6)   -- vertical divider between rail and main
+	-- logo top-left
+	local railLogo=Instance.new("ImageLabel"); railLogo.Position=UDim2.new(0,30,0,26); railLogo.Size=UDim2.fromOffset(132,40); railLogo.BackgroundTransparency=1; railLogo.Image=LOGO; railLogo.ImageColor3=C.Text; railLogo.ScaleType=Enum.ScaleType.Fit; railLogo.ZIndex=6; railLogo.Parent=rail
+	railLogo.AnchorPoint=Vector2.new(0,0.5); railLogo.Position=UDim2.new(0,34,0,50)
+	-- avatar block
+	local av=Instance.new("ImageLabel"); av.Position=UDim2.new(0,34,0,92); av.Size=UDim2.fromOffset(64,64); av.BackgroundColor3=C.Panel2; av.Image=HEAD; av.ZIndex=6; av.Parent=rail; corner(av,999)
+	local avRing=stroke(av,C.Accent,2,0)
+	track(RunService.RenderStepped:Connect(function() if av.Parent then pcall(function() avRing.Transparency=0.1+math.abs(math.sin(tick()*1.3))*0.35 end) end end))
+	local pnm=txt(rail,player.DisplayName,19,C.Text,F.Bold); pnm.Position=UDim2.new(0,112,0,96); pnm.Size=UDim2.fromOffset(178,24); pnm.ZIndex=6
+	local phd=txt(rail,"@"..player.Name,12,C.Muted,F.Code); phd.Position=UDim2.new(0,112,0,122); phd.Size=UDim2.fromOffset(178,16); phd.ZIndex=6
+	-- role / plan chip
+	local chip=Instance.new("Frame"); chip.Position=UDim2.new(0,112,0,142); chip.Size=UDim2.fromOffset(IS_MOD and 150 or 96,22); chip.BackgroundColor3=C.Accent; chip.ZIndex=6; chip.Parent=rail; corner(chip,999)
+	if IS_MOD then
+		gradient(chip, ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(120,90,255)),ColorSequenceKeypoint.new(1,C.Accent)}), 20)
+		txt(chip,MYROLE,11,C.Text,F.Black,Enum.TextXAlignment.Center).Size=UDim2.fromScale(1,1)
+	else
+		gradient(chip, ColorSequence.new({ColorSequenceKeypoint.new(0,C.Accent2),ColorSequenceKeypoint.new(1,C.Accent)}), 20)
+		txt(chip,TIER.." PLAN",11,C.Text,F.Black,Enum.TextXAlignment.Center).Size=UDim2.fromScale(1,1)
+	end
+	sep(rail, UDim2.new(0,34,0,180), 250, false, 6)
+	-- stat rows (label left, value right) — no boxes, just rows
+	local function statRow(y, label, valRef)
+		txt(rail,label,12,C.Faint,F.Code).Position=UDim2.new(0,34,0,y)
+		local v=txt(rail,"--",13,C.Text,F.Bold,Enum.TextXAlignment.Right); v.Position=UDim2.new(0,150,0,y); v.Size=UDim2.fromOffset(134,16); v.ZIndex=6
+		return v
+	end
+	local pl=statRow(196,"PLAN",nil); pl.Text=IS_MOD and "MOD" or TIER
+	local memberV=statRow(220,"MEMBER",nil); pcall(function() memberV.Text=tostring(math.floor(player.AccountAge)).." days" end)
+	local timerT=statRow(244,"SESSION",nil); timerT.Text="00:00"
+	local sinceT=memberV   -- alias kept for the loading sequence wiring
+	sep(rail, UDim2.new(0,34,0,278), 250, false, 6)
+	-- quick actions header + compact rows
+	txt(rail,"QUICK ACTIONS",11,C.Muted,F.Bold).Position=UDim2.new(0,34,0,294)
+	local qlist=Instance.new("Frame"); qlist.Position=UDim2.new(0,26,0,318); qlist.Size=UDim2.new(0,266,0,232); qlist.BackgroundTransparency=1; qlist.ZIndex=6; qlist.Parent=rail
+	local qll=Instance.new("UIListLayout"); qll.Padding=UDim.new(0,4); qll.SortOrder=Enum.SortOrder.LayoutOrder; qll.Parent=qlist
+	local function action(label, order, cb)
+		local b=Instance.new("TextButton"); b.LayoutOrder=order; b.Size=UDim2.new(1,0,0,36); b.BackgroundColor3=C.Accent; b.BackgroundTransparency=1; b.Text=""; b.AutoButtonColor=false; b.ZIndex=6; b.Parent=qlist; corner(b,8)
+		local t=txt(b,label,13.5,Color3.fromRGB(206,204,220),F.Med); t.Position=UDim2.new(0,10,0,0); t.Size=UDim2.new(1,-36,1,0); t.ZIndex=7
+		local ar=txt(b,"→",15,C.Faint,F.Bold,Enum.TextXAlignment.Right); ar.AnchorPoint=Vector2.new(1,0.5); ar.Position=UDim2.new(1,-12,0.5,0); ar.Size=UDim2.fromOffset(16,16); ar.ZIndex=7
+		b.MouseButton1Click:Connect(function() pcall(cb) end)
+		b.MouseEnter:Connect(function() pcall(function() tw(b,0.15,{BackgroundTransparency=0.86}); tw(t,0.15,{TextColor3=C.Text,Position=UDim2.new(0,14,0,0)}); tw(ar,0.15,{TextColor3=C.Accent,Position=UDim2.new(1,-10,0.5,0)}) end) end)
+		b.MouseLeave:Connect(function() pcall(function() tw(b,0.2,{BackgroundTransparency=1}); tw(t,0.2,{TextColor3=Color3.fromRGB(206,204,220),Position=UDim2.new(0,10,0,0)}); tw(ar,0.2,{TextColor3=C.Faint,Position=UDim2.new(1,-12,0.5,0)}) end) end)
+		return b
+	end
+
+	-- ══════════ RIGHT MAIN — HEADER + UPDATE LOG TIMELINE ══════════
+	local main=Instance.new("Frame"); main.Position=UDim2.new(0,318,0,0); main.Size=UDim2.new(1,-318,1,0); main.BackgroundTransparency=1; main.ZIndex=5; main.Parent=shell
+	table.insert(panels, main)
+	-- header: tagline + status
+	local hTitle=txt(main,"D R E A M   H U B",22,C.Text,F.Black); hTitle.Position=UDim2.new(0,34,0,28); hTitle.Size=UDim2.fromOffset(360,26); hTitle.ZIndex=6
+	local hGrad=gradient(hTitle, ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(255,150,120)),ColorSequenceKeypoint.new(0.5,Color3.fromRGB(255,255,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(255,120,120))}), 0)
+	track(RunService.RenderStepped:Connect(function() if hTitle.Parent then pcall(function() hGrad.Offset=Vector2.new(((tick()*0.3)%2)-1,0) end) end end))
+	local tagline=txt(main,"Elevate your experience",12,C.Muted,F.Code); tagline.Position=UDim2.new(0,36,0,56); tagline.Size=UDim2.fromOffset(360,16); tagline.ZIndex=6
+	-- status (top-right of main): animated dot + playing + players
+	local pdot=Instance.new("Frame"); pdot.AnchorPoint=Vector2.new(0,0.5); pdot.Position=UDim2.new(0,36,0,86); pdot.Size=UDim2.fromOffset(8,8); pdot.BackgroundColor3=C.Green; pdot.BorderSizePixel=0; pdot.ZIndex=6; pdot.Parent=main; corner(pdot,999)
+	local pdotGlow=stroke(pdot,C.Green,3,0.5)
+	track(RunService.RenderStepped:Connect(function() if pdot.Parent then pcall(function() pdotGlow.Transparency=0.4+math.abs(math.sin(tick()*2))*0.5 end) end end))
+	local pillTxt=txt(main,"Playing: loading   -   -- Players",12,C.Muted,F.Code); pillTxt.Position=UDim2.new(0,52,0,80); pillTxt.Size=UDim2.fromOffset(500,16); pillTxt.ZIndex=6
+	sep(main, UDim2.new(0,34,0,108), 620, false, 6)
+	-- UPDATE LOG heading + animated underline
+	txt(main,"UPDATE LOG",14,C.Text,F.Bold).Position=UDim2.new(0,34,0,122)
+	local ulLine=Instance.new("Frame"); ulLine.Position=UDim2.new(0,34,0,146); ulLine.Size=UDim2.fromOffset(36,3); ulLine.BackgroundColor3=C.Accent; ulLine.BorderSizePixel=0; ulLine.ZIndex=6; ulLine.Parent=main; corner(ulLine,999)
+	track(RunService.RenderStepped:Connect(function() if ulLine.Parent then pcall(function() ulLine.Size=UDim2.fromOffset(30+math.abs(math.sin(tick()*1.5))*22,3) end) end end))
+	local va=txt(main,"latest build",11,C.Faint,F.Code,Enum.TextXAlignment.Right); va.Position=UDim2.new(1,-140,0,124); va.Size=UDim2.fromOffset(96,16); va.ZIndex=6
+	-- timeline
+	local scr=Instance.new("ScrollingFrame"); scr.Position=UDim2.new(0,34,0,160); scr.Size=UDim2.new(1,-70,1,-262); scr.BackgroundTransparency=1; scr.BorderSizePixel=0; scr.ScrollBarThickness=3; scr.ScrollBarImageColor3=C.Accent; scr.ScrollBarImageTransparency=0.4; scr.CanvasSize=UDim2.new(0,0,0,0); scr.AutomaticCanvasSize=Enum.AutomaticSize.Y; scr.ZIndex=6; scr.Parent=main
+	local sl=Instance.new("UIListLayout"); sl.Padding=UDim.new(0,10); sl.SortOrder=Enum.SortOrder.LayoutOrder; sl.Parent=scr
+	local LOGS={
+		{"NEW","Live cross-game chat with role badges + emoji shortcodes"},
+		{"NEW","Staff system: 60+ chat commands, warning tracker, message delete"},
+		{"NEW","AI moderation watches chat and auto-reports rule breaks"},
+		{"FIXED","Prior Ex: hitbox works on every dino now"},
+		{"FIXED","Prior Ex: clicking deals damage with Anti Fractured on"},
+		{"FIXED","Corpse teleport no longer speeds you up / snaps you back"},
+		{"FIXED","Reports send even when your executor blocks discord"},
+		{"REWORKED","Loading + menu rebuilt as a premium launcher"},
+		{"REWORKED","Warns show as an on-screen popup instead of chat"},
+		{"NEW","Target: type any name, then teleport / view / farm them"},
+	}
+	for i,e in ipairs(LOGS) do
+		local row=Instance.new("Frame"); row.LayoutOrder=i; row.Size=UDim2.new(1,-6,0,0); row.AutomaticSize=Enum.AutomaticSize.Y; row.BackgroundTransparency=1; row.ZIndex=6; row.Parent=scr
+		-- timeline dot + connecting line
+		local dot=Instance.new("Frame"); dot.Position=UDim2.new(0,2,0,5); dot.Size=UDim2.fromOffset(8,8); dot.BorderSizePixel=0; dot.ZIndex=8; dot.Parent=row; corner(dot,999)
+		dot.BackgroundColor3=(e[1]=="NEW" and C.Accent2) or (e[1]=="FIXED" and C.Green) or Color3.fromRGB(90,160,255)
+		local bg=badge(row, e[1]); bg.Position=UDim2.new(0,22,0,3); bg.ZIndex=7
+		local t=txt(row,e[2],12.5,Color3.fromRGB(198,196,214),F.Main); t.Position=UDim2.new(0,(e[1]=="REWORKED" and 106 or (e[1]=="FIXED" and 78 or 72)),0,0); t.Size=UDim2.new(1,-(e[1]=="REWORKED" and 112 or (e[1]=="FIXED" and 84 or 78)),0,0); t.AutomaticSize=Enum.AutomaticSize.Y; t.TextWrapped=true; t.TextYAlignment=Enum.TextYAlignment.Top; t.ZIndex=7
+		-- hover: subtle highlight + slide
+		local hit=Instance.new("TextButton"); hit.BackgroundTransparency=1; hit.Text=""; hit.Size=UDim2.new(1,0,1,0); hit.ZIndex=6; hit.Parent=row
+		hit.MouseEnter:Connect(function() pcall(function() tw(t,0.15,{TextColor3=C.Text,Position=UDim2.new(0,(e[1]=="REWORKED" and 110 or (e[1]=="FIXED" and 82 or 76)),0,0)}) end) end)
+		hit.MouseLeave:Connect(function() pcall(function() tw(t,0.2,{TextColor3=Color3.fromRGB(198,196,214),Position=UDim2.new(0,(e[1]=="REWORKED" and 106 or (e[1]=="FIXED" and 78 or 72)),0,0)}) end) end)
+	end
+
 	-- report popup (used by Report a Bug / Give Feedback)
-	local reportGui=Instance.new("Frame"); reportGui.AnchorPoint=Vector2.new(0.5,0.5); reportGui.Position=UDim2.new(0.5,0,0.5,0); reportGui.Size=UDim2.fromOffset(440,308); reportGui.BackgroundColor3=C.Panel; reportGui.BackgroundTransparency=0.02; reportGui.Visible=false; reportGui.ZIndex=20; reportGui.Parent=menuFit; corner(reportGui,14); stroke(reportGui,C.Accent,1.4,0.15)
+	local reportGui=Instance.new("Frame"); reportGui.AnchorPoint=Vector2.new(0.5,0.5); reportGui.Position=UDim2.new(0.5,0,0.5,0); reportGui.Size=UDim2.fromOffset(440,308); reportGui.BackgroundColor3=C.Panel; reportGui.BackgroundTransparency=0.02; reportGui.Visible=false; reportGui.ZIndex=30; reportGui.Parent=menuFit; corner(reportGui,14); stroke(reportGui,C.Accent,1.4,0.15)
 	gradient(reportGui, ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(30,21,25)),ColorSequenceKeypoint.new(1,Color3.fromRGB(15,14,19))}), 90)
 	txt(reportGui,"REPORT A BUG",15,C.Text,F.Bold).Position=UDim2.new(0,18,0,16)
-	local rInput=Instance.new("TextBox"); rInput.Position=UDim2.new(0,18,0,46); rInput.Size=UDim2.new(1,-36,0,120); rInput.BackgroundColor3=C.Panel2; rInput.BackgroundTransparency=0.08; rInput.FontFace=F.Main; rInput.TextSize=14; rInput.TextColor3=C.Text; rInput.PlaceholderText="Describe the bug you found..."; rInput.PlaceholderColor3=C.Muted; rInput.Text=""; rInput.ClearTextOnFocus=false; rInput.MultiLine=true; rInput.TextWrapped=true; rInput.TextXAlignment=Enum.TextXAlignment.Left; rInput.TextYAlignment=Enum.TextYAlignment.Top; rInput.ZIndex=21; rInput.Parent=reportGui; corner(rInput,10); stroke(rInput,C.Border,1,0.25)
-	local rProof=Instance.new("TextBox"); rProof.Position=UDim2.new(0,18,0,174); rProof.Size=UDim2.new(1,-36,0,34); rProof.BackgroundColor3=C.Panel2; rProof.BackgroundTransparency=0.08; rProof.FontFace=F.Main; rProof.TextSize=13; rProof.TextColor3=C.Text; rProof.PlaceholderText="Proof image link (optional) - imgur/gyazo/medal"; rProof.PlaceholderColor3=C.Muted; rProof.Text=""; rProof.ClearTextOnFocus=false; rProof.TextXAlignment=Enum.TextXAlignment.Left; rProof.ZIndex=21; rProof.Parent=reportGui; corner(rProof,10); stroke(rProof,C.Border,1,0.25)
-	local rSubmit=Instance.new("TextButton"); rSubmit.AnchorPoint=Vector2.new(0,1); rSubmit.Position=UDim2.new(0,18,1,-16); rSubmit.Size=UDim2.new(1,-120,0,34); rSubmit.BackgroundColor3=C.Accent; rSubmit.FontFace=F.Bold; rSubmit.Text="Submit"; rSubmit.TextSize=14; rSubmit.TextColor3=C.Text; rSubmit.ZIndex=21; rSubmit.Parent=reportGui; corner(rSubmit,10)
+	local rInput=Instance.new("TextBox"); rInput.Position=UDim2.new(0,18,0,46); rInput.Size=UDim2.new(1,-36,0,120); rInput.BackgroundColor3=C.Panel2; rInput.BackgroundTransparency=0.08; rInput.FontFace=F.Main; rInput.TextSize=14; rInput.TextColor3=C.Text; rInput.PlaceholderText="Describe the bug you found..."; rInput.PlaceholderColor3=C.Muted; rInput.Text=""; rInput.ClearTextOnFocus=false; rInput.MultiLine=true; rInput.TextWrapped=true; rInput.TextXAlignment=Enum.TextXAlignment.Left; rInput.TextYAlignment=Enum.TextYAlignment.Top; rInput.ZIndex=31; rInput.Parent=reportGui; corner(rInput,10); stroke(rInput,C.Border,1,0.25)
+	local rProof=Instance.new("TextBox"); rProof.Position=UDim2.new(0,18,0,174); rProof.Size=UDim2.new(1,-36,0,34); rProof.BackgroundColor3=C.Panel2; rProof.BackgroundTransparency=0.08; rProof.FontFace=F.Main; rProof.TextSize=13; rProof.TextColor3=C.Text; rProof.PlaceholderText="Proof image link (optional) - imgur/gyazo/medal"; rProof.PlaceholderColor3=C.Muted; rProof.Text=""; rProof.ClearTextOnFocus=false; rProof.TextXAlignment=Enum.TextXAlignment.Left; rProof.ZIndex=31; rProof.Parent=reportGui; corner(rProof,10); stroke(rProof,C.Border,1,0.25)
+	local rSubmit=Instance.new("TextButton"); rSubmit.AnchorPoint=Vector2.new(0,1); rSubmit.Position=UDim2.new(0,18,1,-16); rSubmit.Size=UDim2.new(1,-120,0,34); rSubmit.BackgroundColor3=C.Accent; rSubmit.FontFace=F.Bold; rSubmit.Text="Submit"; rSubmit.TextSize=14; rSubmit.TextColor3=C.Text; rSubmit.ZIndex=31; rSubmit.Parent=reportGui; corner(rSubmit,10)
 	gradient(rSubmit, ColorSequence.new({ColorSequenceKeypoint.new(0,C.Accent2),ColorSequenceKeypoint.new(1,C.Accent)}), 25)
-	local rClose=Instance.new("TextButton"); rClose.AnchorPoint=Vector2.new(1,1); rClose.Position=UDim2.new(1,-18,1,-16); rClose.Size=UDim2.fromOffset(88,34); rClose.BackgroundColor3=C.Panel2; rClose.FontFace=F.Bold; rClose.Text="Close"; rClose.TextSize=14; rClose.TextColor3=C.Muted; rClose.ZIndex=21; rClose.Parent=reportGui; corner(rClose,10); stroke(rClose,C.Border,1,0.25)
-	local rStatus=txt(reportGui,"",11,C.Muted,F.Code); rStatus.AnchorPoint=Vector2.new(0.5,1); rStatus.Position=UDim2.new(0.5,0,1,-54); rStatus.Size=UDim2.new(1,-36,0,14); rStatus.TextXAlignment=Enum.TextXAlignment.Center; rStatus.ZIndex=21
+	local rClose=Instance.new("TextButton"); rClose.AnchorPoint=Vector2.new(1,1); rClose.Position=UDim2.new(1,-18,1,-16); rClose.Size=UDim2.fromOffset(88,34); rClose.BackgroundColor3=C.Panel2; rClose.FontFace=F.Bold; rClose.Text="Close"; rClose.TextSize=14; rClose.TextColor3=C.Muted; rClose.ZIndex=31; rClose.Parent=reportGui; corner(rClose,10); stroke(rClose,C.Border,1,0.25)
+	local rStatus=txt(reportGui,"",11,C.Muted,F.Code); rStatus.AnchorPoint=Vector2.new(0.5,1); rStatus.Position=UDim2.new(0.5,0,1,-54); rStatus.Size=UDim2.new(1,-36,0,14); rStatus.TextXAlignment=Enum.TextXAlignment.Center; rStatus.ZIndex=31
 	rClose.MouseButton1Click:Connect(function() reportGui.Visible=false end)
 	local function httpReq(o) local req=(typeof(syn)=="table" and syn.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request; if req then return req(o) end end
 	local sending=false
@@ -293,31 +335,34 @@ task.spawn(function()
 	local function openReport() reportGui.Visible=true; rStatus.Text="" end
 
 	action("Join New Server", 1, function() pcall(function() TeleportService:Teleport(game.PlaceId, player) end) end)
-	action("Report a Bug", 2, openReport)
-	action("Give Feedback", 3, openReport)
-	action("Copy Game Link", 4, function() pcall(function() setclipboard("https://www.roblox.com/games/"..game.PlaceId) end) end)
-	action("Copy Discord", 5, function() pcall(function() setclipboard("discord.gg/dreamhub") end) end)
+	action("Copy Discord", 2, function() pcall(function() setclipboard("discord.gg/dreamhub") end) end)
+	action("Report a Bug", 3, openReport)
+	action("Give Feedback", 4, openReport)
+	action("Copy Game Link", 5, function() pcall(function() setclipboard("https://www.roblox.com/games/"..game.PlaceId) end) end)
 
-	-- ENTER HUB (gradient + animated shine via gradient offset — no extra frames, nothing can break)
-	local enterButton=Instance.new("TextButton"); enterButton.AnchorPoint=Vector2.new(0.5,1); enterButton.Position=UDim2.new(0.5,0,0.955,0); enterButton.Size=UDim2.fromOffset(560,70); enterButton.BackgroundColor3=C.Accent; enterButton.FontFace=F.Black; enterButton.Text="ENTER HUB   -   "..TIER; enterButton.TextSize=25; enterButton.TextColor3=C.Text; enterButton.AutoButtonColor=false; enterButton.ZIndex=4; enterButton.Parent=menuFit
-	corner(enterButton,14); local ebStroke=stroke(enterButton,Color3.fromRGB(255,150,140),1.4,0.15)
-	local ebGrad=gradient(enterButton, ColorSequence.new({ColorSequenceKeypoint.new(0,C.Accent2),ColorSequenceKeypoint.new(0.45,C.Accent),ColorSequenceKeypoint.new(0.55,Color3.fromRGB(255,90,96)),ColorSequenceKeypoint.new(0.65,C.Accent),ColorSequenceKeypoint.new(1,Color3.fromRGB(196,26,40))}), 15)
+	-- ══════════ ENTER HUB — the focal point (full-width bar inside the shell) ══════════
+	sep(main, UDim2.new(0,34,1,-92), 620, false, 6)
+	local enterButton=Instance.new("TextButton"); enterButton.AnchorPoint=Vector2.new(0.5,1); enterButton.Position=UDim2.new(0.5,159,1,-26); enterButton.Size=UDim2.fromOffset(632,58); enterButton.BackgroundColor3=C.Accent; enterButton.FontFace=F.Black; enterButton.Text="ENTER HUB"; enterButton.TextSize=22; enterButton.TextColor3=C.Text; enterButton.AutoButtonColor=false; enterButton.ZIndex=8; enterButton.Parent=shell
+	corner(enterButton,12); local ebStroke=stroke(enterButton,Color3.fromRGB(255,150,140),1.4,0.1)
+	local ebGrad=gradient(enterButton, ColorSequence.new({ColorSequenceKeypoint.new(0,C.Accent2),ColorSequenceKeypoint.new(0.45,C.Accent),ColorSequenceKeypoint.new(0.55,Color3.fromRGB(255,90,96)),ColorSequenceKeypoint.new(0.65,C.Accent),ColorSequenceKeypoint.new(1,Color3.fromRGB(196,26,40))}), 12)
 	track(RunService.RenderStepped:Connect(function() if enterButton.Parent then pcall(function() ebGrad.Offset=Vector2.new(((tick()*0.3)%2)-1,0) end) end end))
-	enterButton.MouseEnter:Connect(function() pcall(function() tw(enterButton,0.15,{Size=UDim2.fromOffset(574,72)}); tw(ebStroke,0.15,{Transparency=0}) end) end)
-	enterButton.MouseLeave:Connect(function() pcall(function() tw(enterButton,0.22,{Size=UDim2.fromOffset(560,70)}); tw(ebStroke,0.22,{Transparency=0.15}) end) end)
+	local ebTier=txt(enterButton,TIER,12,Color3.fromRGB(255,225,225),F.Bold,Enum.TextXAlignment.Right); ebTier.AnchorPoint=Vector2.new(1,0.5); ebTier.Position=UDim2.new(1,-20,0.5,0); ebTier.Size=UDim2.fromOffset(90,16); ebTier.ZIndex=9
+	enterButton.MouseEnter:Connect(function() pcall(function() tw(enterButton,0.15,{Size=UDim2.fromOffset(644,60)}); tw(ebStroke,0.15,{Transparency=0}) end) end)
+	enterButton.MouseLeave:Connect(function() pcall(function() tw(enterButton,0.22,{Size=UDim2.fromOffset(632,58)}); tw(ebStroke,0.22,{Transparency=0.1}) end) end)
+	table.insert(panels, enterButton)
 
 	-- fit + session timer + player count
 	local function fitScale()
 		local cam=workspace.CurrentCamera; local vp=cam and cam.ViewportSize or Vector2.new(1280,720)
-		menuScale.Scale=math.clamp(math.min(vp.X/1080, vp.Y/720),0.5,1)
+		menuScale.Scale=math.clamp(math.min(vp.X/1060, vp.Y/700),0.45,1)
 	end
 	pcall(fitScale)
 	if workspace.CurrentCamera then track(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fitScale)) end
 	local t0=tick()
 	track(RunService.Heartbeat:Connect(function()
 		if menuCanvas.GroupTransparency<0.5 then
-			local s=math.floor(tick()-t0); timerT.Text=("Session %02d:%02d"):format(math.floor(s/60), s%60)
-			pcall(function() pillTxt.Text="Playing: "..(GAMEBRAND~="DREAM HUB" and GAMEBRAND or "loading").."   |   "..tostring(#Players:GetPlayers()).." / "..tostring(Players.MaxPlayers>0 and Players.MaxPlayers or "?").." Players" end)
+			local s=math.floor(tick()-t0); timerT.Text=("%02d:%02d"):format(math.floor(s/60), s%60)
+			pcall(function() pillTxt.Text="Playing: "..(GAMEBRAND~="DREAM HUB" and GAMEBRAND or "loading").."   -   "..tostring(#Players:GetPlayers()).." / "..tostring(Players.MaxPlayers>0 and Players.MaxPlayers or "?").." Players" end)
 		end
 	end))
 
