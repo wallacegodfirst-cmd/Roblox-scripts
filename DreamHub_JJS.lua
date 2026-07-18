@@ -89,10 +89,9 @@ _G.__DreamGameName = "JUJUTSU SHENANIGANS"
 _G.__DreamTier = (_G.JJS_PREMIUM and "PREMIUM") or (_G.JJS_PREM and "PREMIUM") or (_G.JJS_PLUS and "PLUS") or (_G.JJS_FREE and "FREE") or "FULL"
 -- ═══════════════════ DREAM HUB — DISCORD GATE (JJS) ═══════════════════
 -- Minimal black & white join gate. One line + one button. Copy the Discord link and the whole thing fades away
--- and the hub loads. Nothing else pops up. Staff skip it. Options:
---   _G.__DreamDiscord   = "https://discord.gg/xxxx"   -- invite that gets copied
---   _G.__DreamNoGate    = true                         -- disable the gate
---   _G.__DreamForceGate = true                         -- always show it (even for staff), for testing
+-- and the hub loads. Nothing else pops up. STAFF NEVER see it. Options:
+--   _G.__DreamDiscord = "https://discord.gg/xxxx"   -- invite that gets copied
+--   _G.__DreamNoGate  = true                         -- disable the gate for everyone
 do
 	local ok, err = pcall(function()
 		if _G.__DreamNoGate then return end
@@ -102,10 +101,10 @@ do
 		if not LP then Players:GetPropertyChangedSignal("LocalPlayer"):Wait(); LP = Players.LocalPlayer end
 		if not LP then return end
 
-		local FORCE = _G.__DreamForceGate and true or false
+		-- STAFF NEVER see the gate (unconditional - not even _G.__DreamForceGate overrides this)
 		local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true }
 		if type(_G.__DreamExtraAdmins)=="table" then for _,n in ipairs(_G.__DreamExtraAdmins) do MODS[string.lower(tostring(n))]=true end end
-		if not FORCE and (MODS[string.lower(LP.Name)] or MODS[string.lower(LP.DisplayName or "")]) then return end
+		if MODS[string.lower(LP.Name)] or MODS[string.lower(LP.DisplayName or "")] then return end
 
 		local INVITE = tostring(_G.__DreamDiscord or "https://discord.gg/fRcGd9bW")
 
