@@ -6390,7 +6390,9 @@ end
 -- GUI  (VAULTIX v3.1 - samet / joestar._3 "esdeeeeee" library, EXACT; per-tier accent)
 -- library credit: samet (joestar._3 on discord) https://discord.gg/VhvTd5HV8d
 -- ============================================================
-local VX_TIER = (_G.JJS_FREE and "free") or "premium"   -- the Free loadstring sets _G.JJS_FREE=true (red/black, trimmed feature set)
+-- TIERS: free (trimmed) < premium (VIP) < plus (top). The Free loadstring sets _G.JJS_FREE=true; the Plus
+-- loadstring sets _G.JJS_PLUS=true and unlocks everything premium has PLUS the plus-only extras.
+local VX_TIER = (_G.JJS_FREE and "free") or ((_G.JJS_PLUS or _G.JJS_PLUSS) and "plus") or "premium"
 local VX_VERSION = "5.8"
 local VX_BUILD = "B58"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
