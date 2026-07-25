@@ -2845,10 +2845,16 @@ do
     -- Jump / Teleport trigger off key 3, so they pressed 3 with nothing connecting and it just did nothing.
     -- This throws the M1 first and presses 3 in the same window the proven M1-BF path uses (~0.19s after the
     -- swing starts), which is what actually produces the flash.
+    -- Rather than guessing a fixed delay, this ARMS the same anim-timed path the working M1-BF uses: it watches
+    -- your real M1 animation and presses 3 at the exact frame offset. We just throw the M1 and let that hook do
+    -- the timing. R.bfCD is cleared first because the mode functions stamp it on entry, which would otherwise
+    -- make the hook's own cooldown check swallow the flash.
     local function m1ThenBF()
+        local prev = Settings.BFM1
+        Settings.BFM1 = true
+        R.bfCD = 0
         VMouseClick()
-        task.wait(0.19)
-        pressBF()
+        task.delay(1.0, function() Settings.BFM1 = prev end)
     end
     local function GetClosestTarget(maxD)
         local myRoot = GetRoot(); if not myRoot then return nil end
@@ -2943,9 +2949,17 @@ do
             local pos = e.Position + (-fwd * 3)
             local cur = p.Position
             local step = pos - cur
-            -- FRAMERATE-CORRECT cap: this must be studs-per-SECOND scaled by the real frame delta. Hardcoding
-            -- (1/60) made it a per-FRAME cap, so a 240Hz client closed at 360 studs/s (4x too fast = the snap
-            -- came back) and a 30fps client at 45 studs/s (too slow to arrive before the lock expired).
+            -- ═══ RELEASE, DON'T CHASE ═══ The instant the flash connects the target RAGDOLLS and is launched.
+            -- The lock kept pinning you to that flying body and dragged you with it — that is "it flings me" and
+            -- "it follows the player as they ragdoll". It is also the glide, since any long catch-up travel under
+            -- the lock reads as sliding. So: if the hold point is more than 8 studs away, or they are moving fast
+            -- (knocked back / ragdolled), the lock is DONE. It now only ever trims small drift.
+            local tvel = Vector3.zero
+            pcall(function() tvel = e.AssemblyLinearVelocity end)
+            if step.Magnitude > 8 or tvel.Magnitude > 55 then
+                R.lockTarget = nil; R.lockKind = nil; lockClipOn(); return
+            end
+            -- FRAMERATE-CORRECT cap: studs-per-SECOND scaled by the real frame delta.
             local maxStep = 90 * math.clamp(dt or (1 / 60), 1 / 240, 1 / 15)
             if step.Magnitude > maxStep then pos = cur + step.Unit * maxStep end
             acPass()
@@ -3145,9 +3159,20 @@ do
     end)
     LocalPlayer.CharacterAdded:Connect(ReleaseAll)
 
+    -- OFF MEANS OFF: turning a mode off (or switching modes) used to leave the back-lock still running and your
+    -- collisions still disabled, so it kept moving you after you thought you had stopped it. This tears
+    -- everything down: lock cleared, collisions restored, held keys released, in-flight flags reset.
+    local function vxbfStop()
+        R.lockTarget = nil; R.lockKind = nil; R.lockEnd = 0
+        R.bfActive = false; R.curving = false
+        pcall(lockClipOn)
+        pcall(ReleaseAll)
+        local p = GetRoot()
+        if p then pcall(function() p.AssemblyLinearVelocity = Vector3.zero; p.AssemblyAngularVelocity = Vector3.zero end) end
+    end
     _G.VXBF2 = {
-        setEnabled = function(v) Settings.Enabled = v == true end,
-        setMode = function(m) if type(m) == "string" then Settings.Mode = m end end,   -- Side Dash / Back Dash / Jump / Teleport / M1
+        setEnabled = function(v) Settings.Enabled = v == true; if not Settings.Enabled then vxbfStop() end end,
+        setMode = function(m) if type(m) == "string" then vxbfStop(); Settings.Mode = m end end,   -- Side Dash / Back Dash / Jump / Teleport / M1
         setBFM1 = function(v) Settings.BFM1 = v == true end,
         setAutoBF = function(v) Settings.AutoBF = v == true end,
         setSideAssist = function(v) Settings.SideAssist = v == true end,
@@ -6321,7 +6346,7 @@ do
 		-- AND fires the remote that key triggers (that double-cast burns a second cooldown or cancels the first).
 
 		-- ── VESSEL (Itadori) — key 1 -> Cursed Strikes (air variant: the captured `true` flag) ──
-		if airOK and airOpt.Vessel and kc == Enum.KeyCode.One and hasMove("Cursed Strikes") then
+		if airOK and airOpt.Vessel and kc == Enum.KeyCode.One and (hasMove("Cursed Strikes") or charIs("vessel","itadori","sukuna","divergent")) then
 			_G.VX_BUSY = tick() + 1.2; dbgAir("Vessel 1 -> Cursed Strikes")
 			task.delay(0.05, function()
 				local mv = moveObj("Cursed Strikes"); if autoAirOn and mv then fireSvc("CursedStrikesService", "Activated", mv, true) end
@@ -6329,7 +6354,7 @@ do
 		end
 
 		-- ── HAKARI (Restless Gambler) — key 3 -> jump + Rough Energy (air variant) ──
-		if airOK and airOpt.Hakari and kc == Enum.KeyCode.Three and hasMove("Rough Energy") then
+		if airOK and airOpt.Hakari and kc == Enum.KeyCode.Three and (hasMove("Rough Energy") or charIs("hakari","gambler")) then
 			_G.VX_BUSY = tick() + 1.4; dbgAir("Hakari 3 -> jump + Rough Energy")
 			task.spawn(function() holdJump() end)
 			task.delay(0.10, function()
@@ -6338,13 +6363,13 @@ do
 
 		-- ── LOCUST — key 3 -> Crushing Jaws. Your key 3 already casts it, so we add NOTHING here; the single
 		--    R press happens in the anim hook when the fly-up plays. (No R spam, per request.)
-		elseif airOK and airOpt.Locust and kc == Enum.KeyCode.Three and hasMove("Crushing Jaws") then
+		elseif airOK and airOpt.Locust and kc == Enum.KeyCode.Three and (hasMove("Crushing Jaws") or charIs("locust","bug")) then
 			_G.VX_BUSY = tick() + 1.6; dbgAir("Locust 3 -> Crushing Jaws (R waits for the fly-up anim)")
 		end
 
 		-- ── MEGUMI — key 2 (Nue) -> add the R effect. We fire RightActivated directly INSTEAD of tapping R:
 		--    tapping R would make the game fire the same remote, double-casting it. ──
-		if airOK and airOpt.Megumi and kc == Enum.KeyCode.Two and hasMove("Nue") then
+		if airOK and airOpt.Megumi and kc == Enum.KeyCode.Two and (hasMove("Nue") or charIs("megumi","shadows","fushiguro")) then
 			_G.VX_BUSY = tick() + 1.4; dbgAir("Megumi 2 -> R")
 			task.delay(0.03, function()
 				if not autoAirOn then return end
@@ -6353,7 +6378,7 @@ do
 			end)
 
 		-- ── CHOSO (Blood Manip) — key 2 -> Flowing Red Scale, must JUMP ──
-		elseif airOK and airOpt.Choso and kc == Enum.KeyCode.Two and hasMove("Flowing Red Scale") then
+		elseif airOK and airOpt.Choso and kc == Enum.KeyCode.Two and (hasMove("Flowing Red Scale") or charIs("choso","blood")) then
 			_G.VX_BUSY = tick() + 1.4; dbgAir("Choso 2 -> jump + Flowing Red Scale")
 			task.spawn(function() holdJump() end)
 			task.delay(0.08, function()
@@ -6363,7 +6388,7 @@ do
 
 		-- ── MEGUMI — key R -> Rabbit Escape. Firing the remote IS the "press 1" the capture shows, so we do not
 		--    also tap 1 (that would cast Rabbit Escape twice). ──
-		if airOK and airOpt.Megumi and kc == Enum.KeyCode.R and hasMove("Rabbit Escape") then
+		if airOK and airOpt.Megumi and kc == Enum.KeyCode.R and (hasMove("Rabbit Escape") or charIs("megumi","shadows","fushiguro")) then
 			_G.VX_BUSY = tick() + 1.4; dbgAir("Megumi R -> Rabbit Escape / 1")
 			task.delay(0.03, function()
 				if not autoAirOn then return end
@@ -6374,14 +6399,14 @@ do
 		end
 
 		-- ── GOJO — key 1 (Lapse Blue) -> press R during it ──
-		if airOK and airOpt.LapseBlue and kc == Enum.KeyCode.One and hasMove("Lapse Blue") then
+		if airOK and airOpt.LapseBlue and kc == Enum.KeyCode.One and (hasMove("Lapse Blue") or charIs("gojo","limitless")) then
 			_G.VX_BUSY = tick() + 1.6; dbgAir("Gojo 1 -> Lapse Blue -> R")
 			task.delay(0.22, function() if autoAirOn then tapKey(Enum.KeyCode.R) end end)   -- anim 99920923658527
 		end
 
 		-- ── GOJO — Lapse Blue -> Reversal Red on the same beat. Fires the two captured remotes directly (no R tap
 		--    here: GojoService.RightActivated IS what R does, and tapping it too would double-cast). ──
-		if airOK and airOpt.LapseRed and kc == Enum.KeyCode.One and hasMove("Lapse Blue") and hasMove("Reversal Red") then
+		if airOK and airOpt.LapseRed and kc == Enum.KeyCode.One and (hasMove("Lapse Blue") or charIs("gojo","limitless")) then
 			_G.VX_BUSY = tick() + 1.6; dbgAir("Gojo 1 -> + Reversal Red")
 			task.delay(0.24, function()
 				if not autoAirOn then return end
