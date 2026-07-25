@@ -1209,6 +1209,7 @@ do
 		local diff0 = ((endAngle0 - startAngle + math.pi) % (2 * math.pi)) - math.pi
 		local sweepDir = opts.dir or (diff0 >= 0 and 1 or -1)   -- opts.dir forces LEFT(-1)/RIGHT(1) (Side Dash Assist alternates)
 		local t0 = tick()
+		local lastT = t0                                                       -- real frame delta for the speed cap below
 		while true do
 			local h = getHRP(myCharResolved()); if not (h and targetHRP and targetHRP.Parent) then break end
 			local a = math.clamp((tick() - t0) / dur, 0, 1)
@@ -1231,7 +1232,10 @@ do
 			local y = baseY + (tp.Y - tp0.Y) + yArc * math.sin(e * math.pi)   -- follow their height + optional jump arc
 			local pos = Vector3.new(tp.X + math.cos(angle) * radius, y, tp.Z + math.sin(angle) * radius)
 			local step = pos - lastPos
-			local maxStep = 150 * (1 / 60)                                     -- hard cap ~150 studs/s: NOTHING can whip you across the map in one frame
+			-- FRAMERATE-CORRECT cap (was hardcoded 1/60 = a per-FRAME cap, so high-refresh clients got a 2-4x
+			-- faster arc than intended — that is the "it whips/teleports" on a 144/240Hz monitor).
+			local nowT = tick(); local fdt = math.clamp(nowT - (lastT or nowT), 1 / 240, 1 / 15); lastT = nowT
+			local maxStep = 150 * fdt                                          -- hard cap ~150 studs/s: NOTHING can whip you across the map in one frame
 			if step.Magnitude > maxStep then pos = lastPos + step.Unit * maxStep end
 			lastPos = pos
 			if _G.VX_ACPASS then _G.VX_ACPASS() end
@@ -2885,7 +2889,7 @@ do
     end
 
     -- lock-on: hold you behind the target for the flash window
-    RunService.RenderStepped:Connect(function()
+    RunService.RenderStepped:Connect(function(dt)
         if not R.lockTarget or tick() >= R.lockEnd then return end
         local e = R.lockTarget:FindFirstChild("HumanoidRootPart"); if not e then return end
         local p = GetRoot(); if not p then return end
@@ -2899,7 +2903,10 @@ do
             local pos = e.Position + (-fwd * 3)
             local cur = p.Position
             local step = pos - cur
-            local maxStep = 90 * (1 / 60)                    -- <=90 studs/s: no whip, no launch
+            -- FRAMERATE-CORRECT cap: this must be studs-per-SECOND scaled by the real frame delta. Hardcoding
+            -- (1/60) made it a per-FRAME cap, so a 240Hz client closed at 360 studs/s (4x too fast = the snap
+            -- came back) and a 30fps client at 45 studs/s (too slow to arrive before the lock expired).
+            local maxStep = 90 * math.clamp(dt or (1 / 60), 1 / 240, 1 / 15)
             if step.Magnitude > maxStep then pos = cur + step.Unit * maxStep end
             acPass()
             pcall(function()
@@ -5984,6 +5991,11 @@ do
 	-- helpers for the Auto Air / mid-M1 sequences
 	local autoAirOn = false
 	local lastVesselAir = 0
+	-- Auto Air's OWN injected-key stamps. Kept separate from the shared _G.VX_INJ_KEYS on purpose: that global is
+	-- written by several modules (Auto Earthquake re-stamps key 3 every 40ms while charging, Yuta stamps key 2),
+	-- and checking it made Auto Air suppress ITSELF whenever another feature was running — the real reason Rough
+	-- Energy / Crushing Jaws never fired. We must only ignore keys WE pressed, not keys another module claimed.
+	local airSelfInj = {}
 	local lastM1Tgt = nil                 -- the enemy your last LANDED M1 hit (all sequences target THEM, like the Dummy in your captures)
 	local function knitRE(svcName, reName)
 		local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
@@ -6057,7 +6069,8 @@ do
 		end
 		local function tapKey(kc, hold)
 			_G.VX_INJECT_UNTIL = tick() + 0.35
-			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[kc] = tick() + 0.5
+			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[kc] = tick() + 0.5   -- tell OTHER modules this key was synthetic
+			airSelfInj[kc] = tick() + 0.5                                               -- and remember it was OURS
 			pcall(function() VIM:SendKeyEvent(true, kc, false, game); task.wait(hold or 0.09); VIM:SendKeyEvent(false, kc, false, game) end)
 		end
 		-- EVERY M1, which was eating your real 1/2/3/R presses = 'Auto Air doesn't work'). Now a key is only
@@ -6067,8 +6080,11 @@ do
 		--       (Rough Energy / Crushing Jaws) could NEVER run. The Yuta module does the same to key 2 (Nue).
 		--   (b) With no enemy in range the handler returned early, silently disabling unrelated features below.
 		-- They are now BOOLEANS that gate only the Auto Air branches, never the rest of the handler.
+		-- Only ignore a key WE just injected (self-retrigger guard). Reading the SHARED _G.VX_INJ_KEYS here was the
+		-- bug: Auto Earthquake re-stamps key 3 every 40ms while charging and Yuta stamps key 2, so Auto Air was
+		-- being suppressed by other features rather than by its own presses.
 		local injBlocked = false
-		do local injK = _G.VX_INJ_KEYS; if injK and input.KeyCode and injK[input.KeyCode] and tick() < injK[input.KeyCode] then injBlocked = true end end
+		do local k = input.KeyCode; local t = k and airSelfInj[k]; if t and tick() < t then injBlocked = true end end
 		-- ENEMY-PRESENCE GATE (root cause of "Auto Air activates randomly"): every sequence below fires off a real
 		-- key/click (jump, 1/2/3, M1). With no enemy engaged, jumping to move or pressing 1 in the open used to launch
 		-- the whole air combo. Require an enemy within engagement range (40 studs) before ANY sequence runs. This is a
@@ -6087,7 +6103,13 @@ do
 			local n = c:FindFirstChildOfClass("Humanoid")
 			local hay = string.lower((c.Name or "") .. " " .. (n and n.DisplayName or "") .. " " .. (detectCharName(c) or ""))
 			local mv = c:FindFirstChild("Moveset"); if mv then for _, m in ipairs(mv:GetChildren()) do hay = hay .. " " .. string.lower(m.Name) end end
-			for _, w in ipairs({ ... }) do if string.find(hay, string.lower(w), 1, true) then return true end end
+			-- NORMALISED compare: the game writes names unspaced ("BlackFlash"), so a raw search for "black flash"
+			-- could never match. Strip spaces/underscores/hyphens from BOTH sides, same as normMove does for moves.
+			local nhay = (string.gsub(hay, "[%s_%-]", ""))
+			for _, w in ipairs({ ... }) do
+				local nw = (string.gsub(string.lower(tostring(w)), "[%s_%-]", ""))
+				if nw ~= "" and string.find(nhay, nw, 1, true) then return true end
+			end
 			return false
 		end
 		local function dbgAir(msg) if _G.VX_BF_DEBUG then print("[DreamHub AutoAir] " .. msg) end end
@@ -6121,6 +6143,11 @@ do
 			-- 1) the Moveset FOLDER (each child is a move)
 			local mv = c:FindFirstChild("Moveset")
 			if mv then for _, mm in ipairs(mv:GetChildren()) do if string.find(normMove(mm.Name), want, 1, true) then return true end end end
+			-- FALLBACKS BELOW ARE DELIBERATELY NARROW. They only run when the Moveset FOLDER did not answer, and
+			-- only for needles of 5+ chars. A short needle like "nue" is a substring of ordinary words such as
+			-- "Continue", so searching attributes / animation names with it would auto-press keys for a character
+			-- that has no Nue. Long needles ("roughenergy", "crushingjaws", "twofoldkick", "lapseblue") are safe.
+			if #want < 5 then return false end
 			-- 2) a Moveset StringValue (folder absent / renamed after a game update)
 			local hay = ""
 			pcall(function()
@@ -6149,7 +6176,7 @@ do
 			if okd and res then return true end
 			return false
 		end
-		local function holdJump() _G.VX_INJECT_UNTIL = tick() + 0.35; _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 0.5; pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.08); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end
+		local function holdJump() _G.VX_INJECT_UNTIL = tick() + 0.35; _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 0.5; airSelfInj[Enum.KeyCode.Space] = tick() + 0.5; pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.08); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end
 		local kc = input.KeyCode
 
 		-- KEY 4 = Twofold Kick -> press R  (key press + the Gojo RightActivated REMOTE as a guaranteed backup)
