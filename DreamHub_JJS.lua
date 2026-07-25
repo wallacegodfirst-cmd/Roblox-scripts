@@ -1765,7 +1765,7 @@ _G.VX_CLAIMOWN = vxClaimOwnership
 -- TP Step slider genuinely makes the teleport gentler if a server still sets you back.
 local VX_TP_SPEED = 60   -- studs PER FRAME (back-compat local; the LIVE value the glide reads is _G.VX_TP_SPEED)
 _G.VX_TP_SPEED  = tonumber(_G.VX_TP_SPEED) or 60      -- studs/frame the glide steps in (lower = gentler if a server still sets you back)
-_G.VX_TP_METHOD = _G.VX_TP_METHOD or "Glide"          -- "Glide" (default: anti-setback stepping + AC pass each hop) | "Instant" (single snap) | "Auto" (snap short, glide long)
+_G.VX_TP_METHOD = _G.VX_TP_METHOD or "Auto"          -- "Glide" (default: anti-setback stepping + AC pass each hop) | "Instant" (single snap) | "Auto" (snap short, glide long)
 -- game updates -> teleports set back). Try the known path first, else search for any RemoteEvent named
 local vxACRemote = nil
 local vxACStamp = 0
@@ -1829,8 +1829,14 @@ game:GetService("RunService").Heartbeat:Connect(function()
 end)
 local isTeleporting = false
 local function vxMyChar()
+	-- ORDER MATTERS: the JJS body lives under workspace.Characters, and LP.Character can point at a stale/decoy
+	-- rig. Resolving LP.Character FIRST meant safeTeleport moved the wrong model — the teleport "did nothing"
+	-- because your real body never left. Every other resolver in this file is Characters-first; now so is this.
 	local LP = game:GetService("Players").LocalPlayer
-	return LP.Character or (workspace:FindFirstChild("Characters") and workspace.Characters:FindFirstChild(LP.Name))
+	local chs = workspace:FindFirstChild("Characters")
+	local c = chs and chs:FindFirstChild(LP.Name)
+	if c and c:FindFirstChild("HumanoidRootPart") then return c end
+	return LP.Character or c
 end
 -- AC acknowledge: only fire the REAL remote. The bypass at the top of the file replaces the AC remotes with
 -- dummies tagged VX_Dummy -- the old version happily fired the dummy, which does nothing, so the server never
@@ -1874,7 +1880,10 @@ local function vxRouteClear(a, b)
 		rp.RespectCanCollide = true
 		return workspace:Raycast(a, d, rp)
 	end)
-	return ok and hit == nil
+	-- BUG: this used to be `return ok and hit == nil`, so a pcall FAILURE reported "route blocked" — which forced
+	-- the 400-stud up-and-dive detour on a perfectly clear line. A raycast error must never cause a detour.
+	if not ok then return true end
+	return hit == nil
 end
 -- VELOCITY FLIGHT (the TP method that works): instead of writing CFrames at the target, we push the character
 -- there with plain physics VELOCITY every frame — the server watches you MOVE, so there is nothing to reject.
@@ -1966,8 +1975,12 @@ local function safeTeleport(targetCFrame, holdTime)
 		-- VELOCITY FLIGHT (the working method): push yourself to the target with plain physics velocity —
 		-- the server just sees you moving, nothing to reject. If a building blocks the straight line we fly
 		-- UP 400 studs first, then dive to the target. Collisions off during flight, restored after.
-		local vel = math.clamp(tonumber(_G.VX_TP_VEL) or 100, 30, 400)
-		local blocked = not vxRouteClear(from, targetCFrame.Position)
+		-- SPEED: _G.VX_TP_VEL was never assigned anywhere, so every teleport flew at a fixed 100 studs/s (a
+		-- 500-stud hop took 5s, and 10s+ with a detour) = "teleport doesn't work". Default is now 260 and the
+		-- Teleports page exposes a slider that writes _G.VX_TP_VEL.
+		local vel = math.clamp(tonumber(_G.VX_TP_VEL) or 260, 30, 600)
+		-- Only consider the up-and-over detour for LONG hops; short hops that clip a curb no longer fly 400 studs up.
+		local blocked = dist > 150 and not vxRouteClear(from, targetCFrame.Position)
 		local total = dist + (blocked and 800 or 0)                      -- up + dive when routing over a building
 		glideSecs = total / vel + 0.4
 		vxCurrentTargetCF = nil                                          -- lock idles during the flight (see vxVelocityLeg)
@@ -6048,15 +6061,24 @@ do
 			pcall(function() VIM:SendKeyEvent(true, kc, false, game); task.wait(hold or 0.09); VIM:SendKeyEvent(false, kc, false, game) end)
 		end
 		-- EVERY M1, which was eating your real 1/2/3/R presses = 'Auto Air doesn't work'). Now a key is only
-		do local injK = _G.VX_INJ_KEYS; if injK and input.KeyCode and injK[input.KeyCode] and tick() < injK[input.KeyCode] then return end end
+		-- ═══ AUTO AIR ROOT CAUSE #2 ═══ These two guards used to `return` out of the WHOLE shared InputBegan
+		-- handler. Two consequences, both of which read as "Auto Air doesn't work":
+		--   (a) Auto Earthquake re-stamps VX_INJ_KEYS[Three] every 40ms while it is on, so the key-3 branches
+		--       (Rough Energy / Crushing Jaws) could NEVER run. The Yuta module does the same to key 2 (Nue).
+		--   (b) With no enemy in range the handler returned early, silently disabling unrelated features below.
+		-- They are now BOOLEANS that gate only the Auto Air branches, never the rest of the handler.
+		local injBlocked = false
+		do local injK = _G.VX_INJ_KEYS; if injK and input.KeyCode and injK[input.KeyCode] and tick() < injK[input.KeyCode] then injBlocked = true end end
 		-- ENEMY-PRESENCE GATE (root cause of "Auto Air activates randomly"): every sequence below fires off a real
 		-- key/click (jump, 1/2/3, M1). With no enemy engaged, jumping to move or pressing 1 in the open used to launch
 		-- the whole air combo. Require an enemy within engagement range (40 studs) before ANY sequence runs. This is a
 		-- correctness condition, not a timing tweak — it does not change WHEN a valid air combo fires, only that one is
 		-- actually intended. (The lines ABOVE this guard — Gojo-TP / lastM1Tgt memory — are separate and unaffected.)
-		if autoAirOn then
+		-- airOK gates the Auto Air branches ONLY (see the note above) — it no longer returns out of the handler.
+		local airOK = false
+		if autoAirOn and not injBlocked then
 			local _am = myHRP(); local _ae = nearestEnemyChar(); local _ar = _ae and _ae:FindFirstChild("HumanoidRootPart")
-			if not (_am and _ar and (_ar.Position - _am.Position).Magnitude <= 60) then return end   -- widened 40->60 so testing at range still fires
+			airOK = (_am and _ar and (_ar.Position - _am.Position).Magnitude <= 60) and true or false
 		end
 		-- BULLETPROOF character check: detected name, model name, DISPLAY name, or any Moveset entry containing the word.
 		local function charIs(...)
@@ -6070,17 +6092,68 @@ do
 		end
 		local function dbgAir(msg) if _G.VX_BF_DEBUG then print("[DreamHub AutoAir] " .. msg) end end
 		-- MOVE-BASED detection (user's exact captures): check YOUR Moveset for the move name, not the character name.
+		-- ═══ THE AUTO AIR BUG ═══ The game stores move names UNSPACED ("RoughEnergy", "LapseBlue",
+		-- "TwofoldKick", "CrushingJaws"), but every call below asks for the SPACED display name
+		-- ("Rough Energy"). A plain substring search for "rough energy" inside "roughenergy" never matches, so
+		-- ONLY the single-word "Nue" branches could ever fire — that is why Auto Air did nothing for the
+		-- Vessel / Gambler / Locust. We now NORMALISE both sides (strip spaces, underscores, hyphens, case)
+		-- before comparing, and we look in EVERY place a moveset is known to live:
+		--   char.Moveset/*            (folder of move objects  - original)
+		--   char.Info.Moveset         (StringValue             - newer layout)
+		--   char.Info.Character/Moveset attributes
+		local function normMove(s) return (string.gsub(string.lower(tostring(s or "")), "[%s_%-]", "")) end
 		local function hasMove(name)
 			local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
-			local mv = c and c:FindFirstChild("Moveset"); if not mv then return false end
-			for _, mm in ipairs(mv:GetChildren()) do if string.find(string.lower(mm.Name), string.lower(name), 1, true) then return true end end
+			if not c then return false end
+			local want = normMove(name); if want == "" then return false end
+			-- ONE-SHOT DEBUG DUMP: with _G.VX_BF_DEBUG = true, print your character's real Moveset child names to
+			-- F9 the first time this runs. That tells us definitively whether the game spells moves "RoughEnergy"
+			-- or "Rough Energy" — send me that line and any future move can be matched exactly.
+			if _G.VX_BF_DEBUG and not _G.VX_MOVEDUMPED then
+				_G.VX_MOVEDUMPED = true
+				pcall(function()
+					local mv0 = c:FindFirstChild("Moveset")
+					local names = {}
+					if mv0 then for _, mm in ipairs(mv0:GetChildren()) do names[#names + 1] = mm.Name end end
+					print("[DreamHub AutoAir] character=" .. tostring(c.Name) .. "  Moveset children = { " .. table.concat(names, ", ") .. " }")
+				end)
+			end
+			-- 1) the Moveset FOLDER (each child is a move)
+			local mv = c:FindFirstChild("Moveset")
+			if mv then for _, mm in ipairs(mv:GetChildren()) do if string.find(normMove(mm.Name), want, 1, true) then return true end end end
+			-- 2) a Moveset StringValue (folder absent / renamed after a game update)
+			local hay = ""
+			pcall(function()
+				local info = c:FindFirstChild("Info")
+				if info then
+					local msv = info:FindFirstChild("Moveset")
+					if msv and msv:IsA("StringValue") then hay = hay .. " " .. msv.Value end
+					local cv = info:FindFirstChild("Character")
+					if cv and cv:IsA("StringValue") then hay = hay .. " " .. cv.Value end
+				end
+				if mv and mv:IsA("StringValue") then hay = hay .. " " .. mv.Value end
+				for _, an in ipairs({ "Moveset", "Character", "Class" }) do
+					local av = c:GetAttribute(an); if type(av) == "string" then hay = hay .. " " .. av end
+				end
+			end)
+			if hay ~= "" and string.find(normMove(hay), want, 1, true) then return true end
+			-- 3) last resort: the equipped tool / animation names sometimes carry the move name
+			local okd, res = pcall(function()
+				local h = c:FindFirstChildOfClass("Humanoid"); local an = h and h:FindFirstChildOfClass("Animator")
+				if not an then return false end
+				for _, tr in ipairs(an:GetPlayingAnimationTracks()) do
+					if tr.Animation and string.find(normMove(tr.Animation.Name), want, 1, true) then return true end
+				end
+				return false
+			end)
+			if okd and res then return true end
 			return false
 		end
 		local function holdJump() _G.VX_INJECT_UNTIL = tick() + 0.35; _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 0.5; pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.08); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end
 		local kc = input.KeyCode
 
 		-- KEY 4 = Twofold Kick -> press R  (key press + the Gojo RightActivated REMOTE as a guaranteed backup)
-		if autoAirOn and kc == Enum.KeyCode.Four and hasMove("Twofold Kick") then
+		if airOK and kc == Enum.KeyCode.Four and hasMove("Twofold Kick") then
 			_G.VX_BUSY = tick() + 1.4; dbgAir("Twofold Kick (4) -> R")
 			task.delay(0.32, function()
 				if not autoAirOn then return end
@@ -6090,7 +6163,7 @@ do
 			end)
 		end
 		-- KEY 1 = Lapse Blue -> press R  (key + remote backup)
-		if autoAirOn and kc == Enum.KeyCode.One and hasMove("Lapse Blue") then
+		if airOK and kc == Enum.KeyCode.One and hasMove("Lapse Blue") then
 			_G.VX_BUSY = tick() + 1.4; dbgAir("Lapse Blue (1) -> R")
 			task.delay(0.35, function()
 				if not autoAirOn then return end
@@ -6100,7 +6173,7 @@ do
 			end)
 		end
 		-- KEY 2 = Nue (Ten Shadows) -> press R  (key + the user's captured MegumiService.RightActivated remote)
-		if autoAirOn and kc == Enum.KeyCode.Two and hasMove("Nue") then
+		if airOK and kc == Enum.KeyCode.Two and hasMove("Nue") then
 			_G.VX_BUSY = tick() + 1.4; dbgAir("Nue (2) -> R")
 			task.delay(0.4, function()
 				if not autoAirOn then return end
@@ -6109,23 +6182,34 @@ do
 			end)
 		end
 		-- KEY R = Megumi RightActivated -> press 1
-		if autoAirOn and kc == Enum.KeyCode.R and hasMove("Nue") then
+		if airOK and kc == Enum.KeyCode.R and hasMove("Nue") then
 			_G.VX_BUSY = tick() + 1.4; dbgAir("Megumi R -> 1")
 			task.delay(0.12, function() if autoAirOn then tapKey(Enum.KeyCode.One) end end)
 		end
 		-- KEY 3 = Rough Energy (Gambler) -> SPACE JUMP at the same instant, then space again
-		if autoAirOn and kc == Enum.KeyCode.Three and hasMove("Rough Energy") then
+		if airOK and kc == Enum.KeyCode.Three and hasMove("Rough Energy") then
 			_G.VX_BUSY = tick() + 1.4; dbgAir("Rough Energy (3) -> jump + space")
 			task.spawn(function() holdJump() end)
 			task.delay(0.22, function() if autoAirOn then holdJump() end end)
-		end
-		-- KEY 3 = Crushing Jaws -> SPAM R for 7 seconds
-		if autoAirOn and kc == Enum.KeyCode.Three and hasMove("Crushing Jaws") then
+		-- KEY 3 = Crushing Jaws (Locust) -> SPAM R for 7 seconds. elseif: key 3 is shared with Rough Energy above,
+		-- and as two separate `if`s a character owning both would fire BOTH sequences on one press.
+		elseif airOK and kc == Enum.KeyCode.Three and hasMove("Crushing Jaws") then
 			_G.VX_BUSY = tick() + 7.2; dbgAir("Crushing Jaws (3) -> spam R 7s")
 			task.spawn(function()
 				local t0 = tick()
 				while autoAirOn and tick() - t0 < 7 do tapKey(Enum.KeyCode.R); task.wait(0.2) end
 			end)
+		end
+		-- ═══ VESSEL (Itadori / Sukuna) — RESTORED ═══ You JUMP -> auto-press 1 to carry them up.
+		-- This branch existed in b0034dc and was accidentally dropped by 5ebeb00 when Auto Air moved from
+		-- character-based to move-based detection; `lastVesselAir` and `charIs` were the orphaned leftovers.
+		-- Recovered verbatim from git and kept CHARACTER-based on purpose: the vessel launcher is the jump
+		-- itself, not a named move, so hasMove() cannot express it.
+		if airOK and kc == Enum.KeyCode.Space and charIs("vessel", "itadori", "sukuna", "black flash", "divergent") then
+			if tick() - (lastVesselAir or 0) > 0.9 then
+				lastVesselAir = tick(); _G.VX_BUSY = tick() + 1.2; dbgAir("Vessel: Jump -> 1")
+				task.delay(0.12, function() if autoAirOn then tapKey(Enum.KeyCode.One) end end)
+			end
 		end
 	end)
 	-- AUTO AIR anim triggers: Twofold Kick (Gojo) kicks them UP -> click R (RightActivated at the target).
@@ -10914,7 +10998,7 @@ do
     local TargetPage = Window:Page({ Name = "Target", Icon = "crosshair" })
     local tgSub = TargetPage:SubPage({ Name = "Target", Columns = 2 })
     local tSec = tgSub:Section({ Name = "Target", Side = 1 })
-    pcall(function() tSec:Label("🏗️ In fixing + kind of works (teleports)") end)
+    pcall(function() tSec:Label("Teleports (fixed: real speed, no phantom detour, correct body) (teleports)") end)
     -- IN-GUI info panel (user: "show it inside the gui"): one line per stat, all live-updating.
     local nameL, hpL, ultL, killL   -- fwd (textbox callback below refreshes them)
     local function liveInfo()
@@ -11037,9 +11121,13 @@ do
     local TpPage = Window:Page({ Name = "Teleports", Icon = "navigation" })
     local tpSub = TpPage:SubPage({ Name = "Teleports", Columns = 2 })
     local locSec = tpSub:Section({ Name = "Locations", Side = 1 })
-    pcall(function() locSec:Label("🏗️ In fixing + kind of works") end)
+    pcall(function() locSec:Label("Teleports (fixed: real speed, no phantom detour, correct body)") end)
     if TPApi and TPApi.spotNames then for _, n in ipairs(TPApi.spotNames()) do locSec:Button({ Name = n, Callback = function() if TPApi then TPApi.spot(n) end end }) end end
     local quickSec = tpSub:Section({ Name = "Quick", Side = 2 })
+    -- These two API functions existed but nothing ever called them, so "Instant" was unreachable and the flight
+    -- speed was permanently pinned at 100 studs/s. Now they are wired up.
+    quickSec:Dropdown({ Name = "TP Method", Items = { "Auto", "Instant", "Glide" }, Default = "Auto", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
+    quickSec:Slider({ Name = "TP Speed", Min = 60, Max = 600, Default = 260, Decimals = 1, Suffix = "st/s", Callback = function(v) _G.VX_TP_VEL = tonumber(v) or 260 end })
     quickSec:Button({ Name = "Print TP Remote", Callback = function()
         local RS = game:GetService("ReplicatedStorage"); local found = 0
         for _, d in ipairs(RS:GetDescendants()) do
