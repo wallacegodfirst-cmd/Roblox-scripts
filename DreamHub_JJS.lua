@@ -2832,7 +2832,11 @@ do
     local function VKeyDown(k) if not k then return end R.stamp[k] = tick(); if not R.held[k] then R.held[k] = true; VIM:SendKeyEvent(true, k, false, game) end end
     local function VKeyUp(k) if not k then return end if R.held[k] then R.held[k] = nil; VIM:SendKeyEvent(false, k, false, game) end end
     local function VKeyTap(k, hold) VKeyDown(k); task.wait(hold or 0.05); VKeyUp(k) end
-    local function VMouseClick() VIM:SendMouseButtonEvent(0, 0, 0, true, game, 0); task.wait(0.03); VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0) end
+    -- A synthetic click CANCELS an in-flight Crow ult, so every scripted click is suppressed while it is out.
+    local function VMouseClick()
+        if tick() < (tonumber(_G.VX_CROW_FLYING) or 0) then return end
+        VIM:SendMouseButtonEvent(0, 0, 0, true, game, 0); task.wait(0.03); VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+    end
     local function ReleaseAll() for k in pairs(R.held) do pcall(function() VIM:SendKeyEvent(false, k, false, game) end) end table.clear(R.held) end
     local function markThree() R.stamp[Enum.KeyCode.Three] = tick(); _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.4 end
     local function pressBF() markThree(); VIM:SendKeyEvent(true, Settings.BFKey, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Settings.BFKey, false, game) end
@@ -2867,7 +2871,14 @@ do
     local function dashToBack(t, opts)
         local e = t and t:FindFirstChild("HumanoidRootPart"); if not e then return false end
         opts = opts or {}
-        if opts.jump then VKeyTap(Enum.KeyCode.Space, 0.06); task.wait(0.10) end   -- real jump first (back-dash 2nd press)
+        -- NO REAL SPACE PRESS. A physics jump leaves the Humanoid in Freefall with upward velocity while the arc
+        -- writes CFrame every frame — the two fight and the resolver launches you. That was the "back dash /
+        -- M1 chain jumps me and flings me". The airborne LOOK now comes from the arc's own yArc (pure CFrame),
+        -- and we force the humanoid back to a grounded state first so nothing is mid-jump when the arc starts.
+        pcall(function()
+            local c = GetChar(); local h = c and c:FindFirstChildOfClass("Humanoid")
+            if h then h:ChangeState(Enum.HumanoidStateType.Running) end
+        end)
         VKeyTap(Settings.DashKey, 0.04)   -- REAL dash key = the game's own dash anim + impulse
         task.wait(0.06)                   -- let that impulse start before the arc takes over (else it looks cancelled)
         local p = GetRoot(); if p then pcall(function() p.AssemblyLinearVelocity = Vector3.zero end) end   -- kill the dash burst so the arc can't fling
@@ -2940,7 +2951,7 @@ do
                 _G.VX_ORBIT(e, {
                     dir        = -1,                     -- sweep LEFT
                     endBehind  = true,
-                    endBias    = 0.62,                   -- ~35 deg off dead-centre = side of the back
+                    endBias    = 0,                      -- land BEHIND them (dead-centre back), per request
                     extraSweep = math.pi * 0.30,
                     endRadius  = math.max(Settings.BFTeleportDist, 3),
                     duration   = Settings.SideCurveTime + 0.05,
@@ -2995,9 +3006,11 @@ do
         local t = GetClosestTarget(Settings.DashRange); if not t then return end
         R.bfCD = tick(); R.bfActive = true
         local e = t:FindFirstChild("HumanoidRootPart"); if not e then R.bfActive = false return end
-        pressBF(); task.wait(0.05)
-        dashToBack(t, { duration = 0.26, extraSweep = math.pi * 0.45 })   -- real dash arc around to the back (was a teleport)
+        -- ORDER FIX: this used to press BF *before* moving, so the flash fired from your old position and whiffed
+        -- ("it dashes behind them but doesn't black flash"). Dash to their back FIRST, then flash.
+        dashToBack(t, { duration = 0.26, extraSweep = math.pi * 0.45 })
         R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.0
+        task.wait(0.05); pressBF()
         task.delay(0.3, function() R.bfActive = false end); status("BF Side Chain")
     end
     local function doBFBackDash()
@@ -3016,8 +3029,7 @@ do
         local jumpThis = R.backDashAlt == false   -- false after the 2nd toggle -> the jump variant
         aimCameraAt(e.Position)
         dashToBack(t, {
-            jump       = jumpThis,
-            yArc       = jumpThis and 6 or 0,             -- arc OVER them on the jump variant
+            yArc       = jumpThis and 4 or 0,             -- arc OVER them (pure CFrame - NOT a physics jump)
             duration   = jumpThis and 0.30 or 0.24,
             extraSweep = math.pi * (jumpThis and 0.30 or 0.45),
         })
@@ -3883,6 +3895,7 @@ do
 	local VIM = game:GetService("VirtualInputManager")
 	local LP = Players.LocalPlayer
 	local on, crowHitOn, lastTarget, flying = false, false, nil, false
+	local crowGen = 0   -- generation counter: a newer G cast owns the click-suppression window
 	local function myHRP() local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character; return c and c:FindFirstChild("HumanoidRootPart") end
 	local function nearestEnemy()
 		local hrp = myHRP(); if not hrp then return nil end
@@ -3939,7 +3952,12 @@ do
 		local lt = lockedTarget()
 		local tp
 		if lt then tp = posOf(lt)
-		elseif flying then tp = posOf((lastTarget and lastTarget.Parent) and lastTarget) end
+		elseif flying then
+			tp = posOf((lastTarget and lastTarget.Parent) and lastTarget)
+			-- FALLBACK (was missing = "crow going to target doesn't work"): with no click-lock and no remembered
+			-- M1 victim there was NO target at all, so the crow just sat there. Home the nearest enemy instead.
+			if not tp then local ne = nearestEnemy(); if ne then lastTarget = ne; tp = posOf(ne) end end
+		end
 		if not tp then return end
 		dressCrow(crow)                                                             -- big hitbox + your color, every frame (covers newly-streamed parts)
 		local ctl = crowControlRemote()
@@ -3977,7 +3995,27 @@ do
 	UIS.InputBegan:Connect(function(input, gpe)  -- (M1 target-memory is handled by the GetMouse().Button1Down hook above, not duplicated here)
 		if on and not gpe and input.KeyCode == Enum.KeyCode.G then  -- ult: spawn the crow + take control of its flight to the target
 			local tgt = lockedTarget() or ((lastTarget and lastTarget.Parent) and lastTarget) or nearestEnemy()
-			if tgt then lastTarget = tgt; fireKnit("MeiMeiService", "Activated", false, tgt); flying = true; vxLog("Crow -> " .. tgt.Name); task.delay(25, function() flying = false end) end
+			-- WHILE THE CROW IS FLYING, NO SYNTHETIC CLICKS. A click cancels the ult ("if u click, it go away"),
+			-- and the BF / M1-chain / dash-assist paths all send VirtualInputManager mouse clicks. This flag is
+			-- checked by those paths so they hold off until the crow lands.
+			if tgt then
+				lastTarget = tgt; fireKnit("MeiMeiService", "Activated", false, tgt); vxLog("Crow -> " .. tgt.Name)
+				-- Only suppress scripted clicks once a crow ACTUALLY exists. Setting the flag on every G press
+				-- meant a G on cooldown (no crow spawns) silently killed the dash-assist M1s for 25s.
+				crowGen = crowGen + 1
+				local myGen = crowGen
+				task.spawn(function()
+					local t0 = tick()
+					repeat task.wait(0.1) until crowModel() or tick() - t0 > 2 or crowGen ~= myGen
+					if crowGen ~= myGen then return end
+					if not crowModel() then vxLog("Crow: none spawned (cooldown?) - clicks NOT suppressed"); return end
+					flying = true; _G.VX_CROW_FLYING = tick() + 25
+					task.delay(25, function()
+						if crowGen ~= myGen then return end   -- a newer cast owns the suppression now
+						flying = false; _G.VX_CROW_FLYING = 0
+					end)
+				end)
+			end
 		end
 	end)
 	CrowUltApi = {
@@ -5996,6 +6034,12 @@ do
 	-- and checking it made Auto Air suppress ITSELF whenever another feature was running — the real reason Rough
 	-- Energy / Crushing Jaws never fired. We must only ignore keys WE pressed, not keys another module claimed.
 	local airSelfInj = {}
+	local function dbgAir(msg) if _G.VX_BF_DEBUG then print("[DreamHub AutoAir] " .. tostring(msg)) end end
+	-- PER-CHARACTER Auto Air switches ("make the user pick which auto air it wants on"). All default ON; the
+	-- Combat page exposes one toggle each. A sequence only runs if BOTH the master Auto Air toggle and its own
+	-- switch are on AND you actually own the move.
+	local airOpt = { Vessel = true, Twofold = true, Hakari = true, Megumi = true, Choso = true, LapseBlue = true, LapseRed = true, Locust = true }
+	AutoAirOptSet = function(k, v) if k ~= nil then airOpt[k] = v == true end end
 	local lastM1Tgt = nil                 -- the enemy your last LANDED M1 hit (all sequences target THEM, like the Dummy in your captures)
 	local function knitRE(svcName, reName)
 		local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
@@ -6112,7 +6156,6 @@ do
 			end
 			return false
 		end
-		local function dbgAir(msg) if _G.VX_BF_DEBUG then print("[DreamHub AutoAir] " .. msg) end end
 		-- MOVE-BASED detection (user's exact captures): check YOUR Moveset for the move name, not the character name.
 		-- ═══ THE AUTO AIR BUG ═══ The game stores move names UNSPACED ("RoughEnergy", "LapseBlue",
 		-- "TwofoldKick", "CrushingJaws"), but every call below asks for the SPACED display name
@@ -6179,60 +6222,128 @@ do
 		local function holdJump() _G.VX_INJECT_UNTIL = tick() + 0.35; _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 0.5; airSelfInj[Enum.KeyCode.Space] = tick() + 0.5; pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.08); VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end) end
 		local kc = input.KeyCode
 
-		-- KEY 4 = Twofold Kick -> press R  (key press + the Gojo RightActivated REMOTE as a guaranteed backup)
-		if airOK and kc == Enum.KeyCode.Four and hasMove("Twofold Kick") then
-			_G.VX_BUSY = tick() + 1.4; dbgAir("Twofold Kick (4) -> R")
-			task.delay(0.32, function()
-				if not autoAirOn then return end
-				tapKey(Enum.KeyCode.R)
-				local mdl = lastM1Tgt or nearestEnemyChar()
-				if mdl then local re = gojoRE(); if re then pcall(function() re:FireServer(asPlayerCharacter(mdl)) end) end end
+		-- ═══════════════════ AUTO AIR — built from the user's exact remote captures ═══════════════════
+		-- Every sequence below fires the REAL Knit service RemoteEvent the user captured, with the real Moveset
+		-- object as the argument, exactly as the capture showed. Key presses are kept only where the capture
+		-- itself was a key (jump / R / 1). Each character has its own toggle so you pick what runs.
+		local function moveObj(nm)
+			local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+			local mv = c and c:FindFirstChild("Moveset")
+			-- ONE-SHOT DEBUG DUMP (moved here from hasMove, which is no longer on the hot path): with
+			-- _G.VX_BF_DEBUG = true this prints your character's REAL Moveset child names to F9 the first time
+			-- Auto Air looks one up. If Auto Air ever goes quiet, that line tells us exactly why.
+			if _G.VX_BF_DEBUG and not _G.VX_MOVEDUMPED then
+				_G.VX_MOVEDUMPED = true
+				pcall(function()
+					local names = {}
+					if mv and mv:IsA("Folder") or (mv and mv:IsA("Model")) then
+						for _, mm in ipairs(mv:GetChildren()) do names[#names + 1] = mm.Name end
+					end
+					print("[DreamHub AutoAir] char=" .. tostring(c and c.Name) ..
+						"  Moveset=" .. tostring(mv and mv.ClassName or "MISSING") ..
+						"  children = { " .. table.concat(names, ", ") .. " }")
+				end)
+			end
+			if not mv then dbgAir("no Moveset on your character - Auto Air cannot resolve moves"); return nil end
+			local direct = mv:FindFirstChild(nm); if direct then return direct end
+			local want = normMove(nm)                                   -- spacing-proof fallback ("RoughEnergy")
+			for _, mm in ipairs(mv:GetChildren()) do if normMove(mm.Name) == want then return mm end end
+			-- SUBSTRING fallback: covers suffixed entries like "Lapse Blue MAX"
+			for _, mm in ipairs(mv:GetChildren()) do if string.find(normMove(mm.Name), want, 1, true) then return mm end end
+			return nil
+		end
+		local function svcRE(svc, re)
+			local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
+			local s = k and k:FindFirstChild(svc); local r = s and s:FindFirstChild("RE")
+			return r and r:FindFirstChild(re)
+		end
+		local function fireSvc(svc, re, ...)
+			local r = svcRE(svc, re)
+			if not r then dbgAir("remote MISSING: " .. svc .. ".RE." .. re); return false end
+			local a = table.pack(...)
+			local ok = pcall(function() r:FireServer(table.unpack(a, 1, a.n)) end)
+			dbgAir((ok and "fired " or "FAILED ") .. svc .. "." .. re)
+			return ok
+		end
+		local function airTarget()   -- the capture used workspace.Characters.Dummy; live play wants the real enemy
+			local e = nearestEnemyChar(); if e then return e end
+			local chs = workspace:FindFirstChild("Characters"); return chs and chs:FindFirstChild("Dummy")
+		end
+
+		-- PRINCIPLE: your own key press already casts the move. Each branch adds ONLY the follow-up the capture
+		-- describes — it never re-sends the same ability the key just fired, and it never both presses the key
+		-- AND fires the remote that key triggers (that double-cast burns a second cooldown or cancels the first).
+
+		-- ── VESSEL (Itadori) — key 1 -> Cursed Strikes (air variant: the captured `true` flag) ──
+		if airOK and airOpt.Vessel and kc == Enum.KeyCode.One and moveObj("Cursed Strikes") then
+			_G.VX_BUSY = tick() + 1.2; dbgAir("Vessel 1 -> Cursed Strikes")
+			task.delay(0.05, function()
+				if autoAirOn then fireSvc("CursedStrikesService", "Activated", moveObj("Cursed Strikes"), true) end
 			end)
 		end
-		-- KEY 1 = Lapse Blue -> press R  (key + remote backup)
-		if airOK and kc == Enum.KeyCode.One and hasMove("Lapse Blue") then
-			_G.VX_BUSY = tick() + 1.4; dbgAir("Lapse Blue (1) -> R")
-			task.delay(0.35, function()
-				if not autoAirOn then return end
-				tapKey(Enum.KeyCode.R)
-				local mdl = lastM1Tgt or nearestEnemyChar()
-				if mdl then local re = gojoRE(); if re then pcall(function() re:FireServer(asPlayerCharacter(mdl)) end) end end
-			end)
-		end
-		-- KEY 2 = Nue (Ten Shadows) -> press R  (key + the user's captured MegumiService.RightActivated remote)
-		if airOK and kc == Enum.KeyCode.Two and hasMove("Nue") then
-			_G.VX_BUSY = tick() + 1.4; dbgAir("Nue (2) -> R")
-			task.delay(0.4, function()
-				if not autoAirOn then return end
-				tapKey(Enum.KeyCode.R)
-				pcall(function() fireKnit("MegumiService", "RightActivated") end)
-			end)
-		end
-		-- KEY R = Megumi RightActivated -> press 1
-		if airOK and kc == Enum.KeyCode.R and hasMove("Nue") then
-			_G.VX_BUSY = tick() + 1.4; dbgAir("Megumi R -> 1")
-			task.delay(0.12, function() if autoAirOn then tapKey(Enum.KeyCode.One) end end)
-		end
-		-- KEY 3 = Rough Energy (Gambler) -> SPACE JUMP at the same instant, then space again
-		if airOK and kc == Enum.KeyCode.Three and hasMove("Rough Energy") then
-			_G.VX_BUSY = tick() + 1.4; dbgAir("Rough Energy (3) -> jump + space")
+
+		-- ── HAKARI (Restless Gambler) — key 3 -> jump + Rough Energy (air variant) ──
+		if airOK and airOpt.Hakari and kc == Enum.KeyCode.Three and moveObj("Rough Energy") then
+			_G.VX_BUSY = tick() + 1.4; dbgAir("Hakari 3 -> jump + Rough Energy")
 			task.spawn(function() holdJump() end)
-			task.delay(0.22, function() if autoAirOn then holdJump() end end)
-		-- KEY 3 = Crushing Jaws (Locust) -> SPAM R for 7 seconds. elseif: key 3 is shared with Rough Energy above,
-		-- and as two separate `if`s a character owning both would fire BOTH sequences on one press.
-		elseif airOK and kc == Enum.KeyCode.Three and hasMove("Crushing Jaws") then
-			_G.VX_BUSY = tick() + 7.2; dbgAir("Crushing Jaws (3) -> spam R 7s")
-			task.spawn(function()
-				local t0 = tick()
-				while autoAirOn and tick() - t0 < 7 do tapKey(Enum.KeyCode.R); task.wait(0.2) end
+			task.delay(0.10, function()
+				if autoAirOn then fireSvc("RoughEnergyService", "Activated", moveObj("Rough Energy"), true) end
+			end)
+
+		-- ── LOCUST — key 3 -> Crushing Jaws. Your key 3 already casts it, so we add NOTHING here; the single
+		--    R press happens in the anim hook when the fly-up plays. (No R spam, per request.)
+		elseif airOK and airOpt.Locust and kc == Enum.KeyCode.Three and moveObj("Crushing Jaws") then
+			_G.VX_BUSY = tick() + 1.6; dbgAir("Locust 3 -> Crushing Jaws (R waits for the fly-up anim)")
+		end
+
+		-- ── MEGUMI — key 2 (Nue) -> add the R effect. We fire RightActivated directly INSTEAD of tapping R:
+		--    tapping R would make the game fire the same remote, double-casting it. ──
+		if airOK and airOpt.Megumi and kc == Enum.KeyCode.Two and moveObj("Nue") then
+			_G.VX_BUSY = tick() + 1.4; dbgAir("Megumi 2 -> + RightActivated")
+			task.delay(0.03, function()
+				if autoAirOn then fireSvc("MegumiService", "RightActivated") end
+			end)
+
+		-- ── CHOSO (Blood Manip) — key 2 -> Flowing Red Scale, must JUMP ──
+		elseif airOK and airOpt.Choso and kc == Enum.KeyCode.Two and moveObj("Flowing Red Scale") then
+			_G.VX_BUSY = tick() + 1.4; dbgAir("Choso 2 -> jump + Flowing Red Scale")
+			task.spawn(function() holdJump() end)
+			task.delay(0.08, function()
+				if autoAirOn then fireSvc("RedScaleService", "Activated", moveObj("Flowing Red Scale"), true) end
 			end)
 		end
-		-- ═══ VESSEL (Itadori / Sukuna) — RESTORED ═══ You JUMP -> auto-press 1 to carry them up.
-		-- This branch existed in b0034dc and was accidentally dropped by 5ebeb00 when Auto Air moved from
-		-- character-based to move-based detection; `lastVesselAir` and `charIs` were the orphaned leftovers.
-		-- Recovered verbatim from git and kept CHARACTER-based on purpose: the vessel launcher is the jump
-		-- itself, not a named move, so hasMove() cannot express it.
-		if airOK and kc == Enum.KeyCode.Space and charIs("vessel", "itadori", "sukuna", "black flash", "divergent") then
+
+		-- ── MEGUMI — key R -> Rabbit Escape. Firing the remote IS the "press 1" the capture shows, so we do not
+		--    also tap 1 (that would cast Rabbit Escape twice). ──
+		if airOK and airOpt.Megumi and kc == Enum.KeyCode.R and moveObj("Rabbit Escape") then
+			_G.VX_BUSY = tick() + 1.4; dbgAir("Megumi R -> Rabbit Escape")
+			task.delay(0.03, function()
+				if autoAirOn then fireSvc("RabbitEscapeService", "Activated", moveObj("Rabbit Escape"), airTarget()) end
+			end)
+		end
+
+		-- ── GOJO — key 1 (Lapse Blue) -> press R during it ──
+		if airOK and airOpt.LapseBlue and kc == Enum.KeyCode.One and moveObj("Lapse Blue") then
+			_G.VX_BUSY = tick() + 1.6; dbgAir("Gojo 1 -> Lapse Blue -> R")
+			task.delay(0.22, function() if autoAirOn then tapKey(Enum.KeyCode.R) end end)   -- anim 99920923658527
+		end
+
+		-- ── GOJO — Lapse Blue -> Reversal Red on the same beat. Fires the two captured remotes directly (no R tap
+		--    here: GojoService.RightActivated IS what R does, and tapping it too would double-cast). ──
+		if airOK and airOpt.LapseRed and kc == Enum.KeyCode.One and moveObj("Lapse Blue") and moveObj("Reversal Red") then
+			_G.VX_BUSY = tick() + 1.6; dbgAir("Gojo 1 -> + Reversal Red")
+			task.delay(0.24, function()
+				if not autoAirOn then return end
+				fireSvc("ReversalRedService", "Activated", moveObj("Reversal Red"))
+				fireSvc("GojoService", "RightActivated", asPlayerCharacter(airTarget()))   -- this remote wants the PLAYER's .Character
+			end)
+		end
+
+		-- ── GOJO Twofold Kick — key 4 casts it; the R after the SECOND kick is fired by the anim hook. ──
+		-- ═══ VESSEL (Itadori / Sukuna) — you JUMP -> auto-press 1 to carry them up ═══
+		-- Recovered from commit b0034dc; kept CHARACTER-based because the launcher is the jump itself, not a
+		-- named move, so hasMove()/moveObj() cannot express it.
+		if airOK and airOpt.Vessel and kc == Enum.KeyCode.Space and charIs("vessel", "itadori", "sukuna", "black flash", "divergent") then
 			if tick() - (lastVesselAir or 0) > 0.9 then
 				lastVesselAir = tick(); _G.VX_BUSY = tick() + 1.2; dbgAir("Vessel: Jump -> 1")
 				task.delay(0.12, function() if autoAirOn then tapKey(Enum.KeyCode.One) end end)
@@ -6245,6 +6356,10 @@ do
 	-- ANIM-DRIVEN backup (your captured ids): keeps aiming through Gojo's R (99920923658527), and the RED
 	-- charge anim (137654778575373) auto-clicks R even if the key-3 press was missed/eaten.
 	local GOJO_R_ANIM, RED_ANIM = "99920923658527", "137654778575373"
+	-- Auto Air anim ids (user captures): Twofold Kick, and the two Locust fly-up anims.
+	local TWOFOLD_ANIM = "104749346956269"
+	local LOCUST_UP = { ["134777193523837"] = true, ["112223227323175"] = true }
+	local twofoldCount, lastTwofold, lastLocustR = 0, 0, 0
 	-- Gojo M1 landing anims (your capture) -> count them for the "After N M1s" TP-back mode
 	local GOJO_M1 = { ["127851700400958"] = true, ["72548435296350"] = true, ["84547415708554"] = true }
 	local gojoM1Count, lastGojoM1 = 0, 0
@@ -6272,9 +6387,31 @@ do
 				lastRedR = tick()
 				task.spawn(function() pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.12); VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game) end) end)
 			end
+			-- ═══ AUTO AIR — ANIM-DRIVEN R PRESSES (user's captured ids) ═══
+			-- TWOFOLD KICK (104749346956269): press R after the SECOND kick. The anim plays once per kick, so we
+			-- count plays and act on the 2nd; the counter resets after 1.5s idle so a new cast starts clean.
+			if autoAirOn and airOpt.Twofold and id == TWOFOLD_ANIM then
+				if tick() - lastTwofold > 1.5 then twofoldCount = 0 end
+				lastTwofold = tick(); twofoldCount = twofoldCount + 1
+				if twofoldCount >= 2 then
+					twofoldCount = 0
+					dbgAir("Twofold: 2nd kick -> R")
+					task.spawn(function()
+						pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.10); VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game) end)
+					end)
+				end
+			end
+			-- LOCUST fly-up (134777193523837 / 112223227323175): press R ONCE when it lifts — no more R spam.
+			if autoAirOn and airOpt.Locust and LOCUST_UP[id] and tick() - lastLocustR > 0.8 then
+				lastLocustR = tick()
+				dbgAir("Locust fly-up -> R")
+				task.spawn(function()
+					pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game); task.wait(0.10); VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game) end)
+				end)
+			end
 		end)
 	end
-	task.spawn(function() while true do if gojoOn or redOn then pcall(hookSelfAnims) end task.wait(0.7) end end)
+	task.spawn(function() while true do if gojoOn or redOn or autoAirOn then pcall(hookSelfAnims) end task.wait(0.7) end end)
 	GojoTpApi = { set = function(v) gojoOn = v == true end }
 	ReversalRedApi = { set = function(v) redOn = v == true end }
 end
@@ -10966,7 +11103,23 @@ do
     end
     acSec:Toggle({ Name = "Auto Yuta Black Flash", Default = false, Callback = function(b) if YutaBFApi then YutaBFApi.setAuto(b) end end })
     acSec:Toggle({ Name = "Auto Ult", Callback = function(b) if AutoUltApi then AutoUltApi.set(b) end end })
-    if tier("premium") then acSec:Toggle({ Name = "Auto Air", Callback = function(b) if AutoAirApi_set then AutoAirApi_set(b) end end }) end   -- FREE: Auto Air removed (premium only)
+    if tier("premium") then
+        acSec:Toggle({ Name = "Auto Air", Callback = function(b) if AutoAirApi_set then AutoAirApi_set(b) end end })   -- FREE: Auto Air removed (premium only)
+        -- Pick which characters Auto Air runs for. Each needs the master toggle above ON as well.
+        pcall(function() acSec:Label("Auto Air - pick which ones run:") end)
+        for _, o in ipairs({
+            { "Vessel",    "Vessel (1 -> Cursed Strikes, jump -> 1)" },
+            { "Twofold",   "Gojo Twofold Kick (R after 2nd kick)" },
+            { "LapseBlue", "Gojo Lapse Blue (1 -> R)" },
+            { "LapseRed",  "Gojo Lapse Blue -> Reversal Red" },
+            { "Megumi",    "Megumi (2 -> Nue+R, R -> Rabbit+1)" },
+            { "Hakari",    "Hakari (3 -> jump + Rough Energy)" },
+            { "Choso",     "Choso (2 -> jump + Flowing Red Scale)" },
+            { "Locust",    "Locust (3 -> Crushing Jaws, R on fly-up)" },
+        }) do
+            acSec:Toggle({ Name = o[2], Default = true, Callback = function(b) if AutoAirOptSet then AutoAirOptSet(o[1], b) end end })
+        end
+    end
     acSec:Dropdown({ Name = "Auto Slam / Uppercut", Items = { "Off", "Down Slam", "Uppercut" }, Default = "Off", Callback = function(m) if M1ComboApi then M1ComboApi.setMode(m) end end })
     -- (Removed the "Launcher after N hits" slider — the mechanic is now the FIXED real game rule per the wiki:
     -- Uppercut = 4 M1s with Space held, Down Slam = 3 M1s then jump+M1. No slider needed or accurate anymore.)
