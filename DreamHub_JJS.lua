@@ -1183,6 +1183,10 @@ do
 		local extraSweep = opts.extraSweep or 0
 		local radialBias = opts.radialBias or 0
 		local yArc       = opts.yArc or 0
+		-- endBias (radians): offset the FINAL angle off dead-centre-back. Landing exactly on the spine triggers the
+		-- game's back-hit knockdown, which ends the combo; a ~35 deg bias puts you at the SIDE of their back, where
+		-- the M1 keeps them standing so the combo can continue.
+		local endBias    = opts.endBias or 0
 		local myC = myCharResolved()
 		local h0 = getHRP(myC); if not (h0 and targetHRP and targetHRP.Parent) then return end
 		local tp0 = targetHRP.Position
@@ -1201,7 +1205,7 @@ do
 		local look0 = targetHRP.CFrame.LookVector
 		local flat0 = Vector3.new(look0.X, 0, look0.Z); local mag0 = flat0.Magnitude
 		local behind0 = (mag0 < 0.01) and Vector3.new(0, 0, -1) or (flat0 / mag0)
-		local endAngle0 = endBehind and math.atan2(behind0.Z, behind0.X) or startAngle
+		local endAngle0 = endBehind and (math.atan2(behind0.Z, behind0.X) + endBias) or startAngle
 		local diff0 = ((endAngle0 - startAngle + math.pi) % (2 * math.pi)) - math.pi
 		local sweepDir = opts.dir or (diff0 >= 0 and 1 or -1)   -- opts.dir forces LEFT(-1)/RIGHT(1) (Side Dash Assist alternates)
 		local t0 = tick()
@@ -1217,7 +1221,7 @@ do
 				local look = targetHRP.CFrame.LookVector
 				local flat = Vector3.new(look.X, 0, look.Z); local mag = flat.Magnitude
 				local bd = (mag < 0.01) and Vector3.new(0, 0, -1) or (flat / mag)
-				endAngle = math.atan2(bd.Z, bd.X)
+				endAngle = math.atan2(bd.Z, bd.X) + endBias
 			end
 			local diff = ((endAngle - startAngle + math.pi) % (2 * math.pi)) - math.pi
 			diff = diff + sweepDir * extraSweep                               -- widen the arc in a stable direction (real circling)
@@ -2838,6 +2842,34 @@ do
     local function autoSide(p, e) local eR = Vector3.new(e.CFrame.RightVector.X, 0, e.CFrame.RightVector.Z); if eR.Magnitude < 0.01 then return -1 end eR = eR.Unit; local off = Vector3.new((p.Position - e.Position).X, 0, (p.Position - e.Position).Z); return (off:Dot(eR) >= 0) and 1 or -1 end
     local function chooseSide(p, e, c) if UserInputService:IsKeyDown(Enum.KeyCode.A) then return -1 end if UserInputService:IsKeyDown(Enum.KeyCode.D) then return 1 end if c == "Left" then return -1 end if c == "Right" then return 1 end return autoSide(p, e) end
     local function smoothTP(pos) local p = GetRoot(); if not p then return end acPass(); p.CFrame = CFrame.new(pos); local cc = GetChar(); if cc then pcall(function() cc:PivotTo(CFrame.new(pos)) end) end end
+    -- ═══ LEGIT DASH TO THE BACK (replaces the old smoothTP+faceEnemyBack teleport) ═══
+    -- Presses the REAL dash key so the game plays its own dash animation, then rides the shared anti-fling arc
+    -- (_G.VX_ORBIT: per-frame speed cap, collisions off, velocity zeroed, live target tracking) around to their
+    -- back. This is a travelled path, not a position write — it reads as a player dashing, never a blink.
+    -- opts: duration, endRadius, extraSweep (rad; math.pi*2 = full 360), yArc (jump arc), dir (-1 L / 1 R).
+    local function dashToBack(t, opts)
+        local e = t and t:FindFirstChild("HumanoidRootPart"); if not e then return false end
+        opts = opts or {}
+        if opts.jump then VKeyTap(Enum.KeyCode.Space, 0.06); task.wait(0.10) end   -- real jump first (back-dash 2nd press)
+        VKeyTap(Settings.DashKey, 0.04)   -- REAL dash key = the game's own dash anim + impulse
+        task.wait(0.06)                   -- let that impulse start before the arc takes over (else it looks cancelled)
+        local p = GetRoot(); if p then pcall(function() p.AssemblyLinearVelocity = Vector3.zero end) end   -- kill the dash burst so the arc can't fling
+        if _G.VX_ORBIT then
+            _G.VX_ORBIT(e, {
+                duration   = opts.duration   or 0.26,
+                endRadius  = opts.endRadius  or math.max(Settings.BFTeleportDist, 3),
+                extraSweep = opts.extraSweep or (math.pi * 0.35),
+                endBehind  = true,
+                yArc       = opts.yArc or 0,
+                dir        = opts.dir,
+            })
+            return true
+        end
+        -- orbit unavailable (very old build): fall back to the old instant move so the chain still lands
+        local fwd = Vector3.new(e.CFrame.LookVector.X, 0, e.CFrame.LookVector.Z)
+        if fwd.Magnitude > 0.01 then smoothTP(e.Position - fwd.Unit * Settings.BFTeleportDist) end
+        return true
+    end
 
     -- lock-on: hold you behind the target for the flash window
     RunService.RenderStepped:Connect(function()
@@ -2848,8 +2880,20 @@ do
         if fwd.Magnitude < 0.01 then return end
         fwd = fwd.Unit
         if R.lockKind == "bf_back" then
+            -- SOFT back-hold (was a hard per-frame CFrame pin = the "teleport" feel AND the fling: pinning a body
+            -- inside another every frame is a physics explosion). Now we LERP toward the back point with a
+            -- per-frame step cap, so you glide the last few studs like a player adjusting, and never snap.
             local pos = e.Position + (-fwd * 3)
-            acPass(); p.CFrame = CFrame.new(pos, pos + fwd)
+            local cur = p.Position
+            local step = pos - cur
+            local maxStep = 90 * (1 / 60)                    -- <=90 studs/s: no whip, no launch
+            if step.Magnitude > maxStep then pos = cur + step.Unit * maxStep end
+            acPass()
+            pcall(function()
+                p.CFrame = CFrame.lookAt(pos, Vector3.new(e.Position.X, pos.Y, e.Position.Z))
+                p.AssemblyLinearVelocity = Vector3.zero      -- no residual momentum = nothing to fling with
+                p.AssemblyAngularVelocity = Vector3.zero
+            end)
             aimCameraAt(e.Position + fwd * 50)
         elseif R.lockKind == "cam" then
             aimCameraAt(e.Position)   -- soft lock: just keep the camera on them (no teleport, no icon)
@@ -2867,10 +2911,23 @@ do
         R.curving = true
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 0.55   -- soft camera lock (no icon), auto-expires
         task.spawn(function()
-            if _G.VX_ORBIT then _G.VX_ORBIT(e, { dir = -1, endBehind = false, duration = Settings.SideCurveTime + 0.05 })   -- LEFT
-            else VKeyTap(Settings.DashKey, 0.04); local sd = e.CFrame.RightVector * -1; aimCameraDir(sd); faceRootDir(sd) end
+            -- SIDE DASH ASSIST (Q): real dash key first (the game's own dash anim), then arc around to the SIDE of
+            -- their back — endBias keeps you off the spine so the M1 does NOT trigger the back-hit knockdown, which
+            -- is what was dropping them and ending the combo. Landing off-centre keeps them standing = combo extends.
+            VKeyTap(Settings.DashKey, 0.04); task.wait(0.06)
+            local p0 = GetRoot(); if p0 then pcall(function() p0.AssemblyLinearVelocity = Vector3.zero end) end
+            if _G.VX_ORBIT then
+                _G.VX_ORBIT(e, {
+                    dir        = -1,                     -- sweep LEFT
+                    endBehind  = true,
+                    endBias    = 0.62,                   -- ~35 deg off dead-centre = side of the back
+                    extraSweep = math.pi * 0.30,
+                    endRadius  = math.max(Settings.BFTeleportDist, 3),
+                    duration   = Settings.SideCurveTime + 0.05,
+                })
+            else local sd = e.CFrame.RightVector * -1; aimCameraDir(sd); faceRootDir(sd) end
         end)
-        if Settings.SideM1 and not isBF then task.delay(0.22, function() aimCameraAt((t:FindFirstChild("HumanoidRootPart") or e).Position); VMouseClick() end) end
+        if Settings.SideM1 and not isBF then task.delay(0.30, function() aimCameraAt((t:FindFirstChild("HumanoidRootPart") or e).Position); VMouseClick() end) end
         task.delay(0.55, function() R.curving = false; if R.lockKind == "cam" then R.lockTarget = nil; R.lockKind = nil end end)
         if not isBF then status("Side Dash L") end
         return true
@@ -2884,11 +2941,11 @@ do
         if not isBF then R.lastDash = tick() end
         ReleaseAll(); task.wait(0.01)
         aimCameraAt(e.Position)
-        local to = Vector3.new((e.Position - p.Position).X, 0, (e.Position - p.Position).Z)
-        if to.Magnitude > 0.01 then faceRootDir(to) end
-        VKeyDown(Enum.KeyCode.W); task.wait(0.02); VKeyTap(Settings.DashKey, 0.05)
-        task.delay(0.20, function() VKeyUp(Enum.KeyCode.W) end)
-        if not isBF then task.delay(0.25, function() faceEnemyBack(t); VMouseClick() end); status("Back Dash + M1") end
+        -- BACK DASH ASSIST (E): a FULL 360 sweep around them ending on their back. extraSweep = 2*pi is one
+        -- complete lap, ridden on the anti-fling arc (speed-capped, collisions off, velocity zeroed each frame),
+        -- so it stays fast and tight without launching anyone or drifting out of the area.
+        dashToBack(t, { duration = 0.42, extraSweep = math.pi * 2, endRadius = math.max(Settings.BFTeleportDist, 3.5) })
+        if not isBF then task.delay(0.05, function() aimCameraAt((t:FindFirstChild("HumanoidRootPart") or e).Position); VMouseClick() end); status("Back Dash 360 + M1") end
         return true
     end
     -- BF MODES
@@ -2897,6 +2954,7 @@ do
         local t = GetClosestTarget(Settings.DashRange); if not t then return end
         local e = t:FindFirstChild("HumanoidRootPart"); if not e then return end
         R.bfCD = tick(); R.bfActive = true
+        -- "Teleport" mode keeps its instant feel by design (it is the blink option); every OTHER mode dashes.
         local fwd = Vector3.new(e.CFrame.LookVector.X, 0, e.CFrame.LookVector.Z).Unit
         smoothTP(e.Position - fwd * Settings.BFTeleportDist); faceEnemyBack(t)
         R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.0
@@ -2917,9 +2975,8 @@ do
         local t = GetClosestTarget(Settings.DashRange); if not t then return end
         R.bfCD = tick(); R.bfActive = true
         local e = t:FindFirstChild("HumanoidRootPart"); if not e then R.bfActive = false return end
-        pressBF(); task.wait(0.05); doSideDash(true); task.wait(0.15)
-        local fwd = Vector3.new(e.CFrame.LookVector.X, 0, e.CFrame.LookVector.Z).Unit
-        smoothTP(e.Position - fwd * Settings.BFTeleportDist); faceEnemyBack(t)
+        pressBF(); task.wait(0.05)
+        dashToBack(t, { duration = 0.26, extraSweep = math.pi * 0.45 })   -- real dash arc around to the back (was a teleport)
         R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.0
         task.delay(0.3, function() R.bfActive = false end); status("BF Side Chain")
     end
@@ -2928,20 +2985,38 @@ do
         local t = GetClosestTarget(Settings.DashRange); if not t then return end
         R.bfCD = tick(); R.bfActive = true
         local e = t:FindFirstChild("HumanoidRootPart"); if not e then R.bfActive = false return end
-        ReleaseAll(); VKeyTap(Enum.KeyCode.Space, 0.1); task.wait(0.15)
-        aimCameraAt(e.Position); VKeyDown(Enum.KeyCode.W); task.wait(0.02); VKeyTap(Settings.DashKey, 0.05); task.wait(0.2); VKeyUp(Enum.KeyCode.W)
-        local fwd = Vector3.new(e.CFrame.LookVector.X, 0, e.CFrame.LookVector.Z).Unit
-        smoothTP(e.Position - fwd * Settings.BFTeleportDist); faceEnemyBack(t)
+        ReleaseAll()
+        -- ═══ BACK DASH — ALTERNATES ON EVERY PRESS OF 3 ═══
+        --   press 1: plain dash around to their back  -> black flash
+        --   press 2: JUMP (space) first, then dash behind -> black flash   (then it flips back to press-1 behavior)
+        -- The counter resets after 6s idle so a fresh engagement always starts on the plain dash.
+        if tick() - (R.backDashT or 0) > 6 then R.backDashAlt = false end
+        R.backDashAlt = not R.backDashAlt
+        R.backDashT = tick()
+        local jumpThis = R.backDashAlt == false   -- false after the 2nd toggle -> the jump variant
+        aimCameraAt(e.Position)
+        dashToBack(t, {
+            jump       = jumpThis,
+            yArc       = jumpThis and 6 or 0,             -- arc OVER them on the jump variant
+            duration   = jumpThis and 0.30 or 0.24,
+            extraSweep = math.pi * (jumpThis and 0.30 or 0.45),
+        })
         R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.0
-        task.wait(0.05); pressBF(); task.delay(0.3, function() R.bfActive = false end); status("BF Back Chain")
+        task.wait(0.05); pressBF(); task.delay(0.3, function() R.bfActive = false end)
+        status(jumpThis and "BF Back Chain (jump)" or "BF Back Chain")
     end
     local function doBFM1Chain()
         if tick() - R.bfCD < Settings.BFCooldown or R.bfActive then return end
         R.bfCD = tick(); R.bfActive = true
         local t = GetClosestTarget(Settings.DashRange); if not t then R.bfActive = false return end
-        task.wait(0.1); doSideDash(true); task.wait(0.2)
+        task.wait(0.1)
+        -- M1 CHAIN: dash AROUND them (real dash key + anti-fling arc) with the camera locked on, ending on their
+        -- back — then flash. Previously this side-dashed and then TELEPORTED onto the back (faceEnemyBack was a
+        -- hard CFrame write), which is what read as a blink instead of a dash.
+        R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.2   -- camera stays on them through the arc
+        dashToBack(t, { duration = 0.28, extraSweep = math.pi * 0.5 })
         local e = t and t:FindFirstChild("HumanoidRootPart")
-        if e then faceEnemyBack(t); R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.0 end
+        if e then R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.0 end
         task.wait(0.05); pressBF(); task.delay(0.3, function() R.bfActive = false end); status("BF M1 Chain")
     end
     local function doBlackFlash()
