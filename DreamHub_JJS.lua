@@ -32,7 +32,9 @@ do
 					local folder = svc:FindFirstChild(folderName)
 					if folder then
 						for _, v in ipairs(folder:GetChildren()) do
-							if (v:IsA("RemoteEvent") or v:IsA("RemoteFunction")) and not v:GetAttribute("VX_Dummy") then
+							-- NEVER destroy Teleport: the anti-setback pass fires it to tell the server a move was legit.
+							-- Replacing it with a dummy meant that message went nowhere = instant rubberbanding.
+							if (v:IsA("RemoteEvent") or v:IsA("RemoteFunction")) and not v:GetAttribute("VX_Dummy") and v.Name ~= "Teleport" then
 								local dummy = Instance.new(v.ClassName)
 								dummy.Name = v.Name
 								dummy:SetAttribute("VX_Dummy", true)   -- tag it so the re-run loop skips our own dummy (no churn)
@@ -2975,43 +2977,17 @@ do
         for p in pairs(lockNoclip) do if p.Parent then pcall(function() p.CanCollide = true end) end end
         lockNoclip = nil
     end
+    -- CAMERA-ONLY LOCK. The old bf_back lock wrote your CFrame into the enemy's hitbox every frame; the moment
+    -- you M1 or flash, the physics engine resolves that overlap by launching you. No CFrame write here at all
+    -- now - the dash already puts you on their back, so the lock just keeps the camera on them.
     RunService.RenderStepped:Connect(function(dt)
-        if not R.lockTarget or tick() >= R.lockEnd then lockClipOn(); return end
-        if R.lockKind == "bf_back" then lockClipOff() end
-        local e = R.lockTarget:FindFirstChild("HumanoidRootPart"); if not e then return end
-        local p = GetRoot(); if not p then return end
-        local fwd = Vector3.new(e.CFrame.LookVector.X, 0, e.CFrame.LookVector.Z)
-        if fwd.Magnitude < 0.01 then return end
-        fwd = fwd.Unit
-        if R.lockKind == "bf_back" then
-            -- SOFT back-hold (was a hard per-frame CFrame pin = the "teleport" feel AND the fling: pinning a body
-            -- inside another every frame is a physics explosion). Now we LERP toward the back point with a
-            -- per-frame step cap, so you glide the last few studs like a player adjusting, and never snap.
-            local pos = e.Position + (-fwd * 5.2)   -- 5.2 studs: outside their hitbox, so re-enabling collisions can never punt them
-            local cur = p.Position
-            local step = pos - cur
-            -- ═══ RELEASE, DON'T CHASE ═══ The instant the flash connects the target RAGDOLLS and is launched.
-            -- The lock kept pinning you to that flying body and dragged you with it — that is "it flings me" and
-            -- "it follows the player as they ragdoll". It is also the glide, since any long catch-up travel under
-            -- the lock reads as sliding. So: if the hold point is more than 8 studs away, or they are moving fast
-            -- (knocked back / ragdolled), the lock is DONE. It now only ever trims small drift.
-            local tvel = Vector3.zero
-            pcall(function() tvel = e.AssemblyLinearVelocity end)
-            if step.Magnitude > 12 or tvel.Magnitude > 55 then   -- 12 = hold distance (5.2) + arc overshoot headroom; velocity is the real ragdoll test
-                R.lockTarget = nil; R.lockKind = nil; lockClipOn(); return
-            end
-            -- FRAMERATE-CORRECT cap: studs-per-SECOND scaled by the real frame delta.
-            local maxStep = 90 * math.clamp(dt or (1 / 60), 1 / 240, 1 / 15)
-            if step.Magnitude > maxStep then pos = cur + step.Unit * maxStep end
-            acPass()
-            pcall(function()
-                p.CFrame = CFrame.lookAt(pos, Vector3.new(e.Position.X, pos.Y, e.Position.Z))
-                p.AssemblyLinearVelocity = Vector3.zero      -- no residual momentum = nothing to fling with
-                p.AssemblyAngularVelocity = Vector3.zero
-            end)
-            aimCameraAt(e.Position + fwd * 50)
-        elseif R.lockKind == "cam" then
-            aimCameraAt(e.Position)   -- soft lock: just keep the camera on them (no teleport, no icon)
+        if not R.lockTarget or tick() >= R.lockEnd then
+            lockClipOn()
+            return
+        end
+        if R.lockKind == "cam" or R.lockKind == "bf_back" then
+            local e = R.lockTarget:FindFirstChild("HumanoidRootPart")
+            if e then aimCameraAt(e.Position) end
         end
     end)
 
@@ -3066,7 +3042,7 @@ do
         if _mr and (e.Position - _mr.Position).Magnitude > Settings.DashRange then R.bfActive = false; return end
         local fwd = Vector3.new(e.CFrame.LookVector.X, 0, e.CFrame.LookVector.Z).Unit
         smoothTP(e.Position - fwd * Settings.BFTeleportDist); faceEnemyBack(t)
-        R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.0
+        R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
         task.wait(0.1); m1ThenBF(); task.delay(0.3, function() R.bfActive = false end); status("BF Teleport")
     end
     local function doBFJump()
@@ -3078,7 +3054,7 @@ do
         aimCameraAt(e.Position)
         dashToBack(t, { duration = 0.30, extraSweep = math.pi * 0.25, yArc = 7 })
         faceBackOf(t)
-        R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.0
+        R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
         task.wait(0.05); m1ThenBF()
         task.delay(0.3, function() R.bfActive = false end); status("BF Jump Chain")
     end
@@ -3091,7 +3067,7 @@ do
         -- ("it dashes behind them but doesn't black flash"). Dash to their back FIRST, then flash.
         dashToBack(t, { duration = 0.26, extraSweep = math.pi * 0.45 })
         faceBackOf(t)
-        R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.0
+        R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
         task.wait(0.05); m1ThenBF()
         task.delay(0.3, function() R.bfActive = false end); status("BF Side Chain")
     end
@@ -3116,7 +3092,7 @@ do
             extraSweep = math.pi * (jumpThis and 0.30 or 0.45),
         })
         faceBackOf(t)
-        R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.0
+        R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
         task.wait(0.05); m1ThenBF(); task.delay(0.3, function() R.bfActive = false end)
         status(jumpThis and "BF Back Chain (jump)" or "BF Back Chain")
     end
@@ -3135,7 +3111,7 @@ do
         dashToBack(t, { duration = 0.28, extraSweep = math.pi * 0.5 })   -- 2) the side dash around to their back
         faceBackOf(t)
         local e = t and t:FindFirstChild("HumanoidRootPart")
-        if e then R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.0 end
+        if e then R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0 end
         task.wait(0.05); m1ThenBF()                                      -- 3) the flash (timed by the real engine)
         task.delay(0.3, function() R.bfActive = false end); status("BF M1 Chain")
     end
@@ -3689,47 +3665,50 @@ do
 		State.spaceHeld = false
 		VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
 	end
+	-- DOWN SLAM / UPPERCUT are decided by your PHYSICAL STATE (airborne / holding space), not by a string
+	-- argument. The old path fired Activated("Down"), which JJS does not accept - so nothing happened. Both
+	-- modes now reproduce what a real player does with real inputs.
 	local function onM1()
 		if mode == "Off" then return end
 		local now = tick()
 		if now - State.lastFire < Config.Cooldown then return end
-		if not State.remote then resolveV5Remote() end
+
+		if now - State.lastM1 > Config.M1ResetWindow then State.m1Count = 0 end
+		State.lastM1 = now
+		State.m1Count = State.m1Count + 1
+		local n = State.m1Count
+
 		if mode == "Down Slam" then
-			-- THE WORKING v1 PATH — untouched
-			State.lastFire = now
-			fireDir("Down")
+			-- 3 M1s, then hop and throw one more M1 while airborne = the slam.
+			if n >= 3 then
+				State.m1Count = 0
+				State.lastFire = now
+				task.spawn(function()
+					pcall(jump)                      -- module's own bunny hop (sets VX_LAUNCHING so Side Dash cannot cancel it)
+					task.wait(0.06)
+					pcall(function()
+						local cam = workspace.CurrentCamera; local vp = (cam and cam.ViewportSize) or Vector2.new(800, 600)
+						VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, true, game, 0)
+						task.wait(0.03)
+						VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, false, game, 0)
+					end)
+				end)
+			end
 		elseif mode == "Uppercut" then
-			-- Uppercut: count M1s (1-3 stay normal punches)
-			if now - State.lastM1 > Config.M1ResetWindow then State.m1Count = 0 end
-			State.lastM1 = now
-			State.m1Count = State.m1Count + 1
-			local n = State.m1Count
+			-- hold Space into the 4th M1 = the launcher.
 			if n == 3 then
-				-- hold Space like a real player winding the launcher into the 4th
 				spaceDown()
 				local token = {}
 				State.spaceToken = token
-				-- safety: if the 4th M1 never comes, drop Space
 				task.delay(2.0, function()
-					if State.spaceToken == token then
-						spaceUp(); State.spaceToken = nil
-						State.m1Count = 0
-					end
+					if State.spaceToken == token then spaceUp(); State.spaceToken = nil; State.m1Count = 0 end
 				end)
 			elseif n >= 4 then
 				State.m1Count = 0
 				State.lastFire = now
 				State.spaceToken = nil
-				spaceDown()   -- ensure held even if the 3rd was missed
-				-- CRITICAL: let the game's own 4th-M1 message reach the server FIRST, then send the launcher.
-				-- Firing "Up" at t=0 races it.
-				task.delay(Config.UpFireDelay, function()
-					if mode == "Uppercut" then fireDir(Config.UpArg) end
-				end)
-				task.delay(Config.UpFireDelay2, function()
-					if mode == "Uppercut" then fireDir(Config.UpArg) end
-				end)
-				task.delay(Config.SpaceHold, spaceUp)
+				spaceDown()
+				task.delay(Config.SpaceHold, function() spaceUp() end)
 			end
 		end
 	end
@@ -6113,9 +6092,24 @@ do
 			if _lt and _lt.Parent and _lt:FindFirstChild("HumanoidRootPart") then local _lh=_lt:FindFirstChildOfClass("Humanoid"); if not _lh or _lh.Health > 0 then return _lt end end
 		end
 		local best, bd
-		local function chk(m) if m and m.Name ~= LP.Name and m ~= LP.Character then local r = m:FindFirstChild("HumanoidRootPart"); local h = m:FindFirstChildOfClass("Humanoid"); if r and h and h.Health > 0 then local d = (r.Position - hrp.Position).Magnitude; if not bd or d < bd then best, bd = m, d end end end end
+		-- Health check is now `not h or h.Health > 0`: training dummies often have NO Humanoid at all, and the
+		-- old `h and h.Health > 0` rejected them outright.
+		local function chk(m)
+			if m and m.Name ~= LP.Name and m ~= LP.Character then
+				local r = m:FindFirstChild("HumanoidRootPart"); local h = m:FindFirstChildOfClass("Humanoid")
+				if r and (not h or h.Health > 0) then
+					local d = (r.Position - hrp.Position).Magnitude; if not bd or d < bd then best, bd = m, d end
+				end
+			end
+		end
 		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP then chk(plr.Character) end end
 		local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do chk(m) end end
+		-- DUMMY FOLDERS: Auto Air's 60-stud presence gate rides this. Training dummies usually live outside
+		-- workspace.Characters, so testing on one left the gate permanently false = "Auto Air does nothing".
+		for _, folderName in ipairs({ "Dummies", "Training", "NPCs", "Dummy" }) do
+			local f = workspace:FindFirstChild(folderName)
+			if f then for _, m in ipairs(f:GetChildren()) do chk(m) end end
+		end
 		return best
 	end
 	local function gojoRE()  -- GojoService.RE.RightActivated -> fires with a target Character = TP behind them
