@@ -982,7 +982,7 @@ do
 	local function reconnect() hooked = setmetatable({}, { __mode = "k" }); pcall(hookAll); return true end
 
 	BFApi = {
-		SetEnabled = function(v) enabled = v == true end,
+		SetEnabled = function(v) enabled = v == true; _G.VX_BFAPI_ON = enabled end,   -- exposed so VXBF2 knows the real flash engine is live
 		IsEnabled = function() return enabled end,
 		SetCooldown = function() end,
 		SetTimingOffset = function(v) if type(v) == "number" then offset = v end end,
@@ -2849,12 +2849,15 @@ do
     -- your real M1 animation and presses 3 at the exact frame offset. We just throw the M1 and let that hook do
     -- the timing. R.bfCD is cleared first because the mode functions stamp it on entry, which would otherwise
     -- make the hook's own cooldown check swallow the flash.
+    -- Throw the M1 and let the PROVEN engine (BFApi, armed by the Mode dropdown) time the key-3 press off your
+    -- real swing animation. We deliberately do NOT press 3 ourselves here — a blind press does nothing, and two
+    -- presses would fight. The pressBF fallback only runs if BFApi is unavailable for some reason.
     local function m1ThenBF()
-        local prev = Settings.BFM1
-        Settings.BFM1 = true
-        R.bfCD = 0
+        R.bfCD = 0                      -- clear the stamp the mode set on entry, or the flash hook swallows this swing
         VMouseClick()
-        task.delay(1.0, function() Settings.BFM1 = prev end)
+        if not (_G.VX_BFAPI_ON) then    -- no working engine -> best-effort blind press so something still happens
+            task.wait(0.19); pressBF()
+        end
     end
     local function GetClosestTarget(maxD)
         local myRoot = GetRoot(); if not myRoot then return nil end
@@ -6791,7 +6794,16 @@ end
 -- ============================================================
 -- TIERS: free (trimmed) < premium (VIP) < plus (top). The Free loadstring sets _G.JJS_FREE=true; the Plus
 -- loadstring sets _G.JJS_PLUS=true and unlocks everything premium has PLUS the plus-only extras.
-local VX_TIER = (_G.JJS_FREE and "free") or ((_G.JJS_PLUS or _G.JJS_PLUSS) and "plus") or "premium"
+-- TIER PRECEDENCE — order matters. `_G` PERSISTS between executions in most executors, so once you have run the
+-- FREE loadstring in a session, `_G.JJS_FREE` stays true forever. With FREE tested first, a later PLUS run still
+-- resolved to "free", which silently removed every premium-gated feature — including the Auto Air toggle, the
+-- ONLY thing that can turn Auto Air on. That is why Auto Air "did not work" no matter what was fixed inside it.
+-- An explicitly requested higher tier now wins, and we clear the stale lower flags so nothing can resurrect them.
+if _G.JJS_PLUS or _G.JJS_PLUSS or _G.JJS_PREMIUM or _G.JJS_PREM then _G.JJS_FREE = nil end
+local VX_TIER = ((_G.JJS_PLUS or _G.JJS_PLUSS) and "plus")
+	or ((_G.JJS_PREMIUM or _G.JJS_PREM) and "premium")
+	or (_G.JJS_FREE and "free")
+	or "premium"
 local VX_VERSION = "5.8"
 local VX_BUILD = "B58"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
@@ -11078,10 +11090,15 @@ do
     bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 BF", "Side Dash", "Back Dash", "Jump", "Teleport", "M1 Chain" } or { "Off", "M1 BF" }), Default = "Off", Callback = function(m)
         m = (type(m) == "table") and m[1] or m
         if not _G.VXBF2 then return end
+        -- ═══ WHY NO MODE EXCEPT "M1 BF" EVER FLASHED ═══ BFApi is the engine that actually produces a Black
+        -- Flash: it polls for the real M1 click (the game SINKS that click, so InputBegan never sees it) and
+        -- presses 3 at the correct animation frame. Only the "M1 BF" branch ever switched it on — every dash
+        -- mode left `bfM1On = false` and never even called bfSync(), so the proven flash engine was OFF and the
+        -- modes were left pressing 3 blind, which does nothing. Every mode now arms BFApi as well as its dash.
         if m == "Off" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false); bfM1On = false; bfSync()
         elseif m == "M1 BF" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false); bfM1On = true; bfSync()
-        elseif m == "M1 Chain" then _G.VXBF2.setBFM1(false); _G.VXBF2.setMode("M1"); _G.VXBF2.setEnabled(true)
-        else _G.VXBF2.setBFM1(false); _G.VXBF2.setMode(m); _G.VXBF2.setEnabled(true) end
+        elseif m == "M1 Chain" then _G.VXBF2.setBFM1(false); _G.VXBF2.setMode("M1"); _G.VXBF2.setEnabled(true); bfM1On = true; bfSync()
+        else _G.VXBF2.setBFM1(false); _G.VXBF2.setMode(m); _G.VXBF2.setEnabled(true); bfM1On = true; bfSync() end
     end })
     -- M1 BF as a direct TOGGLE too: the Mode dropdown callback is flaky on this UI lib (that is why Feint M1
     -- is a toggle), so selecting "M1 BF" from the dropdown sometimes never fired and M1 BF stayed off. This
