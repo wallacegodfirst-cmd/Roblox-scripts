@@ -1771,23 +1771,28 @@ do
 	do
 		local RSm = game:GetService("RunService")
 		local UISm = game:GetService("UserInputService")
-		_G.VX_M1_SUBS = _G.VX_M1_SUBS or {}
+		-- RE-EXECUTE SAFETY: _G survives between runs. Keeping the old subscriber table would leave DEAD closures
+		-- from the previous script instance registered, and guarding the poll on a sticky flag meant the poll was
+		-- never re-created on a second run - so every subscriber (Down Slam, Uppercut, M1 Chain) silently stopped
+		-- working the moment you re-executed. Always start fresh and always reconnect.
+		if _G.VX_M1_POLL_CONN then pcall(function() _G.VX_M1_POLL_CONN:Disconnect() end) end
+		if _G.VX_KEY_POLL_CONN then pcall(function() _G.VX_KEY_POLL_CONN:Disconnect() end) end
+		_G.VX_M1_SUBS = {}
 		_G.VX_M1_SUB = function(key, fn)            -- subscribe: VX_M1_SUB("uppercut", myHandler); pass nil to remove
 		-- NB: NOT named VX_ON_M1 - that global already exists later in the file as a zero-arg click stamper.
 			if type(key) ~= "string" then return end
 			_G.VX_M1_SUBS[key] = (type(fn) == "function") and fn or nil
 		end
-		_G.VX_KEY_SUBS = _G.VX_KEY_SUBS or {}
+		_G.VX_KEY_SUBS = {}
 		_G.VX_ON_KEY = function(key, fn)           -- subscribe: VX_ON_KEY("autoair", function(kc) ... end)
 			if type(key) ~= "string" then return end
 			_G.VX_KEY_SUBS[key] = (type(fn) == "function") and fn or nil
 		end
-		if not _G.VX_KEY_POLLING then
-			_G.VX_KEY_POLLING = true
+		do
 			local WATCH = { Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.KeyCode.Four,
 				Enum.KeyCode.R, Enum.KeyCode.Space, Enum.KeyCode.Q, Enum.KeyCode.E, Enum.KeyCode.G }
 			local wasKey = {}
-			RSm.RenderStepped:Connect(function()
+			_G.VX_KEY_POLL_CONN = RSm.RenderStepped:Connect(function()
 				if UISm:GetFocusedTextBox() then return end
 				for _, kc in ipairs(WATCH) do
 					local ok, down = pcall(function() return UISm:IsKeyDown(kc) end)
@@ -1800,10 +1805,9 @@ do
 				end
 			end)
 		end
-		if not _G.VX_M1_POLLING then
-			_G.VX_M1_POLLING = true
+		do
 			local wasDown = false
-			RSm.RenderStepped:Connect(function()
+			_G.VX_M1_POLL_CONN = RSm.RenderStepped:Connect(function()
 				local ok, down = pcall(function() return UISm:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) end)
 				if not ok then return end
 				if down and not wasDown and not UISm:GetFocusedTextBox() then
@@ -3452,11 +3456,20 @@ do
 	local on, last, climbing = false, 0, false
 	local ANIMS = { jump = "rbxassetid://134343219970072", parkRight = "rbxassetid://113609963676386", parkLeft = "rbxassetid://94327920127463", fall = "rbxassetid://126572575938378", land = "rbxassetid://97446412066176" }
 	local tracks = {}
+	local sideTracks = {}   -- declared here so the shared animator-cache invalidator below can clear it
 	local function myChar() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
 	local function myHRP() local c = myChar(); return c and c:FindFirstChild("HumanoidRootPart") end
 	local function animatorOf() local c = myChar(); local h = c and c:FindFirstChildOfClass("Humanoid"); return h and h:FindFirstChildOfClass("Animator") end
+	-- ANIMATION CACHE INVALIDATION: a respawn/character swap creates a NEW Animator, and a track loaded on the
+	-- old one just silently refuses to play - which is exactly "parkour works but does no animation".
+	local trackAnimator = nil
+	local function freshAnimator()
+		local a = animatorOf()
+		if a ~= trackAnimator then trackAnimator = a; table.clear(tracks); table.clear(sideTracks) end
+		return a
+	end
 	local function play(key)
-		local a = animatorOf(); if not a then return end
+		local a = freshAnimator(); if not a then return end
 		local t = tracks[key]
 		if not t then local anim = Instance.new("Animation"); anim.AnimationId = ANIMS[key]; local ok, tr = pcall(function() return a:LoadAnimation(anim) end); if ok and tr then t = tr; tracks[key] = tr end end
 		if t then pcall(function() t:Play() end) end
@@ -3476,10 +3489,9 @@ do
 		end
 		return false
 	end
-	local sideTracks = {}
 	local function sideTrack(key)  -- looped wall-run track per side (parkLeft / parkRight)
+		local a = freshAnimator(); if not a then return nil end
 		if sideTracks[key] then return sideTracks[key] end
-		local a = animatorOf(); if not a then return nil end
 		local anim = Instance.new("Animation"); anim.AnimationId = ANIMS[key]
 		local ok, t = pcall(function() return a:LoadAnimation(anim) end)
 		if ok and t then t.Looped = true; sideTracks[key] = t end
