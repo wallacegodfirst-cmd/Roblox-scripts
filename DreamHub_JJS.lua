@@ -1750,6 +1750,62 @@ do
 	_G.VX_LAST_CLICK = 0
 	UIS.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then _G.VX_LAST_CLICK = tick() end end)
 	pcall(function() LPc:GetMouse().Button1Down:Connect(function() _G.VX_LAST_CLICK = tick() end) end)
+
+	-- ═══ SHARED REAL-M1 DETECTOR (_G.VX_ON_M1) ═══════════════════════════════════════════════════════════════
+	-- THE GAME SINKS THE M1 CLICK. InputBegan and Mouse.Button1Down fire for GUI/empty clicks but NOT for a real
+	-- attack click, which is why every feature bound to them silently never ran (Auto Uppercut, Auto Down Slam).
+	-- The only reliable detector is polling the raw button state and catching the rising edge - the same trick
+	-- the working Black Flash engine uses. One poll here, and any module can subscribe.
+	do
+		local RSm = game:GetService("RunService")
+		local UISm = game:GetService("UserInputService")
+		_G.VX_M1_SUBS = _G.VX_M1_SUBS or {}
+		_G.VX_M1_SUB = function(key, fn)            -- subscribe: VX_M1_SUB("uppercut", myHandler); pass nil to remove
+		-- NB: NOT named VX_ON_M1 - that global already exists later in the file as a zero-arg click stamper.
+			if type(key) ~= "string" then return end
+			_G.VX_M1_SUBS[key] = (type(fn) == "function") and fn or nil
+		end
+		_G.VX_KEY_SUBS = _G.VX_KEY_SUBS or {}
+		_G.VX_ON_KEY = function(key, fn)           -- subscribe: VX_ON_KEY("autoair", function(kc) ... end)
+			if type(key) ~= "string" then return end
+			_G.VX_KEY_SUBS[key] = (type(fn) == "function") and fn or nil
+		end
+		if not _G.VX_KEY_POLLING then
+			_G.VX_KEY_POLLING = true
+			local WATCH = { Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.KeyCode.Four,
+				Enum.KeyCode.R, Enum.KeyCode.Space, Enum.KeyCode.Q, Enum.KeyCode.E, Enum.KeyCode.G }
+			local wasKey = {}
+			RSm.RenderStepped:Connect(function()
+				if UISm:GetFocusedTextBox() then return end
+				for _, kc in ipairs(WATCH) do
+					local ok, down = pcall(function() return UISm:IsKeyDown(kc) end)
+					if ok then
+						if down and not wasKey[kc] then
+							for _, fn in pairs(_G.VX_KEY_SUBS) do task.spawn(function() pcall(fn, kc) end) end
+						end
+						wasKey[kc] = down
+					end
+				end
+			end)
+		end
+		if not _G.VX_M1_POLLING then
+			_G.VX_M1_POLLING = true
+			local wasDown = false
+			RSm.RenderStepped:Connect(function()
+				local ok, down = pcall(function() return UISm:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) end)
+				if not ok then return end
+				if down and not wasDown and not UISm:GetFocusedTextBox() then
+					_G.VX_LAST_CLICK = tick()          -- keep the BF engine's timing stamp fresh too
+					-- A click WE injected must still stamp the timing above (the flash needs it) but must NOT
+					-- re-enter the subscribers, or a chain's own M1 would retrigger the chain / bump the combo count.
+					if tick() >= (tonumber(_G.VX_SYNTH_CLICK) or 0) then
+						for _, fn in pairs(_G.VX_M1_SUBS) do task.spawn(function() pcall(fn) end) end
+					end
+				end
+				wasDown = down
+			end)
+		end
+	end
 	_G.VX_IS_M1 = function(track)
 		if not track or not track.Animation then return false end
 		local id = tostring(track.Animation.AnimationId):match("%d+")
@@ -2848,6 +2904,7 @@ do
     -- A synthetic click CANCELS an in-flight Crow ult, so every scripted click is suppressed while it is out.
     local function VMouseClick()
         if tick() < (tonumber(_G.VX_CROW_FLYING) or 0) then return end
+        _G.VX_SYNTH_CLICK = tick() + 0.25   -- ours: the shared M1 detector must not re-enter its subscribers
         VIM:SendMouseButtonEvent(0, 0, 0, true, game, 0); task.wait(0.03); VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0)
     end
     local function ReleaseAll() for k in pairs(R.held) do pcall(function() VIM:SendKeyEvent(false, k, false, game) end) end table.clear(R.held) end
@@ -3052,7 +3109,7 @@ do
         R.bfCD = tick(); R.bfActive = true; ReleaseAll()
         -- Arc OVER them to the back (pure CFrame yArc, no physics jump = no fling), THEN M1+flash.
         aimCameraAt(e.Position)
-        dashToBack(t, { duration = 0.30, extraSweep = math.pi * 0.25, yArc = 7 })
+        dashToBack(t, { duration = 0.26, extraSweep = math.pi * 0.45, yArc = 6 })   -- same sweep as Side Dash, plus the arc over them
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
         task.wait(0.05); m1ThenBF()
@@ -3086,11 +3143,9 @@ do
         R.backDashT = tick()
         local jumpThis = R.backDashAlt == false   -- false after the 2nd toggle -> the jump variant
         aimCameraAt(e.Position)
-        dashToBack(t, {
-            yArc       = jumpThis and 4 or 0,             -- arc OVER them (pure CFrame - NOT a physics jump)
-            duration   = jumpThis and 0.30 or 0.24,
-            extraSweep = math.pi * (jumpThis and 0.30 or 0.45),
-        })
+        -- Same arc as the (good) Side Dash chain; the jump variant only adds a small vertical lift so the
+        -- movement reads identically instead of the shorter/flatter sweep it used before.
+        dashToBack(t, { duration = 0.26, extraSweep = math.pi * 0.45, yArc = jumpThis and 4 or 0 })
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
         task.wait(0.05); m1ThenBF(); task.delay(0.3, function() R.bfActive = false end)
@@ -3104,11 +3159,9 @@ do
         -- M1 CHAIN: dash AROUND them (real dash key + anti-fling arc) with the camera locked on, ending on their
         -- back — then flash. Previously this side-dashed and then TELEPORTED onto the back (faceEnemyBack was a
         -- hard CFrame write), which is what read as a blink instead of a dash.
-        -- ORDER (per request): M1 first, THEN the side dash, THEN the flash.
+        -- Your own M1 is the trigger, so we do NOT throw another one: side dash around them, then flash.
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.4   -- camera stays on them through the whole chain
-        VMouseClick()                                                    -- 1) the M1
-        task.wait(0.10)
-        dashToBack(t, { duration = 0.28, extraSweep = math.pi * 0.5 })   -- 2) the side dash around to their back
+        dashToBack(t, { duration = 0.28, extraSweep = math.pi * 0.5 })   -- side dash around to their back
         faceBackOf(t)
         local e = t and t:FindFirstChild("HumanoidRootPart")
         if e then R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0 end
@@ -3165,9 +3218,6 @@ do
         if input.KeyCode == Settings.BFKey and Settings.Enabled and Settings.Mode ~= "M1" then
             doBlackFlash(); return
         end
-        if input.UserInputType == Enum.UserInputType.MouseButton1 and Settings.Enabled and Settings.Mode == "M1" then
-            task.spawn(doBFM1Chain); return
-        end
         -- CLICK path for BF: covers characters whose M1 anim isn't in the database (the anim path can't catch
         if input.UserInputType == Enum.UserInputType.MouseButton1 and (Settings.AutoBF or Settings.BFM1) then
             if tick() - R.bfCD >= Settings.BFCooldown then
@@ -3189,6 +3239,14 @@ do
         local p = GetRoot()
         if p then pcall(function() p.AssemblyLinearVelocity = Vector3.zero; p.AssemblyAngularVelocity = Vector3.zero end) end
     end
+    -- M1 CHAIN: fires on EVERY real M1 (poll-based detector; the game sinks the click so InputBegan cannot see
+    -- it). One M1 -> side dash around them -> black flash. No counting, no waiting for a 3rd swing.
+    if _G.VX_M1_SUB then
+        _G.VX_M1_SUB("vxbf2_m1chain", function()
+            if Settings.Enabled and Settings.Mode == "M1" then doBFM1Chain() end
+        end)
+    end
+
     _G.VXBF2 = {
         setEnabled = function(v) Settings.Enabled = v == true; if not Settings.Enabled then vxbfStop() end end,
         setMode = function(m) if type(m) == "string" then vxbfStop(); Settings.Mode = m end end,   -- Side Dash / Back Dash / Jump / Teleport / M1
@@ -3712,12 +3770,9 @@ do
 			end
 		end
 	end
-	UIS.InputBegan:Connect(function(input, _)   -- (no gp bail - see note above; textbox check keeps typing safe)
-		if UIS:GetFocusedTextBox() then return end
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			onM1()
-		end
-	end)
+	-- REAL M1s come from the shared poll detector, NOT InputBegan: the game sinks the attack click, so the old
+	-- InputBegan hook only ever fired on GUI/empty clicks = Auto Uppercut / Down Slam never ran at all.
+	if _G.VX_M1_SUB then _G.VX_M1_SUB("m1combo", function() if not UIS:GetFocusedTextBox() then onM1() end end) end
 	LP.CharacterAdded:Connect(function()
 		task.wait(0.4)
 		spaceUp()
@@ -3952,11 +4007,15 @@ do
 	end
 	pcall(function() conns[#conns + 1] = mouse.Button1Down:Connect(function()
 		if not clickActive() then return end
+		if locked and locked.Parent then return end          -- STICKY: once locked, in-game clicks never change or drop it
 		local m = enemyUnderMouse(); if not m then return end
-		if locked == m then release() else locked = m; makeHL(m) end   -- click the SAME locked user again = turn the outline off
+		locked = m; makeHL(m)                                -- first click picks the target; only the GUI toggle clears it
 	end) end)
 	conns[#conns + 1] = RunService.Heartbeat:Connect(function()
-		if locked and not locked.Parent then release() end             -- target despawned / died
+		if locked then
+			local _lh = locked:FindFirstChildOfClass("Humanoid")
+			if not locked.Parent or (_lh and _lh.Health <= 0) then release() end   -- despawned OR dead (a lingering corpse used to lock you out)
+		end
 		if locked and hl and hl.Adornee ~= locked then pcall(function() hl.Adornee = locked end) end
 	end)
 	_G.VX_LOCK = {
@@ -3964,7 +4023,7 @@ do
 		set = function(m) if m and m.Parent then locked = m; makeHL(m) else locked = nil; clearHL() end end,     -- programmatic lock + red outline (set(nil) clears it) - used by Auto Rika Sword
 		want = function(key, v) want[key] = v == true; if not clickActive() then release() end end,  -- register a feature that needs click-to-lock; auto-clears the lock when nothing needs it
 		setColor = function(c) if typeof(c) == "Color3" then curColor = c; if hl then pcall(function() hl.OutlineColor = c end) end end end,   -- Lock Color dropdown
-		manual = function(v) manualOn = (v == true); want["manual"] = manualOn; if not clickActive() then release() end end,   -- the user's own Lock Target toggle
+		manual = function(v) manualOn = (v == true); want["manual"] = manualOn; if not manualOn then release() end end,   -- turning the toggle off ALWAYS clears, even if another feature still wants click-lock   -- the user's own Lock Target toggle
 		manualActive = function() return manualOn == true end,   -- ONLY a user click-lock retargets combat (a programmatic Rika lock must not)
 		_cleanup = function() for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end; clearHL() end,  -- called by a later re-run to remove this run's handlers + outline
 	}
@@ -6170,7 +6229,7 @@ do
 		return nil
 	end
 	local lastThree = 0   -- you pressed 3 (Lapse Blue etc): R now means REVERSAL RED, so the mid-M1 auto-R must stand down
-	UIS.InputBegan:Connect(function(input, gpe)
+	local function __airHandler(input, gpe)
 		-- DON'T bail on gpe: pressing 1/2/3/R to use a move sets gpe=true (the game bound the key), and those
 		-- are EXACTLY the presses Auto Air chains off. Only skip while you're TYPING in a textbox.
 		if UIS:GetFocusedTextBox() then return end
@@ -6498,7 +6557,20 @@ do
 				task.delay(0.12, function() if autoAirOn then tapKey(Enum.KeyCode.One) end end)
 			end
 		end
-	end)
+	end
+	-- Driven by BOTH the normal input event AND a raw key poll. If the game sinks an ability key, InputBegan
+	-- never fires for it and every Auto Air sequence is silently dead - the poll sees the press regardless.
+	-- A short per-key stamp stops the two paths from double-running the same press.
+	local __airLast = {}
+	local function __airOnce(kc)
+		if not kc then return end
+		if __airLast[kc] and tick() - __airLast[kc] < 0.05 then return end   -- ~3 frames: collapses one press seen by both paths, never a real follow-up
+		__airLast[kc] = tick()
+		__airHandler({ KeyCode = kc, UserInputType = Enum.UserInputType.Keyboard }, false)
+	end
+	UIS.InputBegan:Connect(function(input, gpe) if input and input.KeyCode and input.KeyCode ~= Enum.KeyCode.Unknown then __airOnce(input.KeyCode) else __airHandler(input, gpe) end end)
+	if _G.VX_ON_KEY then _G.VX_ON_KEY("autoair", function(kc) __airOnce(kc) end) end
+	if _G.VX_M1_SUB then _G.VX_M1_SUB("autoair_m1tgt", function() local m = landedM1Target(); if m then lastM1Tgt = m end end) end   -- real M1s only come from the poll
 	-- AUTO AIR anim triggers: Twofold Kick (Gojo) kicks them UP -> click R (RightActivated at the target).
 	-- Gambler: your landed M1 -> fire Rough Energy (the 'click 3 for you' launcher).
 	AutoAirApi_set = function(v) autoAirOn = v == true end
@@ -11147,7 +11219,9 @@ do
                 -- Stamp the click for BOTH M1 BF and Auto BF. The engine's universal fallback (fire on any
                 -- Action-priority attack anim right after a click) needs this stamp; without it Auto BF only
                 -- caught the handful of hardcoded windup ids and missed most characters' M1 windups.
-                if not (bfM1On or bfAutoOn) then wasDown = false; return end
+                -- Gate on the ENGINE's real state, not the GUI toggles: dash modes borrow the engine
+                -- transiently, and the old check made the poll bail during exactly those borrows = no flash.
+                if not (bfM1On or bfAutoOn or _G.VX_BFAPI_ON) then wasDown = false; return end
                 local down = UISbf:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
                 if down and not wasDown and not UISbf:GetFocusedTextBox() then onClick() end
                 wasDown = down
@@ -11241,11 +11315,15 @@ do
     do
         local lockSub = CombatPage:SubPage({ Name = "Lock Target", Columns = 2 })
         local lkSec = lockSub:Section({ Name = "Lock Target", Side = 1 })
-        pcall(function() lkSec:Label("Turn on, then CLICK an enemy to lock. Click them again to unlock.") end)
+        pcall(function() lkSec:Label("Turn on, then CLICK an enemy. It STAYS locked - in-game clicks never change it. Turn this toggle off to clear. Used by the Black Flash chains + dashes.") end)
         lkSec:Toggle({ Name = "Lock Target (click an enemy)", Default = false, Callback = function(b) if _G.VX_LOCK and _G.VX_LOCK.manual then _G.VX_LOCK.manual(b) end end })
-        lkSec:Dropdown({ Name = "Lock Color", Items = { "Red", "Cyan", "Green", "Purple", "Orange", "White" }, Default = "Red", Callback = function(c)
+        lkSec:Dropdown({ Name = "Lock Color", Items = { "Red", "Cyan", "Green", "Purple", "Orange", "White", "Yellow", "Pink", "Blue", "Lime", "Black", "Gold", "Teal", "Magenta" }, Default = "Red", Callback = function(c)
             c = (type(c) == "table") and c[1] or c
-            local map = { Red = Color3.fromRGB(255, 46, 58), Cyan = Color3.fromRGB(0, 225, 255), Green = Color3.fromRGB(70, 225, 90), Purple = Color3.fromRGB(180, 90, 255), Orange = Color3.fromRGB(255, 150, 40), White = Color3.fromRGB(255, 255, 255) }
+            local map = { Red = Color3.fromRGB(255, 46, 58), Cyan = Color3.fromRGB(0, 225, 255), Green = Color3.fromRGB(70, 225, 90),
+                Purple = Color3.fromRGB(180, 90, 255), Orange = Color3.fromRGB(255, 150, 40), White = Color3.fromRGB(255, 255, 255),
+                Yellow = Color3.fromRGB(255, 235, 60), Pink = Color3.fromRGB(255, 120, 200), Blue = Color3.fromRGB(60, 120, 255),
+                Lime = Color3.fromRGB(160, 255, 60), Black = Color3.fromRGB(10, 10, 12), Gold = Color3.fromRGB(255, 200, 70),
+                Teal = Color3.fromRGB(0, 200, 180), Magenta = Color3.fromRGB(255, 60, 220) }
             if _G.VX_LOCK and _G.VX_LOCK.setColor and map[c] then _G.VX_LOCK.setColor(map[c]) end
         end })
     end
