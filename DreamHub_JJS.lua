@@ -2854,15 +2854,25 @@ do
     -- Throw the M1 and let the PROVEN engine (BFApi, armed by the Mode dropdown) time the key-3 press off your
     -- real swing animation. We deliberately do NOT press 3 ourselves here — a blind press does nothing, and two
     -- presses would fight. The pressBF fallback only runs if BFApi is unavailable for some reason.
+    -- BORROW the flash engine for THIS beat only, then give it straight back. Leaving it armed is what made
+    -- every ordinary M1 auto-flash while the user's own "M1 Black Flash" toggle was off. _G.VX_BFAPI_WANT holds
+    -- the user's real choice (bfM1On or bfAutoOn); we restore exactly that, never just "on".
     local function m1ThenBF()
         -- Do NOT touch R.bfCD here: it is doBFM1Chain's own entry gate, and zeroing it made the BF Cooldown
         -- slider unreachable. BFApi keeps its own separate cooldown, so there is nothing to clear.
-        -- If the flash engine got switched off behind our back (the standalone "M1 Black Flash" toggle writes the
-        -- same variable the mode dropdown does), re-arm it — an active dash mode always wants flashes.
-        if not _G.VX_BFAPI_ON and _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(true) end) end
+        local borrowed = false
+        if not _G.VX_BFAPI_ON and _G.VX_BFAPI_SET then
+            borrowed = true
+            pcall(function() _G.VX_BFAPI_SET(true) end)
+        end
         VMouseClick()
-        if not _G.VX_BFAPI_ON then      -- still no engine -> best-effort blind press so something happens
+        if not _G.VX_BFAPI_ON then      -- no engine at all -> best-effort blind press so something happens
             task.wait(0.19); pressBF()
+        end
+        if borrowed then
+            task.delay(0.6, function()  -- long enough for the swing + flash frame, then hand it back
+                if _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(_G.VX_BFAPI_WANT == true) end) end
+            end)
         end
     end
     local function GetClosestTarget(maxD)
@@ -11101,19 +11111,21 @@ do
     end
     -- M1 BF AND Auto BF both run your verbatim AutoBlackFlash engine (the anim watcher that presses 3 on the
     -- BF windup anims) — so M1 BF = your exact script running on your character's M1 + the click press below.
-    local function bfSync() if BFApi then BFApi.SetEnabled(bfAutoOn or bfM1On) end end
+    -- bfSync is the ONLY place the user's real flash preference is expressed. Record it globally so a dash
+    -- mode that temporarily borrows the engine can restore exactly this, instead of leaving it stuck on.
+    local function bfSync() _G.VX_BFAPI_WANT = (bfAutoOn or bfM1On) and true or false; if BFApi then BFApi.SetEnabled(_G.VX_BFAPI_WANT) end end
     bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 BF", "Side Dash", "Back Dash", "Jump", "Teleport", "M1 Chain" } or { "Off", "M1 BF" }), Default = "Off", Callback = function(m)
         m = (type(m) == "table") and m[1] or m
         if not _G.VXBF2 then return end
-        -- ═══ WHY NO MODE EXCEPT "M1 BF" EVER FLASHED ═══ BFApi is the engine that actually produces a Black
-        -- Flash: it polls for the real M1 click (the game SINKS that click, so InputBegan never sees it) and
-        -- presses 3 at the correct animation frame. Only the "M1 BF" branch ever switched it on — every dash
-        -- mode left `bfM1On = false` and never even called bfSync(), so the proven flash engine was OFF and the
-        -- modes were left pressing 3 blind, which does nothing. Every mode now arms BFApi as well as its dash.
+        -- BFApi is the engine that actually produces a Black Flash (it polls for the real M1 click, which the
+        -- game sinks, and presses 3 on the correct animation frame). A dash mode needs it — but ONLY for its own
+        -- flash beat. Arming it permanently here is what made EVERY M1 auto-flash with the "M1 Black Flash"
+        -- toggle off. So the dropdown no longer touches bfM1On for dash modes: the mode borrows the engine for
+        -- ~0.6s inside m1ThenBF and hands it straight back to whatever YOU chose (bfM1On / bfAutoOn).
         if m == "Off" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false); bfM1On = false; bfSync()
         elseif m == "M1 BF" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false); bfM1On = true; bfSync()
-        elseif m == "M1 Chain" then _G.VXBF2.setBFM1(false); _G.VXBF2.setMode("M1"); _G.VXBF2.setEnabled(true); bfM1On = true; bfSync()
-        else _G.VXBF2.setBFM1(false); _G.VXBF2.setMode(m); _G.VXBF2.setEnabled(true); bfM1On = true; bfSync() end
+        elseif m == "M1 Chain" then _G.VXBF2.setBFM1(false); _G.VXBF2.setMode("M1"); _G.VXBF2.setEnabled(true); bfSync()
+        else _G.VXBF2.setBFM1(false); _G.VXBF2.setMode(m); _G.VXBF2.setEnabled(true); bfSync() end
     end })
     -- M1 BF as a direct TOGGLE too: the Mode dropdown callback is flaky on this UI lib (that is why Feint M1
     -- is a toggle), so selecting "M1 BF" from the dropdown sometimes never fired and M1 BF stayed off. This
