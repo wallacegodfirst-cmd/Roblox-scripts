@@ -1850,7 +1850,7 @@ _G.VX_CLAIMOWN = vxClaimOwnership
 -- TP Step slider genuinely makes the teleport gentler if a server still sets you back.
 local VX_TP_SPEED = 60   -- studs PER FRAME (back-compat local; the LIVE value the glide reads is _G.VX_TP_SPEED)
 _G.VX_TP_SPEED  = tonumber(_G.VX_TP_SPEED) or 60      -- studs/frame the glide steps in (lower = gentler if a server still sets you back)
-_G.VX_TP_METHOD = _G.VX_TP_METHOD or "Instant"          -- "Glide" (default: anti-setback stepping + AC pass each hop) | "Instant" (single snap) | "Auto" (snap short, glide long)
+_G.VX_TP_METHOD = _G.VX_TP_METHOD or "Anchor"          -- "Glide" (default: anti-setback stepping + AC pass each hop) | "Instant" (single snap) | "Auto" (snap short, glide long)
 -- game updates -> teleports set back). Try the known path first, else search for any RemoteEvent named
 local vxACRemote = nil
 local vxACStamp = 0
@@ -1993,7 +1993,7 @@ function vxHardWrite(char, hrp, cf)
 			end
 		end
 		local seatWeld = hrp:FindFirstChild("SeatWeld"); if seatWeld then seatWeld:Destroy() end
-		hrp.Anchored = false
+		if not _G.VX_TP_ANCHORING then hrp.Anchored = false end
 		-- PIVOT MUST BE THE HRP. PivotTo moves the model's WorldPivot; if PrimaryPart is nil the HRP lands at
 		-- an offset, and the re-pin (which measures HRP vs target) then never converges - it re-writes every
 		-- frame for the whole hold. That reads exactly as "Instant did nothing / I jitter".
@@ -2104,18 +2104,28 @@ local function safeTeleport(targetCFrame, holdTime)
 	-- engage the lock anchored to WHERE WE ARE, so the Heartbeat can't yank us to the final spot mid-glide
 	vxCurrentTargetCF = CFrame.new(from) * targetCFrame.Rotation
 	vxTeleportLock = true
-	local instant = (method == "Instant") or (method == "Auto" and dist <= step * 1.5)
+	local anchored = (method == "Anchor")
+	local instant = anchored or (method == "Instant") or (method == "Auto" and dist <= step * 1.5)
 	local glideSecs = 0
 	if instant or dist < 1 then
 		vxCurrentTargetCF = targetCFrame
 		vxNoclipOff(myGen)                      -- reclaim collisions a superseded glide leaked
 		task.spawn(function()
+			-- ANCHOR MODE: an anchored part is not physics-simulated, so a server correction applied as
+			-- velocity or a BodyMover cannot move you while it is set. Anchor -> write -> unanchor.
+			local anchoredPart = nil
+			if anchored then
+				local c0 = vxMyChar(); local h0 = c0 and c0:FindFirstChild("HumanoidRootPart")
+				if h0 then anchoredPart = h0; _G.VX_TP_ANCHORING = true; pcall(function() h0.Anchored = true end) end
+			end
 			-- ~15 FRAMES OF INSISTENCE instead of ONE. A single frame's write can be lost to a server-owned
 			-- assembly, a weld from someone else's ability, hitstun, a grab or a seat. Those conditions
 			-- basically never occur in an empty private server and occur constantly in a public one - which
 			-- is the whole private-vs-public difference. Every write is announced on the AC channel.
 			for _ = 1, 15 do
-				if myGen ~= vxTeleGen then return end                 -- superseded by a newer teleport
+				-- BREAK, never RETURN: returning here would skip the unanchor below and leave you ANCHORED
+				-- (= frozen in place, permanently) whenever a newer teleport superseded this one.
+				if myGen ~= vxTeleGen then break end                  -- superseded by a newer teleport
 				local c2 = vxMyChar(); local h2 = c2 and c2:FindFirstChild("HumanoidRootPart")
 				if not h2 then break end
 				if (h2.Position - targetCFrame.Position).Magnitude > 0.35 then
@@ -2124,7 +2134,17 @@ local function safeTeleport(targetCFrame, holdTime)
 				end
 				task.wait()
 			end
+			if anchoredPart then _G.VX_TP_ANCHORING = false; pcall(function() anchoredPart.Anchored = false end) end   -- ALWAYS release
 		end)
+		-- WATCHDOG: nothing may EVER leave you anchored (that would freeze you in place). Runs independently
+		-- of the loop above, so even an unexpected error cannot strand you.
+		if anchored then
+			task.delay(1.5, function()
+				_G.VX_TP_ANCHORING = false
+				local cw = vxMyChar(); local hw = cw and cw:FindFirstChild("HumanoidRootPart")
+				if hw and hw.Anchored then pcall(function() hw.Anchored = false end) end
+			end)
+		end
 		-- SERVER-AUTHORITATIVE DETECTION: if we are still nowhere near the target a moment later, the server
 		-- IS enforcing and no amount of client insistence wins. Fall back to the velocity glide, which the
 		-- server just sees as ordinary movement, and say so instead of looking silently broken.
@@ -3659,7 +3679,7 @@ do
 	end
 	TPApi = {
 		setSpeed = function(v) if type(v) == "number" then _G.VX_TP_SPEED = v end end,
-		setMethod = function(m) if type(m) == "table" then m = m[1] end _G.VX_TP_METHOD = (m == "Instant" or m == "Glide") and m or "Auto" end,
+		setMethod = function(m) if type(m) == "table" then m = m[1] end _G.VX_TP_METHOD = (m == "Instant" or m == "Glide" or m == "Anchor") and m or "Auto" end,
 		up = function() local r = hrp(); if r then vxTeleportHard(r.Position + Vector3.new(0, 120, 0), 1.25) end end,
 		spawn = function()
 			-- FindFirstChildOfClass is NOT recursive; JJS spawns sit inside workspace.Map, so the old call found
@@ -3854,59 +3874,82 @@ do
 	-- while holding Space. The bug was never this logic - it was the TRIGGER (InputBegan never fires for a
 	-- sunk attack click). The trigger is now the shared poll; the behaviour below is byte-for-byte the
 	-- original, so what worked on FREE works again.
-	local function onM1()
+	-- ═══ SWING COUNTING IS ANIMATION-DRIVEN, NOT CLICK-DRIVEN ═══
+	-- Counting CLICKS is why Uppercut "only worked if I paused": you can click faster than the game swings,
+	-- clicks get deduped/dropped by the input paths, and injected clicks from other features add phantom
+	-- counts - so the count and the real combo drift apart. The per-character M1 ANIMATION database in this
+	-- module (COMBO_IDS, built above) is exact: one entry plays per real landed swing. It was built and then
+	-- never read by anything. Now it drives the counter, so 1-2-3-4 always matches what you actually threw.
+	local function onSwing()
 		if mode == "Off" then return end
 		local now = tick()
-		if now - State.lastFire < Config.Cooldown then return end
-		if not State.remote then resolveV5Remote() end
+		if now - State.lastM1 > Config.M1ResetWindow then State.m1Count = 0 end
+		State.lastM1 = now
+		State.m1Count = State.m1Count + 1
+		local n = State.m1Count
+		if _G.VX_M1_DEBUG then print("[M1COMBO] swing " .. n .. "  mode=" .. tostring(mode)) end
+
 		if mode == "Down Slam" then
-			-- JJS's down slam is an AIRBORNE FALLING M1 - firing a direction remote while standing on the
-			-- floor cannot produce it, which is why this did nothing. Reproduce what a real player does:
-			-- hop, then click while falling. The remote is still sent (harmless if the server ignores it).
-			State.lastFire = now
-			local c = myModel()
-			local h = c and c:FindFirstChildOfClass("Humanoid")
-			local grounded = (h == nil) or (h.FloorMaterial ~= Enum.Material.Air)
-			task.spawn(function()
-				if grounded then pcall(jump); task.wait(0.12) end
-				fireDir("Down")
-				_G.VX_SYNTH_CLICK = tick() + 0.08    -- just long enough to ignore OUR click (realM1 takes ~0.04s); a longer window ate the user's own next M1
-				pcall(realM1)                        -- the airborne M1 IS the slam
-			end)
+			-- JJS's down slam is an AIRBORNE FALLING M1. Firing a direction remote while standing on the floor
+			-- cannot produce it. On the 3rd swing: hop, then click while falling - exactly what a player does.
+			if n >= 3 then
+				State.m1Count = 0
+				State.lastFire = now
+				task.spawn(function()
+					local c = myModel()
+					local h = c and c:FindFirstChildOfClass("Humanoid")
+					if (h == nil) or (h.FloorMaterial ~= Enum.Material.Air) then pcall(jump); task.wait(0.12) end
+					fireDir("Down")                       -- harmless if the server ignores the argument
+					_G.VX_SYNTH_CLICK = tick() + 0.08     -- ignore OUR click, not the user's next one
+					pcall(realM1)                         -- the airborne M1 IS the slam
+				end)
+			end
+
 		elseif mode == "Uppercut" then
-			-- Uppercut: count M1s (1-3 stay normal punches)
-			if now - State.lastM1 > Config.M1ResetWindow then State.m1Count = 0 end
-			State.lastM1 = now
-			State.m1Count = State.m1Count + 1
-			local n = State.m1Count
+			-- Hold Space INTO the 4th swing = the launcher.
 			if n == 3 then
-				-- hold Space like a real player winding the launcher into the 4th
 				spaceDown()
 				local token = {}
 				State.spaceToken = token
-				-- safety: if the 4th M1 never comes, drop Space
 				task.delay(2.0, function()
-					if State.spaceToken == token then
-						spaceUp(); State.spaceToken = nil
-						State.m1Count = 0
-					end
+					if State.spaceToken == token then spaceUp(); State.spaceToken = nil; State.m1Count = 0 end
 				end)
 			elseif n >= 4 then
 				State.m1Count = 0
 				State.lastFire = now
 				State.spaceToken = nil
-				spaceDown()   -- ensure held even if the 3rd was missed
-				-- CRITICAL: let the game's own 4th-M1 message reach the server FIRST, then send the launcher.
-				-- Firing "Up" at t=0 races it.
-				task.delay(Config.UpFireDelay, function()
-					if mode == "Uppercut" then fireDir(Config.UpArg) end
-				end)
-				task.delay(Config.UpFireDelay2, function()
-					if mode == "Uppercut" then fireDir(Config.UpArg) end
-				end)
-				task.delay(Config.SpaceHold, spaceUp)
+				spaceDown()                                -- ensure held even if the 3rd was missed
+				task.delay(Config.UpFireDelay, function() if mode == "Uppercut" then fireDir(Config.UpArg) end end)
+				task.delay(Config.SpaceHold, function() spaceUp() end)
 			end
 		end
+	end
+
+	-- Hook the animator and count real swings. Re-hooks whenever the Animator instance changes (respawn /
+	-- character swap), because a track bound to a dead Animator never fires again.
+	local comboAnimator, comboConn = nil, nil
+	local function hookComboAnims()
+		local c = myModel()
+		local h = c and c:FindFirstChildOfClass("Humanoid")
+		local a = h and h:FindFirstChildOfClass("Animator")
+		if not a or a == comboAnimator then return end
+		if comboConn then pcall(function() comboConn:Disconnect() end) end
+		comboAnimator = a
+		comboConn = a.AnimationPlayed:Connect(function(track)
+			if mode == "Off" then return end
+			local ok, id = pcall(function() return tostring(track.Animation.AnimationId):match("%d+") end)
+			if not ok or not id then return end
+			if COMBO_IDS[id] then onSwing() end
+		end)
+	end
+	task.spawn(function() while true do pcall(hookComboAnims); task.wait(0.5) end end)
+
+	-- Kept for compatibility: the click paths no longer count. If the animation DB somehow misses this
+	-- character entirely, this is the safety net that still advances the combo.
+	local function onM1()
+		if mode == "Off" then return end
+		if comboConn and tick() - State.lastM1 < 1.5 then return end   -- animation path is live and counting
+		onSwing()
 	end
 	-- REAL M1s come from the shared poll detector, NOT InputBegan: the game sinks the attack click, so the old
 	-- InputBegan hook only ever fired on GUI/empty clicks = Auto Uppercut / Down Slam never ran at all.
@@ -11735,7 +11778,7 @@ do
     local quickSec = tpSub:Section({ Name = "Quick", Side = 2 })
     -- These two API functions existed but nothing ever called them, so "Instant" was unreachable and the flight
     -- speed was permanently pinned at 100 studs/s. Now they are wired up.
-    quickSec:Dropdown({ Name = "TP Method", Items = { "Instant", "Auto", "Glide" }, Default = "Instant", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
+    quickSec:Dropdown({ Name = "TP Method", Items = { "Anchor", "Instant", "Auto", "Glide" }, Default = "Anchor", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
     quickSec:Slider({ Name = "TP Speed", Min = 60, Max = 600, Default = 260, Decimals = 1, Suffix = "st/s", Callback = function(v) _G.VX_TP_VEL = tonumber(v) or 260 end })
     quickSec:Button({ Name = "Print TP Remote", Callback = function()
         local RS = game:GetService("ReplicatedStorage"); local found = 0
