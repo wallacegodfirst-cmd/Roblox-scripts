@@ -992,6 +992,8 @@ do
 		Reconnect = reconnect,
 		Status = function() return { enabled = enabled } end,
 	}
+	_G.VX_BFAPI_SET = BFApi.SetEnabled   -- lets VXBF2's dash modes re-arm the flash engine
+
 end
 
 -- ============================================================
@@ -1228,14 +1230,14 @@ do
 			diff = diff + sweepDir * extraSweep                               -- widen the arc in a stable direction (real circling)
 			local angle = startAngle + diff * e
 			local radius = startRadius + (endRadius - startRadius) * e + radialBias * math.sin(e * math.pi)
-			if radius < 3 then radius = 3 end                                 -- never INSIDE their body (that's the fling)
+			if radius < 4.5 then radius = 4.5 end                             -- never INSIDE their body (that overlap is what launches THEM)
 			local y = baseY + (tp.Y - tp0.Y) + yArc * math.sin(e * math.pi)   -- follow their height + optional jump arc
 			local pos = Vector3.new(tp.X + math.cos(angle) * radius, y, tp.Z + math.sin(angle) * radius)
 			local step = pos - lastPos
 			-- FRAMERATE-CORRECT cap (was hardcoded 1/60 = a per-FRAME cap, so high-refresh clients got a 2-4x
 			-- faster arc than intended — that is the "it whips/teleports" on a 144/240Hz monitor).
 			local nowT = tick(); local fdt = math.clamp(nowT - (lastT or nowT), 1 / 240, 1 / 15); lastT = nowT
-			local maxStep = 150 * fdt                                          -- hard cap ~150 studs/s: NOTHING can whip you across the map in one frame
+			local maxStep = 110 * fdt                                          -- cap ~110 studs/s: fast dash speed, but under the server's movement-check threshold (kick mitigation)
 			if step.Magnitude > maxStep then pos = lastPos + step.Unit * maxStep end
 			lastPos = pos
 			if _G.VX_ACPASS then _G.VX_ACPASS() end
@@ -2853,9 +2855,13 @@ do
     -- real swing animation. We deliberately do NOT press 3 ourselves here — a blind press does nothing, and two
     -- presses would fight. The pressBF fallback only runs if BFApi is unavailable for some reason.
     local function m1ThenBF()
-        R.bfCD = 0                      -- clear the stamp the mode set on entry, or the flash hook swallows this swing
+        -- Do NOT touch R.bfCD here: it is doBFM1Chain's own entry gate, and zeroing it made the BF Cooldown
+        -- slider unreachable. BFApi keeps its own separate cooldown, so there is nothing to clear.
+        -- If the flash engine got switched off behind our back (the standalone "M1 Black Flash" toggle writes the
+        -- same variable the mode dropdown does), re-arm it — an active dash mode always wants flashes.
+        if not _G.VX_BFAPI_ON and _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(true) end) end
         VMouseClick()
-        if not (_G.VX_BFAPI_ON) then    -- no working engine -> best-effort blind press so something still happens
+        if not _G.VX_BFAPI_ON then      -- still no engine -> best-effort blind press so something happens
             task.wait(0.19); pressBF()
         end
     end
@@ -2877,11 +2883,21 @@ do
     local function faceEnemyBack(t)
         local p = GetRoot(); local e = t and t:FindFirstChild("HumanoidRootPart"); if not p or not e then return end
         local fwd = Vector3.new(e.CFrame.LookVector.X, 0, e.CFrame.LookVector.Z)
-        if fwd.Magnitude > 0.01 then acPass(); p.CFrame = CFrame.new(e.Position - fwd * 3, e.Position) end
+        if fwd.Magnitude > 0.01 then acPass(); p.CFrame = CFrame.new(e.Position - fwd * 5.2, e.Position) end   -- match the lock's hold distance (was 3 = a visible yank backwards)
     end
     local function autoSide(p, e) local eR = Vector3.new(e.CFrame.RightVector.X, 0, e.CFrame.RightVector.Z); if eR.Magnitude < 0.01 then return -1 end eR = eR.Unit; local off = Vector3.new((p.Position - e.Position).X, 0, (p.Position - e.Position).Z); return (off:Dot(eR) >= 0) and 1 or -1 end
     local function chooseSide(p, e, c) if UserInputService:IsKeyDown(Enum.KeyCode.A) then return -1 end if UserInputService:IsKeyDown(Enum.KeyCode.D) then return 1 end if c == "Left" then return -1 end if c == "Right" then return 1 end return autoSide(p, e) end
     local function smoothTP(pos) local p = GetRoot(); if not p then return end acPass(); p.CFrame = CFrame.new(pos); local cc = GetChar(); if cc then pcall(function() cc:PivotTo(CFrame.new(pos)) end) end end
+    -- ALWAYS AIM AT THE BACK: turn your body AND the camera to look at their spine after any approach. Rotation
+    -- only — no position write — so it cannot shove them or trip the movement checks.
+    local function faceBackOf(t)
+        local e = t and t:FindFirstChild("HumanoidRootPart"); if not e then return end
+        local p = GetRoot(); if not p then return end
+        pcall(function()
+            p.CFrame = CFrame.lookAt(p.Position, Vector3.new(e.Position.X, p.Position.Y, e.Position.Z))
+        end)
+        aimCameraAt(e.Position)
+    end
     -- ═══ LEGIT DASH TO THE BACK (replaces the old smoothTP+faceEnemyBack teleport) ═══
     -- Presses the REAL dash key so the game plays its own dash animation, then rides the shared anti-fling arc
     -- (_G.VX_ORBIT: per-frame speed cap, collisions off, velocity zeroed, live target tracking) around to their
@@ -2949,7 +2965,7 @@ do
             -- SOFT back-hold (was a hard per-frame CFrame pin = the "teleport" feel AND the fling: pinning a body
             -- inside another every frame is a physics explosion). Now we LERP toward the back point with a
             -- per-frame step cap, so you glide the last few studs like a player adjusting, and never snap.
-            local pos = e.Position + (-fwd * 3)
+            local pos = e.Position + (-fwd * 5.2)   -- 5.2 studs: outside their hitbox, so re-enabling collisions can never punt them
             local cur = p.Position
             local step = pos - cur
             -- ═══ RELEASE, DON'T CHASE ═══ The instant the flash connects the target RAGDOLLS and is launched.
@@ -2959,7 +2975,7 @@ do
             -- (knocked back / ragdolled), the lock is DONE. It now only ever trims small drift.
             local tvel = Vector3.zero
             pcall(function() tvel = e.AssemblyLinearVelocity end)
-            if step.Magnitude > 8 or tvel.Magnitude > 55 then
+            if step.Magnitude > 12 or tvel.Magnitude > 55 then   -- 12 = hold distance (5.2) + arc overshoot headroom; velocity is the real ragdoll test
                 R.lockTarget = nil; R.lockKind = nil; lockClipOn(); return
             end
             -- FRAMERATE-CORRECT cap: studs-per-SECOND scaled by the real frame delta.
@@ -2988,23 +3004,12 @@ do
         R.curving = true
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 0.55   -- soft camera lock (no icon), auto-expires
         task.spawn(function()
-            -- SIDE DASH ASSIST (Q): real dash key first (the game's own dash anim), then arc around to the SIDE of
-            -- their back — endBias keeps you off the spine so the M1 does NOT trigger the back-hit knockdown, which
-            -- is what was dropping them and ending the combo. Landing off-centre keeps them standing = combo extends.
-            VKeyTap(Settings.DashKey, 0.04); task.wait(0.06)
-            local p0 = GetRoot(); if p0 then pcall(function() p0.AssemblyLinearVelocity = Vector3.zero end) end
-            if _G.VX_ORBIT then
-                _G.VX_ORBIT(e, {
-                    dir        = -1,                     -- sweep LEFT
-                    endBehind  = true,
-                    endBias    = 0,                      -- land BEHIND them (dead-centre back), per request
-                    extraSweep = math.pi * 0.30,
-                    endRadius  = math.max(Settings.BFTeleportDist, 3),
-                    duration   = Settings.SideCurveTime + 0.05,
-                })
-            else local sd = e.CFrame.RightVector * -1; aimCameraDir(sd); faceRootDir(sd) end
+            -- SIDE DASH ASSIST (Q) = EXACTLY the Side Dash BF movement, minus the Black Flash (per request).
+            -- Same dashToBack arc, same landing on their back, same back-facing — it simply never flashes.
+            dashToBack(t, { duration = 0.26, extraSweep = math.pi * 0.45 })
+            faceBackOf(t)                                  -- always end up aiming at their back
         end)
-        if Settings.SideM1 and not isBF then task.delay(0.30, function() aimCameraAt((t:FindFirstChild("HumanoidRootPart") or e).Position); VMouseClick() end) end
+        if Settings.SideM1 and not isBF then task.delay(0.34, function() aimCameraAt((t:FindFirstChild("HumanoidRootPart") or e).Position); VMouseClick() end) end
         task.delay(0.55, function() R.curving = false; if R.lockKind == "cam" then R.lockTarget = nil; R.lockKind = nil end end)
         if not isBF then status("Side Dash L") end
         return true
@@ -3045,7 +3050,8 @@ do
         -- Arc OVER them to the back (pure CFrame yArc, no physics jump = no fling), THEN M1+flash.
         aimCameraAt(e.Position)
         dashToBack(t, { duration = 0.30, extraSweep = math.pi * 0.25, yArc = 7 })
-        R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.2
+        faceBackOf(t)
+        R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.0
         task.wait(0.05); m1ThenBF()
         task.delay(0.3, function() R.bfActive = false end); status("BF Jump Chain")
     end
@@ -3057,7 +3063,8 @@ do
         -- ORDER FIX: this used to press BF *before* moving, so the flash fired from your old position and whiffed
         -- ("it dashes behind them but doesn't black flash"). Dash to their back FIRST, then flash.
         dashToBack(t, { duration = 0.26, extraSweep = math.pi * 0.45 })
-        R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.2
+        faceBackOf(t)
+        R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.0
         task.wait(0.05); m1ThenBF()
         task.delay(0.3, function() R.bfActive = false end); status("BF Side Chain")
     end
@@ -3081,7 +3088,8 @@ do
             duration   = jumpThis and 0.30 or 0.24,
             extraSweep = math.pi * (jumpThis and 0.30 or 0.45),
         })
-        R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.2
+        faceBackOf(t)
+        R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.0
         task.wait(0.05); m1ThenBF(); task.delay(0.3, function() R.bfActive = false end)
         status(jumpThis and "BF Back Chain (jump)" or "BF Back Chain")
     end
@@ -3093,11 +3101,16 @@ do
         -- M1 CHAIN: dash AROUND them (real dash key + anti-fling arc) with the camera locked on, ending on their
         -- back — then flash. Previously this side-dashed and then TELEPORTED onto the back (faceEnemyBack was a
         -- hard CFrame write), which is what read as a blink instead of a dash.
-        R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.2   -- camera stays on them through the arc
-        dashToBack(t, { duration = 0.28, extraSweep = math.pi * 0.5 })
+        -- ORDER (per request): M1 first, THEN the side dash, THEN the flash.
+        R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.4   -- camera stays on them through the whole chain
+        VMouseClick()                                                    -- 1) the M1
+        task.wait(0.10)
+        dashToBack(t, { duration = 0.28, extraSweep = math.pi * 0.5 })   -- 2) the side dash around to their back
+        faceBackOf(t)
         local e = t and t:FindFirstChild("HumanoidRootPart")
         if e then R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.0 end
-        task.wait(0.05); pressBF(); task.delay(0.3, function() R.bfActive = false end); status("BF M1 Chain")
+        task.wait(0.05); m1ThenBF()                                      -- 3) the flash (timed by the real engine)
+        task.delay(0.3, function() R.bfActive = false end); status("BF M1 Chain")
     end
     local function doBlackFlash()
         if not Settings.Enabled or R.bfActive then return end
@@ -5965,7 +5978,9 @@ do
 			end
 		end
 	end)
-	SideDashApi = { set = function(v) on = v == true end }
+	-- SUPERSEDED: VXBF2's doSideDash is the live Side Dash Assist (bound to Q at ~3192). This older module is
+	-- also bound to Q; leaving it settable risked two handlers firing on one press ("dashes weird"). Hard-off.
+	SideDashApi = { set = function() on = false end }
 end
 
 -- ============================================================
