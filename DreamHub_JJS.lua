@@ -958,7 +958,12 @@ do
 				-- works no matter your character/keybind: a left-click re-tap at the flash frame -- the real timing
 				-- mechanic on most characters -- plus the ability key. A stray unbound key does nothing; the extra
 				-- click is harmless mid-M1. This is a synthetic input, NOT a raw remote packet, so it does not kick.
+				-- The re-click is the PRIMARY Black Flash trigger on most characters, but it lands an EXTRA in-game M1
+			-- per swing, and that extra hit is what stacks the server's knockback on the target ('it flings them').
+			-- Default ON so flash reliability is unchanged; the Combat toggle lets you trade it for less launch.
+			if _G.VX_BF_RECLICK ~= false then
 				pcall(function() VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0); task.wait(0.02); VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0) end)
+			end
 				pressKey(Enum.KeyCode.Three)
 			end)
 		end
@@ -1771,7 +1776,7 @@ _G.VX_CLAIMOWN = vxClaimOwnership
 -- TP Step slider genuinely makes the teleport gentler if a server still sets you back.
 local VX_TP_SPEED = 60   -- studs PER FRAME (back-compat local; the LIVE value the glide reads is _G.VX_TP_SPEED)
 _G.VX_TP_SPEED  = tonumber(_G.VX_TP_SPEED) or 60      -- studs/frame the glide steps in (lower = gentler if a server still sets you back)
-_G.VX_TP_METHOD = _G.VX_TP_METHOD or "Auto"          -- "Glide" (default: anti-setback stepping + AC pass each hop) | "Instant" (single snap) | "Auto" (snap short, glide long)
+_G.VX_TP_METHOD = _G.VX_TP_METHOD or "Instant"          -- "Glide" (default: anti-setback stepping + AC pass each hop) | "Instant" (single snap) | "Auto" (snap short, glide long)
 -- game updates -> teleports set back). Try the known path first, else search for any RemoteEvent named
 local vxACRemote = nil
 local vxACStamp = 0
@@ -1824,7 +1829,11 @@ local vxCurrentTargetCF = nil
 game:GetService("RunService").Heartbeat:Connect(function()
 	if vxTeleportLock and vxCurrentTargetCF then
 		local LP = game:GetService("Players").LocalPlayer
-		local char = LP.Character or (workspace:FindFirstChild("Characters") and workspace.Characters:FindFirstChild(LP.Name))
+		-- Characters-FIRST (matches vxMyChar and the PlatformStand loop). Resolving LP.Character first could
+		-- re-pin a stale/decoy rig while your real body stayed set back, which is why Instant silently failed.
+		local chs = workspace:FindFirstChild("Characters")
+		local resolved = chs and chs:FindFirstChild(LP.Name)
+		local char = (resolved and resolved:FindFirstChild("HumanoidRootPart")) and resolved or (LP.Character or resolved)
 		local hrp = char and char:FindFirstChild("HumanoidRootPart")
 		if hrp then
 			if (hrp.Position - vxCurrentTargetCF.Position).Magnitude > 3 then
@@ -2877,6 +2886,9 @@ do
     end
     local function GetClosestTarget(maxD)
         local myRoot = GetRoot(); if not myRoot then return nil end
+        -- LOCK TARGET: if you clicked a target, every feature acts on THAT one, at any range.
+        local _g=_G.VX_LOCK; local _lt=(_g and _g.manualActive and _g.manualActive() and _g.get) and _g.get() or nil
+        if _lt and _lt.Parent and _lt:FindFirstChild("HumanoidRootPart") then local _lh=_lt:FindFirstChildOfClass("Humanoid"); if not _lh or _lh.Health > 0 then return _lt end end
         local folder = workspace:FindFirstChild("Characters") or workspace
         local me = GetChar(); local best, bd = nil, maxD or 60
         for _, ch in ipairs(folder:GetChildren()) do
@@ -3014,9 +3026,10 @@ do
         R.curving = true
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 0.55   -- soft camera lock (no icon), auto-expires
         task.spawn(function()
-            -- SIDE DASH ASSIST (Q) = EXACTLY the Side Dash BF movement, minus the Black Flash (per request).
-            -- Same dashToBack arc, same landing on their back, same back-facing — it simply never flashes.
-            dashToBack(t, { duration = 0.26, extraSweep = math.pi * 0.45 })
+            -- SIDE DASH ASSIST (Q) = the M1 CHAIN dash, verbatim, with NO Black Flash (per request).
+            -- Same duration and same half-circle sweep, so it whips AROUND them fast and lands on their back.
+            -- It never calls pressBF/m1ThenBF, so pressing Q can never flash.
+            dashToBack(t, { duration = 0.28, extraSweep = math.pi * 0.5 })
             faceBackOf(t)                                  -- always end up aiming at their back
         end)
         if Settings.SideM1 and not isBF then task.delay(0.34, function() aimCameraAt((t:FindFirstChild("HumanoidRootPart") or e).Position); VMouseClick() end) end
@@ -3047,6 +3060,10 @@ do
         local e = t:FindFirstChild("HumanoidRootPart"); if not e then return end
         R.bfCD = tick(); R.bfActive = true
         -- "Teleport" mode keeps its instant feel by design (it is the blink option); every OTHER mode dashes.
+        -- DISTANCE BOUND: this is a raw CFrame write. A locked target ignores the range scan, so without
+        -- this a far lock became a several-hundred-stud blink - exactly what gets you kicked.
+        local _mr = GetRoot()
+        if _mr and (e.Position - _mr.Position).Magnitude > Settings.DashRange then R.bfActive = false; return end
         local fwd = Vector3.new(e.CFrame.LookVector.X, 0, e.CFrame.LookVector.Z).Unit
         smoothTP(e.Position - fwd * Settings.BFTeleportDist); faceEnemyBack(t)
         R.lockTarget = t; R.lockKind = "bf_back"; R.lockEnd = tick() + 1.0
@@ -3268,6 +3285,8 @@ do
 	local function myHRP() local c = myChar(); return c and c:FindFirstChild("HumanoidRootPart") end
 	local function nearestEnemyHRP()  -- the NEAREST living enemy in range (correct target, not a stale LP.Character read)
 		local hrp = myHRP(); if not hrp then return nil end
+		local _g=_G.VX_LOCK; local _lt=(_g and _g.manualActive and _g.manualActive() and _g.get) and _g.get() or nil   -- LOCK TARGET wins over any range scan
+		if _lt and _lt.Parent then local _lh=_lt:FindFirstChildOfClass("Humanoid"); local _lr = _lt:FindFirstChild("HumanoidRootPart"); if _lr and (not _lh or _lh.Health > 0) then return _lr end end
 		local best, bd
 		local function chk(m) if m and m.Name ~= LP.Name and m ~= LP.Character then local h = m:FindFirstChildOfClass("Humanoid"); local r = m:FindFirstChild("HumanoidRootPart"); if h and h.Health > 0 and r then local d = (r.Position - hrp.Position).Magnitude; if d <= range and (not bd or d < bd) then best, bd = r, d end end end end
 		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP then chk(plr.Character) end end
@@ -3494,7 +3513,7 @@ do
 		nearest = function()
 			local r = hrp(); if not r then return end
 			local best, bd
-			local function chk(m) if m and m ~= LP.Character then local h = m:FindFirstChildOfClass("Humanoid"); local rr = m:FindFirstChild("HumanoidRootPart"); if h and h.Health > 0 and rr then local d = (rr.Position - r.Position).Magnitude; if not bd or d < bd then best, bd = rr, d end end end end
+			local function chk(m) if m and m.Name ~= LP.Name and m ~= LP.Character then local h = m:FindFirstChildOfClass("Humanoid"); local rr = m:FindFirstChild("HumanoidRootPart"); if h and h.Health > 0 and rr then local d = (rr.Position - r.Position).Magnitude; if not bd or d < bd then best, bd = rr, d end end end end
 			for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP then chk(plr.Character) end end
 			local chars = workspace:FindFirstChild("Characters"); if chars then for _, m in ipairs(chars:GetChildren()) do chk(m) end end
 			if best then vxTeleportHard(best.Position, 2) end
@@ -3920,6 +3939,8 @@ do
 		for _, o in ipairs(host:GetChildren()) do if o.Name == "VX_LockHighlight" then o:Destroy() end end
 	end)
 	local locked, hl = nil, nil
+	local curColor = Color3.fromRGB(255, 40, 52)   -- live lock-outline colour (Lock Color dropdown)
+	local manualOn = false                        -- true only while the user's Lock Target toggle is on
 	local conns = {}  -- our RBXScriptConnections, so a later re-run can disconnect them
 	local want = {}   -- feature key -> wants click-to-lock active (any true = active)
 	local function clickActive() for _, v in pairs(want) do if v then return true end end return false end
@@ -3931,7 +3952,7 @@ do
 		h.Name = "VX_LockHighlight"
 		h.FillTransparency = 1                          -- outline only, no fill
 		h.OutlineTransparency = 0
-		h.OutlineColor = Color3.fromRGB(255, 40, 52)    -- warm red
+		h.OutlineColor = curColor
 		h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 		h.Adornee = m
 		pcall(function() h.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
@@ -3963,6 +3984,9 @@ do
 		get = function() return (locked and locked.Parent) and locked or nil end,   -- the currently locked Model, or nil
 		set = function(m) if m and m.Parent then locked = m; makeHL(m) else locked = nil; clearHL() end end,     -- programmatic lock + red outline (set(nil) clears it) - used by Auto Rika Sword
 		want = function(key, v) want[key] = v == true; if not clickActive() then release() end end,  -- register a feature that needs click-to-lock; auto-clears the lock when nothing needs it
+		setColor = function(c) if typeof(c) == "Color3" then curColor = c; if hl then pcall(function() hl.OutlineColor = c end) end end end,   -- Lock Color dropdown
+		manual = function(v) manualOn = (v == true); want["manual"] = manualOn; if not clickActive() then release() end end,   -- the user's own Lock Target toggle
+		manualActive = function() return manualOn == true end,   -- ONLY a user click-lock retargets combat (a programmatic Rika lock must not)
 		_cleanup = function() for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end; clearHL() end,  -- called by a later re-run to remove this run's handlers + outline
 	}
 end
@@ -6082,8 +6106,12 @@ do
 	local LP = Players.LocalPlayer
 	local gojoOn, redOn, lastGojo = false, false, 0
 	local function myHRP() local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character; return c and c:FindFirstChild("HumanoidRootPart") end
-	local function nearestEnemyChar()
+	local function nearestEnemyChar(raw)   -- raw = ignore the lock (used by the 'is anyone near me' gate)
 		local hrp = myHRP(); if not hrp then return nil end
+		if not raw then
+			local _g=_G.VX_LOCK; local _lt=(_g and _g.manualActive and _g.manualActive() and _g.get) and _g.get() or nil   -- LOCK TARGET wins over any range scan
+			if _lt and _lt.Parent and _lt:FindFirstChild("HumanoidRootPart") then local _lh=_lt:FindFirstChildOfClass("Humanoid"); if not _lh or _lh.Health > 0 then return _lt end end
+		end
 		local best, bd
 		local function chk(m) if m and m.Name ~= LP.Name and m ~= LP.Character then local r = m:FindFirstChild("HumanoidRootPart"); local h = m:FindFirstChildOfClass("Humanoid"); if r and h and h.Health > 0 then local d = (r.Position - hrp.Position).Magnitude; if not bd or d < bd then best, bd = m, d end end end end
 		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP then chk(plr.Character) end end
@@ -6224,7 +6252,7 @@ do
 		if autoAirOn then
 			if injBlocked then _airWhy = "ignored (we pressed this key ourselves)"
 			else
-				local _am = myHRP(); local _ae = nearestEnemyChar(); local _ar = _ae and _ae:FindFirstChild("HumanoidRootPart")
+				local _am = myHRP(); local _ae = nearestEnemyChar(true); local _ar = _ae and _ae:FindFirstChild("HumanoidRootPart")   -- raw: a far-away LOCK must not disable Auto Air
 				if not _am then _airWhy = "no HumanoidRootPart on you"
 				elseif not _ar then _airWhy = "NO ENEMY FOUND (need a player/dummy in workspace.Characters)"
 				else
@@ -6325,6 +6353,9 @@ do
 		-- Every sequence below fires the REAL Knit service RemoteEvent the user captured, with the real Moveset
 		-- object as the argument, exactly as the capture showed. Key presses are kept only where the capture
 		-- itself was a key (jump / R / 1). Each character has its own toggle so you pick what runs.
+		-- Cache resolved moves per (character, name). The descendant scan below is only reached when the folder
+		-- lookups fail, and that is a PERSISTENT state - without a cache it would re-scan the whole rig on every
+		-- single press of that key for the rest of the session.
 		local function moveObj(nm)
 			local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
 			local mv = c and c:FindFirstChild("Moveset")
@@ -6343,12 +6374,32 @@ do
 						"  children = { " .. table.concat(names, ", ") .. " }")
 				end)
 			end
-			if not mv then dbgAir("no Moveset on your character - Auto Air cannot resolve moves"); return nil end
-			local direct = mv:FindFirstChild(nm); if direct then return direct end
-			local want = normMove(nm)                                   -- spacing-proof fallback ("RoughEnergy")
-			for _, mm in ipairs(mv:GetChildren()) do if normMove(mm.Name) == want then return mm end end
-			-- SUBSTRING fallback: covers suffixed entries like "Lapse Blue MAX"
-			for _, mm in ipairs(mv:GetChildren()) do if string.find(normMove(mm.Name), want, 1, true) then return mm end end
+			if not mv then dbgAir("no Moveset folder - falling back to a descendant scan") end
+			local want = normMove(nm)                                   -- spacing-proof ("RoughEnergy" == "Rough Energy")
+			_G.VX_MOVECACHE = _G.VX_MOVECACHE or {}
+			local ck = tostring(c) .. "|" .. want
+			local hit = _G.VX_MOVECACHE[ck]
+			if hit and hit.Parent then return hit end
+			if mv then
+				local direct = mv:FindFirstChild(nm); if direct then _G.VX_MOVECACHE[ck]=direct; return direct end
+				for _, mm in ipairs(mv:GetChildren()) do if normMove(mm.Name) == want then _G.VX_MOVECACHE[ck]=mm; return mm end end
+				-- SUBSTRING fallback: covers suffixed entries like "Lapse Blue MAX"
+				for _, mm in ipairs(mv:GetChildren()) do if string.find(normMove(mm.Name), want, 1, true) then _G.VX_MOVECACHE[ck]=mm; return mm end end
+			end
+			-- LAST RESORT: a game update can relocate/rename the Moveset container. Scan all descendants for an
+			-- Instance whose normalised name matches EXACTLY (strict equality, never substring - a loose match
+			-- here could hand FireServer an unrelated Sound/Animation and get the call rejected).
+			-- Only container-ish classes are plausible Moveset entries. Accepting an Animation/Sound here would
+			-- hand FireServer a junk instance (silently rejected) AND mask the key fallback below it.
+			for _, d in ipairs(c:GetDescendants()) do
+				if normMove(d.Name) == want then
+					local cn = d.ClassName
+					if cn == "Folder" or cn == "Model" or cn == "Configuration" or cn == "ModuleScript"
+						or cn == "ObjectValue" or cn == "StringValue" or cn == "Tool" or cn == "Part" then
+						_G.VX_MOVECACHE[ck]=d; return d
+					end
+				end
+			end
 			return nil
 		end
 		local function svcRE(svc, re)
@@ -6377,7 +6428,7 @@ do
 		if airOK and airOpt.Vessel and kc == Enum.KeyCode.One and (hasMove("Cursed Strikes") or charIs("vessel","itadori","sukuna","divergent")) then
 			_G.VX_BUSY = tick() + 1.2; dbgAir("Vessel 1 -> Cursed Strikes")
 			task.delay(0.05, function()
-				local mv = moveObj("Cursed Strikes"); if autoAirOn and mv then fireSvc("CursedStrikesService", "Activated", mv, true) end
+				local mv = moveObj("Cursed Strikes"); if autoAirOn and mv then fireSvc("CursedStrikesService", "Activated", mv, true) end   -- no key fallback: it would just re-press the key you already hit
 			end)
 		end
 
@@ -6386,7 +6437,7 @@ do
 			_G.VX_BUSY = tick() + 1.4; dbgAir("Hakari 3 -> jump + Rough Energy")
 			task.spawn(function() holdJump() end)
 			task.delay(0.10, function()
-				local mv = moveObj("Rough Energy"); if autoAirOn and mv then fireSvc("RoughEnergyService", "Activated", mv, true) end
+				local mv = moveObj("Rough Energy"); if autoAirOn then if mv then fireSvc("RoughEnergyService", "Activated", mv, true) else tapKey(Enum.KeyCode.Three) end end
 			end)
 
 		-- ── LOCUST — key 3 -> Crushing Jaws. Your key 3 already casts it, so we add NOTHING here; the single
@@ -6410,7 +6461,7 @@ do
 			_G.VX_BUSY = tick() + 1.4; dbgAir("Choso 2 -> jump + Flowing Red Scale")
 			task.spawn(function() holdJump() end)
 			task.delay(0.08, function()
-				local mv = moveObj("Flowing Red Scale"); if autoAirOn and mv then fireSvc("RedScaleService", "Activated", mv, true) end
+				local mv = moveObj("Flowing Red Scale"); if autoAirOn then if mv then fireSvc("RedScaleService", "Activated", mv, true) else tapKey(Enum.KeyCode.Two) end end
 			end)
 		end
 
@@ -11140,6 +11191,7 @@ do
         bfAutoOn = (b == true); bfSync()
         if _G.VXBF2 then _G.VXBF2.setAutoBF(false) end   -- avoid the weaker VXBF2 path double-pressing
     end })
+    bfSec:Toggle({ Name = "BF Uses Reclick (off = less fling)", Default = true, Callback = function(b) _G.VX_BF_RECLICK = (b == true) end })
     bfSec:Toggle({ Name = "BF Debug (print)", Default = false, Callback = function(b) _G.VX_BF_DEBUG = (b == true) end })   -- prints one line per detected flash so you can confirm detection is happening
     bfSec:Toggle({ Name = "Debug On Screen", Default = false, Callback = function(b) _G.VX_DEBUG_HUD = (b == true) end })   -- shows the BF + Quake status on screen so you don't need the F9 console
     bfSec:Slider({ Name = "BF Cooldown", Min = 0.1, Max = 2, Default = 0.5, Decimals = 0.05, Suffix = "s", Callback = function(v) if _G.VXBF2 then _G.VXBF2.setCooldown(v) end end })
@@ -11190,6 +11242,19 @@ do
     ultSec:Label("Goku M1: it might work, if it dont i will fix it later 😭")
     ultSec:Toggle({ Name = "Hollow Nuke", Callback = function(b) if HollowApi then HollowApi.set(b) end end })
 
+    -- ═══ LOCK TARGET ═══ Click an enemy and EVERY combat feature (BF modes, dashes, auto air, crow)
+    -- acts on that one character until you click them again to release. Not a camera lock.
+    do
+        local lockSub = CombatPage:SubPage({ Name = "Lock Target", Columns = 2 })
+        local lkSec = lockSub:Section({ Name = "Lock Target", Side = 1 })
+        pcall(function() lkSec:Label("Turn on, then CLICK an enemy to lock. Click them again to unlock.") end)
+        lkSec:Toggle({ Name = "Lock Target (click an enemy)", Default = false, Callback = function(b) if _G.VX_LOCK and _G.VX_LOCK.manual then _G.VX_LOCK.manual(b) end end })
+        lkSec:Dropdown({ Name = "Lock Color", Items = { "Red", "Cyan", "Green", "Purple", "Orange", "White" }, Default = "Red", Callback = function(c)
+            c = (type(c) == "table") and c[1] or c
+            local map = { Red = Color3.fromRGB(255, 46, 58), Cyan = Color3.fromRGB(0, 225, 255), Green = Color3.fromRGB(70, 225, 90), Purple = Color3.fromRGB(180, 90, 255), Orange = Color3.fromRGB(255, 150, 40), White = Color3.fromRGB(255, 255, 255) }
+            if _G.VX_LOCK and _G.VX_LOCK.setColor and map[c] then _G.VX_LOCK.setColor(map[c]) end
+        end })
+    end
     local defSub = CombatPage:SubPage({ Name = "Defense", Columns = 2 })
     local counterSec = defSub:Section({ Name = "Counter", Side = 1 })
     -- Side/Back Dash Assist now use the reworked VXBF2 engine (Q = side curve, E = back-through). Free gets both.
@@ -11426,7 +11491,7 @@ do
     local quickSec = tpSub:Section({ Name = "Quick", Side = 2 })
     -- These two API functions existed but nothing ever called them, so "Instant" was unreachable and the flight
     -- speed was permanently pinned at 100 studs/s. Now they are wired up.
-    quickSec:Dropdown({ Name = "TP Method", Items = { "Auto", "Instant", "Glide" }, Default = "Auto", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
+    quickSec:Dropdown({ Name = "TP Method", Items = { "Instant", "Auto", "Glide" }, Default = "Instant", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
     quickSec:Slider({ Name = "TP Speed", Min = 60, Max = 600, Default = 260, Decimals = 1, Suffix = "st/s", Callback = function(v) _G.VX_TP_VEL = tonumber(v) or 260 end })
     quickSec:Button({ Name = "Print TP Remote", Callback = function()
         local RS = game:GetService("ReplicatedStorage"); local found = 0
