@@ -88,7 +88,16 @@ end
 -- (LOADING SCREEN REMOVED per request — the hub builds straight away, no splash.)
 -- Dream Hub loading screen
 _G.__DreamGameName = "JUJUTSU SHENANIGANS"
-_G.__DreamTier = (_G.JJS_PREMIUM and "PREMIUM") or (_G.JJS_PREM and "PREMIUM") or (_G.JJS_PLUS and "PLUS") or (_G.JJS_FREE and "FREE") or "FULL"
+do
+	local _plus = _G.JJS_PLUS or _G.JJS_PLUSS
+	local _prem = _G.JJS_PREMIUM or _G.JJS_PREM
+	local _free = _G.JJS_FREE
+	-- CONSUME them: _G survives between executions, so a flag from an earlier run would otherwise keep
+	-- overriding the one you set for THIS run (running FREE after PLUS gave you PLUS, and vice versa).
+	_G.JJS_PLUS, _G.JJS_PLUSS, _G.JJS_PREMIUM, _G.JJS_PREM, _G.JJS_FREE = nil, nil, nil, nil, nil
+	_G.__DreamTierKey = (_plus and "plus") or (_prem and "premium") or (_free and "free") or "full"
+	_G.__DreamTier = (_plus and "PLUS") or (_prem and "PREMIUM") or (_free and "FREE") or "FULL"
+end
 
 -- ═══════════════════ DREAM HUB — LOADING SCREEN ═══════════════════
 -- (Loading screen + menu removed by request - the hub loads straight in.)
@@ -932,6 +941,9 @@ do
 	-- the click gate (your mouse poll updates _G.VX_LAST_CLICK) stops random anims from firing it.
 	-- BF After (M1s): only flash after _G.VX_BF_AFTER swings (the dropdown), so you pick how many M1s first.
 	local lastFire, swingCount, lastSwing = 0, 0, 0
+	-- A chain that wants to flash on THIS swing resets the counter first; otherwise it inherits however many
+	-- swings were already counted and appears to "need 2 or 3 M1s" even with BF After (M1s) set to 1.
+	_G.VX_BF_RESETCOUNT = function() swingCount = 0; lastSwing = 0 end
 	local function onAnim(track)
 		if not enabled then return end
 		local ok, id = pcall(function() return track.Animation.AnimationId end)
@@ -2928,6 +2940,7 @@ do
     local function m1ThenBF()
         -- Do NOT touch R.bfCD here: it is doBFM1Chain's own entry gate, and zeroing it made the BF Cooldown
         -- slider unreachable. BFApi keeps its own separate cooldown, so there is nothing to clear.
+        if _G.VX_BF_RESETCOUNT then pcall(_G.VX_BF_RESETCOUNT) end   -- flash on THIS swing, not after N more
         local borrowed = false
         if not _G.VX_BFAPI_ON and _G.VX_BFAPI_SET then
             borrowed = true
@@ -2984,9 +2997,17 @@ do
     -- (_G.VX_ORBIT: per-frame speed cap, collisions off, velocity zeroed, live target tracking) around to their
     -- back. This is a travelled path, not a position write — it reads as a player dashing, never a blink.
     -- opts: duration, endRadius, extraSweep (rad; math.pi*2 = full 360), yArc (jump arc), dir (-1 L / 1 R).
+    local MAXDASH = 26   -- studs. Past this a dash would visibly glide you across the map = obvious. Just don't.
     local function dashToBack(t, opts)
         local e = t and t:FindFirstChild("HumanoidRootPart"); if not e then return false end
         opts = opts or {}
+        do
+            local mr = GetRoot()
+            if mr and (e.Position - mr.Position).Magnitude > MAXDASH then
+                if _G.VX_BF_DEBUG then print("[DreamHub BF] target too far ("..math.floor((e.Position-mr.Position).Magnitude).." studs) - not dashing") end
+                return false
+            end
+        end
         -- NO REAL SPACE PRESS. A physics jump leaves the Humanoid in Freefall with upward velocity while the arc
         -- writes CFrame every frame — the two fight and the resolver launches you. That was the "back dash /
         -- M1 chain jumps me and flings me". The airborne LOOK now comes from the arc's own yArc (pure CFrame),
@@ -3006,6 +3027,7 @@ do
                 endBehind  = true,
                 yArc       = opts.yArc or 0,
                 dir        = opts.dir,
+                endBias    = opts.endBias or 0,   -- 0 = dead behind the spine; ~0.55 = corner of the back
             })
             return true
         end
@@ -3062,8 +3084,10 @@ do
             -- SIDE DASH ASSIST (Q) = the M1 CHAIN dash, verbatim, with NO Black Flash (per request).
             -- Same duration and same half-circle sweep, so it whips AROUND them fast and lands on their back.
             -- It never calls pressBF/m1ThenBF, so pressing Q can never flash.
-            dashToBack(t, { duration = 0.28, extraSweep = math.pi * 0.5 })
-            faceBackOf(t)                                  -- always end up aiming at their back
+            -- SMALL, FAST, SHARP: a quick clip around to the CORNER of their back (endBias offsets off the
+            -- spine so the M1 does not land the knockdown), not a long orbit.
+            dashToBack(t, { duration = 0.16, extraSweep = math.pi * 0.18, endBias = 0.55 })
+            faceBackOf(t)
         end)
         if Settings.SideM1 and not isBF then task.delay(0.34, function() aimCameraAt((t:FindFirstChild("HumanoidRootPart") or e).Position); VMouseClick() end) end
         task.delay(0.55, function() R.curving = false; if R.lockKind == "cam" then R.lockTarget = nil; R.lockKind = nil end end)
@@ -3161,7 +3185,7 @@ do
         -- hard CFrame write), which is what read as a blink instead of a dash.
         -- Your own M1 is the trigger, so we do NOT throw another one: side dash around them, then flash.
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.4   -- camera stays on them through the whole chain
-        dashToBack(t, { duration = 0.28, extraSweep = math.pi * 0.5 })   -- side dash around to their back
+        dashToBack(t, { duration = 0.24, extraSweep = math.pi * 0.12 })   -- small sweep = ends BEHIND their back, not past the corner
         faceBackOf(t)
         local e = t and t:FindFirstChild("HumanoidRootPart")
         if e then R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0 end
@@ -3726,53 +3750,70 @@ do
 	-- DOWN SLAM / UPPERCUT are decided by your PHYSICAL STATE (airborne / holding space), not by a string
 	-- argument. The old path fired Activated("Down"), which JJS does not accept - so nothing happened. Both
 	-- modes now reproduce what a real player does with real inputs.
+	-- RESTORED to the version that worked: Down Slam fires the real direction remote, Uppercut counts to 4
+	-- while holding Space. The bug was never this logic - it was the TRIGGER (InputBegan never fires for a
+	-- sunk attack click). The trigger is now the shared poll; the behaviour below is byte-for-byte the
+	-- original, so what worked on FREE works again.
 	local function onM1()
 		if mode == "Off" then return end
 		local now = tick()
 		if now - State.lastFire < Config.Cooldown then return end
-
-		if now - State.lastM1 > Config.M1ResetWindow then State.m1Count = 0 end
-		State.lastM1 = now
-		State.m1Count = State.m1Count + 1
-		local n = State.m1Count
-
+		if not State.remote then resolveV5Remote() end
 		if mode == "Down Slam" then
-			-- 3 M1s, then hop and throw one more M1 while airborne = the slam.
-			if n >= 3 then
-				State.m1Count = 0
-				State.lastFire = now
-				task.spawn(function()
-					pcall(jump)                      -- module's own bunny hop (sets VX_LAUNCHING so Side Dash cannot cancel it)
-					task.wait(0.06)
-					pcall(function()
-						local cam = workspace.CurrentCamera; local vp = (cam and cam.ViewportSize) or Vector2.new(800, 600)
-						VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, true, game, 0)
-						task.wait(0.03)
-						VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, false, game, 0)
-					end)
-				end)
-			end
+			-- THE WORKING v1 PATH — untouched
+			State.lastFire = now
+			fireDir("Down")
 		elseif mode == "Uppercut" then
-			-- hold Space into the 4th M1 = the launcher.
+			-- Uppercut: count M1s (1-3 stay normal punches)
+			if now - State.lastM1 > Config.M1ResetWindow then State.m1Count = 0 end
+			State.lastM1 = now
+			State.m1Count = State.m1Count + 1
+			local n = State.m1Count
 			if n == 3 then
+				-- hold Space like a real player winding the launcher into the 4th
 				spaceDown()
 				local token = {}
 				State.spaceToken = token
+				-- safety: if the 4th M1 never comes, drop Space
 				task.delay(2.0, function()
-					if State.spaceToken == token then spaceUp(); State.spaceToken = nil; State.m1Count = 0 end
+					if State.spaceToken == token then
+						spaceUp(); State.spaceToken = nil
+						State.m1Count = 0
+					end
 				end)
 			elseif n >= 4 then
 				State.m1Count = 0
 				State.lastFire = now
 				State.spaceToken = nil
-				spaceDown()
-				task.delay(Config.SpaceHold, function() spaceUp() end)
+				spaceDown()   -- ensure held even if the 3rd was missed
+				-- CRITICAL: let the game's own 4th-M1 message reach the server FIRST, then send the launcher.
+				-- Firing "Up" at t=0 races it.
+				task.delay(Config.UpFireDelay, function()
+					if mode == "Uppercut" then fireDir(Config.UpArg) end
+				end)
+				task.delay(Config.UpFireDelay2, function()
+					if mode == "Uppercut" then fireDir(Config.UpArg) end
+				end)
+				task.delay(Config.SpaceHold, spaceUp)
 			end
 		end
 	end
 	-- REAL M1s come from the shared poll detector, NOT InputBegan: the game sinks the attack click, so the old
 	-- InputBegan hook only ever fired on GUI/empty clicks = Auto Uppercut / Down Slam never ran at all.
-	if _G.VX_M1_SUB then _G.VX_M1_SUB("m1combo", function() if not UIS:GetFocusedTextBox() then onM1() end end) end
+	-- BOTH triggers, de-duplicated. It used to work off InputBegan, so that path stays; the poll is added
+	-- because InputBegan does not see a sunk attack click on every build. Whichever fires first wins and the
+	-- other is ignored for 0.05s, so a single M1 can never run onM1 twice.
+	local __m1Guard = 0
+	local function __m1Once()
+		if UIS:GetFocusedTextBox() then return end
+		if tick() - __m1Guard < 0.05 then return end
+		__m1Guard = tick()
+		onM1()
+	end
+	UIS.InputBegan:Connect(function(input, _)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then __m1Once() end
+	end)
+	if _G.VX_M1_SUB then _G.VX_M1_SUB("m1combo", function() __m1Once() end) end
 	LP.CharacterAdded:Connect(function()
 		task.wait(0.4)
 		spaceUp()
@@ -6860,11 +6901,33 @@ do
 		if lt and lt.Parent then return lt:FindFirstChild("HumanoidRootPart") or lt:FindFirstChildWhichIsA("BasePart") end
 		return nearestEnemy()
 	end
+	-- IMPROVED AIM ASSIST: was a single hard snap on the frame the move started, which missed anyone moving and
+	-- read as an obvious camera jerk. Now it TRACKS for a short window, LEADS the target using their velocity,
+	-- and eases the camera instead of teleporting it - so it stays on a strafing enemy and looks hand-aimed.
+	local aimGen = 0
 	local function faceTarget()
-		local hrp = myHRP(); local tr = targetPart(); if not (hrp and tr) then return end
-		local tp = tr.Position
-		pcall(function() hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(tp.X, hrp.Position.Y, tp.Z)) end)  -- flat-face them so the move fires at them
-		pcall(function() Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, tp) end)
+		aimGen = aimGen + 1
+		local myGen = aimGen
+		task.spawn(function()
+			local t0 = tick()
+			while tick() - t0 < 0.45 and aimGen == myGen do          -- track through the cast, not one frame
+				local hrp = myHRP(); local tr = targetPart()
+				if not (hrp and tr and tr.Parent) then return end
+				local d = (tr.Position - hrp.Position).Magnitude
+				if d > 120 then return end                            -- do not swing the camera at someone across the map
+				-- LEAD the target: aim where they will be, scaled by distance (travel time), so a strafing
+				-- enemy is still hit instead of the shot trailing behind them.
+				local tv = Vector3.zero
+				pcall(function() tv = tr.AssemblyLinearVelocity end)
+				local lead = math.clamp(d / 180, 0, 0.16)
+				local tp = tr.Position + Vector3.new(tv.X, 0, tv.Z) * lead
+				pcall(function() hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(tp.X, hrp.Position.Y, tp.Z)) end)   -- body faces them so the move fires at them
+				pcall(function()                                       -- camera EASES onto them (no snap = looks aimed, not scripted)
+					Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position, tp), 0.45)
+				end)
+				task.wait()
+			end
+		end)
 	end
 	local function isMove(track)  -- ANY of your captured MOVE anims (all skills/ults + M1 ids)
 		if not track or not track.Animation then return false end
@@ -6941,11 +7004,9 @@ end
 -- resolved to "free", which silently removed every premium-gated feature — including the Auto Air toggle, the
 -- ONLY thing that can turn Auto Air on. That is why Auto Air "did not work" no matter what was fixed inside it.
 -- An explicitly requested higher tier now wins, and we clear the stale lower flags so nothing can resurrect them.
-if _G.JJS_PLUS or _G.JJS_PLUSS or _G.JJS_PREMIUM or _G.JJS_PREM then _G.JJS_FREE = nil end
-local VX_TIER = ((_G.JJS_PLUS or _G.JJS_PLUSS) and "plus")
-	or ((_G.JJS_PREMIUM or _G.JJS_PREM) and "premium")
-	or (_G.JJS_FREE and "free")
-	or "premium"
+-- Derived from the ONE tier resolved (and consumed) at the top of the file, so it always matches the flag you
+-- set for this run. "full" (no flag at all) keeps the historical everything-unlocked behaviour.
+local VX_TIER = (_G.__DreamTierKey == "full") and "premium" or (_G.__DreamTierKey or "premium")
 local VX_VERSION = "5.8"
 local VX_BUILD = "B58"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
