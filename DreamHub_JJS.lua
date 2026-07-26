@@ -1876,6 +1876,13 @@ _G.VX_ACPASS = vxACPass
 local vxTeleGen = 0  -- overlap guard: each teleport takes the next number; a newer one supersedes older holds so rapid teleports (Rika sword) do not fight over your CFrame or leave PlatformStand stuck on (frozen)
 -- SAFETY: never leave you stuck in PlatformStand (the "frozen after teleport" pose in the screenshot).
 -- Once no teleport has touched you for ~0.4s, force PlatformStand OFF so you can ALWAYS move again.
+-- Forward-declared ON PURPOSE: the respawn reset and the collision sweeper below both live ABOVE the noclip
+-- helpers, and Lua upvalue capture is LEXICAL - declaring these later would make every reference above a
+-- GLOBAL (always nil), so the guards would silently never fire.
+local vxNoclipParts
+local vxLockChar          -- the rig a teleport hold belongs to; a respawn voids the hold
+local vxLastPinPass = 0   -- throttle for the AC pass fired by the re-pin
+local VX_NOTIFY   -- the GUI assigns this = its toast fn; forward-declared so teleport code above can use it
 task.spawn(function()
 	local Players = game:GetService("Players"); local LP = Players.LocalPlayer
 	while true do
@@ -1884,6 +1891,14 @@ task.spawn(function()
 			local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
 			local h = c and c:FindFirstChildOfClass("Humanoid")
 			if h and h.PlatformStand then pcall(function() h.PlatformStand = false end) end
+			-- COLLISION SWEEPER: vxNoclipOff bails on a generation mismatch, and the Instant branch never
+			-- noclipped at all - so a superseded glide could leave every part CanCollide=false permanently.
+			-- 1.2s (not 0.4) because vxACPass bumps vxTeleLastActive at ~3Hz during flight; a tighter window
+			-- could restore collisions MID-FLIGHT and slam you into the wall the noclip existed to pass.
+			if vxNoclipParts and tick() - vxTeleLastActive > 1.2 then
+				for _, v in ipairs(vxNoclipParts) do pcall(function() v.CanCollide = true end) end
+				vxNoclipParts = nil
+			end
 		end
 	end
 end)
@@ -1901,20 +1916,40 @@ local vxCurrentTargetCF = nil
 -- froze you in place if you tried to walk/dash right after landing. Now: re-pin ONLY when the server shoves
 -- you (>3 studs), never touch velocity per-frame.
 game:GetService("RunService").Heartbeat:Connect(function()
-	if vxTeleportLock and vxCurrentTargetCF then
-		local LP = game:GetService("Players").LocalPlayer
-		-- Characters-FIRST (matches vxMyChar and the PlatformStand loop). Resolving LP.Character first could
-		-- re-pin a stale/decoy rig while your real body stayed set back, which is why Instant silently failed.
-		local chs = workspace:FindFirstChild("Characters")
-		local resolved = chs and chs:FindFirstChild(LP.Name)
-		local char = (resolved and resolved:FindFirstChild("HumanoidRootPart")) and resolved or (LP.Character or resolved)
-		local hrp = char and char:FindFirstChild("HumanoidRootPart")
-		if hrp then
-			if (hrp.Position - vxCurrentTargetCF.Position).Magnitude > 3 then
-				vxHardWrite(char, hrp, vxCurrentTargetCF)
-			end
-		end
+	if not (vxTeleportLock and vxCurrentTargetCF) then return end
+	local LP = game:GetService("Players").LocalPlayer
+	-- Characters-FIRST (matches vxMyChar and the PlatformStand loop).
+	local chs = workspace:FindFirstChild("Characters")
+	local resolved = chs and chs:FindFirstChild(LP.Name)
+	local char = (resolved and resolved:FindFirstChild("HumanoidRootPart")) and resolved or (LP.Character or resolved)
+	if not char then return end
+	-- A hold belongs to ONE rig. A respawn VOIDS it - otherwise the hold finds your BRAND NEW character and
+	-- drags it to the previous teleport's destination for the rest of the hold.
+	if vxLockChar and char ~= vxLockChar then
+		vxTeleportLock = false; vxCurrentTargetCF = nil; vxLockChar = nil
+		return
 	end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+	if (hrp.Position - vxCurrentTargetCF.Position).Magnitude > 3 then
+		-- ANSWER the correction on the anti-cheat's own channel. THIS is the private-vs-public difference:
+		-- the glide fires this every few ticks while it moves (so it survives), while the re-pin fired it
+		-- ZERO times - every correction was met with another unannounced jump, which escalates instead of
+		-- settling. Throttled so we announce at most ~10x/sec.
+		local now = tick()
+		if now - vxLastPinPass > 0.1 then vxLastPinPass = now; vxACPass() end
+		vxHardWrite(char, hrp, vxCurrentTargetCF)
+	end
+end)
+-- A RESPAWN VOIDS EVERY HOLD (nothing used to do this - and with Instant Respawn on, a new rig exists a
+-- fraction of a second after death, squarely inside every 2-5s hold).
+game:GetService("Players").LocalPlayer.CharacterAdded:Connect(function()
+	vxTeleportLock = false
+	vxCurrentTargetCF = nil
+	vxLockChar = nil
+	vxNoclipParts = nil          -- recorded parts belong to the DEAD rig
+	vxTeleGen = vxTeleGen + 1    -- supersede any in-flight leg and any pending release timer
+	_G.VX_TELEPORTING = false
 end)
 local isTeleporting = false
 local function vxMyChar()
@@ -1947,10 +1982,24 @@ end
 function vxHardWrite(char, hrp, cf)
 	pcall(function()
 		local hum = char:FindFirstChildOfClass("Humanoid")
-		if hum then hum.Sit = false; hum.PlatformStand = false; hum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+		if hum then
+			hum.Sit = false
+			if hum.PlatformStand then hum.PlatformStand = false end
+			-- Only when ACTUALLY ragdolled. Re-issuing this on every re-pin frame pinned the humanoid in a
+			-- getting-up transition for the whole hold.
+			local st = hum:GetState()
+			if st == Enum.HumanoidStateType.Physics or st == Enum.HumanoidStateType.Ragdoll or st == Enum.HumanoidStateType.FallingDown then
+				hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+			end
+		end
 		local seatWeld = hrp:FindFirstChild("SeatWeld"); if seatWeld then seatWeld:Destroy() end
 		hrp.Anchored = false
+		-- PIVOT MUST BE THE HRP. PivotTo moves the model's WorldPivot; if PrimaryPart is nil the HRP lands at
+		-- an offset, and the re-pin (which measures HRP vs target) then never converges - it re-writes every
+		-- frame for the whole hold. That reads exactly as "Instant did nothing / I jitter".
+		if char.PrimaryPart ~= hrp then pcall(function() char.PrimaryPart = hrp end) end
 		char:PivotTo(cf)
+		if (hrp.Position - cf.Position).Magnitude > 0.5 then hrp.CFrame = cf end   -- pivot still missed: correct it
 		hrp.AssemblyLinearVelocity = Vector3.new(0,0,0)
 		hrp.AssemblyAngularVelocity = Vector3.new(0,0,0)
 	end)
@@ -1983,7 +2032,7 @@ end
 -- collisions mid-flight of the NEW one — and the new leg had recorded nothing (parts were already off), so
 -- you ended solid in a wall or permanently noclipped. One shared list: first leg records, only the CURRENT
 -- teleport's landing restores, superseded legs leave it alone.
-local vxNoclipParts = nil
+vxNoclipParts = nil
 local function vxNoclipOn()
 	if vxNoclipParts then return end
 	vxNoclipParts = {}
@@ -2045,7 +2094,8 @@ local function safeTeleport(targetCFrame, holdTime)
 	vxACAck()
 	vxACPass()
 	vxTeleGen = vxTeleGen + 1
-	local myGen = vxTeleGen        -- overlap guard: a newer teleport supersedes this one's hops + lock
+	local myGen = vxTeleGen
+	vxLockChar = char            -- stamp the hold with the rig that owns it (a respawn voids it)        -- overlap guard: a newer teleport supersedes this one's hops + lock
 	local method = _G.VX_TP_METHOD or "Glide"
 	local step = tonumber(_G.VX_TP_SPEED) or 60
 	local from = hrp.Position
@@ -2057,9 +2107,41 @@ local function safeTeleport(targetCFrame, holdTime)
 	local instant = (method == "Instant") or (method == "Auto" and dist <= step * 1.5)
 	local glideSecs = 0
 	if instant or dist < 1 then
-		vxHardWrite(char, hrp, targetCFrame)
-		vxACPass()
 		vxCurrentTargetCF = targetCFrame
+		vxNoclipOff(myGen)                      -- reclaim collisions a superseded glide leaked
+		task.spawn(function()
+			-- ~15 FRAMES OF INSISTENCE instead of ONE. A single frame's write can be lost to a server-owned
+			-- assembly, a weld from someone else's ability, hitstun, a grab or a seat. Those conditions
+			-- basically never occur in an empty private server and occur constantly in a public one - which
+			-- is the whole private-vs-public difference. Every write is announced on the AC channel.
+			for _ = 1, 15 do
+				if myGen ~= vxTeleGen then return end                 -- superseded by a newer teleport
+				local c2 = vxMyChar(); local h2 = c2 and c2:FindFirstChild("HumanoidRootPart")
+				if not h2 then break end
+				if (h2.Position - targetCFrame.Position).Magnitude > 0.35 then
+					vxACPass()
+					vxHardWrite(c2, h2, targetCFrame)
+				end
+				task.wait()
+			end
+		end)
+		-- SERVER-AUTHORITATIVE DETECTION: if we are still nowhere near the target a moment later, the server
+		-- IS enforcing and no amount of client insistence wins. Fall back to the velocity glide, which the
+		-- server just sees as ordinary movement, and say so instead of looking silently broken.
+		task.delay(0.35, function()
+			if myGen ~= vxTeleGen then return end
+			local c3 = vxMyChar(); local h3 = c3 and c3:FindFirstChild("HumanoidRootPart")
+			if not (h3 and vxCurrentTargetCF) then return end
+			if (h3.Position - targetCFrame.Position).Magnitude > 15 then
+				_G.VX_TP_SETBACKS = (tonumber(_G.VX_TP_SETBACKS) or 0) + 1
+				if _G.VX_TP_SETBACKS >= 2 and _G.VX_TP_METHOD ~= "Glide" then
+					_G.VX_TP_METHOD = "Glide"
+					if VX_NOTIFY then pcall(function() VX_NOTIFY("Server rejected Instant here - switched to Glide", false) end) end
+				end
+			else
+				_G.VX_TP_SETBACKS = 0
+			end
+		end)
 	else
 		-- VELOCITY FLIGHT (the working method): push yourself to the target with plain physics velocity —
 		-- the server just sees you moving, nothing to reject. If a building blocks the straight line we fly
@@ -2093,7 +2175,7 @@ end
 -- wrappers: everything in the hub that used to glide now just safe-teleports (the bypass makes it stick)
 local function vxGlide(target, onArrive, holdTime)
 	local hrp
-	do local LP = game:GetService("Players").LocalPlayer; local c = LP.Character or (workspace:FindFirstChild("Characters") and workspace.Characters:FindFirstChild(LP.Name)); hrp = c and c:FindFirstChild("HumanoidRootPart") end
+	do local c = vxMyChar(); hrp = c and c:FindFirstChild("HumanoidRootPart") end   -- Characters-FIRST (LP.Character can be a stale/decoy rig)
 	local cf = (typeof(target) == "CFrame") and target or (hrp and (CFrame.new(target) * hrp.CFrame.Rotation)) or CFrame.new(target)
 	safeTeleport(cf, holdTime or 0.5)
 	if onArrive then task.delay((holdTime or 0.5) + 0.05, function() pcall(onArrive) end) end
@@ -2101,7 +2183,7 @@ end
 local function vxTeleportHard(dest, holdTime)
 	if typeof(dest) == "CFrame" then safeTeleport(dest, holdTime or 0.6); return end
 	local hrp
-	do local LP = game:GetService("Players").LocalPlayer; local c = LP.Character or (workspace:FindFirstChild("Characters") and workspace.Characters:FindFirstChild(LP.Name)); hrp = c and c:FindFirstChild("HumanoidRootPart") end
+	do local c = vxMyChar(); hrp = c and c:FindFirstChild("HumanoidRootPart") end   -- Characters-FIRST (LP.Character can be a stale/decoy rig)
 	local cf = hrp and (CFrame.new(dest) * hrp.CFrame.Rotation) or CFrame.new(dest)
 	safeTeleport(cf, holdTime or 0.6)
 end
@@ -2109,7 +2191,7 @@ end
 -- Fire a Knit service RemoteEvent by name. Resolves the path fresh each call so it survives character
 -- switches / lazy loading, and silently no-ops if the remote is not present (e.g. wrong character).
 local VX_DEBUG = false
-local VX_NOTIFY  -- the GUI assigns this = its toast fn; lets feature modules + fireKnit pop a visible notification
+-- (VX_NOTIFY is forward-declared near the teleport state so earlier code can use it too)
 local vxDbgGui, vxDbgLabel
 local function vxLog(msg)  -- prints to console AND shows an on-screen line (top-left) when Debug is on - so you can SEE what fires
 	if not VX_DEBUG then return end
@@ -3578,8 +3660,14 @@ do
 	TPApi = {
 		setSpeed = function(v) if type(v) == "number" then _G.VX_TP_SPEED = v end end,
 		setMethod = function(m) if type(m) == "table" then m = m[1] end _G.VX_TP_METHOD = (m == "Instant" or m == "Glide") and m or "Auto" end,
-		up = function() local r = hrp(); if r then vxTeleportHard(r.Position + Vector3.new(0, 120, 0), 3) end end,
-		spawn = function() local sp = workspace:FindFirstChildOfClass("SpawnLocation"); if sp then vxTeleportHard(sp.Position + Vector3.new(0, 4, 0), 3) end end,
+		up = function() local r = hrp(); if r then vxTeleportHard(r.Position + Vector3.new(0, 120, 0), 1.25) end end,
+		spawn = function()
+			-- FindFirstChildOfClass is NOT recursive; JJS spawns sit inside workspace.Map, so the old call found
+			-- nothing on most maps and the button silently did nothing.
+			local sp = workspace:FindFirstChildOfClass("SpawnLocation") or workspace:FindFirstChildWhichIsA("SpawnLocation", true)
+			if sp then vxTeleportHard(sp.Position + Vector3.new(0, 4, 0), 1.25)
+			elseif VX_NOTIFY then VX_NOTIFY("No SpawnLocation found on this map", false) end
+		end,
 		nearest = function()
 			local r = hrp(); if not r then return end
 			local best, bd
@@ -3588,9 +3676,9 @@ do
 			local chars = workspace:FindFirstChild("Characters"); if chars then for _, m in ipairs(chars:GetChildren()) do chk(m) end end
 			if best then vxTeleportHard(best.Position, 2) end
 		end,
-		location = function(names) local p = locate(names); if p then vxTeleportHard(p + Vector3.new(0, 5, 0), 3) elseif VX_NOTIFY then VX_NOTIFY("Location '" .. tostring(names[1]) .. "' not found", false) end return p ~= nil end,
+		location = function(names) local p = locate(names); if p then vxTeleportHard(p + Vector3.new(0, 5, 0), 1.25) elseif VX_NOTIFY then VX_NOTIFY("Location '" .. tostring(names[1]) .. "' not found", false) end return p ~= nil end,
 		save = function(n) local r = hrp(); if r then slots[n] = r.Position end end,
-		goto_ = function(n) if slots[n] then vxTeleportHard(slots[n], 3) end end,
+		goto_ = function(n) if slots[n] then vxTeleportHard(slots[n], 1.25) end end,
 		spotNames = function() local t = {}; for _, s in ipairs(SPOTS) do t[#t + 1] = s[1] end return t end,
 		spot = function(name) for _, s in ipairs(SPOTS) do if s[1] == name then vxTeleportHard(s[2] + Vector3.new(0, 4, 0), 2); return true end end return false end,  -- stepped teleport + 2s hold (4s of being pinned after arriving felt broken)
 		playerNames = function() local t = {}; for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP then t[#t + 1] = plr.Name end end return t end,   -- list other players
@@ -3599,7 +3687,7 @@ do
 			local plr = name and Players:FindFirstChild(name)
 			if plr and plr.Character then hrpTarget = plr.Character:FindFirstChild("HumanoidRootPart") end
 			if not hrpTarget then local chs = workspace:FindFirstChild("Characters"); local mdl = chs and chs:FindFirstChild(name); hrpTarget = mdl and mdl:FindFirstChild("HumanoidRootPart") end
-			if hrpTarget then vxTeleportHard(hrpTarget.Position - hrpTarget.CFrame.LookVector * 4 + Vector3.new(0, 3, 0), 3); return true end
+			if hrpTarget then vxTeleportHard(hrpTarget.Position - hrpTarget.CFrame.LookVector * 4 + Vector3.new(0, 3, 0), 1.25); return true end
 			if VX_NOTIFY then VX_NOTIFY("Player '" .. tostring(name) .. "' not found", false) end
 			return false
 		end,
@@ -3679,7 +3767,7 @@ do
 	-- game-processed, so the standalone's gpe bail would stop it from EVER firing inside the hub).
 	-- eating your REAL clicks = "uppercut/downslam not working".
 	local Config = {
-		Cooldown = 0.30,
+		Cooldown = 0.12,   -- was 0.30: longer than a JJS swing, so it swallowed every other real M1
 		Manual   = nil,
 		UpArg          = "Up",
 		UpFireDelay    = 0.15,  -- wait for the game's own 4th M1 to register, then fire
@@ -3705,7 +3793,7 @@ do
 	end
 	local function detectCharacter()
 		if Config.Manual and Config.Manual ~= "" then return Config.Manual end
-		local char = LP.Character
+		local char = myModel()   -- JJS keeps your real body under workspace.Characters; LP.Character is often the wrong rig
 		if not char then return nil end
 		for _, name in ipairs(V5CharNames) do
 			local ln = string.lower(name)
@@ -3772,9 +3860,19 @@ do
 		if now - State.lastFire < Config.Cooldown then return end
 		if not State.remote then resolveV5Remote() end
 		if mode == "Down Slam" then
-			-- THE WORKING v1 PATH — untouched
+			-- JJS's down slam is an AIRBORNE FALLING M1 - firing a direction remote while standing on the
+			-- floor cannot produce it, which is why this did nothing. Reproduce what a real player does:
+			-- hop, then click while falling. The remote is still sent (harmless if the server ignores it).
 			State.lastFire = now
-			fireDir("Down")
+			local c = myModel()
+			local h = c and c:FindFirstChildOfClass("Humanoid")
+			local grounded = (h == nil) or (h.FloorMaterial ~= Enum.Material.Air)
+			task.spawn(function()
+				if grounded then pcall(jump); task.wait(0.12) end
+				fireDir("Down")
+				_G.VX_SYNTH_CLICK = tick() + 0.08    -- just long enough to ignore OUR click (realM1 takes ~0.04s); a longer window ate the user's own next M1
+				pcall(realM1)                        -- the airborne M1 IS the slam
+			end)
 		elseif mode == "Uppercut" then
 			-- Uppercut: count M1s (1-3 stay normal punches)
 			if now - State.lastM1 > Config.M1ResetWindow then State.m1Count = 0 end
@@ -3818,6 +3916,7 @@ do
 	local __m1Guard = 0
 	local function __m1Once()
 		if UIS:GetFocusedTextBox() then return end
+		if tick() < (tonumber(_G.VX_SYNTH_CLICK) or 0) then return end   -- ignore clicks WE injected
 		if tick() - __m1Guard < 0.05 then return end
 		__m1Guard = tick()
 		onM1()
@@ -4856,10 +4955,10 @@ do
 		local hrp = myHRP(); if not hrp then return end
 		local c = domainCenter()
 		local out = enemyOutsideDomain(c)
-		if out then vxTeleportHard(out.Position - out.CFrame.LookVector * 4 + Vector3.new(0, 3, 0), 3); return end   -- go to a user who is OUTSIDE the domain
-		if c then local away = hrp.Position - c; local dir = away.Magnitude > 1 and away.Unit or hrp.CFrame.LookVector; vxTeleportHard(c + dir * 320 + Vector3.new(0, 140, 0), 3); return end  -- none outside: bolt far away from the center + high UP (out of the dome)
-		local tp = trainPos(); if tp then vxTeleportHard(tp + Vector3.new(0, 6, 0), 3); return end               -- no center found: train station
-		vxTeleportHard(hrp.Position + Vector3.new(0, 400, 0), 3)                                                  -- last resort: straight UP, high enough to clear the dome
+		if out then vxTeleportHard(out.Position - out.CFrame.LookVector * 4 + Vector3.new(0, 3, 0), 1.25); return end   -- go to a user who is OUTSIDE the domain
+		if c then local away = hrp.Position - c; local dir = away.Magnitude > 1 and away.Unit or hrp.CFrame.LookVector; vxTeleportHard(c + dir * 320 + Vector3.new(0, 140, 0), 1.25); return end  -- none outside: bolt far away from the center + high UP (out of the dome)
+		local tp = trainPos(); if tp then vxTeleportHard(tp + Vector3.new(0, 6, 0), 1.25); return end               -- no center found: train station
+		vxTeleportHard(hrp.Position + Vector3.new(0, 400, 0), 1.25)                                                  -- last resort: straight UP, high enough to clear the dome
 	end
 	local function domainCaster()  -- the enemy who CAST the domain = the living enemy nearest the domain center
 		local c = domainCenter(); if not c then return randomEnemyHRP() end
@@ -5104,7 +5203,7 @@ do
 		if VX_NOTIFY then VX_NOTIFY("Mahoraga sensed - safe teleport", false) end
 		vxTeleportHard(MAHO_SAFE + Vector3.new(0, 4, 0), 5)          -- the WORKING glide teleport (same engine as the Teleports tab) to the safe spot + hold 5s
 		task.delay(7, function()
-			vxTeleportHard(MAHO_RETURN + Vector3.new(0, 4, 0), 3)     -- summon done -> back to the main map
+			vxTeleportHard(MAHO_RETURN + Vector3.new(0, 4, 0), 1.25)     -- summon done -> back to the main map
 			if VX_NOTIFY then VX_NOTIFY("Back to main map", true) end
 			task.delay(1.5, function() mahoBusy = false end)
 		end)
@@ -11501,7 +11600,7 @@ do
     end)
     pcall(function() auSec:Label("🏗️ Auto Farm: In fixing + kind of works (teleport)") end)
     auSec:Toggle({ Name = "Auto Farm", Callback = function(b) if FarmApi then FarmApi.set(b) end end })
-    auSec:Dropdown({ Name = "Farm Target", Items = playerList(), Default = "Nearest", Callback = function(v) if FarmApi then FarmApi.setTarget(v) end end })
+    auSec:Dropdown({ Name = "Farm Target", Items = playerList(), Default = "Nearest", Callback = function(v) if FarmApi then FarmApi.setTarget((type(v) == "table") and v[1] or v) end end })   -- unwrap: a table here made the farm loop error out and stay dead until re-execute
     auSec:Toggle({ Name = "Auto Train", Callback = function(b) if TrainApi then TrainApi.setAuto(b) end end })
 
     -- ===================== TARGET (type a username -> act on that player) =====================
@@ -11658,7 +11757,7 @@ do
     quickSec:Button({ Name = "Go Slot 3", Callback = function() if TPApi then TPApi.goto_(3) end end })
     local plySec = tpSub:Section({ Name = "Players", Side = 1 })
     local tpPlyName
-    local plyDrop = plySec:Dropdown({ Name = "Player", Items = (TPApi and TPApi.playerNames and TPApi.playerNames()) or {}, Callback = function(v) tpPlyName = v end })
+    local plyDrop = plySec:Dropdown({ Name = "Player", Items = (TPApi and TPApi.playerNames and TPApi.playerNames()) or {}, Callback = function(v) tpPlyName = (type(v) == "table") and v[1] or v end })   -- unwrap: the UI hands back a table, so this used to store a table and the button did nothing
     plySec:Button({ Name = "Refresh Players", Callback = function() if plyDrop and TPApi then pcall(function() plyDrop:Refresh(TPApi.playerNames()) end) end end })
     plySec:Button({ Name = "Teleport To Player", Callback = function() if TPApi and tpPlyName then TPApi.tpPlayer(tpPlyName) end end })
 
