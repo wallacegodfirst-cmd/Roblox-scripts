@@ -81,7 +81,10 @@ do
 			task.wait(0.5)
 			pcall(destroyACRemotes)
 		end
-		while true do task.wait(5); pcall(destroyACRemotes) end   -- then a slow watchdog for any recreation
+		-- STOP after a short window. Re-destroying the AC remotes every 5s forever makes the server watch its
+		-- own remotes vanish and reappear on a loop - a detectable tampering pattern, and a kick risk in a
+		-- public server. Knit lazy-loads within seconds, so a brief watchdog covers the real need.
+		for _ = 1, 3 do task.wait(5); pcall(destroyACRemotes) end
 	end)
 end
 
@@ -1850,7 +1853,7 @@ _G.VX_CLAIMOWN = vxClaimOwnership
 -- TP Step slider genuinely makes the teleport gentler if a server still sets you back.
 local VX_TP_SPEED = 60   -- studs PER FRAME (back-compat local; the LIVE value the glide reads is _G.VX_TP_SPEED)
 _G.VX_TP_SPEED  = tonumber(_G.VX_TP_SPEED) or 60      -- studs/frame the glide steps in (lower = gentler if a server still sets you back)
-_G.VX_TP_METHOD = _G.VX_TP_METHOD or "Anchor"          -- "Glide" (default: anti-setback stepping + AC pass each hop) | "Instant" (single snap) | "Auto" (snap short, glide long)
+_G.VX_TP_METHOD = _G.VX_TP_METHOD or "Instant"          -- "Glide" (default: anti-setback stepping + AC pass each hop) | "Instant" (single snap) | "Auto" (snap short, glide long)
 -- game updates -> teleports set back). Try the known path first, else search for any RemoteEvent named
 local vxACRemote = nil
 local vxACStamp = 0
@@ -2000,8 +2003,9 @@ function vxHardWrite(char, hrp, cf)
 		if char.PrimaryPart ~= hrp then pcall(function() char.PrimaryPart = hrp end) end
 		char:PivotTo(cf)
 		if (hrp.Position - cf.Position).Magnitude > 0.5 then hrp.CFrame = cf end   -- pivot still missed: correct it
-		hrp.AssemblyLinearVelocity = Vector3.new(0,0,0)
-		hrp.AssemblyAngularVelocity = Vector3.new(0,0,0)
+		-- DO NOT ZERO VELOCITY. A several-hundred-stud position change on one frame while velocity reads
+		-- exactly 0,0,0 is physically impossible, and the server's own simulation flags that desync and
+		-- reverts you. Leaving your real velocity intact makes the jump look like ordinary motion.
 	end)
 end
 -- FLIGHT PATH CHECK: is the straight line to the target blocked by anything solid (a building)?
@@ -2110,6 +2114,10 @@ local function safeTeleport(targetCFrame, holdTime)
 	if instant or dist < 1 then
 		vxCurrentTargetCF = targetCFrame
 		vxNoclipOff(myGen)                      -- reclaim collisions a superseded glide leaked
+		-- NEVER engage the Heartbeat position lock for an instant hop. The lock forces you back every time
+		-- the server nudges you, the server reverts again, and the two fight forever - that IS the
+		-- rubberband. Land the hop, then leave the server alone.
+		vxTeleportLock = false
 		task.spawn(function()
 			-- ANCHOR MODE: an anchored part is not physics-simulated, so a server correction applied as
 			-- velocity or a BodyMover cannot move you while it is set. Anchor -> write -> unanchor.
@@ -2122,7 +2130,7 @@ local function safeTeleport(targetCFrame, holdTime)
 			-- assembly, a weld from someone else's ability, hitstun, a grab or a seat. Those conditions
 			-- basically never occur in an empty private server and occur constantly in a public one - which
 			-- is the whole private-vs-public difference. Every write is announced on the AC channel.
-			for _ = 1, 15 do
+			for _ = 1, 5 do   -- 5, not 15: enough to survive a lost frame, few enough that it is not a fight
 				-- BREAK, never RETURN: returning here would skip the unanchor below and leave you ANCHORED
 				-- (= frozen in place, permanently) whenever a newer teleport superseded this one.
 				if myGen ~= vxTeleGen then break end                  -- superseded by a newer teleport
@@ -2154,7 +2162,7 @@ local function safeTeleport(targetCFrame, holdTime)
 			if not (h3 and vxCurrentTargetCF) then return end
 			if (h3.Position - targetCFrame.Position).Magnitude > 15 then
 				_G.VX_TP_SETBACKS = (tonumber(_G.VX_TP_SETBACKS) or 0) + 1
-				if _G.VX_TP_SETBACKS >= 2 and _G.VX_TP_METHOD ~= "Glide" then
+				if _G.VX_TP_SETBACKS >= 3 and _G.VX_TP_METHOD ~= "Glide" then   -- 3, not 2: Instant is the wanted method, only give up after it repeatedly fails
 					_G.VX_TP_METHOD = "Glide"
 					if VX_NOTIFY then pcall(function() VX_NOTIFY("Server rejected Instant here - switched to Glide", false) end) end
 				end
@@ -2169,18 +2177,25 @@ local function safeTeleport(targetCFrame, holdTime)
 		-- SPEED: _G.VX_TP_VEL was never assigned anywhere, so every teleport flew at a fixed 100 studs/s (a
 		-- 500-stud hop took 5s, and 10s+ with a detour) = "teleport doesn't work". Default is now 260 and the
 		-- Teleports page exposes a slider that writes _G.VX_TP_VEL.
-		local vel = math.clamp(tonumber(_G.VX_TP_VEL) or 260, 30, 600)
+		local vel = math.clamp(tonumber(_G.VX_TP_VEL) or 90, 30, 200)   -- 90 = believable dash speed; 260 was ~16x walk and gets reverted
 		-- Only consider the up-and-over detour for LONG hops; short hops that clip a curb no longer fly 400 studs up.
 		local blocked = dist > 150 and not vxRouteClear(from, targetCFrame.Position)
-		local total = dist + (blocked and 800 or 0)                      -- up + dive when routing over a building
+		local total = dist + (blocked and 240 or 0)                      -- up + dive when routing over a building
 		glideSecs = total / vel + 0.4
 		vxCurrentTargetCF = nil                                          -- lock idles during the flight (see vxVelocityLeg)
 		task.spawn(function()
-			if blocked then vxVelocityLeg(from + Vector3.new(0, 400, 0), vel, myGen) end
+			if blocked then vxVelocityLeg(from + Vector3.new(0, 120, 0), vel, myGen) end   -- was 400: a 400-stud vertical hop is an obvious flag
 			vxVelocityLeg(targetCFrame.Position, vel, myGen)
 			if myGen ~= vxTeleGen then return end
 			local c = vxMyChar(); local h = c and c:FindFirstChild("HumanoidRootPart")
-			if c and h then vxHardWrite(c, h, targetCFrame); vxACPass() end   -- exact landing (position + facing)
+			if c and h then
+				vxHardWrite(c, h, targetCFrame); vxACPass()   -- exact landing (position + facing)
+				-- Kill the flight velocity HERE, not inside vxHardWrite. The glide arrives travelling at speed,
+				-- so without this you sail straight past the target. Instant hops must NOT be zeroed (a big
+				-- position change with velocity 0,0,0 is the physics desync the server reverts), which is why
+				-- this belongs to the glide landing alone.
+				pcall(function() h.AssemblyLinearVelocity = Vector3.zero; h.AssemblyAngularVelocity = Vector3.zero end)
+			end
 			vxCurrentTargetCF = targetCFrame
 		end)
 	end
@@ -3735,6 +3750,24 @@ do
 		end
 	end
 	local function realM1()  -- a REAL M1 click at screen center: the game's own input converts held-space M1 -> uptilt / airborne falling M1 -> slam
+		-- FACE THE TARGET FIRST. A centre-screen click whiffs entirely if nobody is in front of you, and a
+		-- whiffed swing produces no slam/uppercut no matter how the timing is set up.
+		pcall(function()
+			local c = myModel(); local hrp = c and c:FindFirstChild("HumanoidRootPart")
+			if not hrp then return end
+			local best, bd
+			local function chk(m)
+				if not m or m.Name == LP.Name or m == LP.Character then return end
+				local r = m:FindFirstChild("HumanoidRootPart"); local hh = m:FindFirstChildOfClass("Humanoid")
+				if r and (not hh or hh.Health > 0) then
+					local d = (r.Position - hrp.Position).Magnitude
+					if d < 18 and (not bd or d < bd) then best, bd = r, d end
+				end
+			end
+			for _, pl in ipairs(game:GetService("Players"):GetPlayers()) do if pl ~= LP then chk(pl.Character) end end
+			local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do chk(m) end end
+			if best then hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(best.Position.X, hrp.Position.Y, best.Position.Z)) end
+		end)
 		local cam = workspace.CurrentCamera; local v = (cam and cam.ViewportSize) or Vector2.new(800, 600)
 		pcall(function() VIM:SendMouseButtonEvent(v.X / 2, v.Y / 2, 0, true, game, 0); task.wait(0.04); VIM:SendMouseButtonEvent(v.X / 2, v.Y / 2, 0, false, game, 0) end)
 	end
@@ -3898,10 +3931,36 @@ do
 				task.spawn(function()
 					local c = myModel()
 					local h = c and c:FindFirstChildOfClass("Humanoid")
-					if (h == nil) or (h.FloorMaterial ~= Enum.Material.Air) then pcall(jump); task.wait(0.12) end
-					fireDir("Down")                       -- harmless if the server ignores the argument
-					_G.VX_SYNTH_CLICK = tick() + 0.08     -- ignore OUR click, not the user's next one
-					pcall(realM1)                         -- the airborne M1 IS the slam
+					local hrp = c and c:FindFirstChild("HumanoidRootPart")
+					-- Get properly AIRBORNE. The old hop set Y velocity to 26, which is ~1.5 studs - and the
+					-- blind 0.12s wait then clicked at the PEAK, where you are not falling, so the game had
+					-- no reason to produce a slam.
+					if h and h.FloorMaterial ~= Enum.Material.Air then
+						_G.VX_LAUNCHING = tick()
+						_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}
+						_G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 0.5
+						pcall(function()
+							VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+							task.wait(0.02)
+							VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+						end)
+						pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end)
+						if hrp then pcall(function() local v = hrp.AssemblyLinearVelocity; hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 45), v.Z) end) end
+					end
+					-- WAIT FOR THE FALL. A down slam is an airborne FALLING M1, so poll the real physical
+					-- state instead of guessing a delay.
+					local t0 = tick()
+					while tick() - t0 < 0.6 do
+						local c2 = myModel()
+						local h2 = c2 and c2:FindFirstChildOfClass("Humanoid")
+						local r2 = c2 and c2:FindFirstChild("HumanoidRootPart")
+						if h2 and r2 and h2.FloorMaterial == Enum.Material.Air and r2.AssemblyLinearVelocity.Y < -5 then break end
+						task.wait()
+					end
+					-- NO fireDir("Down"): Activated only accepts a Moveset object or a boolean, so the string
+					-- was silently rejected. The airborne falling M1 below IS the slam.
+					_G.VX_SYNTH_CLICK = tick() + 0.15
+					pcall(realM1)
 				end)
 			end
 
@@ -3919,7 +3978,8 @@ do
 				State.lastFire = now
 				State.spaceToken = nil
 				spaceDown()                                -- ensure held even if the 3rd was missed
-				task.delay(Config.UpFireDelay, function() if mode == "Uppercut" then fireDir(Config.UpArg) end end)
+				-- NO fireDir(Config.UpArg): Activated("Up") is the same rejected string shape. Holding Space
+				-- into the 4th swing IS the uppercut, and spaceDown() above already does it.
 				task.delay(Config.SpaceHold, function() spaceUp() end)
 			end
 		end
@@ -11778,8 +11838,8 @@ do
     local quickSec = tpSub:Section({ Name = "Quick", Side = 2 })
     -- These two API functions existed but nothing ever called them, so "Instant" was unreachable and the flight
     -- speed was permanently pinned at 100 studs/s. Now they are wired up.
-    quickSec:Dropdown({ Name = "TP Method", Items = { "Anchor", "Instant", "Auto", "Glide" }, Default = "Anchor", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
-    quickSec:Slider({ Name = "TP Speed", Min = 60, Max = 600, Default = 260, Decimals = 1, Suffix = "st/s", Callback = function(v) _G.VX_TP_VEL = tonumber(v) or 260 end })
+    quickSec:Dropdown({ Name = "TP Method", Items = { "Instant", "Anchor", "Auto", "Glide" }, Default = "Instant", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
+    quickSec:Slider({ Name = "TP Speed (Glide)", Min = 30, Max = 200, Default = 90, Decimals = 1, Suffix = "st/s", Callback = function(v) _G.VX_TP_VEL = tonumber(v) or 90 end })   -- range matches the clamp; 90 is a believable dash, 260 read as ~16x walk speed and got reverted
     quickSec:Button({ Name = "Print TP Remote", Callback = function()
         local RS = game:GetService("ReplicatedStorage"); local found = 0
         for _, d in ipairs(RS:GetDescendants()) do
