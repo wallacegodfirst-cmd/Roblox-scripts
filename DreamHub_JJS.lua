@@ -1898,6 +1898,9 @@ task.spawn(function()
 			-- noclipped at all - so a superseded glide could leave every part CanCollide=false permanently.
 			-- 1.2s (not 0.4) because vxACPass bumps vxTeleLastActive at ~3Hz during flight; a tighter window
 			-- could restore collisions MID-FLIGHT and slam you into the wall the noclip existed to pass.
+			-- If a flight died mid-way the in-flight flag would stay set and permanently disable the position
+			-- lock. Nothing has moved you for >1.2s here, so nothing can still be in flight.
+			if _G.VX_TP_INFLIGHT and tick() - vxTeleLastActive > 1.2 then _G.VX_TP_INFLIGHT = false end
 			if vxNoclipParts and tick() - vxTeleLastActive > 1.2 then
 				for _, v in ipairs(vxNoclipParts) do pcall(function() v.CanCollide = true end) end
 				vxNoclipParts = nil
@@ -1919,6 +1922,10 @@ local vxCurrentTargetCF = nil
 -- froze you in place if you tried to walk/dash right after landing. Now: re-pin ONLY when the server shoves
 -- you (>3 studs), never touch velocity per-frame.
 game:GetService("RunService").Heartbeat:Connect(function()
+	-- NEVER fight a teleport that is still in progress. While a hop or a glide is actively moving you,
+	-- this lock would drag you toward a target you have not reached yet; the server corrects, the lock
+	-- re-drags, and that tug-of-war IS the 'it sends me back'. The lock only guards you AFTER you land.
+	if _G.VX_TP_INFLIGHT then return end
 	if not (vxTeleportLock and vxCurrentTargetCF) then return end
 	local LP = game:GetService("Players").LocalPlayer
 	-- Characters-FIRST (matches vxMyChar and the PlatformStand loop).
@@ -2118,6 +2125,7 @@ local function safeTeleport(targetCFrame, holdTime)
 		-- the server nudges you, the server reverts again, and the two fight forever - that IS the
 		-- rubberband. Land the hop, then leave the server alone.
 		vxTeleportLock = false
+		_G.VX_TP_INFLIGHT = true                -- the lock must not fight our own writes
 		task.spawn(function()
 			-- ANCHOR MODE: an anchored part is not physics-simulated, so a server correction applied as
 			-- velocity or a BodyMover cannot move you while it is set. Anchor -> write -> unanchor.
@@ -2143,6 +2151,7 @@ local function safeTeleport(targetCFrame, holdTime)
 				task.wait()
 			end
 			if anchoredPart then _G.VX_TP_ANCHORING = false; pcall(function() anchoredPart.Anchored = false end) end   -- ALWAYS release
+			_G.VX_TP_INFLIGHT = false            -- writes settled
 		end)
 		-- WATCHDOG: nothing may EVER leave you anchored (that would freeze you in place). Runs independently
 		-- of the loop above, so even an unexpected error cannot strand you.
@@ -2183,10 +2192,12 @@ local function safeTeleport(targetCFrame, holdTime)
 		local total = dist + (blocked and 240 or 0)                      -- up + dive when routing over a building
 		glideSecs = total / vel + 0.4
 		vxCurrentTargetCF = nil                                          -- lock idles during the flight (see vxVelocityLeg)
+		_G.VX_TP_INFLIGHT = true                                         -- the lock must not fight the flight
 		task.spawn(function()
 			if blocked then vxVelocityLeg(from + Vector3.new(0, 120, 0), vel, myGen) end   -- was 400: a 400-stud vertical hop is an obvious flag
 			vxVelocityLeg(targetCFrame.Position, vel, myGen)
-			if myGen ~= vxTeleGen then return end
+			if myGen ~= vxTeleGen then _G.VX_TP_INFLIGHT = false; return end
+			_G.VX_TP_INFLIGHT = false                                    -- landed: the lock may guard again
 			local c = vxMyChar(); local h = c and c:FindFirstChild("HumanoidRootPart")
 			if c and h then
 				vxHardWrite(c, h, targetCFrame); vxACPass()   -- exact landing (position + facing)
@@ -2204,6 +2215,14 @@ local function safeTeleport(targetCFrame, holdTime)
 		vxTeleportLock = false
 		vxCurrentTargetCF = nil
 		isTeleporting = false
+		_G.VX_TP_INFLIGHT = false
+		-- A teleport completed, so stop counting old failures - otherwise three unlucky hops ANYWHERE
+		-- demoted you to Glide for the rest of the session.
+		_G.VX_TP_SETBACKS = 0
+		-- ...and give the user back the method they actually chose.
+		if _G.VX_TP_METHOD == "Glide" and _G.VX_TP_USER_METHOD and _G.VX_TP_USER_METHOD ~= "Glide" then
+			_G.VX_TP_METHOD = _G.VX_TP_USER_METHOD
+		end
 	end)
 	return true
 end
@@ -3694,7 +3713,7 @@ do
 	end
 	TPApi = {
 		setSpeed = function(v) if type(v) == "number" then _G.VX_TP_SPEED = v end end,
-		setMethod = function(m) if type(m) == "table" then m = m[1] end _G.VX_TP_METHOD = (m == "Instant" or m == "Glide" or m == "Anchor") and m or "Auto" end,
+		setMethod = function(m) if type(m) == "table" then m = m[1] end _G.VX_TP_METHOD = (m == "Instant" or m == "Glide" or m == "Anchor") and m or "Auto"; _G.VX_TP_USER_METHOD = _G.VX_TP_METHOD end,   -- remember the choice so an auto-demote can be undone
 		up = function() local r = hrp(); if r then vxTeleportHard(r.Position + Vector3.new(0, 120, 0), 1.25) end end,
 		spawn = function()
 			-- FindFirstChildOfClass is NOT recursive; JJS spawns sit inside workspace.Map, so the old call found
@@ -3945,16 +3964,16 @@ do
 							VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
 						end)
 						pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end)
-						if hrp then pcall(function() local v = hrp.AssemblyLinearVelocity; hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 45), v.Z) end) end
+						if hrp then pcall(function() local v = hrp.AssemblyLinearVelocity; hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 65), v.Z) end) end   -- 65 (~5 studs): 45 barely left the floor, so the falling state never really registered
 					end
 					-- WAIT FOR THE FALL. A down slam is an airborne FALLING M1, so poll the real physical
 					-- state instead of guessing a delay.
 					local t0 = tick()
-					while tick() - t0 < 0.6 do
+					while tick() - t0 < 0.8 do
 						local c2 = myModel()
 						local h2 = c2 and c2:FindFirstChildOfClass("Humanoid")
 						local r2 = c2 and c2:FindFirstChild("HumanoidRootPart")
-						if h2 and r2 and h2.FloorMaterial == Enum.Material.Air and r2.AssemblyLinearVelocity.Y < -5 then break end
+						if h2 and r2 and h2.FloorMaterial == Enum.Material.Air and r2.AssemblyLinearVelocity.Y < -2 then break end   -- -2, not -5: catch the fall as it starts
 						task.wait()
 					end
 					-- NO fireDir("Down"): Activated only accepts a Moveset object or a boolean, so the string
@@ -3967,7 +3986,10 @@ do
 		elseif mode == "Uppercut" then
 			-- Hold Space INTO the 4th swing = the launcher.
 			if n == 3 then
+				-- TAP, do not hold. Holding Space through the 3rd swing cancels the M1 chain, so the 4th
+				-- swing never plays, the counter never reaches 4, and the uppercut never fires.
 				spaceDown()
+				task.delay(0.12, function() spaceUp() end)
 				local token = {}
 				State.spaceToken = token
 				task.delay(2.0, function()
@@ -3987,20 +4009,31 @@ do
 
 	-- Hook the animator and count real swings. Re-hooks whenever the Animator instance changes (respawn /
 	-- character swap), because a track bound to a dead Animator never fires again.
-	local comboAnimator, comboConn = nil, nil
+	-- Hook EVERY rig that can play your combat animations. JJS uses workspace.Characters[name] and
+	-- LP.Character at different moments; hooking only one meant swings on the other never counted, so the
+	-- 3rd/4th hit never arrived. Weak-keyed so dead animators drop out on their own.
+	local comboHooked = setmetatable({}, { __mode = "k" })
+	local comboAnimLive = false   -- true once at least one animator is hooked (the click fallback stands down)
 	local function hookComboAnims()
-		local c = myModel()
-		local h = c and c:FindFirstChildOfClass("Humanoid")
-		local a = h and h:FindFirstChildOfClass("Animator")
-		if not a or a == comboAnimator then return end
-		if comboConn then pcall(function() comboConn:Disconnect() end) end
-		comboAnimator = a
-		comboConn = a.AnimationPlayed:Connect(function(track)
-			if mode == "Off" then return end
-			local ok, id = pcall(function() return tostring(track.Animation.AnimationId):match("%d+") end)
-			if not ok or not id then return end
-			if COMBO_IDS[id] then onSwing() end
-		end)
+		local rigs = {}
+		local chs = workspace:FindFirstChild("Characters")
+		local resolved = chs and chs:FindFirstChild(LP.Name)
+		if resolved then rigs[#rigs + 1] = resolved end
+		if LP.Character and LP.Character ~= resolved then rigs[#rigs + 1] = LP.Character end
+		for _, char in ipairs(rigs) do
+			local h = char:FindFirstChildOfClass("Humanoid")
+			local a = h and h:FindFirstChildOfClass("Animator")
+			if a and not comboHooked[a] then
+				comboHooked[a] = true
+				comboAnimLive = true
+				a.AnimationPlayed:Connect(function(track)
+					if mode == "Off" then return end
+					local ok, id = pcall(function() return tostring(track.Animation.AnimationId):match("%d+") end)
+					if not ok or not id then return end
+					if COMBO_IDS[id] or (_G.VX_M1_IDS and _G.VX_M1_IDS[id]) then onSwing() end
+				end)
+			end
+		end
 	end
 	task.spawn(function() while true do pcall(hookComboAnims); task.wait(0.5) end end)
 
@@ -4008,7 +4041,7 @@ do
 	-- character entirely, this is the safety net that still advances the combo.
 	local function onM1()
 		if mode == "Off" then return end
-		if comboConn and tick() - State.lastM1 < 1.5 then return end   -- animation path is live and counting
+		if comboAnimLive and tick() - State.lastM1 < 1.5 then return end   -- the animation path is counting; do not double-count this click
 		onSwing()
 	end
 	-- REAL M1s come from the shared poll detector, NOT InputBegan: the game sinks the attack click, so the old
