@@ -2092,7 +2092,55 @@ end
 -- gliding -- now the lock target MOVES WITH the glide (it reinforces each hop instead of fighting it); (2) no AC
 -- pass was fired during the move -- now every few hops we fire it so the server accepts the motion. VX_TP_METHOD
 -- picks Glide (default) / Instant / Auto; VX_TP_SPEED is the hop size (lower = gentler if a server still resists).
+-- ═══ RESET TELEPORT ═══ The method that actually beats a server-side position check: you cannot argue with
+-- the server about how far you moved if the server THROWS AWAY its record of where you were. Resetting the
+-- character makes it drop your old position entirely; the fresh rig spawns with a clean baseline, and a write
+-- during that window is accepted because there is nothing to compare it against.
+-- Cost, stated plainly: you die. Health, combo and momentum are gone. That is the trade for a teleport that
+-- sticks on servers that enforce, which is why it is a selectable method and not silently forced on you.
+local function vxResetTeleport(targetCFrame)
+	local Players2 = game:GetService("Players")
+	local LP2 = Players2.LocalPlayer
+	local dest = targetCFrame
+	local gen = vxTeleGen + 1
+	vxTeleGen = gen
+	task.spawn(function()
+		-- 1) drop the old rig (both the JJS body and the standard one, whichever exists)
+		local c = vxMyChar()
+		pcall(function()
+			local h = c and c:FindFirstChildOfClass("Humanoid")
+			if h then h.Health = 0 end
+		end)
+		pcall(function() if c then c:BreakJoints() end end)
+		-- 2) wait for the replacement to actually exist and be movable
+		local t0 = tick()
+		local nc, nh
+		repeat
+			task.wait(0.05)
+			nc = vxMyChar()
+			nh = nc and nc:FindFirstChild("HumanoidRootPart")
+		until (nc and nh and nc ~= c) or tick() - t0 > 8
+		if not (nc and nh) or gen ~= vxTeleGen then return end
+		task.wait(0.15)                        -- let the spawn settle before we claim the position
+		-- 3) write the destination through the clean-baseline window
+		local t1 = tick()
+		while tick() - t1 < 1.2 and gen == vxTeleGen do
+			local cc = vxMyChar(); local hh = cc and cc:FindFirstChild("HumanoidRootPart")
+			if not hh then break end
+			if _G.VX_ACPASS then _G.VX_ACPASS() end
+			pcall(function()
+				cc:PivotTo(dest)
+				hh.AssemblyLinearVelocity = Vector3.new(0, -2, 0)   -- never a dead zero: that reads as impossible
+			end)
+			game:GetService("RunService").Heartbeat:Wait()
+		end
+	end)
+	return true
+end
+
 local function safeTeleport(targetCFrame, holdTime)
+	-- RESET method: hand off entirely, it owns its own respawn timing.
+	if tostring(_G.VX_TP_METHOD) == "Reset" then return vxResetTeleport(targetCFrame) end
 	local char = vxMyChar(); if not char then return false end
 	local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return false end
 	for _, v in ipairs(char:GetDescendants()) do
@@ -3821,7 +3869,7 @@ do
 	end
 	TPApi = {
 		setSpeed = function(v) if type(v) == "number" then _G.VX_TP_SPEED = v end end,
-		setMethod = function(m) if type(m) == "table" then m = m[1] end _G.VX_TP_METHOD = (m == "Instant" or m == "Glide" or m == "Anchor") and m or "Auto"; _G.VX_TP_USER_METHOD = _G.VX_TP_METHOD end,   -- remember the choice so an auto-demote can be undone
+		setMethod = function(m) if type(m) == "table" then m = m[1] end _G.VX_TP_METHOD = (m == "Instant" or m == "Glide" or m == "Anchor" or m == "Reset") and m or "Auto"; _G.VX_TP_USER_METHOD = _G.VX_TP_METHOD end,   -- remember the choice so an auto-demote can be undone
 		up = function() local r = hrp(); if r then vxTeleportHard(r.Position + Vector3.new(0, 120, 0), 1.25) end end,
 		spawn = function()
 			-- FindFirstChildOfClass is NOT recursive; JJS spawns sit inside workspace.Map, so the old call found
@@ -4062,6 +4110,7 @@ do
 	-- counts - so the count and the real combo drift apart. The per-character M1 ANIMATION database in this
 	-- module (COMBO_IDS, built above) is exact: one entry plays per real landed swing. It was built and then
 	-- never read by anything. Now it drives the counter, so 1-2-3-4 always matches what you actually threw.
+	local slamArmed = 0   -- set after the hop; YOUR next M1 inside this window is the down slam
 	local function onSwing()
 		if mode == "Off" then return end
 		local now = tick()
@@ -4070,20 +4119,27 @@ do
 		State.m1Count = State.m1Count + 1
 		local n = State.m1Count
 		if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] swing " .. n .. "  mode=" .. tostring(mode)) end
+		-- SLAM: if we hopped for you and you are now airborne, THIS swing is the down slam - announce it on
+		-- the same beat you actually clicked, which is the timing that was wrong before.
+		if mode == "Down Slam" and tick() < slamArmed then
+			local c0 = myModel(); local h0 = c0 and c0:FindFirstChildOfClass("Humanoid")
+			if h0 and h0.FloorMaterial == Enum.Material.Air then
+				slamArmed = 0
+				State.m1Count = 0
+				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] airborne M1 -> DOWN SLAM") end
+				fireDir("Down")
+				return
+			end
+		end
 
 		if mode == "Down Slam" then
-			-- BOTH PATHS, because we cannot test which the server honours:
-			--  (a) the REMOTE you captured in game - <Char>Service.RE.Activated("Down") on the 4th swing.
-			--      That capture is the game's OWN behaviour, so the string argument is definitely valid.
-			--  (b) the PHYSICAL mechanic - hop, wait until genuinely airborne AND falling, then M1. If the
-			--      server also requires the state (not just the message), this supplies it.
-			-- They complement each other: the remote alone cannot fake being airborne, and the physical path
-			-- alone cannot fire a move the server expects to be announced.
-			if n >= 4 then
+			-- AFTER 3 SWINGS: just JUMP. We do NOT click for you - YOUR next M1 while falling is the slam.
+			-- (Auto-clicking was the timing problem: it fired on whatever frame it guessed at rather than
+			-- when you actually swung.) The hop is small on purpose - the old 65 launched you far too high.
+			if n >= 3 then
 				State.m1Count = 0
 				State.lastFire = now
-				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] 4th swing -> DOWN SLAM (remote + airborne M1)") end
-				fireDir("Down")
+				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] 3 swings -> hop; your next M1 is the slam") end
 				task.spawn(function()
 					local c = myModel()
 					local h = c and c:FindFirstChildOfClass("Humanoid")
@@ -4091,42 +4147,32 @@ do
 					if h and h.FloorMaterial ~= Enum.Material.Air then
 						_G.VX_LAUNCHING = tick()
 						_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}
-						_G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 0.5
+						_G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 0.4
 						pcall(function()
 							VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
 							task.wait(0.02)
 							VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
 						end)
 						pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end)
+						-- 30, not 65: just enough air to be falling on your next click, not a rocket.
 						if hrp then pcall(function()
 							local v = hrp.AssemblyLinearVelocity
-							hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 65), v.Z)
+							hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 30), v.Z)
 						end) end
 					end
-					-- wait for a REAL falling state, not a guessed delay
-					local t0 = tick()
-					while tick() - t0 < 0.8 do
-						local c2 = myModel()
-						local h2 = c2 and c2:FindFirstChildOfClass("Humanoid")
-						local r2 = c2 and c2:FindFirstChild("HumanoidRootPart")
-						if h2 and r2 and h2.FloorMaterial == Enum.Material.Air and r2.AssemblyLinearVelocity.Y < -2 then break end
-						task.wait()
-					end
-					fireDir("Down")                       -- announce again now that the state is actually right
-					_G.VX_SYNTH_CLICK = tick() + 0.15
-					pcall(realM1)                         -- realM1 already faces the nearest enemy first
+					slamArmed = tick() + 1.6      -- your next M1 within this window announces the slam
 				end)
 			end
 		elseif mode == "Uppercut" then
-			-- Same idea: the captured remote AND the physical hold-Space-into-the-4th.
-			if n >= 4 then
-				State.m1Count = 0
+			-- EVERY swing, not just the 4th, and with no added delay - you asked for it to always be
+			-- available and to be faster. A short cooldown is the only limiter so it cannot spam itself.
+			if tick() - (State.lastUp or 0) >= 0.18 then
+				State.lastUp = tick()
 				State.lastFire = now
-				State.spaceToken = nil
-				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] 4th swing -> UPPERCUT (remote + Space hold)") end
+				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] swing " .. n .. " -> UPPERCUT") end
 				spaceDown()
 				fireDir("Up")
-				task.delay(Config.SpaceHold, function() spaceUp() end)
+				task.delay(0.22, function() spaceUp() end)   -- was Config.SpaceHold; shorter = ready again sooner
 			end
 		end
 	end
@@ -12017,7 +12063,7 @@ do
     local quickSec = tpSub:Section({ Name = "Quick", Side = 2 })
     -- These two API functions existed but nothing ever called them, so "Instant" was unreachable and the flight
     -- speed was permanently pinned at 100 studs/s. Now they are wired up.
-    quickSec:Dropdown({ Name = "TP Method", Items = { "Instant", "Anchor", "Auto", "Glide" }, Default = "Instant", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
+    quickSec:Dropdown({ Name = "TP Method", Items = { "Instant", "Reset", "Anchor", "Auto", "Glide" }, Default = "Instant", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
     quickSec:Slider({ Name = "TP Speed (Glide)", Min = 30, Max = 200, Default = 90, Decimals = 1, Suffix = "st/s", Callback = function(v) _G.VX_TP_VEL = tonumber(v) or 90 end })   -- range matches the clamp; 90 is a believable dash, 260 read as ~16x walk speed and got reverted
     quickSec:Button({ Name = "Print TP Remote", Callback = function()
         local RS = game:GetService("ReplicatedStorage"); local found = 0
