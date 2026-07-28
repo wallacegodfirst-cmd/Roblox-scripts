@@ -2146,7 +2146,8 @@ local function safeTeleport(targetCFrame, holdTime)
 					-- 145-460 stud jumps, so the server is not demanding the speed EXPLAIN the distance - it
 					-- rejects a large move whose velocity is exactly ZERO. Generous hops, believable velocity.
 					local STEP  = 90
-					local hops  = math.clamp(math.ceil(total / STEP), 1, 40)
+						-- Within one step = ONE write. No walking, no glide feel - just there.
+						local hops  = (total <= STEP) and 1 or math.clamp(math.ceil(total / STEP), 1, 40)
 					for k = 1, hops do
 						if myGen ~= vxTeleGen then break end
 						local cc = vxMyChar(); local hh = cc and cc:FindFirstChild("HumanoidRootPart")
@@ -2210,23 +2211,9 @@ local function safeTeleport(targetCFrame, holdTime)
 				if hw and hw.Anchored then pcall(function() hw.Anchored = false end) end
 			end)
 		end
-		-- SERVER-AUTHORITATIVE DETECTION: if we are still nowhere near the target a moment later, the server
-		-- IS enforcing and no amount of client insistence wins. Fall back to the velocity glide, which the
-		-- server just sees as ordinary movement, and say so instead of looking silently broken.
-		task.delay(0.35, function()
-			if myGen ~= vxTeleGen then return end
-			local c3 = vxMyChar(); local h3 = c3 and c3:FindFirstChild("HumanoidRootPart")
-			if not (h3 and vxCurrentTargetCF) then return end
-			if (h3.Position - targetCFrame.Position).Magnitude > 15 then
-				_G.VX_TP_SETBACKS = (tonumber(_G.VX_TP_SETBACKS) or 0) + 1
-				if _G.VX_TP_SETBACKS >= 3 and _G.VX_TP_METHOD ~= "Glide" then   -- 3, not 2: Instant is the wanted method, only give up after it repeatedly fails
-					_G.VX_TP_METHOD = "Glide"
-					if VX_NOTIFY then pcall(function() VX_NOTIFY("Server rejected Instant here - switched to Glide", false) end) end
-				end
-			else
-				_G.VX_TP_SETBACKS = 0
-			end
-		end)
+		-- (Auto-demote to Glide REMOVED: it silently switched the method behind your back, and every later
+		--  teleport then glided - exactly the "it glides, I don't want that" complaint. The method is now
+		--  only ever the one selected in the TP Method dropdown.)
 	else
 		-- VELOCITY FLIGHT (the working method): push yourself to the target with plain physics velocity —
 		-- the server just sees you moving, nothing to reject. If a building blocks the straight line we fly
@@ -2391,9 +2378,73 @@ local function vxMyChar()  -- your live body (JJS keeps it under workspace.Chara
 	local chs = workspace:FindFirstChild("Characters")
 	return (chs and chs:FindFirstChild(LP.Name)) or LP.Character
 end
-local function vxMyCharSvc()  -- which <Char>Service to fire for M1 / Down / Up (hit ONE service, not all 21)
-	local n = detectCharName(vxMyChar())
-	return n and (n .. "Service") or nil
+-- ═══ WHICH SERVICE IS MINE ═══ Down Slam / Uppercut fire <Char>Service.RE.Activated("Down"/"Up"), so we
+-- must land on the RIGHT service. Guessing from a character name is unreliable, so we SCAN instead:
+--   1) match a move in your Moveset to the service that owns it (captured names, most reliable)
+--   2) match a detected character name
+--   3) scan every service under Knit.Services and take one whose name matches a token on your character
+-- Then we verify the candidate actually HAS RE.Activated before returning it.
+local MOVE_TO_CHARSVC = {         -- move you own  ->  the character service that owns your M1 chain
+	["cursedstrikes"] = "Itadori",  ["divergentfist"] = "Itadori",  ["blackflash"] = "Itadori",
+	["lapseblue"]     = "Gojo",     ["twofoldkick"]   = "Gojo",     ["reversalred"] = "Gojo",  ["hollowpurple"] = "Gojo",
+	["nue"]           = "Megumi",   ["rabbitescape"]  = "Megumi",   ["divinedog"]   = "Megumi", ["toad"] = "Megumi",
+	["roughenergy"]   = "Hakari",   ["gamble"]        = "Hakari",
+	["flowingredscale"] = "Choso",  ["piercingblood"] = "Choso",    ["bloodedge"]   = "Choso",  ["supernova"] = "Choso",
+	["crushingjaws"]  = "Locust",   ["wingthrow"]     = "Locust",   ["clever"]      = "Locust",
+	["idletransfiguration"] = "Mahito", ["polymorphicsoul"] = "Mahito",
+	["crow"]          = "MeiMei",   ["blackbird"]     = "MeiMei",
+	["worldcutting"]  = "Toji",     ["playfulcloud"]  = "Toji",     ["inverted"]    = "Toji",
+	["rika"]          = "Yuta",     ["truelove"]      = "Yuta",
+}
+local function vxNorm(x) return (string.gsub(string.lower(tostring(x or "")), "[^%a%d]", "")) end
+local function vxServicesFolder()
+	local k = game:GetService("ReplicatedStorage"):FindFirstChild("Knit")
+	k = k and k:FindFirstChild("Knit")
+	return k and k:FindFirstChild("Services")
+end
+local function vxSvcHasActivated(name)
+	local svcs = vxServicesFolder(); if not svcs then return false end
+	local s = svcs:FindFirstChild(name); local re = s and s:FindFirstChild("RE")
+	return (re and re:FindFirstChild("Activated")) and true or false
+end
+local function vxMyCharSvc()  -- which <Char>Service to fire for M1 / Down / Up
+	local c = vxMyChar()
+	-- 1) MOVESET MATCH (most reliable: your moves are unique to your character)
+	if c then
+		local mv = c:FindFirstChild("Moveset")
+		if mv then
+			for _, m in ipairs(mv:GetChildren()) do
+				local who = MOVE_TO_CHARSVC[vxNorm(m.Name)]
+				if who and vxSvcHasActivated(who .. "Service") then
+					if _G.VX_M1_DEBUG then print("[M1COMBO] service via move '" .. m.Name .. "' -> " .. who .. "Service") end
+					return who .. "Service"
+				end
+			end
+		end
+	end
+	-- 2) DETECTED CHARACTER NAME
+	local n = detectCharName(c)
+	if n and vxSvcHasActivated(n .. "Service") then
+		if _G.VX_M1_DEBUG then print("[M1COMBO] service via character name -> " .. n .. "Service") end
+		return n .. "Service"
+	end
+	-- 3) SCAN: any service whose name appears on your character (model/humanoid/moveset text)
+	local svcs = vxServicesFolder()
+	if svcs and c then
+		local hay = vxNorm(c.Name)
+		local hum = c:FindFirstChildOfClass("Humanoid"); if hum then hay = hay .. vxNorm(hum.DisplayName) end
+		local mv = c:FindFirstChild("Moveset")
+		if mv then for _, m in ipairs(mv:GetChildren()) do hay = hay .. vxNorm(m.Name) end end
+		for _, sv in ipairs(svcs:GetChildren()) do
+			local base = sv.Name:gsub("Service$", "")
+			if #base >= 4 and string.find(hay, vxNorm(base), 1, true) and vxSvcHasActivated(sv.Name) then
+				if _G.VX_M1_DEBUG then print("[M1COMBO] service via scan -> " .. sv.Name) end
+				return sv.Name
+			end
+		end
+	end
+	if _G.VX_M1_DEBUG then print("[M1COMBO] NO service resolved for your character") end
+	return nil
 end
 local function vxClientDash(dir, speed, dur)  -- a REAL velocity dash relative to facing; guarantees visible motion even if the Dash remote is validation-only
 	local char = vxMyChar(); local hrp = char and char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
@@ -3953,9 +4004,30 @@ do
 		-- Fire BOTH the v5-resolved remote AND the hub's per-char resolver (act = your <Char>Service, or all 21
 		-- if undetected — only YOURS responds server-side). Guarantees the correct Activated("Down"/"Up") lands
 		-- even when v5 character detection misses = "auto down slam / uppercut doesn't work" fix.
-		-- EXACT captured shape: FireServer("Down") / FireServer("Up") - a single string, no trailing nil.
-		if State.remote then pcall(function() State.remote:FireServer(dir) end) end
-		pcall(function() act(dir) end)
+		-- EXACT captured shape: <Char>Service.RE.Activated:FireServer("Down") / ("Up") - one string, no nil.
+		local fired = false
+		local svcName = vxMyCharSvc()                     -- scans moveset -> name -> services
+		if svcName then
+			local svcs = game:GetService("ReplicatedStorage"):FindFirstChild("Knit")
+			svcs = svcs and svcs:FindFirstChild("Knit"); svcs = svcs and svcs:FindFirstChild("Services")
+			local sv = svcs and svcs:FindFirstChild(svcName)
+			local re = sv and sv:FindFirstChild("RE"); re = re and re:FindFirstChild("Activated")
+			if re then
+				fired = pcall(function() re:FireServer(dir) end)
+				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] fired " .. svcName .. '.RE.Activated("' .. dir .. '") -> ' .. tostring(fired)) end
+			end
+		end
+		if not fired and State.remote then
+			fired = pcall(function() State.remote:FireServer(dir) end)
+			if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] fell back to State.remote -> " .. tostring(fired)) end
+		end
+		if not fired then
+			-- LAST RESORT: only REAL character services (not all 21 of everything) - just yours answers.
+			for _, nm in ipairs({ "Itadori", "Gojo", "Megumi", "Hakari", "Choso", "Locust", "Mahito", "MeiMei", "Toji", "Yuta", "Sukuna" }) do
+				if vxSvcHasActivated(nm .. "Service") then pcall(function() fireKnit(nm .. "Service", "Activated", dir) end) end
+			end
+			if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] no service resolved - swept the known character services") end
+		end
 	end
 	local function spaceDown()
 		if State.spaceHeld then return end
