@@ -2142,7 +2142,10 @@ local function safeTeleport(targetCFrame, holdTime)
 				local total = delta.Magnitude
 				if total > 1 then
 					local dirU  = delta.Unit
-					local STEP  = 55                                  -- studs per hop: fast, still believable
+					-- Tuned to the capture data, not theory: the teleports that STUCK carried ~22 studs/s through
+					-- 145-460 stud jumps, so the server is not demanding the speed EXPLAIN the distance - it
+					-- rejects a large move whose velocity is exactly ZERO. Generous hops, believable velocity.
+					local STEP  = 90
 					local hops  = math.clamp(math.ceil(total / STEP), 1, 40)
 					for k = 1, hops do
 						if myGen ~= vxTeleGen then break end
@@ -2154,7 +2157,7 @@ local function safeTeleport(targetCFrame, holdTime)
 							hh.CFrame = CFrame.new(p) * rot
 							-- MATCHING velocity: this is the whole point. Position moved, so momentum must
 							-- agree with it, otherwise the move is physically impossible and gets reverted.
-							hh.AssemblyLinearVelocity = dirU * math.min(total / math.max(hops, 1) * 60, 220)
+							hh.AssemblyLinearVelocity = dirU * 26   -- ~ the value observed on the teleports that stuck
 						end)
 						game:GetService("RunService").Heartbeat:Wait()   -- resolved here: RunService is not a file-level local
 					end
@@ -3950,7 +3953,8 @@ do
 		-- Fire BOTH the v5-resolved remote AND the hub's per-char resolver (act = your <Char>Service, or all 21
 		-- if undetected — only YOURS responds server-side). Guarantees the correct Activated("Down"/"Up") lands
 		-- even when v5 character detection misses = "auto down slam / uppercut doesn't work" fix.
-		if State.remote then pcall(function() State.remote:FireServer(dir, nil) end) end
+		-- EXACT captured shape: FireServer("Down") / FireServer("Up") - a single string, no trailing nil.
+		if State.remote then pcall(function() State.remote:FireServer(dir) end) end
 		pcall(function() act(dir) end)
 	end
 	local function spaceDown()
@@ -3987,68 +3991,22 @@ do
 		if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] swing " .. n .. "  mode=" .. tostring(mode)) end
 
 		if mode == "Down Slam" then
-			-- JJS's down slam is an AIRBORNE FALLING M1. Firing a direction remote while standing on the floor
-			-- cannot produce it. On the 3rd swing: hop, then click while falling - exactly what a player does.
-			if n >= 3 then
+			-- Fires on the 4TH swing: <Char>Service.RE.Activated:FireServer("Down") - the exact remote and
+			-- argument shape captured in game. No jumping or synthetic clicking: the remote IS the mechanic.
+			if n >= 4 then
 				State.m1Count = 0
 				State.lastFire = now
-				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] DOWN SLAM firing (3rd swing)") end
-				task.spawn(function()
-					local c = myModel()
-					local h = c and c:FindFirstChildOfClass("Humanoid")
-					local hrp = c and c:FindFirstChild("HumanoidRootPart")
-					-- Get properly AIRBORNE. The old hop set Y velocity to 26, which is ~1.5 studs - and the
-					-- blind 0.12s wait then clicked at the PEAK, where you are not falling, so the game had
-					-- no reason to produce a slam.
-					if h and h.FloorMaterial ~= Enum.Material.Air then
-						_G.VX_LAUNCHING = tick()
-						_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}
-						_G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 0.5
-						pcall(function()
-							VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-							task.wait(0.02)
-							VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-						end)
-						pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end)
-						if hrp then pcall(function() local v = hrp.AssemblyLinearVelocity; hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 65), v.Z) end) end   -- 65 (~5 studs): 45 barely left the floor, so the falling state never really registered
-					end
-					-- WAIT FOR THE FALL. A down slam is an airborne FALLING M1, so poll the real physical
-					-- state instead of guessing a delay.
-					local t0 = tick()
-					while tick() - t0 < 0.8 do
-						local c2 = myModel()
-						local h2 = c2 and c2:FindFirstChildOfClass("Humanoid")
-						local r2 = c2 and c2:FindFirstChild("HumanoidRootPart")
-						if h2 and r2 and h2.FloorMaterial == Enum.Material.Air and r2.AssemblyLinearVelocity.Y < -2 then break end   -- -2, not -5: catch the fall as it starts
-						task.wait()
-					end
-					-- NO fireDir("Down"): Activated only accepts a Moveset object or a boolean, so the string
-					-- was silently rejected. The airborne falling M1 below IS the slam.
-					_G.VX_SYNTH_CLICK = tick() + 0.15
-					pcall(realM1)
-				end)
+				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] 4th swing -> Activated(\"Down\")") end
+				fireDir("Down")
 			end
-
 		elseif mode == "Uppercut" then
-			-- Hold Space INTO the 4th swing = the launcher.
-			if n == 3 then
-				-- TAP, do not hold. Holding Space through the 3rd swing cancels the M1 chain, so the 4th
-				-- swing never plays, the counter never reaches 4, and the uppercut never fires.
-				spaceDown()
-				task.delay(0.12, function() spaceUp() end)
-				local token = {}
-				State.spaceToken = token
-				task.delay(2.0, function()
-					if State.spaceToken == token then spaceUp(); State.spaceToken = nil; State.m1Count = 0 end
-				end)
-			elseif n >= 4 then
+			-- Same mechanic, "Up". Space is no longer held: the remote does the launch, and holding Space
+			-- through the chain was cancelling the very swing we were waiting for.
+			if n >= 4 then
 				State.m1Count = 0
 				State.lastFire = now
-				State.spaceToken = nil
-				spaceDown()                                -- ensure held even if the 3rd was missed
-				-- NO fireDir(Config.UpArg): Activated("Up") is the same rejected string shape. Holding Space
-				-- into the 4th swing IS the uppercut, and spaceDown() above already does it.
-				task.delay(Config.SpaceHold, function() spaceUp() end)
+				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] 4th swing -> Activated(\"Up\")") end
+				fireDir("Up")
 			end
 		end
 	end
