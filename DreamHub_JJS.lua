@@ -2100,107 +2100,7 @@ end
 -- gliding -- now the lock target MOVES WITH the glide (it reinforces each hop instead of fighting it); (2) no AC
 -- pass was fired during the move -- now every few hops we fire it so the server accepts the motion. VX_TP_METHOD
 -- picks Glide (default) / Instant / Auto; VX_TP_SPEED is the hop size (lower = gentler if a server still resists).
--- ═══ RESET TELEPORT — TWO PHASES, DEATH ONLY AS A LAST RESORT ═══
--- Phase A is non-lethal: anchor the root (an anchored assembly is not physics-simulated, so a server
--- correction sent as velocity or a BodyMover cannot drag you), announce on the AC channel, write the
--- destination, unanchor with a small downward drift. Then we MEASURE whether it stuck.
--- Phase B only runs if the server actually reverted Phase A. You cannot argue with the server about how far
--- you moved if it THROWS AWAY its record of where you were: resetting the character drops your old position
--- entirely, and a write into that clean-baseline window has nothing to be compared against.
--- Cost of Phase B, stated plainly: you die - health, combo and momentum are gone. Set _G.VX_TP_NO_DEATH = true
--- to cap this method at Phase A and never pay that cost, at the price of it sometimes not sticking.
-local function vxResetTeleport(targetCFrame)
-	local Players2 = game:GetService("Players")
-	local LP2 = Players2.LocalPlayer
-	local dest = targetCFrame
-	local gen = vxTeleGen + 1
-	vxTeleGen = gen
-	task.spawn(function()
-		local RunSvc = game:GetService("RunService")
-		-- ═══ PHASE A — NON-LETHAL FIRST ═══
-		-- Dying is a real cost (health, combo, momentum), so we do not pay it until we know we have to. An
-		-- ANCHORED root is not physics-simulated, so a server correction arriving as velocity or a BodyMover
-		-- cannot drag you while the anchor is on: anchor -> announce on the AC channel -> write -> unanchor
-		-- carrying a small downward drift (never a dead zero - that reads as impossible physics). On most
-		-- servers this alone sticks and you never die at all.
-		local ac = vxMyChar(); local ah = ac and ac:FindFirstChild("HumanoidRootPart")
-		if ac and ah then
-			_G.VX_TP_INFLIGHT = true
-			_G.VX_TP_ANCHORING = true
-			pcall(function() ah.Anchored = true end)
-			local tA = tick()
-			while tick() - tA < 0.35 and gen == vxTeleGen do
-				local cc = vxMyChar(); local hh = cc and cc:FindFirstChild("HumanoidRootPart")
-				if not hh then break end
-				if _G.VX_ACPASS then _G.VX_ACPASS() end
-				pcall(function() cc:PivotTo(dest) end)
-				RunSvc.Heartbeat:Wait()
-			end
-			_G.VX_TP_ANCHORING = false
-			pcall(function()
-				local cc = vxMyChar(); local hh = cc and cc:FindFirstChild("HumanoidRootPart")
-				if hh then hh.Anchored = false; hh.AssemblyLinearVelocity = Vector3.new(0, -2, 0) end
-			end)
-			-- WATCHDOG: nothing may ever leave you anchored (that is a permanent freeze), even if the loop above
-			-- errored or a newer teleport superseded us mid-hold.
-			task.delay(1.2, function()
-				_G.VX_TP_ANCHORING = false
-				local cw = vxMyChar(); local hw = cw and cw:FindFirstChild("HumanoidRootPart")
-				if hw and hw.Anchored then pcall(function() hw.Anchored = false end) end
-			end)
-			-- Did it stick? Give the server long enough to have set us back if it was going to.
-			task.wait(0.6)
-			if gen ~= vxTeleGen then _G.VX_TP_INFLIGHT = false; return end
-			local pc = vxMyChar(); local ph = pc and pc:FindFirstChild("HumanoidRootPart")
-			if ph and (ph.Position - dest.Position).Magnitude <= 30 then
-				_G.VX_TP_INFLIGHT = false
-				vxTeleLastActive = tick()
-				return                                   -- stuck without dying
-			end
-			_G.VX_TP_INFLIGHT = false
-		end
-		-- Opt-out: with this set we stop here rather than ever killing you, even if Phase A got reverted.
-		if _G.VX_TP_NO_DEATH then return end
-		-- ═══ PHASE B — THE ACTUAL RESET ═══ only reached because the server reverted the write above.
-		-- You cannot argue with the server about how far you moved if it THROWS AWAY its record of where you
-		-- were. Resetting drops your old position entirely, and a write into that clean-baseline window has
-		-- nothing to be compared against. Cost, stated plainly: you die.
-		-- 1) drop the old rig (both the JJS body and the standard one, whichever exists)
-		local c = vxMyChar()
-		pcall(function()
-			local h = c and c:FindFirstChildOfClass("Humanoid")
-			if h then h.Health = 0 end
-		end)
-		pcall(function() if c then c:BreakJoints() end end)
-		-- 2) wait for the replacement to actually exist and be movable
-		local t0 = tick()
-		local nc, nh
-		repeat
-			task.wait(0.05)
-			nc = vxMyChar()
-			nh = nc and nc:FindFirstChild("HumanoidRootPart")
-		until (nc and nh and nc ~= c) or tick() - t0 > 8
-		if not (nc and nh) or gen ~= vxTeleGen then return end
-		task.wait(0.15)                        -- let the spawn settle before we claim the position
-		-- 3) write the destination through the clean-baseline window
-		local t1 = tick()
-		while tick() - t1 < 1.2 and gen == vxTeleGen do
-			local cc = vxMyChar(); local hh = cc and cc:FindFirstChild("HumanoidRootPart")
-			if not hh then break end
-			if _G.VX_ACPASS then _G.VX_ACPASS() end
-			pcall(function()
-				cc:PivotTo(dest)
-				hh.AssemblyLinearVelocity = Vector3.new(0, -2, 0)   -- never a dead zero: that reads as impossible
-			end)
-			game:GetService("RunService").Heartbeat:Wait()
-		end
-	end)
-	return true
-end
-
 local function safeTeleport(targetCFrame, holdTime)
-	-- RESET method: hand off entirely, it owns its own respawn timing.
-	if tostring(_G.VX_TP_METHOD) == "Reset" then return vxResetTeleport(targetCFrame) end
 	local char = vxMyChar(); if not char then return false end
 	local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return false end
 	for _, v in ipairs(char:GetDescendants()) do
@@ -3540,21 +3440,51 @@ do
         task.wait(0.05); m1ThenBF(); task.delay(0.3, function() R.bfActive = false end)
         status(jumpThis and "BF Back Chain (jump)" or "BF Back Chain")
     end
+    -- ═══ ENGAGEMENT RANGE ═══ The chain may only ever act on someone you are ALREADY fighting. DashRange (80)
+    -- is the ranged-search radius for the assist keys; using it here is what made one M1 glide you across the
+    -- map at a stranger. An M1 lands at ~7 studs, so anything past this is not a fight you are in.
+    local CHAIN_RANGE = 20
+    local function targetInChainRange()
+        local t = GetClosestTarget(CHAIN_RANGE); if not t then return nil end
+        local e = t:FindFirstChild("HumanoidRootPart"); local p = GetRoot()
+        if not e or not p then return nil end
+        if (e.Position - p.Position).Magnitude > CHAIN_RANGE then return nil end
+        return t
+    end
     local function doBFM1Chain()
         if tick() - R.bfCD < Settings.BFCooldown or R.bfActive then return end
+        -- NO TARGET NEAR YOU = DO NOTHING. Not a dash, not a flash, not a camera move. Checked BEFORE bfActive
+        -- is claimed so a whiff never eats the cooldown.
+        local t = targetInChainRange()
+        if not t then
+            if _G.VX_BF_DEBUG then print("[DreamHub BF] M1 chain: nobody within " .. CHAIN_RANGE .. " studs - standing down") end
+            return
+        end
         R.bfCD = tick(); R.bfActive = true
-        local t = GetClosestTarget(Settings.DashRange); if not t then R.bfActive = false return end
-        task.wait(0.1)
-        -- M1 CHAIN: dash AROUND them (real dash key + anti-fling arc) with the camera locked on, ending on their
-        -- back — then flash. Previously this side-dashed and then TELEPORTED onto the back (faceEnemyBack was a
-        -- hard CFrame write), which is what read as a blink instead of a dash.
-        -- Your own M1 is the trigger, so we do NOT throw another one: side dash around them, then flash.
-        R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.4   -- camera stays on them through the whole chain
-        dashToBack(t, { duration = 0.24, extraSweep = math.pi * 0.12 })   -- small sweep = ends BEHIND their back, not past the corner
-        faceBackOf(t)
-        local e = t and t:FindFirstChild("HumanoidRootPart")
-        if e then R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0 end
-        task.wait(0.05); m1ThenBF()                                      -- 3) the flash (timed by the real engine)
+        -- ═══ ONE M1. ═══ YOUR click is the M1 - that is what triggered this. m1ThenBF() used to run here and it
+        -- calls VMouseClick(), so every chain threw a SECOND swing on top of yours (and a third if the engine
+        -- was unavailable and it blind-pressed 3). That is the "2 or 3 M1s" problem. We now borrow the flash
+        -- engine WITHOUT clicking: it hooks your real swing animation and presses 3 at the right frame, so the
+        -- flash lands on the M1 you already threw.
+        local borrowed = false
+        if not _G.VX_BFAPI_ON and _G.VX_BFAPI_SET then
+            borrowed = true
+            pcall(function() _G.VX_BFAPI_SET(true) end)
+        end
+        if _G.VX_BF_RESETCOUNT then pcall(_G.VX_BF_RESETCOUNT) end   -- flash on THIS swing, not after N more
+        -- No engine at all (very old build): press 3 ourselves on the same beat the engine would have. Still no
+        -- extra click - the swing being flashed is the one you already threw.
+        if not _G.VX_BFAPI_ON then task.delay(0.19, function() pressBF() end) end
+        R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.4   -- camera stays on them through the chain
+        -- side dash AROUND to their back (real dash key + anti-fling arc). If the dash itself declines - the
+        -- target moved out of MAXDASH in the meantime - we stop rather than snapping to them.
+        local dashed = dashToBack(t, { duration = 0.24, extraSweep = math.pi * 0.12 })
+        if dashed then faceBackOf(t) end
+        if borrowed then
+            task.delay(0.6, function()   -- hand the engine back exactly as we found it
+                if _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(_G.VX_BFAPI_WANT == true) end) end
+            end)
+        end
         task.delay(0.3, function() R.bfActive = false end); status("BF M1 Chain")
     end
     local function doBlackFlash()
@@ -3583,6 +3513,12 @@ do
             -- click within 0.4s, so it fires only on genuine M1s, never randomly, and works on every character.
             if not dly and _G.VX_IS_M1 and _G.VX_IS_M1(track) then dly = 0.19 end
             if not dly then return end
+            -- SAME RULE AS THE CHAIN: swinging at thin air must not burn a Black Flash. Nobody within
+            -- engagement range = no flash at all.
+            if not targetInChainRange() then
+                if _G.VX_BF_DEBUG then print("[DreamHub BF] M1 BF: nobody in range - not flashing") end
+                return
+            end
             if bfPending or tick() - R.bfCD < Settings.BFCooldown then return end
             bfPending = true
             task.delay(dly, function()
@@ -3609,6 +3545,7 @@ do
         end
         -- CLICK path for BF: covers characters whose M1 anim isn't in the database (the anim path can't catch
         if input.UserInputType == Enum.UserInputType.MouseButton1 and (Settings.AutoBF or Settings.BFM1) then
+            if not targetInChainRange() then return end   -- same range rule as the anim path above
             if tick() - R.bfCD >= Settings.BFCooldown then
                 R.bfCD = tick()
                 task.delay(0.14, function() if Settings.AutoBF or Settings.BFM1 then pressBF() end end)
@@ -3938,7 +3875,7 @@ do
 	end
 	TPApi = {
 		setSpeed = function(v) if type(v) == "number" then _G.VX_TP_SPEED = v end end,
-		setMethod = function(m) if type(m) == "table" then m = m[1] end _G.VX_TP_METHOD = (m == "Instant" or m == "Glide" or m == "Anchor" or m == "Reset") and m or "Auto"; _G.VX_TP_USER_METHOD = _G.VX_TP_METHOD end,   -- remember the choice so an auto-demote can be undone
+		setMethod = function(m) if type(m) == "table" then m = m[1] end _G.VX_TP_METHOD = (m == "Instant" or m == "Glide" or m == "Anchor") and m or "Auto"; _G.VX_TP_USER_METHOD = _G.VX_TP_METHOD end,   -- "Reset" REMOVED: it killed you to get a clean position baseline, which is not a trade worth making
 		up = function() local r = hrp(); if r then vxTeleportHard(r.Position + Vector3.new(0, 120, 0), 1.25) end end,
 		spawn = function()
 			-- FindFirstChildOfClass is NOT recursive; JJS spawns sit inside workspace.Map, so the old call found
@@ -4077,7 +4014,7 @@ do
 		"Hiromi", "Yuta", "Mechamaru", "Naoya", "Nanami", "Hanami", "Ryu",
 		"Locust", "Yuki", "Charles", "Haruta", "MeiMei", "Kurourushi", "Sukuna",
 	}
-	local State = { char = nil, remote = nil, lastFire = 0, m1Count = 0, lastM1 = 0, spaceHeld = false, spaceToken = nil }
+	local State = { char = nil, remote = nil, lastFire = 0, m1Count = 0, lastM1 = 0, spaceHeld = false, downHeld = false, spaceToken = nil }
 	local function scanFor(container, lowerName)
 		if not container then return false end
 		for aName, aVal in pairs(container:GetAttributes()) do
@@ -4155,11 +4092,20 @@ do
 			if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] no service resolved - swept the known character services") end
 		end
 	end
-	-- spaceDown() DELETED. It pressed and HELD Space on every swing so the game would read "holding jump + M1"
-	-- as an uppercut. But the captured remote (<Char>Service.RE.Activated:FireServer("Up")) does the uppercut on
-	-- its own, so the Space press was pure side effect - and it made you hop whenever you were not mid-attack,
-	-- which is exactly the "DONT MAKE ME JUMP WHEN I DONT M1" complaint. Only spaceUp() survives, as a safety
-	-- release for any Space left held by an older run of this script.
+	-- ═══ WHY THE SPACE HOLD IS BACK ═══
+	-- Deleting spaceDown() killed the uppercut outright ("dont even work at all"). So the direction is NOT
+	-- carried by the remote argument alone: JJS reads your held MOVEMENT KEY at the moment the swing lands and
+	-- the remote only names it. Up = Space, Down = S. Both have to be held across the swing.
+	-- The actual cause of "it makes me jump when I don't M1" was never the Space press itself - it was
+	-- onSwing() firing on animations that were not real M1s (the character-agnostic fallback counts any
+	-- Action-priority track). So the press is restored and the TRIGGER is what got tightened: realM1Now()
+	-- below requires a genuine click inside 0.4s, and nothing in this module acts without it.
+	local function spaceDown()
+		if State.spaceHeld then return end
+		State.spaceHeld = true
+		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 3   -- our own key: Auto Air/feints must ignore it
+		VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+	end
 	local function spaceUp()
 		if not State.spaceHeld then return end
 		State.spaceHeld = false
@@ -4179,6 +4125,27 @@ do
 	-- module (COMBO_IDS, built above) is exact: one entry plays per real landed swing. It was built and then
 	-- never read by anything. Now it drives the counter, so 1-2-3-4 always matches what you actually threw.
 	local slamArmed = 0   -- set after the hop; YOUR next M1 inside this window is the down slam
+	-- ═══ THE ONE GATE THAT MATTERS ═══ Nothing in this module may act unless you REALLY clicked. The animation
+	-- path counts any Action-priority track for characters whose M1 ids were never captured, so without this a
+	-- dash / ability / hit-reaction animation counted as a swing - and with the Space hold restored that is
+	-- literally "it jumps me when I don't M1". _G.VX_LAST_CLICK is stamped by the shared poll on real clicks
+	-- only (injected clicks are excluded), so this is the honest "was that you" test.
+	local function realM1Now()
+		return (tick() - (tonumber(_G.VX_LAST_CLICK) or 0)) < 0.40
+	end
+	-- DOWN direction = holding S, the same way Up = holding Space. Movement keys never launch you, so this one
+	-- needs no extra guard beyond realM1Now().
+	local function downDown()
+		if State.downHeld then return end
+		State.downHeld = true
+		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.S] = tick() + 3
+		VIM:SendKeyEvent(true, Enum.KeyCode.S, false, game)
+	end
+	local function downUp()
+		if not State.downHeld then return end
+		State.downHeld = false
+		VIM:SendKeyEvent(false, Enum.KeyCode.S, false, game)
+	end
 	local function airborneNow()
 		local c0 = myModel(); local h0 = c0 and c0:FindFirstChildOfClass("Humanoid")
 		return (h0 and h0.FloorMaterial == Enum.Material.Air) or false
@@ -4191,7 +4158,11 @@ do
 		slamArmed = 0
 		State.m1Count = 0
 		if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] DOWN SLAM (" .. tostring(why) .. ")") end
+		-- Symmetric with the uppercut: hold the DIRECTION key across the swing and name it on the remote. Firing
+		-- the remote alone is what did nothing, exactly as it did for "Up".
+		downDown()
 		fireDir("Down")
+		task.delay(0.22, function() downUp() end)
 		return true
 	end
 	-- THE RAW-CLICK SLAM PATH. onSwing() is animation-driven, and an AIRBORNE M1 usually plays a different
@@ -4205,6 +4176,13 @@ do
 	end
 	local function onSwing()
 		if mode == "Off" then return end
+		-- HARD GATE: no real click in the last 0.4s means this was not your M1, so we do nothing at all. This is
+		-- the fix for "don't make me jump when I don't M1" - not deleting the Space press, which is what the
+		-- uppercut actually needs.
+		if not realM1Now() then
+			if _G.VX_M1_DEBUG then print("[M1COMBO] ignored a swing-shaped anim - no real click behind it") end
+			return
+		end
 		local now = tick()
 		if now - State.lastM1 > Config.M1ResetWindow then State.m1Count = 0 end
 		State.lastM1 = now
@@ -4244,12 +4222,16 @@ do
 		elseif mode == "Uppercut" then
 			-- EVERY swing, not just the 4th, and with no added delay - you asked for it to always be
 			-- available and to be faster. A short cooldown is the only limiter so it cannot spam itself.
-			-- The remote alone does the uppercut; NO Space is pressed any more (see spaceDown above).
+			-- Space is held ACROSS the swing (that is the "Up" the game reads) and the remote names it. This is
+			-- the exact pair that you confirmed working; onSwing's realM1Now() gate is what stops it hopping you
+			-- outside an attack.
 			if tick() - (State.lastUp or 0) >= 0.18 then
 				State.lastUp = tick()
 				State.lastFire = now
 				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] swing " .. n .. " -> UPPERCUT") end
+				spaceDown()
 				fireDir("Up")
+				task.delay(0.22, function() spaceUp() end)
 			end
 		end
 	end
@@ -4330,7 +4312,7 @@ do
 	if _G.VX_M1_SUB then _G.VX_M1_SUB("m1combo", function() __m1Once() end) end
 	LP.CharacterAdded:Connect(function()
 		task.wait(0.4)
-		spaceUp()
+		spaceUp(); downUp()   -- never carry a held direction key across a respawn
 		State.spaceToken = nil
 		State.m1Count = 0
 		State.char = nil
@@ -4343,11 +4325,21 @@ do
 			task.wait(1)
 		end
 	end)
+	-- STUCK-KEY WATCHDOG. A held Space or S that never gets released is far worse than a missed uppercut: you
+	-- would jump or walk backwards forever. Both are only ever held for 0.22s, so anything still down after 1s
+	-- means a task.delay was lost (respawn, error, mode change mid-flight) and we release it unconditionally.
+	task.spawn(function()
+		while true do
+			task.wait(0.25)
+			if State.spaceHeld and tick() - (State.lastUp or 0) > 1 then pcall(spaceUp) end
+			if State.downHeld and tick() - (State.lastDown or 0) > 1 then pcall(downUp) end
+		end
+	end)
 
 	M1ComboApi = {
 		setMode = function(m)
 			if type(m) == "table" then m = m[1] end
-			mode = m or "Off"; count = 0; busy = false; State.m1Count = 0; State.spaceToken = nil; spaceUp()
+			mode = m or "Off"; count = 0; busy = false; State.m1Count = 0; State.spaceToken = nil; spaceUp(); downUp()
 			if mode ~= "Off" then refreshDetection() end
 			-- Observable on purpose: with _G.VX_M1_DEBUG = true this proves the dropdown actually reached the
 			-- module and what string it set, which separates "mode never set" from "swings never counted".
@@ -6762,6 +6754,12 @@ do
 	-- Energy / Crushing Jaws never fired. We must only ignore keys WE pressed, not keys another module claimed.
 	local airSelfInj = {}
 	local function dbgAir(msg) if _G.VX_BF_DEBUG then print("[DreamHub AutoAir] " .. tostring(msg)) end end
+	-- The keys Auto Air actually reacts to. Used by the always-on refusal report so pressing W or a hotkey it
+	-- has no opinion about never prints anything.
+	local AIR_KEYS = {
+		[Enum.KeyCode.One] = true, [Enum.KeyCode.Two] = true, [Enum.KeyCode.Three] = true,
+		[Enum.KeyCode.Four] = true, [Enum.KeyCode.R] = true, [Enum.KeyCode.Space] = true,
+	}
 	-- PER-CHARACTER Auto Air switches ("make the user pick which auto air it wants on"). All default ON; the
 	-- Combat page exposes one toggle each. A sequence only runs if BOTH the master Auto Air toggle and its own
 	-- switch are on AND you actually own the move.
@@ -6881,6 +6879,16 @@ do
 		-- if not, exactly why. This is the fastest way to find out why a sequence stays silent.
 		if _G.VX_BF_DEBUG and autoAirOn and input.KeyCode and input.KeyCode ~= Enum.KeyCode.Unknown then
 			dbgAir("key=" .. tostring(input.KeyCode.Name) .. "  airOK=" .. tostring(airOK) .. "  (" .. _airWhy .. ")")
+		end
+		-- ═══ ALWAYS-ON BLOCK REPORT ═══ Auto Air has been "fixed" several times against a guessed gate and kept
+		-- staying silent, so when it is ON and you press one of its keys and it DECLINES, it now says why in F9
+		-- without any debug flag. Throttled to one line every 2s per reason, so it is a hint and not a spam.
+		-- (It prints only on refusal - a working sequence stays quiet.)
+		if autoAirOn and not airOK and input.KeyCode and AIR_KEYS[input.KeyCode] then
+			if tick() - (_G.VX_AIRWHY_T or 0) > 2 or _G.VX_AIRWHY_LAST ~= _airWhy then
+				_G.VX_AIRWHY_T = tick(); _G.VX_AIRWHY_LAST = _airWhy
+				print("[DreamHub AutoAir] " .. tostring(input.KeyCode.Name) .. " did nothing: " .. _airWhy)
+			end
 		end
 		-- BULLETPROOF character check: detected name, model name, DISPLAY name, or any Moveset entry containing the word.
 		local function charIs(...)
@@ -7039,6 +7047,11 @@ do
 		-- describes — it never re-sends the same ability the key just fired, and it never both presses the key
 		-- AND fires the remote that key triggers (that double-cast burns a second cooldown or cancels the first).
 
+		-- Every branch below stamps _G.VX_BUSY, so comparing it before/after tells us whether ANY sequence
+		-- matched. That is how the report at the bottom can say "the range gate passed but no branch owns your
+		-- character + that key" without threading a flag through twenty branches.
+		local _airBusyBefore = _G.VX_BUSY or 0
+
 		-- ── VESSEL (Itadori) — key 1 -> Cursed Strikes (air variant: the captured `true` flag) ──
 		if airOK and airOpt.Vessel and kc == Enum.KeyCode.One and (hasMove("Cursed Strikes") or charIs("vessel","itadori","sukuna","divergent")) then
 			_G.VX_BUSY = tick() + 1.2; dbgAir("Vessel 1 -> Cursed Strikes")
@@ -7117,6 +7130,23 @@ do
 			if tick() - (lastVesselAir or 0) > 0.9 then
 				lastVesselAir = tick(); _G.VX_BUSY = tick() + 1.2; dbgAir("Vessel: Jump -> 1")
 				task.delay(0.12, function() if autoAirOn then tapKey(Enum.KeyCode.One) end end)
+			end
+		end
+		-- ═══ SECOND HALF OF THE BLOCK REPORT ═══ The range gate passed and you pressed one of Auto Air's keys,
+		-- but no branch claimed it. That means the character/move test failed, so print what your rig ACTUALLY
+		-- has - that is the one piece of information needed to add or fix the branch. Throttled, once per key.
+		if autoAirOn and airOK and kc and AIR_KEYS[kc] and (_G.VX_BUSY or 0) == _airBusyBefore then
+			if tick() - (_G.VX_AIRNOBRANCH_T or 0) > 2 or _G.VX_AIRNOBRANCH_K ~= kc then
+				_G.VX_AIRNOBRANCH_T = tick(); _G.VX_AIRNOBRANCH_K = kc
+				local chs = workspace:FindFirstChild("Characters")
+				local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+				local mv = c and c:FindFirstChild("Moveset")
+				local names = {}
+				if mv then for _, m in ipairs(mv:GetChildren()) do names[#names + 1] = m.Name end end
+				print("[DreamHub AutoAir] " .. tostring(kc.Name) .. ": no sequence for this character."
+					.. "  rig=" .. tostring(c and c.Name)
+					.. "  detected=" .. tostring(c and detectCharName(c))
+					.. "  Moveset={ " .. table.concat(names, ", ") .. " }")
 			end
 		end
 	end
@@ -11842,8 +11872,8 @@ do
         if _G.VXBF2 then _G.VXBF2.setAutoBF(false) end   -- avoid the weaker VXBF2 path double-pressing
     end })
     bfSec:Toggle({ Name = "BF Uses Reclick (off = less fling)", Default = true, Callback = function(b) _G.VX_BF_RECLICK = (b == true) end })
-    bfSec:Toggle({ Name = "BF Debug (print)", Default = false, Callback = function(b) _G.VX_BF_DEBUG = (b == true) end })   -- prints one line per detected flash so you can confirm detection is happening
-    bfSec:Toggle({ Name = "Debug On Screen", Default = false, Callback = function(b) _G.VX_DEBUG_HUD = (b == true) end })   -- shows the BF + Quake status on screen so you don't need the F9 console
+    -- "BF Debug (print)" and "Debug On Screen" toggles REMOVED from the menu (they were clutter). The globals
+    -- still exist, so a debug run is `_G.VX_BF_DEBUG = true` / `_G.VX_DEBUG_HUD = true` before the loadstring.
     bfSec:Slider({ Name = "BF Cooldown", Min = 0.1, Max = 2, Default = 0.5, Decimals = 0.05, Suffix = "s", Callback = function(v) if _G.VXBF2 then _G.VXBF2.setCooldown(v) end end })
     -- BF Timing: nudge the flash input earlier(-)/later(+) to hit the exact flash frame for YOUR character.
     bfSec:Slider({ Name = "BF Timing", Min = -0.12, Max = 0.4, Default = 0, Decimals = 0.01, Suffix = "s", Callback = function(v) v = tonumber(v) or 0; bfClickOffset = v; if BFApi then BFApi.SetTimingOffset(v) end end })
@@ -12145,11 +12175,8 @@ do
     local quickSec = tpSub:Section({ Name = "Quick", Side = 2 })
     -- These two API functions existed but nothing ever called them, so "Instant" was unreachable and the flight
     -- speed was permanently pinned at 100 studs/s. Now they are wired up.
-    quickSec:Dropdown({ Name = "TP Method", Items = { "Instant", "Reset", "Anchor", "Auto", "Glide" }, Default = "Instant", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
+    quickSec:Dropdown({ Name = "TP Method", Items = { "Instant", "Anchor", "Auto", "Glide" }, Default = "Instant", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
     quickSec:Slider({ Name = "TP Speed (Glide)", Min = 30, Max = 200, Default = 90, Decimals = 1, Suffix = "st/s", Callback = function(v) _G.VX_TP_VEL = tonumber(v) or 90 end })   -- range matches the clamp; 90 is a believable dash, 260 read as ~16x walk speed and got reverted
-    -- Reset now tries a NON-LETHAL anchor+write first and only resets the character if the server actually
-    -- reverted that. This toggle caps it at the non-lethal half, so it can never cost you the round.
-    quickSec:Toggle({ Name = "Reset TP: never die", Default = false, Callback = function(b) _G.VX_TP_NO_DEATH = b and true or nil end })
     -- The one genuinely untestable-from-here question: is AntiCheatService.RE.Teleport the channel that
     -- SANCTIONS your move, or the channel that REPORTS you? Off = keep it and announce on it (default).
     -- On = destroy it. Flip it, teleport, and whichever setting sticks is the answer.
