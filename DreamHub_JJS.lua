@@ -2126,7 +2126,52 @@ local function safeTeleport(targetCFrame, holdTime)
 		-- rubberband. Land the hop, then leave the server alone.
 		vxTeleportLock = false
 		_G.VX_TP_INFLIGHT = true                -- the lock must not fight our own writes
+		-- ═══ STEPPED + VELOCITY-MATCHED TELEPORT (from real capture data) ═══
+		-- A recorder run over many teleports showed the discriminator exactly: EVERY reverted teleport had
+		-- AssemblyLinearVelocity == 0 at the moment of the jump, and the ones that STUCK had real velocity
+		-- present through it. A large position change with zero velocity is impossible physics, so the
+		-- server's own simulation rejects it - which is why firing the anti-cheat remote never helped.
+		-- So: advance in believable hops AND carry a velocity that matches the direction we are travelling.
+		-- The server sees position and motion agreeing with each other, and there is nothing to reject.
 		task.spawn(function()
+			local c1 = vxMyChar(); local h1 = c1 and c1:FindFirstChild("HumanoidRootPart")
+			if h1 and not anchored then
+				local rot   = targetCFrame.Rotation
+				local start = h1.Position
+				local delta = targetCFrame.Position - start
+				local total = delta.Magnitude
+				if total > 1 then
+					local dirU  = delta.Unit
+					local STEP  = 55                                  -- studs per hop: fast, still believable
+					local hops  = math.clamp(math.ceil(total / STEP), 1, 40)
+					for k = 1, hops do
+						if myGen ~= vxTeleGen then break end
+						local cc = vxMyChar(); local hh = cc and cc:FindFirstChild("HumanoidRootPart")
+						if not hh then break end
+						local p = start:Lerp(targetCFrame.Position, k / hops)
+						if _G.VX_ACPASS then _G.VX_ACPASS() end
+						pcall(function()
+							hh.CFrame = CFrame.new(p) * rot
+							-- MATCHING velocity: this is the whole point. Position moved, so momentum must
+							-- agree with it, otherwise the move is physically impossible and gets reverted.
+							hh.AssemblyLinearVelocity = dirU * math.min(total / math.max(hops, 1) * 60, 220)
+						end)
+						game:GetService("RunService").Heartbeat:Wait()   -- resolved here: RunService is not a file-level local
+					end
+					-- settle ON the target, still carrying a little motion rather than a dead stop
+					local cf = vxMyChar(); local hf = cf and cf:FindFirstChild("HumanoidRootPart")
+					if hf then pcall(function()
+						hf.CFrame = targetCFrame
+						hf.AssemblyLinearVelocity = dirU * 12
+					end) end
+				end
+			end
+		end)
+		task.spawn(function()
+			-- Only the ANCHOR method needs this forcing loop. For the normal path the stepped+velocity-matched
+			-- walker above owns the movement; running both would jump you to the target on frame one and throw
+			-- away the whole point of stepping.
+			if not anchored then return end
 			-- ANCHOR MODE: an anchored part is not physics-simulated, so a server correction applied as
 			-- velocity or a BodyMover cannot move you while it is set. Anchor -> write -> unanchor.
 			local anchoredPart = nil
