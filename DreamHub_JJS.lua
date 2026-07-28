@@ -3939,7 +3939,7 @@ do
 		State.lastM1 = now
 		State.m1Count = State.m1Count + 1
 		local n = State.m1Count
-		if _G.VX_M1_DEBUG then print("[M1COMBO] swing " .. n .. "  mode=" .. tostring(mode)) end
+		if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] swing " .. n .. "  mode=" .. tostring(mode)) end
 
 		if mode == "Down Slam" then
 			-- JJS's down slam is an AIRBORNE FALLING M1. Firing a direction remote while standing on the floor
@@ -3947,6 +3947,7 @@ do
 			if n >= 3 then
 				State.m1Count = 0
 				State.lastFire = now
+				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] DOWN SLAM firing (3rd swing)") end
 				task.spawn(function()
 					local c = myModel()
 					local h = c and c:FindFirstChildOfClass("Humanoid")
@@ -4030,7 +4031,22 @@ do
 					if mode == "Off" then return end
 					local ok, id = pcall(function() return tostring(track.Animation.AnimationId):match("%d+") end)
 					if not ok or not id then return end
-					if COMBO_IDS[id] or (_G.VX_M1_IDS and _G.VX_M1_IDS[id]) then onSwing() end
+					-- CHARACTER-AGNOSTIC SWING DETECTION. Relying on an id database means any character whose
+					-- M1 ids were never captured simply never counts a swing - which is exactly "it does not
+					-- work at all" on that character. A listed id still counts instantly; otherwise ANY
+					-- Action-priority animation that starts right after a real click is a swing. That is the
+					-- same universal test the working Black Flash engine uses, and it needs no database.
+					local isKnown = COMBO_IDS[id] or (_G.VX_M1_IDS and _G.VX_M1_IDS[id])
+					local isSwing = isKnown
+					if not isSwing then
+						local pr = track.Priority
+						local action = (pr == Enum.AnimationPriority.Action or pr == Enum.AnimationPriority.Action2
+							or pr == Enum.AnimationPriority.Action3 or pr == Enum.AnimationPriority.Action4)
+						local clickedJustNow = (tick() - (tonumber(_G.VX_LAST_CLICK) or 0)) < 0.45
+						isSwing = action and clickedJustNow
+						if isSwing and _G.VX_M1_DEBUG then print("[M1COMBO] unlisted M1 anim " .. id .. " counted via click+Action") end
+					end
+					if isSwing then onSwing() end
 				end)
 			end
 		end
@@ -4078,7 +4094,14 @@ do
 	end)
 
 	M1ComboApi = {
-		setMode = function(m) if type(m) == "table" then m = m[1] end; mode = m or "Off"; count = 0; busy = false; State.m1Count = 0; State.spaceToken = nil; spaceUp(); if mode ~= "Off" then refreshDetection() end end,   -- unwrap Fluriore's {"Down Slam"} table (else the mode check never matched = "doesn't work")
+		setMode = function(m)
+			if type(m) == "table" then m = m[1] end
+			mode = m or "Off"; count = 0; busy = false; State.m1Count = 0; State.spaceToken = nil; spaceUp()
+			if mode ~= "Off" then refreshDetection() end
+			-- Observable on purpose: with _G.VX_M1_DEBUG = true this proves the dropdown actually reached the
+			-- module and what string it set, which separates "mode never set" from "swings never counted".
+			if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] mode set to: " .. tostring(mode)) end
+		end,   -- unwrap Fluriore's {"Down Slam"} table (else the mode check never matched = "doesn't work")
 		setDelay = function() end,
 		setCount = function() end,
 		setChar = function(c) Config.Manual = (c and c ~= "" and c ~= "Auto") and c or nil; State.char = nil; State.remote = nil; refreshDetection() end,
