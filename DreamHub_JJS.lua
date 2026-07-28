@@ -32,9 +32,15 @@ do
 					local folder = svc:FindFirstChild(folderName)
 					if folder then
 						for _, v in ipairs(folder:GetChildren()) do
-							-- NEVER destroy Teleport: the anti-setback pass fires it to tell the server a move was legit.
-							-- Replacing it with a dummy meant that message went nowhere = instant rubberbanding.
-							if (v:IsA("RemoteEvent") or v:IsA("RemoteFunction")) and not v:GetAttribute("VX_Dummy") and v.Name ~= "Teleport" then
+							-- The Teleport remote is the one genuinely ambiguous case, so it is a SWITCH, not a guess.
+							-- KEEP (default): the capture shows the CLIENT firing it with a server timestamp, which
+							--   reads as "announce this move as sanctioned". Destroying it would remove the channel.
+							-- DESTROY (_G.VX_KILL_AC_TP = true): the other reading is that the client-side AC fires
+							--   it to REPORT you. If that is right, killing it stops the rollback.
+							-- Only in-game testing separates the two. Flip the toggle and see which one sticks.
+							local isACTeleport = (v.Name == "Teleport")
+							local skip = isACTeleport and not _G.VX_KILL_AC_TP
+							if (v:IsA("RemoteEvent") or v:IsA("RemoteFunction")) and not v:GetAttribute("VX_Dummy") and not skip then
 								local dummy = Instance.new(v.ClassName)
 								dummy.Name = v.Name
 								dummy:SetAttribute("VX_Dummy", true)   -- tag it so the re-run loop skips our own dummy (no churn)
@@ -1863,9 +1869,11 @@ local function vxResolveAC()
 	local RS = game:GetService("ReplicatedStorage")
 	local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
 	local svc = k and k:FindFirstChild("AntiCheatService"); local re = svc and svc:FindFirstChild("RE"); re = re and re:FindFirstChild("Teleport")
-	if re and re:IsA("RemoteEvent") then vxACRemote = re; return re end
+	-- Skip OUR OWN dummy. With _G.VX_KILL_AC_TP on, the real remote is replaced by a tagged stand-in; firing
+	-- that is pure noise, so the AC pass has to cleanly no-op instead of pretending it announced anything.
+	if re and re:IsA("RemoteEvent") and not re:GetAttribute("VX_Dummy") then vxACRemote = re; return re end
 	for _, d in ipairs(RS:GetDescendants()) do
-		if d:IsA("RemoteEvent") and string.lower(d.Name) == "teleport" and string.find(string.lower(d:GetFullName()), "anticheat") then vxACRemote = d; return d end
+		if d:IsA("RemoteEvent") and not d:GetAttribute("VX_Dummy") and string.lower(d.Name) == "teleport" and string.find(string.lower(d:GetFullName()), "anticheat") then vxACRemote = d; return d end
 	end
 	return nil
 end
@@ -2351,8 +2359,14 @@ local function safeTeleport(targetCFrame, holdTime)
 				-- But we brake to a DRIFT, not a dead stop. The recorder data is unambiguous: a big position
 				-- change carrying velocity exactly (0,0,0) is impossible physics and the server reverts it, and
 				-- this landing is a big position change. A small downward drift stops the overshoot just as
-				-- well while still reading as a body under gravity rather than a desync.
-				pcall(function() h.AssemblyLinearVelocity = Vector3.new(0, -2, 0); h.AssemblyAngularVelocity = Vector3.zero end)
+				-- well while still reading as a body under gravity rather than a desync. Keeping a tenth of the
+				-- incoming horizontal speed makes it a decel rather than a hard stop, which reads more like a
+				-- landing and less like a snap.
+				pcall(function()
+					local v = h.AssemblyLinearVelocity
+					h.AssemblyLinearVelocity = Vector3.new(v.X * 0.1, -2, v.Z * 0.1)
+					h.AssemblyAngularVelocity = Vector3.zero
+				end)
 			end
 			vxCurrentTargetCF = targetCFrame
 		end)
@@ -12136,6 +12150,13 @@ do
     -- Reset now tries a NON-LETHAL anchor+write first and only resets the character if the server actually
     -- reverted that. This toggle caps it at the non-lethal half, so it can never cost you the round.
     quickSec:Toggle({ Name = "Reset TP: never die", Default = false, Callback = function(b) _G.VX_TP_NO_DEATH = b and true or nil end })
+    -- The one genuinely untestable-from-here question: is AntiCheatService.RE.Teleport the channel that
+    -- SANCTIONS your move, or the channel that REPORTS you? Off = keep it and announce on it (default).
+    -- On = destroy it. Flip it, teleport, and whichever setting sticks is the answer.
+    quickSec:Toggle({ Name = "Kill AC Teleport remote", Default = false, Callback = function(b)
+        _G.VX_KILL_AC_TP = b and true or nil
+        if _G.VX_DESTROY_AC then pcall(_G.VX_DESTROY_AC) end   -- re-run the sweep so the change takes effect now
+    end })
     quickSec:Button({ Name = "Print TP Remote", Callback = function()
         local RS = game:GetService("ReplicatedStorage"); local found = 0
         for _, d in ipairs(RS:GetDescendants()) do
