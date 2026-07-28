@@ -2124,8 +2124,11 @@ local function safeTeleport(targetCFrame, holdTime)
 		-- NEVER engage the Heartbeat position lock for an instant hop. The lock forces you back every time
 		-- the server nudges you, the server reverts again, and the two fight forever - that IS the
 		-- rubberband. Land the hop, then leave the server alone.
-		vxTeleportLock = false
-		_G.VX_TP_INFLIGHT = true                -- the lock must not fight our own writes
+		-- The lock stays ON, but VX_TP_INFLIGHT suspends it for the duration of the hop so it cannot fight our
+		-- own writes. After we land it guards the position for a SHORT window - long enough to undo one server
+		-- revert, short enough that it can never turn into the endless tug-of-war that caused the rubberband.
+		vxTeleportLock = true
+		_G.VX_TP_INFLIGHT = true
 		-- ═══ STEPPED + VELOCITY-MATCHED TELEPORT (from real capture data) ═══
 		-- A recorder run over many teleports showed the discriminator exactly: EVERY reverted teleport had
 		-- AssemblyLinearVelocity == 0 at the moment of the jump, and the ones that STUCK had real velocity
@@ -2155,7 +2158,7 @@ local function safeTeleport(targetCFrame, holdTime)
 						local p = start:Lerp(targetCFrame.Position, k / hops)
 						if _G.VX_ACPASS then _G.VX_ACPASS() end
 						pcall(function()
-							hh.CFrame = CFrame.new(p) * rot
+							cc:PivotTo(CFrame.new(p) * rot)   -- PivotTo: moves the whole model coherently, not just the root
 							-- MATCHING velocity: this is the whole point. Position moved, so momentum must
 							-- agree with it, otherwise the move is physically impossible and gets reverted.
 							hh.AssemblyLinearVelocity = dirU * 26   -- ~ the value observed on the teleports that stuck
@@ -2165,7 +2168,7 @@ local function safeTeleport(targetCFrame, holdTime)
 					-- settle ON the target, still carrying a little motion rather than a dead stop
 					local cf = vxMyChar(); local hf = cf and cf:FindFirstChild("HumanoidRootPart")
 					if hf then pcall(function()
-						hf.CFrame = targetCFrame
+						cf:PivotTo(targetCFrame)
 						hf.AssemblyLinearVelocity = dirU * 12
 					end) end
 				end
@@ -2200,7 +2203,13 @@ local function safeTeleport(targetCFrame, holdTime)
 				task.wait()
 			end
 			if anchoredPart then _G.VX_TP_ANCHORING = false; pcall(function() anchoredPart.Anchored = false end) end   -- ALWAYS release
-			_G.VX_TP_INFLIGHT = false            -- writes settled
+			_G.VX_TP_INFLIGHT = false            -- writes settled; the lock may guard now
+			vxCurrentTargetCF = targetCFrame
+			task.delay(0.8, function()           -- BOUNDED guard: never an endless fight
+				if myGen ~= vxTeleGen then return end
+				vxTeleportLock = false
+				vxCurrentTargetCF = nil
+			end)
 		end)
 		-- WATCHDOG: nothing may EVER leave you anchored (that would freeze you in place). Runs independently
 		-- of the loop above, so even an unexpected error cannot strand you.
@@ -4063,22 +4072,61 @@ do
 		if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] swing " .. n .. "  mode=" .. tostring(mode)) end
 
 		if mode == "Down Slam" then
-			-- Fires on the 4TH swing: <Char>Service.RE.Activated:FireServer("Down") - the exact remote and
-			-- argument shape captured in game. No jumping or synthetic clicking: the remote IS the mechanic.
+			-- BOTH PATHS, because we cannot test which the server honours:
+			--  (a) the REMOTE you captured in game - <Char>Service.RE.Activated("Down") on the 4th swing.
+			--      That capture is the game's OWN behaviour, so the string argument is definitely valid.
+			--  (b) the PHYSICAL mechanic - hop, wait until genuinely airborne AND falling, then M1. If the
+			--      server also requires the state (not just the message), this supplies it.
+			-- They complement each other: the remote alone cannot fake being airborne, and the physical path
+			-- alone cannot fire a move the server expects to be announced.
 			if n >= 4 then
 				State.m1Count = 0
 				State.lastFire = now
-				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] 4th swing -> Activated(\"Down\")") end
+				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] 4th swing -> DOWN SLAM (remote + airborne M1)") end
 				fireDir("Down")
+				task.spawn(function()
+					local c = myModel()
+					local h = c and c:FindFirstChildOfClass("Humanoid")
+					local hrp = c and c:FindFirstChild("HumanoidRootPart")
+					if h and h.FloorMaterial ~= Enum.Material.Air then
+						_G.VX_LAUNCHING = tick()
+						_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}
+						_G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 0.5
+						pcall(function()
+							VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+							task.wait(0.02)
+							VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+						end)
+						pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end)
+						if hrp then pcall(function()
+							local v = hrp.AssemblyLinearVelocity
+							hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 65), v.Z)
+						end) end
+					end
+					-- wait for a REAL falling state, not a guessed delay
+					local t0 = tick()
+					while tick() - t0 < 0.8 do
+						local c2 = myModel()
+						local h2 = c2 and c2:FindFirstChildOfClass("Humanoid")
+						local r2 = c2 and c2:FindFirstChild("HumanoidRootPart")
+						if h2 and r2 and h2.FloorMaterial == Enum.Material.Air and r2.AssemblyLinearVelocity.Y < -2 then break end
+						task.wait()
+					end
+					fireDir("Down")                       -- announce again now that the state is actually right
+					_G.VX_SYNTH_CLICK = tick() + 0.15
+					pcall(realM1)                         -- realM1 already faces the nearest enemy first
+				end)
 			end
 		elseif mode == "Uppercut" then
-			-- Same mechanic, "Up". Space is no longer held: the remote does the launch, and holding Space
-			-- through the chain was cancelling the very swing we were waiting for.
+			-- Same idea: the captured remote AND the physical hold-Space-into-the-4th.
 			if n >= 4 then
 				State.m1Count = 0
 				State.lastFire = now
-				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] 4th swing -> Activated(\"Up\")") end
+				State.spaceToken = nil
+				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] 4th swing -> UPPERCUT (remote + Space hold)") end
+				spaceDown()
 				fireDir("Up")
+				task.delay(Config.SpaceHold, function() spaceUp() end)
 			end
 		end
 	end
