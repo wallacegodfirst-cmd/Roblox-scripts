@@ -59,13 +59,17 @@ pcall(function()
 	old = hm(game, "__namecall", function(self, ...)
 		if running then
 			local m = gn()
+			-- Varargs must be packed BEFORE the pcall: "..." is illegal inside a nested non-vararg
+			-- function, which is a COMPILE error - the whole script refuses to load.
+			local a = table.pack(...)
 			pcall(function()
+				local shown = dargs(table.unpack(a, 1, a.n))
 				if m == "FireServer" or m == "InvokeServer" then
-					push("REMOTE", m .. "  " .. self:GetFullName() .. "\n         args: " .. dargs(...))
+					push("REMOTE", m .. "  " .. self:GetFullName() .. "\n         args: " .. shown)
 				elseif m == "PivotTo" or m == "SetPrimaryPartCFrame" or m == "MoveTo" then
 					local c = myChar()
 					if self == c or self == myHRP() or (c and self:IsDescendantOf(c)) then
-						push("MOVE", m .. " on " .. self.Name .. " -> " .. dargs(...))
+						push("MOVE", m .. " on " .. self.Name .. " -> " .. shown)
 					end
 				end
 			end)
