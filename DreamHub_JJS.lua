@@ -2092,12 +2092,15 @@ end
 -- gliding -- now the lock target MOVES WITH the glide (it reinforces each hop instead of fighting it); (2) no AC
 -- pass was fired during the move -- now every few hops we fire it so the server accepts the motion. VX_TP_METHOD
 -- picks Glide (default) / Instant / Auto; VX_TP_SPEED is the hop size (lower = gentler if a server still resists).
--- ═══ RESET TELEPORT ═══ The method that actually beats a server-side position check: you cannot argue with
--- the server about how far you moved if the server THROWS AWAY its record of where you were. Resetting the
--- character makes it drop your old position entirely; the fresh rig spawns with a clean baseline, and a write
--- during that window is accepted because there is nothing to compare it against.
--- Cost, stated plainly: you die. Health, combo and momentum are gone. That is the trade for a teleport that
--- sticks on servers that enforce, which is why it is a selectable method and not silently forced on you.
+-- ═══ RESET TELEPORT — TWO PHASES, DEATH ONLY AS A LAST RESORT ═══
+-- Phase A is non-lethal: anchor the root (an anchored assembly is not physics-simulated, so a server
+-- correction sent as velocity or a BodyMover cannot drag you), announce on the AC channel, write the
+-- destination, unanchor with a small downward drift. Then we MEASURE whether it stuck.
+-- Phase B only runs if the server actually reverted Phase A. You cannot argue with the server about how far
+-- you moved if it THROWS AWAY its record of where you were: resetting the character drops your old position
+-- entirely, and a write into that clean-baseline window has nothing to be compared against.
+-- Cost of Phase B, stated plainly: you die - health, combo and momentum are gone. Set _G.VX_TP_NO_DEATH = true
+-- to cap this method at Phase A and never pay that cost, at the price of it sometimes not sticking.
 local function vxResetTeleport(targetCFrame)
 	local Players2 = game:GetService("Players")
 	local LP2 = Players2.LocalPlayer
@@ -2105,6 +2108,55 @@ local function vxResetTeleport(targetCFrame)
 	local gen = vxTeleGen + 1
 	vxTeleGen = gen
 	task.spawn(function()
+		local RunSvc = game:GetService("RunService")
+		-- ═══ PHASE A — NON-LETHAL FIRST ═══
+		-- Dying is a real cost (health, combo, momentum), so we do not pay it until we know we have to. An
+		-- ANCHORED root is not physics-simulated, so a server correction arriving as velocity or a BodyMover
+		-- cannot drag you while the anchor is on: anchor -> announce on the AC channel -> write -> unanchor
+		-- carrying a small downward drift (never a dead zero - that reads as impossible physics). On most
+		-- servers this alone sticks and you never die at all.
+		local ac = vxMyChar(); local ah = ac and ac:FindFirstChild("HumanoidRootPart")
+		if ac and ah then
+			_G.VX_TP_INFLIGHT = true
+			_G.VX_TP_ANCHORING = true
+			pcall(function() ah.Anchored = true end)
+			local tA = tick()
+			while tick() - tA < 0.35 and gen == vxTeleGen do
+				local cc = vxMyChar(); local hh = cc and cc:FindFirstChild("HumanoidRootPart")
+				if not hh then break end
+				if _G.VX_ACPASS then _G.VX_ACPASS() end
+				pcall(function() cc:PivotTo(dest) end)
+				RunSvc.Heartbeat:Wait()
+			end
+			_G.VX_TP_ANCHORING = false
+			pcall(function()
+				local cc = vxMyChar(); local hh = cc and cc:FindFirstChild("HumanoidRootPart")
+				if hh then hh.Anchored = false; hh.AssemblyLinearVelocity = Vector3.new(0, -2, 0) end
+			end)
+			-- WATCHDOG: nothing may ever leave you anchored (that is a permanent freeze), even if the loop above
+			-- errored or a newer teleport superseded us mid-hold.
+			task.delay(1.2, function()
+				_G.VX_TP_ANCHORING = false
+				local cw = vxMyChar(); local hw = cw and cw:FindFirstChild("HumanoidRootPart")
+				if hw and hw.Anchored then pcall(function() hw.Anchored = false end) end
+			end)
+			-- Did it stick? Give the server long enough to have set us back if it was going to.
+			task.wait(0.6)
+			if gen ~= vxTeleGen then _G.VX_TP_INFLIGHT = false; return end
+			local pc = vxMyChar(); local ph = pc and pc:FindFirstChild("HumanoidRootPart")
+			if ph and (ph.Position - dest.Position).Magnitude <= 30 then
+				_G.VX_TP_INFLIGHT = false
+				vxTeleLastActive = tick()
+				return                                   -- stuck without dying
+			end
+			_G.VX_TP_INFLIGHT = false
+		end
+		-- Opt-out: with this set we stop here rather than ever killing you, even if Phase A got reverted.
+		if _G.VX_TP_NO_DEATH then return end
+		-- ═══ PHASE B — THE ACTUAL RESET ═══ only reached because the server reverted the write above.
+		-- You cannot argue with the server about how far you moved if it THROWS AWAY its record of where you
+		-- were. Resetting drops your old position entirely, and a write into that clean-baseline window has
+		-- nothing to be compared against. Cost, stated plainly: you die.
 		-- 1) drop the old rig (both the JJS body and the standard one, whichever exists)
 		local c = vxMyChar()
 		pcall(function()
@@ -2294,10 +2346,13 @@ local function safeTeleport(targetCFrame, holdTime)
 			if c and h then
 				vxHardWrite(c, h, targetCFrame); vxACPass()   -- exact landing (position + facing)
 				-- Kill the flight velocity HERE, not inside vxHardWrite. The glide arrives travelling at speed,
-				-- so without this you sail straight past the target. Instant hops must NOT be zeroed (a big
-				-- position change with velocity 0,0,0 is the physics desync the server reverts), which is why
-				-- this belongs to the glide landing alone.
-				pcall(function() h.AssemblyLinearVelocity = Vector3.zero; h.AssemblyAngularVelocity = Vector3.zero end)
+				-- so without this you sail straight past the target. It belongs to the glide landing alone -
+				-- instant hops are never braked at all.
+				-- But we brake to a DRIFT, not a dead stop. The recorder data is unambiguous: a big position
+				-- change carrying velocity exactly (0,0,0) is impossible physics and the server reverts it, and
+				-- this landing is a big position change. A small downward drift stops the overshoot just as
+				-- well while still reading as a body under gravity rather than a desync.
+				pcall(function() h.AssemblyLinearVelocity = Vector3.new(0, -2, 0); h.AssemblyAngularVelocity = Vector3.zero end)
 			end
 			vxCurrentTargetCF = targetCFrame
 		end)
@@ -4086,12 +4141,11 @@ do
 			if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] no service resolved - swept the known character services") end
 		end
 	end
-	local function spaceDown()
-		if State.spaceHeld then return end
-		State.spaceHeld = true
-		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 3   -- our own key: Auto Air/feints must ignore it
-		VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-	end
+	-- spaceDown() DELETED. It pressed and HELD Space on every swing so the game would read "holding jump + M1"
+	-- as an uppercut. But the captured remote (<Char>Service.RE.Activated:FireServer("Up")) does the uppercut on
+	-- its own, so the Space press was pure side effect - and it made you hop whenever you were not mid-attack,
+	-- which is exactly the "DONT MAKE ME JUMP WHEN I DONT M1" complaint. Only spaceUp() survives, as a safety
+	-- release for any Space left held by an older run of this script.
 	local function spaceUp()
 		if not State.spaceHeld then return end
 		State.spaceHeld = false
@@ -4111,6 +4165,30 @@ do
 	-- module (COMBO_IDS, built above) is exact: one entry plays per real landed swing. It was built and then
 	-- never read by anything. Now it drives the counter, so 1-2-3-4 always matches what you actually threw.
 	local slamArmed = 0   -- set after the hop; YOUR next M1 inside this window is the down slam
+	local function airborneNow()
+		local c0 = myModel(); local h0 = c0 and c0:FindFirstChildOfClass("Humanoid")
+		return (h0 and h0.FloorMaterial == Enum.Material.Air) or false
+	end
+	-- ONE place fires the slam, with ONE cooldown, so the animation path and the raw-click path below cannot
+	-- both announce the same slam (that double-fire burned the cooldown and the second one did nothing).
+	local function doSlam(why)
+		if tick() - (State.lastDown or 0) < 0.30 then return false end
+		State.lastDown = tick()
+		slamArmed = 0
+		State.m1Count = 0
+		if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] DOWN SLAM (" .. tostring(why) .. ")") end
+		fireDir("Down")
+		return true
+	end
+	-- THE RAW-CLICK SLAM PATH. onSwing() is animation-driven, and an AIRBORNE M1 usually plays a different
+	-- (or no) track than the ground combo - so after the hop your slam click produced no counted swing and the
+	-- slam never fired. That was the whole "down slam is bad" bug. This runs off the actual click instead.
+	local function slamOnClick()
+		if mode ~= "Down Slam" then return end
+		if tick() >= slamArmed then return end
+		if not airborneNow() then return end
+		doSlam("armed + airborne click")
+	end
 	local function onSwing()
 		if mode == "Off" then return end
 		local now = tick()
@@ -4121,21 +4199,15 @@ do
 		if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] swing " .. n .. "  mode=" .. tostring(mode)) end
 		-- SLAM: if we hopped for you and you are now airborne, THIS swing is the down slam - announce it on
 		-- the same beat you actually clicked, which is the timing that was wrong before.
-		if mode == "Down Slam" and tick() < slamArmed then
-			local c0 = myModel(); local h0 = c0 and c0:FindFirstChildOfClass("Humanoid")
-			if h0 and h0.FloorMaterial == Enum.Material.Air then
-				slamArmed = 0
-				State.m1Count = 0
-				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] airborne M1 -> DOWN SLAM") end
-				fireDir("Down")
+		if mode == "Down Slam" then
+			-- ALREADY IN THE AIR? Then this swing IS the slam - no counting, no hop, no waiting. This is the
+			-- case that never fired before, because it only ever looked at the armed window.
+			if airborneNow() then
+				doSlam("airborne swing")
 				return
 			end
-		end
-
-		if mode == "Down Slam" then
-			-- AFTER 3 SWINGS: just JUMP. We do NOT click for you - YOUR next M1 while falling is the slam.
-			-- (Auto-clicking was the timing problem: it fired on whatever frame it guessed at rather than
-			-- when you actually swung.) The hop is small on purpose - the old 65 launched you far too high.
+			-- ON THE GROUND: after 3 swings, hop once. YOUR next M1 while airborne is the slam (fired by
+			-- slamOnClick off the raw click, so it does not depend on an airborne animation being counted).
 			if n >= 3 then
 				State.m1Count = 0
 				State.lastFire = now
@@ -4143,22 +4215,14 @@ do
 				task.spawn(function()
 					local c = myModel()
 					local h = c and c:FindFirstChildOfClass("Humanoid")
-					local hrp = c and c:FindFirstChild("HumanoidRootPart")
 					if h and h.FloorMaterial ~= Enum.Material.Air then
 						_G.VX_LAUNCHING = tick()
-						_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}
-						_G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 0.4
-						pcall(function()
-							VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-							task.wait(0.02)
-							VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-						end)
-						pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end)
-						-- 30, not 65: just enough air to be falling on your next click, not a rocket.
-						if hrp then pcall(function()
-							local v = hrp.AssemblyLinearVelocity
-							hrp.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 30), v.Z)
-						end) end
+						-- ONE jump mechanism, the character's own. The old code sent a Space key event AND
+						-- ChangeState(Jumping) AND overwrote Y velocity to 30 - three launches stacking into one
+						-- hop, which is why it "jumps me too high". Humanoid.Jump uses the character's real
+						-- JumpPower, so the hop is exactly a normal jump. It also sends no key, so Auto Air and
+						-- the feint modules can no longer mistake it for you pressing Space.
+						pcall(function() h.Jump = true end)
 					end
 					slamArmed = tick() + 1.6      -- your next M1 within this window announces the slam
 				end)
@@ -4166,13 +4230,12 @@ do
 		elseif mode == "Uppercut" then
 			-- EVERY swing, not just the 4th, and with no added delay - you asked for it to always be
 			-- available and to be faster. A short cooldown is the only limiter so it cannot spam itself.
+			-- The remote alone does the uppercut; NO Space is pressed any more (see spaceDown above).
 			if tick() - (State.lastUp or 0) >= 0.18 then
 				State.lastUp = tick()
 				State.lastFire = now
 				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] swing " .. n .. " -> UPPERCUT") end
-				spaceDown()
 				fireDir("Up")
-				task.delay(0.22, function() spaceUp() end)   -- was Config.SpaceHold; shorter = ready again sooner
 			end
 		end
 	end
@@ -4240,6 +4303,11 @@ do
 		if tick() < (tonumber(_G.VX_SYNTH_CLICK) or 0) then return end   -- ignore clicks WE injected
 		if tick() - __m1Guard < 0.05 then return end
 		__m1Guard = tick()
+		-- The armed down slam runs off the RAW click, ahead of (and independently of) the swing counter: onM1
+		-- refuses to count while the animation path is live, and an airborne M1 often plays no counted track at
+		-- all, so routing the slam through the counter is what made it miss. doSlam's own cooldown stops this
+		-- and the animation path from ever announcing the same slam twice.
+		slamOnClick()
 		onM1()
 	end
 	UIS.InputBegan:Connect(function(input, _)
@@ -12065,6 +12133,9 @@ do
     -- speed was permanently pinned at 100 studs/s. Now they are wired up.
     quickSec:Dropdown({ Name = "TP Method", Items = { "Instant", "Reset", "Anchor", "Auto", "Glide" }, Default = "Instant", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
     quickSec:Slider({ Name = "TP Speed (Glide)", Min = 30, Max = 200, Default = 90, Decimals = 1, Suffix = "st/s", Callback = function(v) _G.VX_TP_VEL = tonumber(v) or 90 end })   -- range matches the clamp; 90 is a believable dash, 260 read as ~16x walk speed and got reverted
+    -- Reset now tries a NON-LETHAL anchor+write first and only resets the character if the server actually
+    -- reverted that. This toggle caps it at the non-lethal half, so it can never cost you the round.
+    quickSec:Toggle({ Name = "Reset TP: never die", Default = false, Callback = function(b) _G.VX_TP_NO_DEATH = b and true or nil end })
     quickSec:Button({ Name = "Print TP Remote", Callback = function()
         local RS = game:GetService("ReplicatedStorage"); local found = 0
         for _, d in ipairs(RS:GetDescendants()) do
