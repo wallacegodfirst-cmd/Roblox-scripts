@@ -1023,7 +1023,17 @@ do
 				-- animation it produced could be counted as a SECOND swing. Whether it was depended on where that
 				-- animation landed against the 0.25s debounce - which is why the failure was intermittent.
 				_G.VX_SYNTH_CLICK = tick() + 0.3
-				pcall(function() VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0); task.wait(0.02); VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0) end)
+				-- ═══ CLICK THE MIDDLE OF THE SCREEN, NOT (0,0) ═══ This was sending the re-click at the
+					-- top-left CORNER of the viewport. Every other injected click in this file uses the viewport
+					-- centre, and for good reason: a click at (0,0) lands on empty GUI space, so the game does not
+					-- register an attack, no swing animation plays, and there is nothing for the flash to land on.
+					pcall(function()
+						local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
+						local cx, cy = (vp and vp.X / 2) or 400, (vp and vp.Y / 2) or 300
+						VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+						task.wait(0.02)
+						VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+					end)
 			end
 				pressKey(Enum.KeyCode.Three)
 			end)
@@ -1729,7 +1739,7 @@ do
 		UISm.InputEnded:Connect(function(i)
 			if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
 				if dragging and not moved then
-					if _G.JJS_FREE then pcall(function() VIMm:SendMouseButtonEvent(0,0,0,true,game,0); task.wait(0.03); VIMm:SendMouseButtonEvent(0,0,0,false,game,0); task.wait(0.14); VIMm:SendKeyEvent(true, Enum.KeyCode.Three, false, game); task.wait(0.04); VIMm:SendKeyEvent(false, Enum.KeyCode.Three, false, game) end)   -- mobile BF: M1 then 3
+					if _G.JJS_FREE then pcall(function() local _vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize; local _cx, _cy = (_vp and _vp.X/2) or 400, (_vp and _vp.Y/2) or 300; VIMm:SendMouseButtonEvent(_cx,_cy,0,true,game,0); task.wait(0.03); VIMm:SendMouseButtonEvent(_cx,_cy,0,false,game,0); task.wait(0.14); VIMm:SendKeyEvent(true, Enum.KeyCode.Three, false, game); task.wait(0.04); VIMm:SendKeyEvent(false, Enum.KeyCode.Three, false, game) end)   -- mobile BF: M1 then 3
 					else pcall(doEPress) end
 				end
 				dragging = false
@@ -3286,7 +3296,10 @@ do
     local function VMouseClick()
         if tick() < (tonumber(_G.VX_CROW_FLYING) or 0) then return end
         _G.VX_SYNTH_CLICK = tick() + 0.25   -- ours: the shared M1 detector must not re-enter its subscribers
-        VIM:SendMouseButtonEvent(0, 0, 0, true, game, 0); task.wait(0.03); VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+        -- Viewport CENTRE, not (0,0) - see the note in the Black Flash engine. A corner click is not an attack.
+        local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
+        local cx, cy = (vp and vp.X / 2) or 400, (vp and vp.Y / 2) or 300
+        VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.03); VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
     end
     local function ReleaseAll() for k in pairs(R.held) do pcall(function() VIM:SendKeyEvent(false, k, false, game) end) end table.clear(R.held) end
     local function markThree() R.stamp[Enum.KeyCode.Three] = tick(); _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.4 end
@@ -3448,6 +3461,29 @@ do
         return true
     end
 
+    -- ═══ TELEPORT MODE: JUST GO BEHIND THEIR BACK ═══ No arc, no dash key, no orbit. One write to the spot
+    -- directly behind their spine. This is what makes Teleport look different from every dash mode instead of
+    -- playing the same arc as all of them.
+    local function tpBehind(t)
+        local e = t and t:FindFirstChild("HumanoidRootPart"); if not e then return false end
+        local p = GetRoot(); if not p then return false end
+        if (e.Position - p.Position).Magnitude > Settings.DashRange then return false end
+        local fwd = Vector3.new(e.CFrame.LookVector.X, 0, e.CFrame.LookVector.Z)
+        if fwd.Magnitude < 0.01 then fwd = Vector3.new(0, 0, 1) end
+        fwd = fwd.Unit
+        local dest = e.Position - fwd * math.max(Settings.BFTeleportDist, 4)
+        acPass()
+        pcall(function()
+            local c = GetChar()
+            local cf = CFrame.lookAt(dest, Vector3.new(e.Position.X, dest.Y, e.Position.Z))
+            if c then c:PivotTo(cf) else p.CFrame = cf end
+            -- never a dead zero: a position change with (0,0,0) velocity is the desync the server reverts
+            p.AssemblyLinearVelocity = Vector3.new(0, -2, 0)
+        end)
+        aimCameraAt(e.Position)
+        return true
+    end
+
     -- lock-on: hold you behind the target for the flash window
     -- ═══ THE BF FLING ═══ The back-lock pins you ~3 studs behind the target every frame. The orbit turns your
     -- collisions off for its arc and RESTORES them on exit — so the lock then held a SOLID body overlapping
@@ -3532,8 +3568,9 @@ do
         -- this a far lock became a several-hundred-stud blink - exactly what gets you kicked.
         local _mr = GetRoot()
         if _mr and (e.Position - _mr.Position).Magnitude > Settings.DashRange then R.bfActive = false; return end
-        local fwd = Vector3.new(e.CFrame.LookVector.X, 0, e.CFrame.LookVector.Z).Unit
-        smoothTP(e.Position - fwd * Settings.BFTeleportDist); faceEnemyBack(t)
+        -- "for teleport it should just teleport behind the back" - one write, no arc, no dash key.
+        if not tpBehind(t) then R.bfActive = false; return end
+        faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
         task.wait(0.1); m1ThenBF(); task.delay(0.3, function() R.bfActive = false end); status("BF Teleport")
     end
@@ -3545,12 +3582,14 @@ do
         -- "jump nee dot jump, press q but side dash behind them and m1": a REAL jump first, then the same short
         -- Q dash the Side Dash uses, then the M1. It used to be a flat CFrame arc with no jump in it at all.
         aimCameraAt(e.Position)
+        -- "for jump it should jump and press q behind them" - a REAL jump, then the dash key, ending behind.
+        -- Its own signature movement: airborne with a visible vertical arc, unlike the flat Side Dash clip.
         pcall(function()
             local c = GetChar(); local h = c and c:FindFirstChildOfClass("Humanoid")
             if h and h.FloorMaterial ~= Enum.Material.Air then h.Jump = true end
         end)
-        task.wait(0.10)                                                  -- let the jump actually leave the ground
-        dashToBack(t, { duration = 0.18, extraSweep = math.pi * 0.15, endRadius = 4.6 })
+        task.wait(0.12)                                                  -- let the jump actually leave the ground
+        dashToBack(t, { duration = 0.30, extraSweep = math.pi * 0.30, endRadius = 5.0, yArc = 7 })
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
         task.wait(0.12)                                   -- let the dash settle before we test the distance
@@ -3569,9 +3608,9 @@ do
         local e = t:FindFirstChild("HumanoidRootPart"); if not e then R.bfActive = false return end
         -- ORDER FIX: this used to press BF *before* moving, so the flash fired from your old position and whiffed
         -- ("it dashes behind them but doesn't black flash"). Dash to their back FIRST, then flash.
-        -- LESS AGGRESSIVE. 0.45pi swung you wide around them and read as a scripted orbit; 0.15pi is a short
-        -- clip to their back, and the tighter endRadius keeps you in M1 range instead of drifting out.
-        dashToBack(t, { duration = 0.18, extraSweep = math.pi * 0.15, endRadius = 4.6 })
+        -- "for a side dash you need to make it more legit and fast" - the shortest, flattest clip of any mode:
+        -- 0.14s, a tight 0.10pi sweep, no vertical arc, ending just off the spine. Reads as a real Q dash.
+        dashToBack(t, { duration = 0.14, extraSweep = math.pi * 0.10, endRadius = 4.4, endBias = 0.35, yArc = 0 })
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
         task.wait(0.12)                                   -- let the dash settle before we test the distance
@@ -3607,7 +3646,9 @@ do
             end)
             task.wait(0.10)
         end
-        dashToBack(t, { duration = 0.18, extraSweep = math.pi * 0.15, endRadius = 4.6 })
+        -- Distinct from Side Dash on purpose: a wider half-circle sweep that reads as going AROUND them
+        -- rather than clipping past their side.
+        dashToBack(t, { duration = 0.26, extraSweep = math.pi * 0.55, endRadius = 4.8 })
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
         task.wait(0.12)                                   -- let the dash settle before we test the distance
@@ -3662,7 +3703,9 @@ do
         -- endRadius 4.6 = right on their back and inside M1 range. The orbit already zeroes velocity every
         -- frame and on exit, and the chain now suppresses the engine's re-click, which was the actual source of
         -- "it flings the person" - each extra landed M1 stacks the server's knockback on them.
-        local dashed = dashToBack(t, { duration = 0.20, extraSweep = math.pi * 0.10, endRadius = 4.6 })
+        -- M1 Chain's own signature: a medium sweep ending DEAD behind the spine (endBias 0), distinct from
+        -- Side Dash's off-spine clip and Back Dash's wide half-circle.
+        local dashed = dashToBack(t, { duration = 0.22, extraSweep = math.pi * 0.22, endRadius = 4.6, endBias = 0 })
         if dashed then faceBackOf(t) end
         if borrowed then
             task.delay(0.6, function()   -- hand the engine back exactly as we found it
@@ -3775,6 +3818,17 @@ do
     local chainSwings, chainLastSwing, chainFiredAt = 0, 0, 0
     _G.VX_CHAIN_COUNT = function()
         if not (Settings.Enabled and Settings.Mode == "M1") then return end
+        -- ═══ NO CLICK = NO CHAIN ═══ "when I don't even click it glides/TPs around and M1s". This is driven
+        -- off the swing counter, and that counter accepts any Action-priority animation for characters whose
+        -- M1 ids were never captured - so a dash, an ability, or another module's injected swing all looked
+        -- like an M1 and launched a whole chain. _G.VX_LAST_CLICK is stamped only by the real mouse poll, so
+        -- requiring a click inside 0.4s means the chain can only ever run off something you actually did.
+        if (tick() - (tonumber(_G.VX_LAST_CLICK) or 0)) > 0.40 then
+            if _G.VX_BF_DEBUG then print("[DreamHub BF] chain: swing with no real click behind it - ignored") end
+            return
+        end
+        -- And never off OUR OWN injected click (the chain's own M1 would retrigger the chain).
+        if tick() < (tonumber(_G.VX_SYNTH_CLICK) or 0) then return end
         local nowT = tick()
         -- ═══ ONE CHAIN PER COMBO ═══ A held click produces FOUR swings ~0.35s apart, and this used to fire a
         -- fresh chain every time the count came round - "one M1 equals three M1s and three black flashes".
@@ -4464,7 +4518,9 @@ do
 		-- from the 2nd swing onward and the NEXT swing comes out as the uppercut / down slam. That is the timing
 		-- that already works for the slam, so the uppercut now uses it too. Each has its own cooldown below, so
 		-- acting from swing 2 cannot spam: one finisher per combo.
-		local need = 2
+		-- Act on swing 3 so M1 #4 comes out as the uppercut / down slam. The direction has to be held and
+		-- named BEFORE the finisher lands - once the game commits to an ordinary M1 the remote is too late.
+		local need = 3
 		if mode == "Down Slam" then
 			-- ALREADY IN THE AIR? Then this swing IS the slam, whatever the count says - an air M1 is a slam.
 			if airborneNow() then
@@ -7418,11 +7474,30 @@ do
 		end
 		local function fireSvc(svc, re, ...)
 			local r = svcRE(svc, re)
-			if not r then dbgAir("remote MISSING: " .. svc .. ".RE." .. re); return false end
+			if not r then
+				-- ═══ SAY IT OUT LOUD ═══ A missing remote was only reported behind a debug flag, so every
+				-- wrong service name in this module failed completely silently - which is what "auto air does
+				-- nothing" looks like from the outside. Several of these names are guesses at MOVE-named
+				-- services (RoughEnergyService, CrushJawService...) while the capture only ever proved the
+				-- CHARACTER-named pattern (<Char>Service.RE.Activated). Report it unconditionally, throttled,
+				-- so one run in-game names the ones that are wrong instead of another round of guessing.
+				if tick() - (_G.VX_AIRMISS_T or 0) > 2 then
+					_G.VX_AIRMISS_T = tick()
+					print("[DreamHub AutoAir] remote MISSING: " .. svc .. ".RE." .. re .. "  (send me this line)")
+				end
+				return false
+			end
 			local a = table.pack(...)
 			local ok = pcall(function() r:FireServer(table.unpack(a, 1, a.n)) end)
 			dbgAir((ok and "fired " or "FAILED ") .. svc .. "." .. re)
 			return ok
+		end
+		-- Fire the remote if it exists; otherwise press the key the game itself binds to that move. A wrong
+		-- service name then degrades to "the key press still happens" instead of "nothing happens at all".
+		local function fireOrKey(svc, re, key, ...)
+			if fireSvc(svc, re, ...) then return true end
+			if key then tapKey(key) end
+			return false
 		end
 		local function airTarget()   -- the capture used workspace.Characters.Dummy; live play wants the real enemy
 			local e = nearestEnemyChar(); if e then return e end
