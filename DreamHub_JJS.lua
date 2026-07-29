@@ -960,6 +960,13 @@ do
 	_G.VX_BF_RESETCOUNT = function() swingCount = 0; lastSwing = 0 end
 	local function onAnim(track)
 		if not enabled then return end
+		-- ═══ "I TURNED M1 BLACK FLASH OFF AND IT STILL FLASHES ON MY M1s" ═══
+		-- The dash modes ARM this engine for their own flash beat (_G.VX_BFAPI_SET(true)) and hand it back a
+		-- second later. During that window the engine is indistinguishable from M1 Black Flash being switched
+		-- on, so every ordinary M1 you threw in that second also flashed - with the mode dropdown showing
+		-- Side Dash and the M1 BF toggle showing off. A BORROW is now single-shot: it may produce exactly ONE
+		-- flash and then disarms itself, so it can never bleed into your normal swings.
+		if _G.VX_BF_BORROWED and (_G.VX_BF_BORROW_USED or 0) > 0 then return end
 		local ok, id = pcall(function() return track.Animation.AnimationId end)
 		if not ok then return end
 		local delayTime = AnimationTriggers[normalizeAnimationId(id)]
@@ -998,6 +1005,8 @@ do
 			if swingCount < need then return end   -- wait until your chosen number of M1s
 			swingCount = 0
 			_G.VX_BF_LAST_FIRE = tick(); _G.VX_BF_LASTMSG = "flash fired (M1 tap + key 3)"
+			-- a borrowed arm is spent by this flash; nothing else may ride it
+			if _G.VX_BF_BORROWED then _G.VX_BF_BORROW_USED = (_G.VX_BF_BORROW_USED or 0) + 1 end
 			if _G.VX_BF_DEBUG then pcall(function() print(string.format("[BF] windup id=%s  ->  firing flash (M1 tap + key 3) in %.2fs", tostring(id), math.max(0, delayTime + offset))) end) end
 			task.delay(math.max(0, delayTime + offset), function()
 				if not enabled then return end
@@ -2239,6 +2248,38 @@ local function safeTeleport(targetCFrame, holdTime)
 						cf:PivotTo(targetCFrame)
 						hf.AssemblyLinearVelocity = dirU * 12
 					end) end
+					-- ═══ VERIFY, THEN RETRY ONCE ═══ The walker used to be fire-and-forget: it wrote the hops and
+					-- assumed you arrived. If the server reverted mid-walk you ended up back where you started with no
+					-- sign anything had failed - that is "teleports don't work". Now we measure, re-walk once (which
+					-- covers a single revert), and if it STILL fails we say so instead of leaving you guessing.
+					task.wait(0.35)
+					if myGen == vxTeleGen then
+						local cv = vxMyChar(); local hv = cv and cv:FindFirstChild("HumanoidRootPart")
+						local off = hv and (hv.Position - targetCFrame.Position).Magnitude or 9e9
+						if off > 25 then
+							if _G.VX_TP_DEBUG then print(string.format("[DreamHub TP] reverted (%.0f studs off) - retrying once", off)) end
+							local start2 = hv and hv.Position or start
+							local hops2 = math.clamp(math.ceil((targetCFrame.Position - start2).Magnitude / STEP), 1, 80)
+							for k = 1, hops2 do
+								if myGen ~= vxTeleGen then break end
+								local cc2 = vxMyChar(); local hh2 = cc2 and cc2:FindFirstChild("HumanoidRootPart")
+								if not hh2 then break end
+								local p2 = start2:Lerp(targetCFrame.Position, k / hops2)
+								if _G.VX_ACPASS then _G.VX_ACPASS() end
+								pcall(function()
+									cc2:PivotTo(CFrame.new(p2) * rot)
+									hh2.AssemblyLinearVelocity = dirU * 26
+								end)
+								game:GetService("RunService").Heartbeat:Wait()
+							end
+							task.wait(0.35)
+							local cw = vxMyChar(); local hw = cw and cw:FindFirstChild("HumanoidRootPart")
+							local off2 = hw and (hw.Position - targetCFrame.Position).Magnitude or 9e9
+							if off2 > 25 and VX_NOTIFY then
+								VX_NOTIFY(string.format("Teleport reverted by the server (%.0f studs off). Try TP Method = Glide.", off2), false)
+							end
+						end
+					end
 				end
 			end
 		end)
@@ -3288,6 +3329,7 @@ do
         local borrowed = false
         if not _G.VX_BFAPI_ON and _G.VX_BFAPI_SET then
             borrowed = true
+            _G.VX_BF_BORROWED = true; _G.VX_BF_BORROW_USED = 0   -- single-shot: one flash, then the engine is deaf
             pcall(function() _G.VX_BFAPI_SET(true) end)
         end
         local firedBefore = _G.VX_BF_LAST_FIRE or 0
@@ -3319,6 +3361,7 @@ do
         if borrowed then
             task.delay(1.2, function()  -- covers the swing, the flash frame AND the retry above before handing back
                 if _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(_G.VX_BFAPI_WANT == true) end) end
+                _G.VX_BF_BORROWED = false; _G.VX_BF_BORROW_USED = 0
             end)
         end
     end
@@ -3604,6 +3647,7 @@ do
         local borrowed = false
         if not _G.VX_BFAPI_ON and _G.VX_BFAPI_SET then
             borrowed = true
+            _G.VX_BF_BORROWED = true; _G.VX_BF_BORROW_USED = 0   -- single-shot (see the note in the BF engine)
             pcall(function() _G.VX_BFAPI_SET(true) end)
         end
         if _G.VX_BF_RESETCOUNT then pcall(_G.VX_BF_RESETCOUNT) end   -- flash on THIS swing, not after N more
@@ -3621,6 +3665,7 @@ do
         if borrowed then
             task.delay(0.6, function()   -- hand the engine back exactly as we found it
                 if _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(_G.VX_BFAPI_WANT == true) end) end
+                _G.VX_BF_BORROWED = false; _G.VX_BF_BORROW_USED = 0
             end)
         end
         task.delay(0.3, function() R.bfActive = false end); status("BF M1 Chain")
@@ -3707,6 +3752,10 @@ do
         -- off, which is "I turned it off and it still pressed 3".
         R.gen = (R.gen or 0) + 1
         R.chainUntil = 0
+        -- Hand the flash engine back IMMEDIATELY on stop. Waiting for the queued hand-back is what let a mode
+        -- you had already switched off keep flashing your next few M1s.
+        _G.VX_BF_BORROWED = false; _G.VX_BF_BORROW_USED = 0
+        if _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(_G.VX_BFAPI_WANT == true) end) end
         R.lockTarget = nil; R.lockKind = nil; R.lockEnd = 0
         R.bfActive = false; R.curving = false
         _G.VX_BF_RECLICK = _G.VX_BF_RECLICK_USER ~= false   -- restore the user's re-click setting immediately
@@ -4394,7 +4443,13 @@ do
 		-- Counting to 4 is only reliable now that the click stamp survives a HELD combo - before this the
 		-- counter never got past 1, which is why "just do it on the 4th M1" kept not happening.
 		-- _G.VX_COMBO_AT is the Combat-page dropdown (default 4); the game's own combo is 4 hits long.
-		local need = math.clamp(tonumber(_G.VX_COMBO_AT) or 4, 1, 4)
+		-- ═══ REPLACE THE Nth M1, DON'T CHASE IT ═══ "before I go to the fourth remote, it replaces with the up
+		-- or down remote". The direction has to be held and named BEFORE the finisher lands, or the game has
+		-- already committed to an ordinary 4th M1 and the remote arrives too late to change anything. So we act
+		-- on the swing BEFORE the chosen one: hold the direction key and fire the remote there, and the swing
+		-- you were aiming at comes out AS the uppercut / down slam.
+		local want = math.clamp(tonumber(_G.VX_COMBO_AT) or 4, 1, 4)
+		local need = math.max(1, want - 1)
 		if mode == "Down Slam" then
 			-- ALREADY IN THE AIR? Then this swing IS the slam, whatever the count says - an air M1 is a slam.
 			if airborneNow() then
@@ -4435,7 +4490,7 @@ do
 				State.lastUp = tick()
 				State.lastFire = now
 				State.m1Count = 0
-				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] swing " .. n .. " -> UPPERCUT") end
+				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] swing " .. n .. " -> UPPERCUT (M1 #" .. want .. " becomes the finisher)") end
 				spaceDown()
 				fireDir("Up")
 				-- 0.40, not 0.22: the game reads the held direction when the swing LANDS, and a JJS M1 takes
@@ -7162,14 +7217,25 @@ do
 		local _airForced = tick() < (tonumber(_G.VX_AIR_FORCE) or 0)
 		if autoAirOn then
 			if injBlocked then _airWhy = "ignored (we pressed this key ourselves)"
+			elseif not _G.VX_AIR_NEEDENEMY then
+				-- Gate disabled (the default). Your key press is the intent; we do not second-guess it.
+				airOK = true; _airWhy = "ok (enemy gate off)"
 			else
 				local _am = myHRP(); local _ae = nearestEnemyChar(true); local _ar = _ae and _ae:FindFirstChild("HumanoidRootPart")   -- raw: a far-away LOCK must not disable Auto Air
 				if not _am then _airWhy = "no HumanoidRootPart on you"
 				elseif not _ar then _airWhy = "NO ENEMY FOUND (need a player/dummy in workspace.Characters)"
 				else
+					-- ═══ THE GATE THAT KEPT AUTO AIR SILENT ═══ The test button forces this open and the
+					-- sequences fire; the normal path did not, so the gate WAS the blocker. It exists to stop a
+					-- stray key in the open launching an air combo, which is worth keeping - but 60 studs and a
+					-- hard requirement that an enemy be resolvable was far too strict, and nearestEnemyChar can
+					-- miss dummies that live outside the folders it knows. Range raised, and the whole gate is
+					-- now optional (Combat page toggle, default OFF = no gate) so it can never be the reason
+					-- nothing happens.
+					local lim = tonumber(_G.VX_AIR_RANGE) or 150
 					local d = (_ar.Position - _am.Position).Magnitude
-					if d <= 60 then airOK = true; _airWhy = "ok (enemy " .. math.floor(d) .. " studs)"
-					else _airWhy = "enemy too far: " .. math.floor(d) .. " studs (limit 60)" end
+					if d <= lim then airOK = true; _airWhy = "ok (enemy " .. math.floor(d) .. " studs)"
+					else _airWhy = "enemy too far: " .. math.floor(d) .. " studs (limit " .. lim .. ")" end
 				end
 			end
 			if _airForced and not airOK then airOK = true; _airWhy = "FORCED by the test button (" .. _airWhy .. ")" end
@@ -12307,6 +12373,10 @@ do
     acSec:Toggle({ Name = "Auto Ult", Callback = function(b) if AutoUltApi then AutoUltApi.set(b) end end })
     if tier("premium") then
         acSec:Toggle({ Name = "Auto Air", Callback = function(b) if AutoAirApi_set then AutoAirApi_set(b) end end })   -- FREE: Auto Air removed (premium only)
+        -- OFF by default: the enemy-presence gate was the reason Auto Air kept doing nothing. Turn it on only if
+        -- you find sequences firing when you did not want them to.
+        _G.VX_AIR_NEEDENEMY = false
+        acSec:Toggle({ Name = "Auto Air: need enemy nearby", Default = false, Callback = function(b) _G.VX_AIR_NEEDENEMY = (b == true) end })
         -- ═══ TEST BUTTONS ═══ Auto Air / Uppercut / Down Slam each have a TRIGGER half and an ACTION half, and
         -- "it doesn't work" cannot tell them apart. These run the ACTION on demand with the gates bypassed and
         -- print what they resolved, so one press says which half is broken. Results go to the F9 console.
