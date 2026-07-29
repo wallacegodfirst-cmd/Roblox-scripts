@@ -2162,9 +2162,17 @@ local function safeTeleport(targetCFrame, holdTime)
 					-- Tuned to the capture data, not theory: the teleports that STUCK carried ~22 studs/s through
 					-- 145-460 stud jumps, so the server is not demanding the speed EXPLAIN the distance - it
 					-- rejects a large move whose velocity is exactly ZERO. Generous hops, believable velocity.
-					local STEP  = 90
+					-- ═══ PRIVATE WORKS, PUBLIC DOESN'T ═══ In an empty private server the anti-cheat has almost
+						-- nothing to do and a 90-stud write sails through. A populated server is the opposite: the
+						-- AC is actively servicing everyone, your updates are interleaved with theirs, and ping is
+						-- higher - so the same 90-stud write lands as a single implausible jump and gets reverted.
+						-- Smaller steps at a believable speed cost a few frames and survive the check. We pick the
+						-- profile from the actual player count so you never have to think about it; set
+						-- _G.VX_TP_STEP to override.
+						local populated = #game:GetService("Players"):GetPlayers() > 1
+						local STEP  = tonumber(_G.VX_TP_STEP) or (populated and 28 or 90)
 						-- Within one step = ONE write. No walking, no glide feel - just there.
-						local hops  = (total <= STEP) and 1 or math.clamp(math.ceil(total / STEP), 1, 40)
+						local hops  = (total <= STEP) and 1 or math.clamp(math.ceil(total / STEP), 1, 80)
 					for k = 1, hops do
 						if myGen ~= vxTeleGen then break end
 						local cc = vxMyChar(); local hh = cc and cc:FindFirstChild("HumanoidRootPart")
@@ -3174,7 +3182,7 @@ do
         ["rbxassetid://74145636023952"] = 0.19, ["rbxassetid://72475960800126"] = 0.20,
         ["rbxassetid://123171106092050"] = 0.19,
     }
-    local R = { held = {}, stamp = {}, lastDash = 0, lockTarget = nil, lockKind = nil, lockEnd = 0, bfCD = 0, bfActive = false, curving = false }
+    local R = { held = {}, stamp = {}, lastDash = 0, lockTarget = nil, lockKind = nil, lockEnd = 0, bfCD = 0, bfActive = false, curving = false, chainUntil = 0, gen = 0 }
     local WIN = 0.15
     local function status(_) end   -- no-op: don't announce which BF mode fired (hide the mechanism)
     local function acPass() if _G.VX_ACPASS then _G.VX_ACPASS() end end
@@ -3218,26 +3226,31 @@ do
             pcall(function() _G.VX_BFAPI_SET(true) end)
         end
         local firedBefore = _G.VX_BF_LAST_FIRE or 0
+        -- ═══ THE "3 3 3 3 AND M1 M1 M1" SPAM ═══ FOUR different things were each throwing an input for one
+        -- press. (1) this click, (2) the BF engine's own re-click on the windup, (3) the engine's key-3, and
+        -- (4) the InputBegan click path pressing 3 again, plus my retry doubling 1-3. The engine's re-click is
+        -- also the "it flings them": every extra landed M1 stacks the server's knockback on the target.
+        -- So for the duration of a chain we suppress the engine's re-click and the InputBegan path, and the
+        -- chain throws EXACTLY ONE click. R.chainUntil is the window both of those check.
+        R.chainUntil = tick() + 1.0
+        local myGen = R.gen or 0
+        _G.VX_BF_RECLICK = false                    -- the chain's own click IS the M1; no second one
         VMouseClick()
         if not _G.VX_BFAPI_ON then      -- no engine at all -> best-effort blind press so something happens
             task.wait(0.19); pressBF()
         else
-            -- ═══ VERIFY, DON'T HOPE ═══ "all the other modes are not black flashing": these modes trigger off
-            -- key 3, so unlike M1 Chain there is no real swing already in flight - they depend entirely on the
-            -- synthetic click producing an attack animation. Mid-dash the game often refuses that click, no
-            -- animation plays, the engine never sees a windup, and nothing flashes. The engine stamps
-            -- _G.VX_BF_LAST_FIRE every time it actually flashes, so we can just CHECK: if nothing fired by the
-            -- time the window has passed, throw one more click and press the key ourselves.
+            -- VERIFY, DON'T HOPE: if the engine never flashed (mid-dash the game can refuse the click, so no
+            -- animation plays and it never sees a windup), press the key ONCE. No second click - that was the
+            -- extra M1 you were seeing.
             task.spawn(function()
                 task.wait(0.42)
+                if (R.gen or 0) ~= myGen then return end                     -- mode was turned off; stand down
                 if (_G.VX_BF_LAST_FIRE or 0) > firedBefore then return end   -- it flashed; nothing to do
-                if _G.VX_BF_DEBUG then print("[DreamHub BF] no flash from the first swing - retrying") end
-                if _G.VX_BF_RESETCOUNT then pcall(_G.VX_BF_RESETCOUNT) end
-                VMouseClick()
-                task.wait(0.19)
-                if (_G.VX_BF_LAST_FIRE or 0) <= firedBefore then pressBF() end
+                if _G.VX_BF_DEBUG then print("[DreamHub BF] engine did not flash - one key press") end
+                pressBF()
             end)
         end
+        task.delay(1.0, function() _G.VX_BF_RECLICK = _G.VX_BF_RECLICK_USER ~= false end)   -- give the setting back
         if borrowed then
             task.delay(1.2, function()  -- covers the swing, the flash frame AND the retry above before handing back
                 if _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(_G.VX_BFAPI_WANT == true) end) end
@@ -3419,9 +3432,15 @@ do
         local t = GetClosestTarget(Settings.DashRange); if not t then return end
         local e = t:FindFirstChild("HumanoidRootPart"); if not e then return end
         R.bfCD = tick(); R.bfActive = true; ReleaseAll()
-        -- Arc OVER them to the back (pure CFrame yArc, no physics jump = no fling), THEN M1+flash.
+        -- "jump nee dot jump, press q but side dash behind them and m1": a REAL jump first, then the same short
+        -- Q dash the Side Dash uses, then the M1. It used to be a flat CFrame arc with no jump in it at all.
         aimCameraAt(e.Position)
-        dashToBack(t, { duration = 0.26, extraSweep = math.pi * 0.45, yArc = 6 })   -- same sweep as Side Dash, plus the arc over them
+        pcall(function()
+            local c = GetChar(); local h = c and c:FindFirstChildOfClass("Humanoid")
+            if h and h.FloorMaterial ~= Enum.Material.Air then h.Jump = true end
+        end)
+        task.wait(0.10)                                                  -- let the jump actually leave the ground
+        dashToBack(t, { duration = 0.18, extraSweep = math.pi * 0.15, endRadius = 4.6 })
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
         task.wait(0.12); m1ThenBF()   -- let the dash settle: clicking while the arc still owns you gets the swing refused
@@ -3434,7 +3453,9 @@ do
         local e = t:FindFirstChild("HumanoidRootPart"); if not e then R.bfActive = false return end
         -- ORDER FIX: this used to press BF *before* moving, so the flash fired from your old position and whiffed
         -- ("it dashes behind them but doesn't black flash"). Dash to their back FIRST, then flash.
-        dashToBack(t, { duration = 0.26, extraSweep = math.pi * 0.45 })
+        -- LESS AGGRESSIVE. 0.45pi swung you wide around them and read as a scripted orbit; 0.15pi is a short
+        -- clip to their back, and the tighter endRadius keeps you in M1 range instead of drifting out.
+        dashToBack(t, { duration = 0.18, extraSweep = math.pi * 0.15, endRadius = 4.6 })
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
         task.wait(0.12); m1ThenBF()   -- let the dash settle: clicking while the arc still owns you gets the swing refused
@@ -3455,9 +3476,16 @@ do
         R.backDashT = tick()
         local jumpThis = R.backDashAlt == false   -- false after the 2nd toggle -> the jump variant
         aimCameraAt(e.Position)
-        -- Same arc as the (good) Side Dash chain; the jump variant only adds a small vertical lift so the
-        -- movement reads identically instead of the shorter/flatter sweep it used before.
-        dashToBack(t, { duration = 0.26, extraSweep = math.pi * 0.45, yArc = jumpThis and 4 or 0 })
+        -- Same short clip as the (good) Side Dash. The alternate press does a REAL jump first rather than a
+        -- fake vertical CFrame lift, so it reads as a player jumping and dashing rather than floating.
+        if jumpThis then
+            pcall(function()
+                local c = GetChar(); local h = c and c:FindFirstChildOfClass("Humanoid")
+                if h and h.FloorMaterial ~= Enum.Material.Air then h.Jump = true end
+            end)
+            task.wait(0.10)
+        end
+        dashToBack(t, { duration = 0.18, extraSweep = math.pi * 0.15, endRadius = 4.6 })
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
         task.wait(0.12); m1ThenBF()   -- let the dash settle: clicking while the arc still owns you gets the swing refused
@@ -3502,7 +3530,10 @@ do
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.4   -- camera stays on them through the chain
         -- side dash AROUND to their back (real dash key + anti-fling arc). If the dash itself declines - the
         -- target moved out of MAXDASH in the meantime - we stop rather than snapping to them.
-        local dashed = dashToBack(t, { duration = 0.24, extraSweep = math.pi * 0.12 })
+        -- endRadius 4.6 = right on their back and inside M1 range. The orbit already zeroes velocity every
+        -- frame and on exit, and the chain now suppresses the engine's re-click, which was the actual source of
+        -- "it flings the person" - each extra landed M1 stacks the server's knockback on them.
+        local dashed = dashToBack(t, { duration = 0.20, extraSweep = math.pi * 0.10, endRadius = 4.6 })
         if dashed then faceBackOf(t) end
         if borrowed then
             task.delay(0.6, function()   -- hand the engine back exactly as we found it
@@ -3572,6 +3603,9 @@ do
         end
         -- CLICK path for BF: covers characters whose M1 anim isn't in the database (the anim path can't catch
         if input.UserInputType == Enum.UserInputType.MouseButton1 and (Settings.AutoBF or Settings.BFM1) then
+            -- A chain is running and it owns the flash. This path pressing 3 as well is one of the duplicate
+            -- key-3s ("it keeps pressing 3 when I only did once").
+            if tick() < (R.chainUntil or 0) then return end
             if not R.bfActive and not targetInChainRange() then return end   -- same range rule as the anim path above
             if tick() - R.bfCD >= Settings.BFCooldown then
                 R.bfCD = tick()
@@ -3585,8 +3619,14 @@ do
     -- collisions still disabled, so it kept moving you after you thought you had stopped it. This tears
     -- everything down: lock cleared, collisions restored, held keys released, in-flight flags reset.
     local function vxbfStop()
+        -- OFF MEANS OFF, INCLUDING WORK ALREADY SCHEDULED. Every chain queues task.delay callbacks (the flash
+        -- retry, the engine hand-back). Without a generation stamp those still fire after you switch the mode
+        -- off, which is "I turned it off and it still pressed 3".
+        R.gen = (R.gen or 0) + 1
+        R.chainUntil = 0
         R.lockTarget = nil; R.lockKind = nil; R.lockEnd = 0
         R.bfActive = false; R.curving = false
+        _G.VX_BF_RECLICK = _G.VX_BF_RECLICK_USER ~= false   -- restore the user's re-click setting immediately
         pcall(lockClipOn)
         pcall(ReleaseAll)
         local p = GetRoot()
@@ -4398,6 +4438,27 @@ do
 		end,   -- unwrap Fluriore's {"Down Slam"} table (else the mode check never matched = "doesn't work")
 		setDelay = function() end,
 		setCount = function() end,
+		-- ═══ DIAGNOSTIC: RUN THE ACTION WITH NO DETECTION IN THE WAY ═══ Uppercut / Down Slam have two halves,
+		-- the TRIGGER (did we notice your swing) and the ACTION (hold the direction + fire the remote). When it
+		-- "doesn't work" we cannot tell which half failed. These run the ACTION alone, on demand, so one press
+		-- of the button separates them: works here but not in a fight = the trigger; does nothing here either =
+		-- the action, and the printout says exactly which service it resolved.
+		testUp = function()
+			print("[M1COMBO TEST] Uppercut: svc=" .. tostring(vxMyCharSvc()) .. "  v5remote=" .. tostring(State.remote and State.remote:GetFullName() or "nil"))
+			spaceDown(); fireDir("Up"); task.delay(0.40, function() spaceUp() end)
+		end,
+		testDown = function()
+			print("[M1COMBO TEST] Down Slam: svc=" .. tostring(vxMyCharSvc()) .. "  v5remote=" .. tostring(State.remote and State.remote:GetFullName() or "nil"))
+			downDown(); fireDir("Down"); task.delay(0.40, function() downUp() end)
+		end,
+		-- Reports whether the swing detector is alive and when it last saw a real click/swing.
+		testStatus = function()
+			print("[M1COMBO TEST] mode=" .. tostring(mode)
+				.. "  animHookLive=" .. tostring(comboAnimLive)
+				.. "  swingsCounted=" .. tostring(State.m1Count)
+				.. "  lastRealClick=" .. string.format("%.2fs ago", tick() - (tonumber(_G.VX_LAST_CLICK) or 0))
+				.. "  lastSwing=" .. string.format("%.2fs ago", tick() - (State.lastM1 or 0)))
+		end,
 		setChar = function(c) Config.Manual = (c and c ~= "" and c ~= "Auto") and c or nil; State.char = nil; State.remote = nil; refreshDetection() end,
 	}
 end
@@ -6913,6 +6974,8 @@ do
 		-- airOK gates the Auto Air branches ONLY (see the note above) — it no longer returns out of the handler.
 		local airOK = false
 		local _airWhy = "off"
+		-- The test button sets this so the enemy-presence gate cannot hide whether the branches themselves work.
+		local _airForced = tick() < (tonumber(_G.VX_AIR_FORCE) or 0)
 		if autoAirOn then
 			if injBlocked then _airWhy = "ignored (we pressed this key ourselves)"
 			else
@@ -6925,6 +6988,7 @@ do
 					else _airWhy = "enemy too far: " .. math.floor(d) .. " studs (limit 60)" end
 				end
 			end
+			if _airForced and not airOK then airOK = true; _airWhy = "FORCED by the test button (" .. _airWhy .. ")" end
 		end
 		-- DIAGNOSTIC: with _G.VX_BF_DEBUG = true every key press prints whether Auto Air was allowed to run and,
 		-- if not, exactly why. This is the fastest way to find out why a sequence stays silent.
@@ -7217,6 +7281,33 @@ do
 	-- AUTO AIR anim triggers: Twofold Kick (Gojo) kicks them UP -> click R (RightActivated at the target).
 	-- Gambler: your landed M1 -> fire Rough Energy (the 'click 3 for you' launcher).
 	AutoAirApi_set = function(v) autoAirOn = v == true end
+	-- ═══ DIAGNOSTIC ═══ Force one Auto Air pass for a key with the enemy gate BYPASSED, and say what it saw.
+	-- Auto Air has been patched against three different guessed gates and still reports as dead, so this proves
+	-- which half is broken: if the branch fires here but not in a fight, the gate is the problem; if no branch
+	-- claims the key even here, the character/move test is.
+	AutoAirApi_test = function(keyName)
+		local kc = Enum.KeyCode[keyName or "One"]
+		local chs = workspace:FindFirstChild("Characters")
+		local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+		local mv = c and c:FindFirstChild("Moveset")
+		local names = {}
+		if mv then for _, m in ipairs(mv:GetChildren()) do names[#names + 1] = m.Name end end
+		local hrp = myHRP(); local en = nearestEnemyChar(true)
+		local er = en and en:FindFirstChild("HumanoidRootPart")
+		print("[AutoAir TEST] key=" .. tostring(keyName)
+			.. "  autoAirOn=" .. tostring(autoAirOn)
+			.. "  rig=" .. tostring(c and c.Name)
+			.. "  detected=" .. tostring(c and detectCharName(c))
+			.. "  Moveset={ " .. table.concat(names, ", ") .. " }")
+		print("[AutoAir TEST] you=" .. tostring(hrp ~= nil)
+			.. "  nearestEnemy=" .. tostring(en and en.Name or "NONE")
+			.. "  dist=" .. tostring((er and hrp) and math.floor((er.Position - hrp.Position).Magnitude) or "n/a"))
+		local savedOn = autoAirOn
+		autoAirOn = true
+		_G.VX_AIR_FORCE = tick() + 1        -- __airHandler treats this as "range gate satisfied"
+		__airOnce(kc)
+		task.delay(1, function() autoAirOn = savedOn; _G.VX_AIR_FORCE = 0 end)
+	end
 	-- ANIM-DRIVEN backup (your captured ids): keeps aiming through Gojo's R (99920923658527), and the RED
 	-- charge anim (137654778575373) auto-clicks R even if the key-3 press was missed/eaten.
 	local GOJO_R_ANIM, RED_ANIM = "99920923658527", "137654778575373"
@@ -11922,7 +12013,7 @@ do
         bfAutoOn = (b == true); bfSync()
         if _G.VXBF2 then _G.VXBF2.setAutoBF(false) end   -- avoid the weaker VXBF2 path double-pressing
     end })
-    bfSec:Toggle({ Name = "BF Uses Reclick (off = less fling)", Default = true, Callback = function(b) _G.VX_BF_RECLICK = (b == true) end })
+    bfSec:Toggle({ Name = "BF Uses Reclick (off = less fling)", Default = true, Callback = function(b) _G.VX_BF_RECLICK = (b == true); _G.VX_BF_RECLICK_USER = (b == true) end })   -- _USER is the real preference; chains suppress the live one transiently and restore from this
     -- "BF Debug (print)" and "Debug On Screen" toggles REMOVED from the menu (they were clutter). The globals
     -- still exist, so a debug run is `_G.VX_BF_DEBUG = true` / `_G.VX_DEBUG_HUD = true` before the loadstring.
     bfSec:Slider({ Name = "BF Cooldown", Min = 0.1, Max = 2, Default = 0.5, Decimals = 0.05, Suffix = "s", Callback = function(v) if _G.VXBF2 then _G.VXBF2.setCooldown(v) end end })
@@ -12025,6 +12116,17 @@ do
     acSec:Toggle({ Name = "Auto Ult", Callback = function(b) if AutoUltApi then AutoUltApi.set(b) end end })
     if tier("premium") then
         acSec:Toggle({ Name = "Auto Air", Callback = function(b) if AutoAirApi_set then AutoAirApi_set(b) end end })   -- FREE: Auto Air removed (premium only)
+        -- ═══ TEST BUTTONS ═══ Auto Air / Uppercut / Down Slam each have a TRIGGER half and an ACTION half, and
+        -- "it doesn't work" cannot tell them apart. These run the ACTION on demand with the gates bypassed and
+        -- print what they resolved, so one press says which half is broken. Results go to the F9 console.
+        pcall(function() acSec:Label("Tests below print to F9. Stand near an enemy, press, send me the lines.") end)
+        acSec:Button({ Name = "TEST: Uppercut now", Callback = function() if M1ComboApi and M1ComboApi.testUp then M1ComboApi.testUp() end end })
+        acSec:Button({ Name = "TEST: Down Slam now", Callback = function() if M1ComboApi and M1ComboApi.testDown then M1ComboApi.testDown() end end })
+        acSec:Button({ Name = "TEST: Combo detector status", Callback = function() if M1ComboApi and M1ComboApi.testStatus then M1ComboApi.testStatus() end end })
+        acSec:Button({ Name = "TEST: Auto Air (key 1)", Callback = function() if AutoAirApi_test then AutoAirApi_test("One") end end })
+        acSec:Button({ Name = "TEST: Auto Air (key 2)", Callback = function() if AutoAirApi_test then AutoAirApi_test("Two") end end })
+        acSec:Button({ Name = "TEST: Auto Air (key 3)", Callback = function() if AutoAirApi_test then AutoAirApi_test("Three") end end })
+        acSec:Button({ Name = "TEST: Auto Air (key R)", Callback = function() if AutoAirApi_test then AutoAirApi_test("R") end end })
         -- Pick which characters Auto Air runs for. Each needs the master toggle above ON as well.
         pcall(function() acSec:Label("Auto Air - pick which ones run:") end)
         for _, o in ipairs({
