@@ -1232,9 +1232,13 @@ do
 		local savedCollide = {}
 		if myC then for _, p in ipairs(myC:GetDescendants()) do if p:IsA("BasePart") and p.CanCollide then savedCollide[p] = true; pcall(function() p.CanCollide = false end) end end end
 		-- decide the sweep DIRECTION once (stable arc, no mid-flight flip-flop)
+		-- ═══ THE "IT DOESN'T GO BEHIND THEIR BACK" BUG ═══ LookVector is the way the target is FACING, so using
+		-- it as the landing direction put you at target.Position + look*radius = directly IN FRONT of them,
+		-- every time, in every mode that asks for endBehind. Behind is the NEGATIVE look vector. (faceEnemyBack
+		-- and the non-orbit fallback both already had the minus sign - only the orbit was missing it.)
 		local look0 = targetHRP.CFrame.LookVector
 		local flat0 = Vector3.new(look0.X, 0, look0.Z); local mag0 = flat0.Magnitude
-		local behind0 = (mag0 < 0.01) and Vector3.new(0, 0, -1) or (flat0 / mag0)
+		local behind0 = (mag0 < 0.01) and Vector3.new(0, 0, 1) or (-flat0 / mag0)
 		local endAngle0 = endBehind and (math.atan2(behind0.Z, behind0.X) + endBias) or startAngle
 		local diff0 = ((endAngle0 - startAngle + math.pi) % (2 * math.pi)) - math.pi
 		local sweepDir = opts.dir or (diff0 >= 0 and 1 or -1)   -- opts.dir forces LEFT(-1)/RIGHT(1) (Side Dash Assist alternates)
@@ -1249,9 +1253,11 @@ do
 			if okv and tv and tv.Magnitude > 1 then tp = tp + Vector3.new(tv.X, 0, tv.Z) * 0.1 * e end   -- PREDICT a moving target (lead grows toward the end = lands where they'll BE)
 			local endAngle = startAngle
 			if endBehind then
+				-- Same sign fix as behind0 above: NEGATIVE look vector = behind them. This one is re-evaluated
+				-- every frame so the arc keeps tracking their back while they turn.
 				local look = targetHRP.CFrame.LookVector
 				local flat = Vector3.new(look.X, 0, look.Z); local mag = flat.Magnitude
-				local bd = (mag < 0.01) and Vector3.new(0, 0, -1) or (flat / mag)
+				local bd = (mag < 0.01) and Vector3.new(0, 0, 1) or (-flat / mag)
 				endAngle = math.atan2(bd.Z, bd.X) + endBias
 			end
 			local diff = ((endAngle - startAngle + math.pi) % (2 * math.pi)) - math.pi
@@ -3211,12 +3217,29 @@ do
             borrowed = true
             pcall(function() _G.VX_BFAPI_SET(true) end)
         end
+        local firedBefore = _G.VX_BF_LAST_FIRE or 0
         VMouseClick()
         if not _G.VX_BFAPI_ON then      -- no engine at all -> best-effort blind press so something happens
             task.wait(0.19); pressBF()
+        else
+            -- ═══ VERIFY, DON'T HOPE ═══ "all the other modes are not black flashing": these modes trigger off
+            -- key 3, so unlike M1 Chain there is no real swing already in flight - they depend entirely on the
+            -- synthetic click producing an attack animation. Mid-dash the game often refuses that click, no
+            -- animation plays, the engine never sees a windup, and nothing flashes. The engine stamps
+            -- _G.VX_BF_LAST_FIRE every time it actually flashes, so we can just CHECK: if nothing fired by the
+            -- time the window has passed, throw one more click and press the key ourselves.
+            task.spawn(function()
+                task.wait(0.42)
+                if (_G.VX_BF_LAST_FIRE or 0) > firedBefore then return end   -- it flashed; nothing to do
+                if _G.VX_BF_DEBUG then print("[DreamHub BF] no flash from the first swing - retrying") end
+                if _G.VX_BF_RESETCOUNT then pcall(_G.VX_BF_RESETCOUNT) end
+                VMouseClick()
+                task.wait(0.19)
+                if (_G.VX_BF_LAST_FIRE or 0) <= firedBefore then pressBF() end
+            end)
         end
         if borrowed then
-            task.delay(0.6, function()  -- long enough for the swing + flash frame, then hand it back
+            task.delay(1.2, function()  -- covers the swing, the flash frame AND the retry above before handing back
                 if _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(_G.VX_BFAPI_WANT == true) end) end
             end)
         end
@@ -3401,7 +3424,7 @@ do
         dashToBack(t, { duration = 0.26, extraSweep = math.pi * 0.45, yArc = 6 })   -- same sweep as Side Dash, plus the arc over them
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
-        task.wait(0.05); m1ThenBF()
+        task.wait(0.12); m1ThenBF()   -- let the dash settle: clicking while the arc still owns you gets the swing refused
         task.delay(0.3, function() R.bfActive = false end); status("BF Jump Chain")
     end
     local function doBFSideDash()
@@ -3414,7 +3437,7 @@ do
         dashToBack(t, { duration = 0.26, extraSweep = math.pi * 0.45 })
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
-        task.wait(0.05); m1ThenBF()
+        task.wait(0.12); m1ThenBF()   -- let the dash settle: clicking while the arc still owns you gets the swing refused
         task.delay(0.3, function() R.bfActive = false end); status("BF Side Chain")
     end
     local function doBFBackDash()
@@ -3437,7 +3460,8 @@ do
         dashToBack(t, { duration = 0.26, extraSweep = math.pi * 0.45, yArc = jumpThis and 4 or 0 })
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
-        task.wait(0.05); m1ThenBF(); task.delay(0.3, function() R.bfActive = false end)
+        task.wait(0.12); m1ThenBF()   -- let the dash settle: clicking while the arc still owns you gets the swing refused
+        task.delay(0.3, function() R.bfActive = false end)
         status(jumpThis and "BF Back Chain (jump)" or "BF Back Chain")
     end
     -- ═══ ENGAGEMENT RANGE ═══ The chain may only ever act on someone you are ALREADY fighting. DashRange (80)
@@ -3515,7 +3539,10 @@ do
             if not dly then return end
             -- SAME RULE AS THE CHAIN: swinging at thin air must not burn a Black Flash. Nobody within
             -- engagement range = no flash at all.
-            if not targetInChainRange() then
+            -- EXCEPT mid-chain: a dash mode has already picked and validated its target, and this hook fires
+            -- while the arc may still be moving you. Re-gating here would cancel the flash the chain exists to
+            -- produce - which is the "the other modes dash but never flash" failure.
+            if not R.bfActive and not targetInChainRange() then
                 if _G.VX_BF_DEBUG then print("[DreamHub BF] M1 BF: nobody in range - not flashing") end
                 return
             end
@@ -3545,7 +3572,7 @@ do
         end
         -- CLICK path for BF: covers characters whose M1 anim isn't in the database (the anim path can't catch
         if input.UserInputType == Enum.UserInputType.MouseButton1 and (Settings.AutoBF or Settings.BFM1) then
-            if not targetInChainRange() then return end   -- same range rule as the anim path above
+            if not R.bfActive and not targetInChainRange() then return end   -- same range rule as the anim path above
             if tick() - R.bfCD >= Settings.BFCooldown then
                 R.bfCD = tick()
                 task.delay(0.14, function() if Settings.AutoBF or Settings.BFM1 then pressBF() end end)
@@ -4068,26 +4095,38 @@ do
 		-- if undetected — only YOURS responds server-side). Guarantees the correct Activated("Down"/"Up") lands
 		-- even when v5 character detection misses = "auto down slam / uppercut doesn't work" fix.
 		-- EXACT captured shape: <Char>Service.RE.Activated:FireServer("Down") / ("Up") - one string, no nil.
-		local fired = false
+		-- ═══ WHY THIS USED TO GIVE UP TOO EARLY ═══ `fired` was set from pcall(), and pcall succeeds as long as
+		-- the CALL did not error. Firing the WRONG character's Activated remote does not error - it is simply
+		-- ignored server-side - so a mis-resolved service still set fired = true and the fallbacks below never
+		-- ran. pcall tells us "sent", never "accepted". So we now branch on whether we actually RESOLVED your
+		-- character, not on whether a send succeeded.
 		local svcName = vxMyCharSvc()                     -- scans moveset -> name -> services
+		local resolved = false
 		if svcName then
 			local svcs = game:GetService("ReplicatedStorage"):FindFirstChild("Knit")
 			svcs = svcs and svcs:FindFirstChild("Knit"); svcs = svcs and svcs:FindFirstChild("Services")
 			local sv = svcs and svcs:FindFirstChild(svcName)
 			local re = sv and sv:FindFirstChild("RE"); re = re and re:FindFirstChild("Activated")
 			if re then
-				fired = pcall(function() re:FireServer(dir) end)
-				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] fired " .. svcName .. '.RE.Activated("' .. dir .. '") -> ' .. tostring(fired)) end
+				resolved = true
+				local ok = pcall(function() re:FireServer(dir) end)
+				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] fired " .. svcName .. '.RE.Activated("' .. dir .. '") -> ' .. tostring(ok)) end
 			end
 		end
-		if not fired and State.remote then
-			fired = pcall(function() State.remote:FireServer(dir) end)
-			if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] fell back to State.remote -> " .. tostring(fired)) end
+		-- The v5 resolver is a SEPARATE detection path, so fire it too rather than only as a fallback: when the
+		-- two disagree one of them is right, and the wrong one is a no-op. Two sends, not eleven.
+		if State.remote then
+			local ok = pcall(function() State.remote:FireServer(dir) end)
+			if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] also fired State.remote -> " .. tostring(ok)) end
 		end
-		if not fired then
-			-- LAST RESORT: only REAL character services (not all 21 of everything) - just yours answers.
-			for _, nm in ipairs({ "Itadori", "Gojo", "Megumi", "Hakari", "Choso", "Locust", "Mahito", "MeiMei", "Toji", "Yuta", "Sukuna" }) do
-				if vxSvcHasActivated(nm .. "Service") then pcall(function() fireKnit(nm .. "Service", "Activated", dir) end) end
+		if not resolved and not State.remote then
+			-- Nothing identified your character at all. Sweep the real character services - only yours answers,
+			-- and this is the difference between "does nothing" and "works". Set _G.VX_M1_NOSWEEP = true to
+			-- opt out if you would rather it stay quiet than send a burst.
+			if not _G.VX_M1_NOSWEEP then
+				for _, nm in ipairs({ "Itadori", "Gojo", "Megumi", "Hakari", "Choso", "Locust", "Mahito", "MeiMei", "Toji", "Yuta", "Sukuna" }) do
+					if vxSvcHasActivated(nm .. "Service") then pcall(function() fireKnit(nm .. "Service", "Activated", dir) end) end
+				end
 			end
 			if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] no service resolved - swept the known character services") end
 		end
@@ -4162,7 +4201,7 @@ do
 		-- the remote alone is what did nothing, exactly as it did for "Up".
 		downDown()
 		fireDir("Down")
-		task.delay(0.22, function() downUp() end)
+		task.delay(0.40, function() downUp() end)   -- same reason as the uppercut's Space hold
 		return true
 	end
 	-- THE RAW-CLICK SLAM PATH. onSwing() is animation-driven, and an AIRBORNE M1 usually plays a different
@@ -4171,8 +4210,9 @@ do
 	local function slamOnClick()
 		if mode ~= "Down Slam" then return end
 		if tick() >= slamArmed then return end
-		if not airborneNow() then return end
-		doSlam("armed + airborne click")
+		-- NO airborne re-check. FloorMaterial lags the hop by a frame or two, so this test kept rejecting the
+		-- very click it was armed for. We hopped you ourselves 3 swings ago - the arming window IS the proof.
+		doSlam("armed click")
 	end
 	local function onSwing()
 		if mode == "Off" then return end
@@ -4209,11 +4249,20 @@ do
 					local h = c and c:FindFirstChildOfClass("Humanoid")
 					if h and h.FloorMaterial ~= Enum.Material.Air then
 						_G.VX_LAUNCHING = tick()
-						-- ONE jump mechanism, the character's own. The old code sent a Space key event AND
-						-- ChangeState(Jumping) AND overwrote Y velocity to 30 - three launches stacking into one
-						-- hop, which is why it "jumps me too high". Humanoid.Jump uses the character's real
-						-- JumpPower, so the hop is exactly a normal jump. It also sends no key, so Auto Air and
-						-- the feint modules can no longer mistake it for you pressing Space.
+						-- Humanoid.Jump alone can be swallowed while the combo animation owns the state, and then
+						-- you never go airborne and the slam never arms. A modest Y floor guarantees the lift
+						-- without the rocket the old 65/30-plus-three-mechanisms stack produced.
+						pcall(function()
+							local r = c and c:FindFirstChild("HumanoidRootPart")
+							if r then
+								local v = r.AssemblyLinearVelocity
+								r.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 34), v.Z)
+							end
+						end)
+						-- Humanoid.Jump + a Y floor, and NO synthetic Space key. The version that launched you too
+						-- high sent a Space key event AND ChangeState(Jumping) AND overwrote Y to 30 - three
+						-- launches stacking into one hop. Sending no key also means Auto Air and the feint
+						-- modules cannot mistake this for you pressing Space.
 						pcall(function() h.Jump = true end)
 					end
 					slamArmed = tick() + 1.6      -- your next M1 within this window announces the slam
@@ -4231,7 +4280,9 @@ do
 				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] swing " .. n .. " -> UPPERCUT") end
 				spaceDown()
 				fireDir("Up")
-				task.delay(0.22, function() spaceUp() end)
+				-- 0.40, not 0.22: the game reads the held direction when the swing LANDS, and a JJS M1 takes
+				-- longer than 0.22s to connect - so the old hold was released before it was ever read.
+				task.delay(0.40, function() spaceUp() end)
 			end
 		end
 	end
