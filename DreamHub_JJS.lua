@@ -1841,11 +1841,19 @@ do
 			_G.VX_M1_POLL_CONN = RSm.RenderStepped:Connect(function()
 				local ok, down = pcall(function() return UISm:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) end)
 				if not ok then return end
-				if down and not wasDown and not UISm:GetFocusedTextBox() then
-					_G.VX_LAST_CLICK = tick()          -- keep the BF engine's timing stamp fresh too
-					-- A click WE injected must still stamp the timing above (the flash needs it) but must NOT
-					-- re-enter the subscribers, or a chain's own M1 would retrigger the chain / bump the combo count.
-					if tick() >= (tonumber(_G.VX_SYNTH_CLICK) or 0) then
+				if down and not UISm:GetFocusedTextBox() then
+					-- ═══ THE ONE THAT BROKE EVERYTHING ═══ A recorder capture settled this: JJS advances the M1
+					-- combo while you HOLD the button. One click held for 1.38s produced FOUR swings ~0.35s apart.
+					-- This stamp used to live inside `down and not wasDown` - the rising edge only - so swings 2,
+					-- 3 and 4 landed 0.41s / 0.76s / 1.12s after the last stamp, and every gate that asks "did
+					-- they click recently" (the Black Flash engine's 0.5s test, the combo module's 0.40s
+					-- realM1Now) answered NO. Only the first swing of a held combo ever counted. That single line
+					-- is both "auto uppercut/down slam don't work" and "it doesn't black flash".
+					-- Button still down = still attacking, so the stamp stays fresh while it is held.
+					_G.VX_LAST_CLICK = tick()
+					-- SUBSCRIBERS stay on the rising edge: they are per-click actions and must not repeat every
+					-- frame. A click WE injected stamps the timing above but never re-enters them.
+					if not wasDown and tick() >= (tonumber(_G.VX_SYNTH_CLICK) or 0) then
 						for _, fn in pairs(_G.VX_M1_SUBS) do task.spawn(function() pcall(fn) end) end
 					end
 				end
@@ -4092,6 +4100,11 @@ do
 		"95295463826732","105077924973072","124862357369335","134243365075812",
 		"127851700400958","72548435296350","84547415708554",
 		"94588892125071","97868312130612","140588454098230","109299799610861",
+		-- 92966188946988 = the AIRBORNE attack swing, captured from a live recording and previously unknown to
+		-- this file at all. In the capture it plays on every air M1 and is always followed by a landing at
+		-- ~-42 Y velocity, i.e. it IS the down slam swing. Without it here an airborne M1 counted as no swing,
+		-- which is exactly why the armed slam never landed.
+		"92966188946988",
 		-- Ten Shadows           Perfection              Blood Main
 		"75337033003776","138489871864252","96185406489877",
 		"126277739156443","99710481887795","121322029260156","98845475810982",
@@ -4280,8 +4293,16 @@ do
 	end
 	local function airborneNow()
 		local c0 = myModel(); local h0 = c0 and c0:FindFirstChildOfClass("Humanoid")
-		return (h0 and h0.FloorMaterial == Enum.Material.Air) or false
+		if not h0 then return false end
+		-- FloorMaterial is the primary test, but it lags a frame or two after a launch and reads Concrete while
+		-- you are already rising. The humanoid STATE flips immediately, so accept either.
+		if h0.FloorMaterial == Enum.Material.Air then return true end
+		local st = h0:GetState()
+		return st == Enum.HumanoidStateType.Freefall or st == Enum.HumanoidStateType.Jumping
 	end
+	-- Captured ids for the AIRBORNE attack swing. Seeing one of these is proof you just air-M1'd, which is a
+	-- down slam regardless of what FloorMaterial happens to say on that frame.
+	local AIR_ATTACK_IDS = { ["92966188946988"] = true }
 	-- ONE place fires the slam, with ONE cooldown, so the animation path and the raw-click path below cannot
 	-- both announce the same slam (that double-fire burned the cooldown and the second one did nothing).
 	local function doSlam(why)
@@ -4417,6 +4438,12 @@ do
 						local clickedJustNow = (tick() - (tonumber(_G.VX_LAST_CLICK) or 0)) < 0.45
 						isSwing = action and clickedJustNow
 						if isSwing and _G.VX_M1_DEBUG then print("[M1COMBO] unlisted M1 anim " .. id .. " counted via click+Action") end
+					end
+					-- An AIRBORNE attack animation is a down slam by definition - announce it directly rather than
+					-- routing it through the ground-combo counter, which has no concept of an air swing.
+					if AIR_ATTACK_IDS[id] and mode == "Down Slam" then
+						if realM1Now() then doSlam("air attack anim " .. id) end
+						return
 					end
 					if isSwing then onSwing() end
 				end)
@@ -12046,7 +12073,10 @@ do
             -- ONLY stamp the click now. The Black Flash engine does the actual press (gated by BF After (M1s))
             -- off your M1 animation, so this no longer double-presses or ignores the count.
             _G.VX_LAST_CLICK = tick()
-            if _G.VX_BF_DEBUG then
+            -- The poll now calls this EVERY FRAME the button is held (that is the fix for held combos), so the
+            -- debug probe below has to be throttled or one held M1 queues sixty of them.
+            if _G.VX_BF_DEBUG and tick() - (_G.VX_BF_PROBE_T or 0) > 1 then
+                _G.VX_BF_PROBE_T = tick()
                 local at = _G.VX_LAST_CLICK
                 task.delay(0.7, function()   -- if no flash fired after this click, the M1 windup anim was never caught
                     if _G.VX_BF_DEBUG and (_G.VX_BF_LAST_FIRE or 0) < at then
@@ -12076,7 +12106,10 @@ do
                 -- transiently, and the old check made the poll bail during exactly those borrows = no flash.
                 if not (bfM1On or bfAutoOn or _G.VX_BFAPI_ON) then wasDown = false; return end
                 local down = UISbf:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
-                if down and not wasDown and not UISbf:GetFocusedTextBox() then onClick() end
+                -- HELD = still attacking (see the note on the shared poll at the top of the file). JJS advances
+                -- the combo while the button is down, so the stamp has to stay fresh or the engine only ever
+                -- sees swing 1 of a held combo and never flashes on 2/3/4.
+                if down and not UISbf:GetFocusedTextBox() then onClick() end
                 wasDown = down
             end)
         end
