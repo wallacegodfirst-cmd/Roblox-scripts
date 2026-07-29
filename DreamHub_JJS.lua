@@ -32,14 +32,14 @@ do
 					local folder = svc:FindFirstChild(folderName)
 					if folder then
 						for _, v in ipairs(folder:GetChildren()) do
-							-- The Teleport remote is the one genuinely ambiguous case, so it is a SWITCH, not a guess.
-							-- KEEP (default): the capture shows the CLIENT firing it with a server timestamp, which
-							--   reads as "announce this move as sanctioned". Destroying it would remove the channel.
-							-- DESTROY (_G.VX_KILL_AC_TP = true): the other reading is that the client-side AC fires
-							--   it to REPORT you. If that is right, killing it stops the rollback.
-							-- Only in-game testing separates the two. Flip the toggle and see which one sticks.
+							-- ═══ SETTLED BY TESTING, NOT THEORY ═══ AntiCheatService.RE.Teleport used to be kept,
+							-- on the reading that the client fires it to announce a sanctioned move (a capture does
+							-- show the client firing it with a server timestamp). In-game it went the other way:
+							-- "when I click kill AC remote it destroys it, meaning I can teleport". So it is the
+							-- server's REPORTER channel, and DESTROYING it is now the default.
+							-- Set _G.VX_KEEP_AC_TP = true to go back to keeping it.
 							local isACTeleport = (v.Name == "Teleport")
-							local skip = isACTeleport and not _G.VX_KILL_AC_TP
+							local skip = isACTeleport and (_G.VX_KEEP_AC_TP == true)
 							if (v:IsA("RemoteEvent") or v:IsA("RemoteFunction")) and not v:GetAttribute("VX_Dummy") and not skip then
 								local dummy = Instance.new(v.ClassName)
 								dummy.Name = v.Name
@@ -1930,7 +1930,7 @@ local function vxResolveAC()
 	local RS = game:GetService("ReplicatedStorage")
 	local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
 	local svc = k and k:FindFirstChild("AntiCheatService"); local re = svc and svc:FindFirstChild("RE"); re = re and re:FindFirstChild("Teleport")
-	-- Skip OUR OWN dummy. With _G.VX_KILL_AC_TP on, the real remote is replaced by a tagged stand-in; firing
+	-- Skip OUR OWN dummy. The real remote is replaced by a tagged stand-in by default; firing
 	-- that is pure noise, so the AC pass has to cleanly no-op instead of pretending it announced anything.
 	if re and re:IsA("RemoteEvent") and not re:GetAttribute("VX_Dummy") then vxACRemote = re; return re end
 	for _, d in ipairs(RS:GetDescendants()) do
@@ -4339,16 +4339,21 @@ do
 	-- onSwing() firing on animations that were not real M1s (the character-agnostic fallback counts any
 	-- Action-priority track). So the press is restored and the TRIGGER is what got tightened: realM1Now()
 	-- below requires a genuine click inside 0.4s, and nothing in this module acts without it.
+	-- ═══ UP IS W, NOT SPACE ═══ Down Slam works and Uppercut does not, and the ONLY difference between them
+	-- was the key each holds: the slam holds S, the uppercut held Space. Space is JUMP, not a direction - so
+	-- the uppercut was hopping you instead of naming a direction, which is both why it did nothing and why it
+	-- made you jump. S means "down", so the symmetric key for "up" is W. Same shape as the slam now.
 	local function spaceDown()
 		if State.spaceHeld then return end
 		State.spaceHeld = true
-		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 3   -- our own key: Auto Air/feints must ignore it
-		VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.W] = tick() + 3   -- our own key: Auto Air/feints must ignore it
+		VIM:SendKeyEvent(true, Enum.KeyCode.W, false, game)
 	end
 	local function spaceUp()
 		if not State.spaceHeld then return end
 		State.spaceHeld = false
-		VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+		VIM:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+		pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)   -- release any Space an older build left held
 	end
 	-- DOWN SLAM / UPPERCUT are decided by your PHYSICAL STATE (airborne / holding space), not by a string
 	-- argument. The old path fired Activated("Down"), which JJS does not accept - so nothing happened. Both
@@ -4442,14 +4447,12 @@ do
 		-- ═══ FIRE ON THE Nth SWING ═══ "every time you do the 4th M1 it uses the service and the remote".
 		-- Counting to 4 is only reliable now that the click stamp survives a HELD combo - before this the
 		-- counter never got past 1, which is why "just do it on the 4th M1" kept not happening.
-		-- _G.VX_COMBO_AT is the Combat-page dropdown (default 4); the game's own combo is 4 hits long.
-		-- ═══ REPLACE THE Nth M1, DON'T CHASE IT ═══ "before I go to the fourth remote, it replaces with the up
-		-- or down remote". The direction has to be held and named BEFORE the finisher lands, or the game has
-		-- already committed to an ordinary 4th M1 and the remote arrives too late to change anything. So we act
-		-- on the swing BEFORE the chosen one: hold the direction key and fire the remote there, and the swing
-		-- you were aiming at comes out AS the uppercut / down slam.
-		local want = math.clamp(tonumber(_G.VX_COMBO_AT) or 4, 1, 4)
-		local need = math.max(1, want - 1)
+		-- ═══ AUTOMATIC, NO SELECTOR ═══ The dropdown is gone. The direction has to be held and named BEFORE the
+		-- finisher lands - once the game has committed to an ordinary M1 the remote arrives too late - so we act
+		-- from the 2nd swing onward and the NEXT swing comes out as the uppercut / down slam. That is the timing
+		-- that already works for the slam, so the uppercut now uses it too. Each has its own cooldown below, so
+		-- acting from swing 2 cannot spam: one finisher per combo.
+		local need = 2
 		if mode == "Down Slam" then
 			-- ALREADY IN THE AIR? Then this swing IS the slam, whatever the count says - an air M1 is a slam.
 			if airborneNow() then
@@ -4483,10 +4486,13 @@ do
 				end)
 			end
 		elseif mode == "Uppercut" then
+			-- One finisher per combo: a 0.9s cooldown, matching how the slam behaves in practice. The old 0.18s
+			-- let it re-fire on every remaining swing of the same combo, which spends the move repeatedly.
+
 			-- On the Nth swing, hold the direction across the swing and name it on the remote. It used to fire
 			-- on EVERY swing, which spent the move on hit 1 of a combo where the game only accepts it on the
 			-- finisher - and made it look like it "does nothing".
-			if n >= need and tick() - (State.lastUp or 0) >= 0.18 then
+			if n >= need and tick() - (State.lastUp or 0) >= 0.9 then
 				State.lastUp = tick()
 				State.lastFire = now
 				State.m1Count = 0
@@ -12404,10 +12410,7 @@ do
         end
     end
     acSec:Dropdown({ Name = "Auto Slam / Uppercut", Items = { "Off", "Down Slam", "Uppercut" }, Default = "Off", Callback = function(m) if M1ComboApi then M1ComboApi.setMode(m) end end })
-    _G.VX_COMBO_AT = 4
-    -- Which swing of the combo fires it. 4 = the finisher, which is what the game itself accepts the direction
-    -- on. Lower it if your character's launcher lands earlier (Hakari's 3rd M1 is already a launcher).
-    acSec:Dropdown({ Name = "Slam / Uppercut on M1 #", Items = { "1", "2", "3", "4" }, Default = "4", Callback = function(v) v = (type(v) == "table") and v[1] or v; _G.VX_COMBO_AT = tonumber(v) or 4 end })
+    -- "Slam / Uppercut on M1 #" dropdown REMOVED - it is automatic now (see the note in onSwing).
     -- (Removed the "Launcher after N hits" slider — the mechanic is now the FIXED real game rule per the wiki:
     -- Uppercut = 4 M1s with Space held, Down Slam = 3 M1s then jump+M1. No slider needed or accurate anymore.)
     pcall(function() acSec:Label("Uppercut soon: Crow, Mangaka, Black Death, Disaster Plants") end)
@@ -12595,11 +12598,10 @@ do
     -- speed was permanently pinned at 100 studs/s. Now they are wired up.
     quickSec:Dropdown({ Name = "TP Method", Items = { "Instant", "Anchor", "Auto", "Glide" }, Default = "Instant", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
     quickSec:Slider({ Name = "TP Speed (Glide)", Min = 30, Max = 200, Default = 90, Decimals = 1, Suffix = "st/s", Callback = function(v) _G.VX_TP_VEL = tonumber(v) or 90 end })   -- range matches the clamp; 90 is a believable dash, 260 read as ~16x walk speed and got reverted
-    -- The one genuinely untestable-from-here question: is AntiCheatService.RE.Teleport the channel that
-    -- SANCTIONS your move, or the channel that REPORTS you? Off = keep it and announce on it (default).
-    -- On = destroy it. Flip it, teleport, and whichever setting sticks is the answer.
-    quickSec:Toggle({ Name = "Kill AC Teleport remote", Default = false, Callback = function(b)
-        _G.VX_KILL_AC_TP = b and true or nil
+    -- Destroying AntiCheatService.RE.Teleport is now the DEFAULT, because that is what made teleport work in
+    -- testing. This toggle puts it back only if you ever want the old behaviour.
+    quickSec:Toggle({ Name = "Keep AC Teleport remote", Default = false, Callback = function(b)
+        _G.VX_KEEP_AC_TP = b and true or nil
         if _G.VX_DESTROY_AC then pcall(_G.VX_DESTROY_AC) end   -- re-run the sweep so the change takes effect now
     end })
     quickSec:Button({ Name = "Print TP Remote", Callback = function()
