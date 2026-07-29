@@ -963,6 +963,19 @@ do
 		local ok, id = pcall(function() return track.Animation.AnimationId end)
 		if not ok then return end
 		local delayTime = AnimationTriggers[normalizeAnimationId(id)]
+		-- ═══ WHY THIS ONLY EVER WORKED ON THE VESSEL ═══ Every id in AnimationTriggers is an ITADORI move
+		-- (Black Flash 1, Black Flash 2, Focus Strike, Straight Hit). Any other character had no entry, so it
+		-- could only reach the priority fallback below - and a swing whose track is not authored at an Action
+		-- tier falls straight through to `return` with no flash. That is "M1 Black Flash only works on Vessel".
+		-- _G.VX_M1_IDS already holds the captured M1 ids for ALL 20 characters (Gojo's included) and this engine
+		-- never looked at it. Consulting it makes a known M1 on ANY character a windup, with no reliance on how
+		-- that character's animation happens to be prioritised.
+		if not delayTime then
+			local nid = tostring(id):match("%d+")
+			if nid and _G.VX_M1_IDS and _G.VX_M1_IDS[nid] and tick() - (_G.VX_LAST_CLICK or 0) < 0.5 then
+				delayTime = 0.19
+			end
+		end
 		if not delayTime then
 			local pr = track.Priority
 			local isAction = pr == Enum.AnimationPriority.Action or pr == Enum.AnimationPriority.Action2 or pr == Enum.AnimationPriority.Action3 or pr == Enum.AnimationPriority.Action4
@@ -1824,21 +1837,30 @@ do
 				Enum.KeyCode.R, Enum.KeyCode.Space, Enum.KeyCode.Q, Enum.KeyCode.E, Enum.KeyCode.G }
 			local wasKey = {}
 			_G.VX_KEY_POLL_CONN = RSm.RenderStepped:Connect(function()
+				-- ═══ LAG ═══ This used to run 9 pcall-wrapped IsKeyDown calls EVERY FRAME, FOREVER, gated on
+				-- nothing - so the hub cost CPU at 60Hz even with every single feature switched off. Two fixes:
+				-- bail immediately when nothing is subscribed, and drop the per-key pcall for one pcall around
+				-- the whole sweep (a pcall in a hot path allocates every call).
+				if next(_G.VX_KEY_SUBS) == nil then return end
 				if UISm:GetFocusedTextBox() then return end
-				for _, kc in ipairs(WATCH) do
-					local ok, down = pcall(function() return UISm:IsKeyDown(kc) end)
-					if ok then
+				pcall(function()
+					for _, kc in ipairs(WATCH) do
+						local down = UISm:IsKeyDown(kc)
 						if down and not wasKey[kc] then
 							for _, fn in pairs(_G.VX_KEY_SUBS) do task.spawn(function() pcall(fn, kc) end) end
 						end
 						wasKey[kc] = down
 					end
-				end
+				end)
 			end)
 		end
 		do
 			local wasDown = false
 			_G.VX_M1_POLL_CONN = RSm.RenderStepped:Connect(function()
+				-- Same treatment as the key poll: skip entirely when nothing consumes M1 events AND no flash
+				-- engine is armed. _G.VX_BFAPI_ON covers the Black Flash engine, which needs the click stamp
+				-- even when it has no M1 subscriber of its own.
+				if next(_G.VX_M1_SUBS) == nil and not _G.VX_BFAPI_ON then return end
 				local ok, down = pcall(function() return UISm:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) end)
 				if not ok then return end
 				if down and not UISm:GetFocusedTextBox() then
@@ -3695,9 +3717,32 @@ do
     end
     -- M1 CHAIN: fires on EVERY real M1 (poll-based detector; the game sinks the click so InputBegan cannot see
     -- it). One M1 -> side dash around them -> black flash. No counting, no waiting for a 3rd swing.
+    -- ═══ M1 CHAIN HONOURS "BF After (M1s)" ═══ "if you do two M1s it will do it, one M1 it would do, three
+    -- M1s it would do it" - the same selector that governs M1 BF now governs the chain, instead of the chain
+    -- firing on every single click. Counted off REAL swings (the animation hook), not clicks, because a held
+    -- button produces four swings from one click.
+    local chainSwings, chainLastSwing = 0, 0
+    _G.VX_CHAIN_COUNT = function()
+        if not (Settings.Enabled and Settings.Mode == "M1") then return end
+        local nowT = tick()
+        if nowT - chainLastSwing > 1.2 then chainSwings = 0 end   -- JJS drops a combo at ~1.2s
+        chainLastSwing = nowT
+        chainSwings = chainSwings + 1
+        local need = math.clamp(tonumber(_G.VX_BF_AFTER) or 1, 1, 3)
+        if chainSwings < need then
+            if _G.VX_BF_DEBUG then print("[DreamHub BF] chain: swing " .. chainSwings .. "/" .. need) end
+            return
+        end
+        chainSwings = 0
+        doBFM1Chain()
+    end
     if _G.VX_M1_SUB then
+        -- Kept as a fallback for characters whose swings never reach the animation hook: if no swing has been
+        -- counted for a while, treat the raw click as the swing so the chain still works.
         _G.VX_M1_SUB("vxbf2_m1chain", function()
-            if Settings.Enabled and Settings.Mode == "M1" then doBFM1Chain() end
+            if not (Settings.Enabled and Settings.Mode == "M1") then return end
+            if tick() - chainLastSwing < 1.2 then return end   -- the animation path is counting; don't double
+            _G.VX_CHAIN_COUNT()
         end)
     end
 
@@ -4345,19 +4390,23 @@ do
 		if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] swing " .. n .. "  mode=" .. tostring(mode)) end
 		-- SLAM: if we hopped for you and you are now airborne, THIS swing is the down slam - announce it on
 		-- the same beat you actually clicked, which is the timing that was wrong before.
+		-- ═══ FIRE ON THE Nth SWING ═══ "every time you do the 4th M1 it uses the service and the remote".
+		-- Counting to 4 is only reliable now that the click stamp survives a HELD combo - before this the
+		-- counter never got past 1, which is why "just do it on the 4th M1" kept not happening.
+		-- _G.VX_COMBO_AT is the Combat-page dropdown (default 4); the game's own combo is 4 hits long.
+		local need = math.clamp(tonumber(_G.VX_COMBO_AT) or 4, 1, 4)
 		if mode == "Down Slam" then
-			-- ALREADY IN THE AIR? Then this swing IS the slam - no counting, no hop, no waiting. This is the
-			-- case that never fired before, because it only ever looked at the armed window.
+			-- ALREADY IN THE AIR? Then this swing IS the slam, whatever the count says - an air M1 is a slam.
 			if airborneNow() then
 				doSlam("airborne swing")
 				return
 			end
-			-- ON THE GROUND: after 3 swings, hop once. YOUR next M1 while airborne is the slam (fired by
-			-- slamOnClick off the raw click, so it does not depend on an airborne animation being counted).
-			if n >= 3 then
+			if n >= need then
 				State.m1Count = 0
 				State.lastFire = now
-				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] 3 swings -> hop; your next M1 is the slam") end
+				-- THE SIMPLE PATH FIRST: announce the direction on this swing exactly the way the capture shows.
+				-- The hop below is only a fallback for characters whose slam needs you off the ground.
+				doSlam("swing " .. n)
 				task.spawn(function()
 					local c = myModel()
 					local h = c and c:FindFirstChildOfClass("Humanoid")
@@ -4373,24 +4422,19 @@ do
 								r.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 34), v.Z)
 							end
 						end)
-						-- Humanoid.Jump + a Y floor, and NO synthetic Space key. The version that launched you too
-						-- high sent a Space key event AND ChangeState(Jumping) AND overwrote Y to 30 - three
-						-- launches stacking into one hop. Sending no key also means Auto Air and the feint
-						-- modules cannot mistake this for you pressing Space.
 						pcall(function() h.Jump = true end)
 					end
-					slamArmed = tick() + 1.6      -- your next M1 within this window announces the slam
+					slamArmed = tick() + 1.6      -- your next M1 within this window announces the slam again
 				end)
 			end
 		elseif mode == "Uppercut" then
-			-- EVERY swing, not just the 4th, and with no added delay - you asked for it to always be
-			-- available and to be faster. A short cooldown is the only limiter so it cannot spam itself.
-			-- Space is held ACROSS the swing (that is the "Up" the game reads) and the remote names it. This is
-			-- the exact pair that you confirmed working; onSwing's realM1Now() gate is what stops it hopping you
-			-- outside an attack.
-			if tick() - (State.lastUp or 0) >= 0.18 then
+			-- On the Nth swing, hold the direction across the swing and name it on the remote. It used to fire
+			-- on EVERY swing, which spent the move on hit 1 of a combo where the game only accepts it on the
+			-- finisher - and made it look like it "does nothing".
+			if n >= need and tick() - (State.lastUp or 0) >= 0.18 then
 				State.lastUp = tick()
 				State.lastFire = now
+				State.m1Count = 0
 				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] swing " .. n .. " -> UPPERCUT") end
 				spaceDown()
 				fireDir("Up")
@@ -4445,7 +4489,12 @@ do
 						if realM1Now() then doSlam("air attack anim " .. id) end
 						return
 					end
-					if isSwing then onSwing() end
+					if isSwing then
+						onSwing()
+						-- Feed the Black Flash chain the same REAL swing. It used to count raw clicks, which a
+						-- held combo does not produce - four swings arrive from one click.
+						if _G.VX_CHAIN_COUNT then pcall(_G.VX_CHAIN_COUNT) end
+					end
 				end)
 			end
 		end
@@ -5258,8 +5307,17 @@ do
 		return out
 	end
 
+	-- ═══ LAG ═══ ESP was the second-heaviest thing in the hub: for EVERY enemy, EVERY frame, it did a
+	-- GetBoundingBox plus eight WorldToViewportPoint calls for the box corners, and rebuilt cooldown labels with
+	-- fresh string.format allocations. At 60fps in a busy lobby that is thousands of projection calls a second.
+	-- ESP does not need to update at render rate to look smooth - 30Hz is indistinguishable and halves the cost.
+	-- _G.VX_ESP_HZ lets you raise it back if you want it perfectly glued.
+	local espLast = 0
 	RunService.RenderStepped:Connect(function()
 		if not cfg.master then return end
+		local espInterval = 1 / math.clamp(tonumber(_G.VX_ESP_HZ) or 30, 10, 60)
+		if tick() - espLast < espInterval then return end
+		espLast = tick()
 		local cam = workspace.CurrentCamera; if not cam then return end
 		local myHRP = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
 		local vp = cam.ViewportSize
@@ -12140,6 +12198,7 @@ do
         if _G.VXBF2 then _G.VXBF2.setBFM1(bfM1On) end
     end })
     _G.VX_BF_AFTER = 1
+    -- Governs BOTH M1 Black Flash and the M1 Chain: pick which swing of your combo the flash lands on.
     bfSec:Dropdown({ Name = "BF After (M1s)", Items = { "1", "2", "3" }, Default = "1", Callback = function(v) v = (type(v) == "table") and v[1] or v; bfCount = tonumber(v) or 1; _G.VX_BF_AFTER = bfCount end })
     bfSec:Toggle({ Name = "Auto Black Flash", Default = false, Callback = function(b)
         bfAutoOn = (b == true); bfSync()
@@ -12275,6 +12334,10 @@ do
         end
     end
     acSec:Dropdown({ Name = "Auto Slam / Uppercut", Items = { "Off", "Down Slam", "Uppercut" }, Default = "Off", Callback = function(m) if M1ComboApi then M1ComboApi.setMode(m) end end })
+    _G.VX_COMBO_AT = 4
+    -- Which swing of the combo fires it. 4 = the finisher, which is what the game itself accepts the direction
+    -- on. Lower it if your character's launcher lands earlier (Hakari's 3rd M1 is already a launcher).
+    acSec:Dropdown({ Name = "Slam / Uppercut on M1 #", Items = { "1", "2", "3", "4" }, Default = "4", Callback = function(v) v = (type(v) == "table") and v[1] or v; _G.VX_COMBO_AT = tonumber(v) or 4 end })
     -- (Removed the "Launcher after N hits" slider — the mechanic is now the FIXED real game rule per the wiki:
     -- Uppercut = 4 M1s with Space held, Down Slam = 3 M1s then jump+M1. No slider needed or accurate anymore.)
     pcall(function() acSec:Label("Uppercut soon: Crow, Mangaka, Black Death, Disaster Plants") end)
@@ -13063,7 +13126,11 @@ end
 -- Optimized Global Scan Routine (Strictly Lua 5.1 Compatible / No "continue" syntax)
 -- Scans the map every 0.2s and caches enemies within 150 studs. 
 task.spawn(function()
-    while task.wait(0.05) do  -- fast scan: a rushing enemy is hooked before their first M1 lands
+    while true do
+        -- ═══ LAG ═══ This was `while task.wait(0.05)`, i.e. it woke 20 times a second FOREVER just to test a
+        -- boolean, even with every block toggle off. Now it idles at 0.5s when off and scans at 0.12s when on -
+        -- still comfortably ahead of a rushing enemy's first M1, at a quarter of the wakeups.
+        if not IsAnyBlockActive() then task.wait(0.5) else task.wait(0.12) end
         local selfChar = CharactersFolder:FindFirstChild(LocalPlayer.Name) or LocalPlayer.Character  -- JJS live body is under workspace.Characters (LP.Character can lag)
         if IsAnyBlockActive() and selfChar then
             local myHRP = selfChar:FindFirstChild("HumanoidRootPart")
@@ -13569,6 +13636,9 @@ RunService.RenderStepped:Connect(function()
 
     local isThreatCurrentlyActive = false
     local facePosition = nil
+    -- Read the server clock ONCE per frame. It used to be called inside the per-enemy loop below, so a lobby
+    -- with 15 people nearby made 15 engine calls every frame for a value that cannot change within one frame.
+    local frameServerTime = workspace:GetServerTimeNow()
 
     -- 1. DATA READER: M1 COMBO SUSTAIN WITH PREDICTIVE HITBOX
     -- Handles smooth defensive chains when an enemy is mashing M1
@@ -13578,7 +13648,7 @@ RunService.RenderStepped:Connect(function()
             if enemyHRP then
                 local currentM1 = enemyChar:GetAttribute("CurrentM1") or 0
                 local lastM1 = enemyChar:GetAttribute("LastM1") or 0
-                local serverTime = workspace:GetServerTimeNow()
+                local serverTime = frameServerTime   -- hoisted: this was one engine call PER ENEMY PER FRAME
                 
                 -- Check if they are actively in an M1 combo string
                 if currentM1 > 0 and (serverTime - lastM1) < 1.05 then   -- 0.80 missed the tail of slower combo strings, so the last hit went unblocked
