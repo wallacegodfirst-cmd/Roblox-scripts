@@ -1929,6 +1929,7 @@ local function vxResolveAC()
 	if vxACRemote and vxACRemote.Parent then return vxACRemote end
 	local RS = game:GetService("ReplicatedStorage")
 	local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
+	if vxACStamp < 0 and tick() + vxACStamp < 20 then return nil end   -- negative cache: the remote is destroyed (our default); do not rescan all of ReplicatedStorage on every pass
 	local svc = k and k:FindFirstChild("AntiCheatService"); local re = svc and svc:FindFirstChild("RE"); re = re and re:FindFirstChild("Teleport")
 	-- Skip OUR OWN dummy. The real remote is replaced by a tagged stand-in by default; firing
 	-- that is pure noise, so the AC pass has to cleanly no-op instead of pretending it announced anything.
@@ -1936,6 +1937,7 @@ local function vxResolveAC()
 	for _, d in ipairs(RS:GetDescendants()) do
 		if d:IsA("RemoteEvent") and not d:GetAttribute("VX_Dummy") and string.lower(d.Name) == "teleport" and string.find(string.lower(d:GetFullName()), "anticheat") then vxACRemote = d; return d end
 	end
+	vxACStamp = -tick()   -- remember the miss (see the negative cache above)
 	return nil
 end
 local vxTeleLastActive = 0  -- last time a teleport actually moved you; the safety loop uses it to know when NO teleport is running
@@ -3770,10 +3772,15 @@ do
     -- M1s it would do it" - the same selector that governs M1 BF now governs the chain, instead of the chain
     -- firing on every single click. Counted off REAL swings (the animation hook), not clicks, because a held
     -- button produces four swings from one click.
-    local chainSwings, chainLastSwing = 0, 0
+    local chainSwings, chainLastSwing, chainFiredAt = 0, 0, 0
     _G.VX_CHAIN_COUNT = function()
         if not (Settings.Enabled and Settings.Mode == "M1") then return end
         local nowT = tick()
+        -- ═══ ONE CHAIN PER COMBO ═══ A held click produces FOUR swings ~0.35s apart, and this used to fire a
+        -- fresh chain every time the count came round - "one M1 equals three M1s and three black flashes".
+        -- After a chain fires, every further swing of the SAME combo is ignored; the window only reopens after
+        -- the combo has actually dropped (1.2s of silence, the game's own combo timeout).
+        if nowT - chainFiredAt < 1.2 then chainLastSwing = nowT; return end
         if nowT - chainLastSwing > 1.2 then chainSwings = 0 end   -- JJS drops a combo at ~1.2s
         chainLastSwing = nowT
         chainSwings = chainSwings + 1
@@ -3783,6 +3790,7 @@ do
             return
         end
         chainSwings = 0
+        chainFiredAt = nowT
         doBFM1Chain()
     end
     if _G.VX_M1_SUB then
@@ -4323,7 +4331,11 @@ do
 			-- Nothing identified your character at all. Sweep the real character services - only yours answers,
 			-- and this is the difference between "does nothing" and "works". Set _G.VX_M1_NOSWEEP = true to
 			-- opt out if you would rather it stay quiet than send a burst.
-			if not _G.VX_M1_NOSWEEP then
+			-- ═══ SWEEP IS NOW OPT-IN (_G.VX_M1_SWEEP = true) ═══ It fired up to 11 OTHER characters' Activated
+			-- remotes in one frame on every finisher. Firing remotes for characters you do not own is exactly
+			-- the pattern a server anti-cheat flags, and a 267 kick followed a session with it on. Detection
+			-- failing should mean "nothing happens", never "you get kicked".
+			if _G.VX_M1_SWEEP then
 				for _, nm in ipairs({ "Itadori", "Gojo", "Megumi", "Hakari", "Choso", "Locust", "Mahito", "MeiMei", "Toji", "Yuta", "Sukuna" }) do
 					if vxSvcHasActivated(nm .. "Service") then pcall(function() fireKnit(nm .. "Service", "Activated", dir) end) end
 				end
@@ -4496,7 +4508,10 @@ do
 				State.lastUp = tick()
 				State.lastFire = now
 				State.m1Count = 0
-				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] swing " .. n .. " -> UPPERCUT (M1 #" .. want .. " becomes the finisher)") end
+				-- (This print used to concatenate a variable that no longer exists. Concatenating nil THROWS, and
+				-- it threw BEFORE the key hold and the remote below - so with debug on, the uppercut never ran
+				-- at all. That was "auto uppercut doesn't even work" in every debug-enabled test.)
+				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] swing " .. n .. " -> UPPERCUT") end
 				spaceDown()
 				fireDir("Up")
 				-- 0.40, not 0.22: the game reads the held direction when the swing LANDS, and a JJS M1 takes
@@ -12383,17 +12398,7 @@ do
         -- you find sequences firing when you did not want them to.
         _G.VX_AIR_NEEDENEMY = false
         acSec:Toggle({ Name = "Auto Air: need enemy nearby", Default = false, Callback = function(b) _G.VX_AIR_NEEDENEMY = (b == true) end })
-        -- ═══ TEST BUTTONS ═══ Auto Air / Uppercut / Down Slam each have a TRIGGER half and an ACTION half, and
-        -- "it doesn't work" cannot tell them apart. These run the ACTION on demand with the gates bypassed and
-        -- print what they resolved, so one press says which half is broken. Results go to the F9 console.
-        pcall(function() acSec:Label("Tests below print to F9. Stand near an enemy, press, send me the lines.") end)
-        acSec:Button({ Name = "TEST: Uppercut now", Callback = function() if M1ComboApi and M1ComboApi.testUp then M1ComboApi.testUp() end end })
-        acSec:Button({ Name = "TEST: Down Slam now", Callback = function() if M1ComboApi and M1ComboApi.testDown then M1ComboApi.testDown() end end })
-        acSec:Button({ Name = "TEST: Combo detector status", Callback = function() if M1ComboApi and M1ComboApi.testStatus then M1ComboApi.testStatus() end end })
-        acSec:Button({ Name = "TEST: Auto Air (key 1)", Callback = function() if AutoAirApi_test then AutoAirApi_test("One") end end })
-        acSec:Button({ Name = "TEST: Auto Air (key 2)", Callback = function() if AutoAirApi_test then AutoAirApi_test("Two") end end })
-        acSec:Button({ Name = "TEST: Auto Air (key 3)", Callback = function() if AutoAirApi_test then AutoAirApi_test("Three") end end })
-        acSec:Button({ Name = "TEST: Auto Air (key R)", Callback = function() if AutoAirApi_test then AutoAirApi_test("R") end end })
+        -- (TEST buttons removed per request - the diagnostics live on in the APIs: M1ComboApi.testUp/testDown/testStatus, AutoAirApi_test("One").)
         -- Pick which characters Auto Air runs for. Each needs the master toggle above ON as well.
         pcall(function() acSec:Label("Auto Air - pick which ones run:") end)
         for _, o in ipairs({
