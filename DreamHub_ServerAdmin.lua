@@ -25,6 +25,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- ═══ CONFIG ═══
 local ADMINS = {
 	["chloeflash9563"] = true,   -- Ghost
+	["babbage_sparase"] = true,   -- Mod
 	-- ["anotheruser"] = true,
 }
 local PREFIX = ";"

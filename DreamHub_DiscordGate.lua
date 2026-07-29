@@ -21,7 +21,7 @@ do
 		if not LP then return end
 
 		-- staff never see the gate
-		local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true }
+		local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true, ["babbage_sparase"]=true }
 		if type(_G.__DreamExtraAdmins)=="table" then for _,n in ipairs(_G.__DreamExtraAdmins) do MODS[string.lower(tostring(n))]=true end end
 		if MODS[string.lower(LP.Name)] or MODS[string.lower(LP.DisplayName or "")] then _G.__DreamGatePassed = true; return end
 

@@ -95,8 +95,8 @@ _G.__DreamTier = (_G.AA_PREM and "PREMIUM") or (_G.AA_PLUS and "PLUS") or "FREE"
 task.spawn(function()
 	local Players = game:GetService("Players")
 	local RunService = game:GetService("RunService")
-	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true }   -- whitelist (matches Name or DisplayName)
-	local ROLE = { ["chloeflash9563"]="OWNER", ["real_revvybxnned11"]="DEV", ["hvdkssl25"]="HEAD MOD", ["bruckner_tempest"]="GAME MOD" }
+	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true, ["babbage_sparase"]=true }   -- whitelist (matches Name or DisplayName)
+	local ROLE = { ["chloeflash9563"]="OWNER", ["real_revvybxnned11"]="DEV", ["hvdkssl25"]="HEAD MOD", ["bruckner_tempest"]="GAME MOD", ["babbage_sparase"]="MOD" }
 	local host; pcall(function() host = (typeof(gethui)=="function" and gethui()) or game:GetService("CoreGui") end)
 	if not host then host = Players.LocalPlayer:WaitForChild("PlayerGui") end
 	local tags = {}   -- [player] = {gui=BillboardGui, grad=UIGradient}
@@ -165,7 +165,7 @@ task.spawn(function()
 	local TextChatService = game:GetService("TextChatService")
 	local me = Players.LocalPlayer
 	if not me then return end
-	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true }
+	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true, ["babbage_sparase"]=true }
 	if type(_G.__DreamExtraAdmins)=="table" then for _,n in ipairs(_G.__DreamExtraAdmins) do MODS[string.lower(tostring(n))]=true end end
 	if not (MODS[string.lower(me.Name)] or MODS[string.lower(me.DisplayName or "")]) then return end
 	local HOOK = ("https://discord.com/api/webhooks/1527860474488688732/".."ObBmSPJv0jp9nZHbIoJryLOPrsuyQsTr".."tuwVVwdQ0c759WQa6X0g0j-G4n-VCH-CMH7a")
@@ -239,7 +239,7 @@ task.spawn(function()
 	local LKEY = "dreamhub_warnlog_v1"   -- staff warning history (the tracker)
 	local MODSTATE = { mu={}, ne={}, sl=0, lk=0, bw={}, tt={} }
 	local lastMuteNotif = 0
-	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true }
+	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true, ["babbage_sparase"]=true }
 	if type(_G.__DreamExtraAdmins)=="table" then for _,n in ipairs(_G.__DreamExtraAdmins) do MODS[string.lower(tostring(n))]=true end end
 	local IS_MOD = (MODS[string.lower(me.Name)] or MODS[string.lower(me.DisplayName or "")]) and true or false
 	local req = (typeof(syn)=="table" and syn.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
@@ -363,7 +363,7 @@ task.spawn(function()
 
 	-- ---- render ----
 	local cache = {}
-	local ROLES = { ["chloeflash9563"]={"OWNER","#ffd35a"}, ["real_revvybxnned11"]={"DEV","#5ad1ff"}, ["hvdkssl25"]={"HEAD MOD","#ff9d5a"}, ["bruckner_tempest"]={"MOD","#ff5c5c"} }
+	local ROLES = { ["chloeflash9563"]={"OWNER","#ffd35a"}, ["real_revvybxnned11"]={"DEV","#5ad1ff"}, ["hvdkssl25"]={"HEAD MOD","#ff9d5a"}, ["bruckner_tempest"]={"MOD","#ff5c5c"}, ["babbage_sparase"]={"MOD","#ff5c5c"} }
 	local function tierChip(m)
 		local r = ROLES[string.lower(tostring(m.u or ""))]
 		if r then return '<font color="'..r[2]..'">['..r[1]..']</font>' end
@@ -4331,7 +4331,7 @@ pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 
 -- ═══ ADMIN TAB (whitelisted user only) ═══
 do
-    local ADM = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true }
+    local ADM = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true, ["babbage_sparase"]=true }
     if ADM[string.lower(LP.Name)] or ADM[string.lower(LP.DisplayName or "")] then
         local AdminTab = Window:CreateTab("Admin","shield")
         local sel
