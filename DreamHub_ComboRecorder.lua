@@ -177,8 +177,12 @@ if REC_REMOTES then
 		mt.__namecall = newcclosure(function(self, ...)
 			local method = getnamecallmethod()
 			if recording and (method == "FireServer" or method == "InvokeServer") then
+				-- `...` may only be read directly inside the vararg function that owns it. The pcall below is a
+				-- NESTED function, so referencing `...` in there is a compile error, not a runtime one - the whole
+				-- file fails to load. Pack the arguments out here first, then the nested closure uses the table.
+				local packed = table.pack(...)
 				pcall(function()
-					add("REMOTE", self:GetFullName() .. ":" .. method .. "(" .. argSummary(...) .. ")")
+					add("REMOTE", self:GetFullName() .. ":" .. method .. "(" .. argSummary(table.unpack(packed, 1, packed.n)) .. ")")
 				end)
 			end
 			return old(self, ...)
