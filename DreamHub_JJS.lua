@@ -919,7 +919,11 @@ do
 	local player = Players.LocalPlayer
 
 	local AnimationTriggers = {
-		["rbxassetid://100962226150441"] = 0.19,
+		-- 100962226150441 (Divergent Fist) DELIBERATELY NOT LISTED. It is Itadori's AUTOMATIC 4th M1, not a
+		-- Black Flash windup. Having it here made the engine schedule a key-3 press 0.19s into an animation
+		-- already committed to Divergent Fist, so the flash could never come out - that is exactly "3 M1s
+		-- and then it just does Divergent Fist". It also BURNED a swing count, pushing every later count
+		-- out of phase with the real combo, which is why the failure looked random.
 		["rbxassetid://95852624447551"]  = 0.19,
 		["rbxassetid://74145636023952"]  = 0.19,
 		["rbxassetid://72475960800126"]  = 0.20,
@@ -950,6 +954,7 @@ do
 	-- the click gate (your mouse poll updates _G.VX_LAST_CLICK) stops random anims from firing it.
 	-- BF After (M1s): only flash after _G.VX_BF_AFTER swings (the dropdown), so you pick how many M1s first.
 	local lastFire, swingCount, lastSwing = 0, 0, 0
+	local lastAnimId, lastAnimAt = nil, 0   -- per-id dedupe: the same swing arriving from both hooked rigs
 	-- A chain that wants to flash on THIS swing resets the counter first; otherwise it inherits however many
 	-- swings were already counted and appears to "need 2 or 3 M1s" even with BF After (M1s) set to 1.
 	_G.VX_BF_RESETCOUNT = function() swingCount = 0; lastSwing = 0 end
@@ -965,9 +970,15 @@ do
             if isAction and clickedRecently then delayTime = 0.19 end
 		end
 		if delayTime then
+			-- SAME SWING ON BOTH RIGS. hookAll connects to LP.Character AND workspace.Characters[you], so one
+			-- swing can arrive twice; the 0.25s global debounce below misses it whenever the two rigs report
+			-- further apart than that, and the swing counts twice. Dedupe on the id as well.
+			local nid = normalizeAnimationId(id)
+			if lastAnimId == nid and tick() - lastAnimAt < 0.45 then return end
+			lastAnimId, lastAnimAt = nid, tick()
 			if tick() - lastFire < 0.25 then return end   -- one count per swing
 			lastFire = tick()
-			if tick() - lastSwing > 2.5 then swingCount = 0 end   -- new combo
+			if tick() - lastSwing > 1.2 then swingCount = 0 end   -- new combo. 1.2 not 2.5: JJS drops a combo at ~1.2s, so a 2.5s window kept counting into a combo the game had already reset and the press landed on the wrong swing index
 			lastSwing = tick()
 			swingCount = swingCount + 1
 			local need = tonumber(_G.VX_BF_AFTER) or 1
@@ -985,6 +996,11 @@ do
 			-- per swing, and that extra hit is what stacks the server's knockback on the target ('it flings them').
 			-- Default ON so flash reliability is unchanged; the Combat toggle lets you trade it for less launch.
 			if _G.VX_BF_RECLICK ~= false then
+				-- MARK IT AS OURS. This re-click was the only injected click in the file that did not stamp
+				-- _G.VX_SYNTH_CLICK, so the shared poll handed it to every M1 subscriber and the Action-priority
+				-- animation it produced could be counted as a SECOND swing. Whether it was depended on where that
+				-- animation landed against the 0.25s debounce - which is why the failure was intermittent.
+				_G.VX_SYNTH_CLICK = tick() + 0.3
 				pcall(function() VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0); task.wait(0.02); VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0) end)
 			end
 				pressKey(Enum.KeyCode.Three)
@@ -1078,7 +1094,7 @@ do
 		Mode            = "Teleport",  -- how to approach before the flash: Teleport / Jump / Side Dash / Back Dash
 	}
 	local AnimationTriggers = {
-		["rbxassetid://100962226150441"] = 0.19,
+		-- Divergent Fist (100962226150441) removed here too - see the note in the main engine table above.
 		["rbxassetid://95852624447551"]  = 0.19,
 		["rbxassetid://74145636023952"]  = 0.19,
 		["rbxassetid://72475960800126"]  = 0.20,
@@ -3178,7 +3194,8 @@ do
         SideAssist = false, BackAssist = false,
     }
     local AnimationTriggers = {
-        ["rbxassetid://100962226150441"] = 0.19, ["rbxassetid://95852624447551"] = 0.19,
+        -- Divergent Fist (100962226150441) removed: automatic 4th M1, not a BF windup.
+        ["rbxassetid://95852624447551"] = 0.19,
         ["rbxassetid://74145636023952"] = 0.19, ["rbxassetid://72475960800126"] = 0.20,
         ["rbxassetid://123171106092050"] = 0.19,
     }
@@ -3216,6 +3233,24 @@ do
     -- BORROW the flash engine for THIS beat only, then give it straight back. Leaving it armed is what made
     -- every ordinary M1 auto-flash while the user's own "M1 Black Flash" toggle was off. _G.VX_BFAPI_WANT holds
     -- the user's real choice (bfM1On or bfAutoOn); we restore exactly that, never just "on".
+    -- ═══ NEVER FLASH BEFORE YOU ARRIVE ═══ "it must not press 3 until it's at the target, no matter how far
+    -- they are". The dash can be cut short (target moved, MAXDASH refused, the arc bailed on radius), and the
+    -- old code pressed on a fixed delay regardless - so the flash went off from wherever you happened to be.
+    -- This blocks the beat until you are genuinely in M1 range, and gives up rather than flashing from range.
+    local function arrivedAt(t, maxWait)
+        local e = t and t:FindFirstChild("HumanoidRootPart"); if not e then return false end
+        local t0 = tick()
+        while tick() - t0 < (maxWait or 0.5) do
+            local p = GetRoot()
+            local ee = t.Parent and t:FindFirstChild("HumanoidRootPart")
+            if not (p and ee) then return false end
+            if (ee.Position - p.Position).Magnitude <= 9 then return true end   -- inside M1 reach
+            task.wait()
+        end
+        local p = GetRoot()
+        local ee = t.Parent and t:FindFirstChild("HumanoidRootPart")
+        return (p and ee and (ee.Position - p.Position).Magnitude <= 9) or false
+    end
     local function m1ThenBF()
         -- Do NOT touch R.bfCD here: it is doBFM1Chain's own entry gate, and zeroing it made the BF Cooldown
         -- slider unreachable. BFApi keeps its own separate cooldown, so there is nothing to clear.
@@ -3443,7 +3478,13 @@ do
         dashToBack(t, { duration = 0.18, extraSweep = math.pi * 0.15, endRadius = 4.6 })
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
-        task.wait(0.12); m1ThenBF()   -- let the dash settle: clicking while the arc still owns you gets the swing refused
+        task.wait(0.12)                                   -- let the dash settle before we test the distance
+        if not arrivedAt(t, 0.5) then
+            if _G.VX_BF_DEBUG then print("[DreamHub BF] never reached the target - not flashing from range") end
+            R.bfActive = false
+            return
+        end
+        m1ThenBF()
         task.delay(0.3, function() R.bfActive = false end); status("BF Jump Chain")
     end
     local function doBFSideDash()
@@ -3458,7 +3499,13 @@ do
         dashToBack(t, { duration = 0.18, extraSweep = math.pi * 0.15, endRadius = 4.6 })
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
-        task.wait(0.12); m1ThenBF()   -- let the dash settle: clicking while the arc still owns you gets the swing refused
+        task.wait(0.12)                                   -- let the dash settle before we test the distance
+        if not arrivedAt(t, 0.5) then
+            if _G.VX_BF_DEBUG then print("[DreamHub BF] never reached the target - not flashing from range") end
+            R.bfActive = false
+            return
+        end
+        m1ThenBF()
         task.delay(0.3, function() R.bfActive = false end); status("BF Side Chain")
     end
     local function doBFBackDash()
@@ -3488,7 +3535,13 @@ do
         dashToBack(t, { duration = 0.18, extraSweep = math.pi * 0.15, endRadius = 4.6 })
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
-        task.wait(0.12); m1ThenBF()   -- let the dash settle: clicking while the arc still owns you gets the swing refused
+        task.wait(0.12)                                   -- let the dash settle before we test the distance
+        if not arrivedAt(t, 0.5) then
+            if _G.VX_BF_DEBUG then print("[DreamHub BF] never reached the target - not flashing from range") end
+            R.bfActive = false
+            return
+        end
+        m1ThenBF()
         task.delay(0.3, function() R.bfActive = false end)
         status(jumpThis and "BF Back Chain (jump)" or "BF Back Chain")
     end
@@ -4673,9 +4726,17 @@ do
 	end
 	pcall(function() conns[#conns + 1] = mouse.Button1Down:Connect(function()
 		if not clickActive() then return end
-		if locked and locked.Parent then return end          -- STICKY: once locked, in-game clicks never change or drop it
-		local m = enemyUnderMouse(); if not m then return end
-		locked = m; makeHL(m)                                -- first click picks the target; only the GUI toggle clears it
+		local m = enemyUnderMouse()
+		-- ═══ CLICKING A TARGET MUST RETARGET ═══ This used to bail whenever anything was already locked, so
+		-- once you had a target you could never pick a different one - clicking the enemy you actually wanted
+		-- silently did nothing ("the lock is not working, when I click the target it needs to go to the
+		-- target"). Now: clicking a DIFFERENT enemy moves the lock to them. Clicking anything that is not an
+		-- enemy (ground, sky, your own body) still leaves the current lock alone, so ordinary combat clicking
+		-- can never drop it - that stickiness was the part worth keeping.
+		if not m then return end
+		if locked == m and locked.Parent then return end     -- already on this one; nothing to do
+		locked = m; makeHL(m)
+		if _G.VX_LOCK_NOTIFY then pcall(function() _G.VX_LOCK_NOTIFY(m.Name) end) end
 	end) end)
 	conns[#conns + 1] = RunService.Heartbeat:Connect(function()
 		if locked then
@@ -6073,19 +6134,57 @@ do
 	-- Normally a domain's barrier/collider traps you (sure-hit dome). This drops CanCollide/CanTouch on the
 	-- domain's barrier parts so you can walk straight in/out of any domain.
 	local walkDomOn = false
-	local function isBarrier(n) n = n:lower(); return n:find("collider") or n:find("barrier") or n:find("wall") or n:find("dome") or n:find("border") end
+	local function isBarrier(n) n = n:lower(); return n:find("collider") or n:find("barrier") or n:find("wall") or n:find("dome") or n:find("border") or n:find("shell") or n:find("sphere") end
+	-- ═══ WHY THIS DID NOTHING ═══ It only ever looked inside workspace.Domains and only matched parts BY NAME.
+	-- JJS does not reliably park a cast domain there - it can sit directly in workspace, under the caster's
+	-- model, or in a per-domain folder - and the barrier part is often generically named ("Part", "Union").
+	-- Now: find domain CONTAINERS by keyword anywhere in workspace, and inside one treat any part that is
+	-- barrier-named OR simply huge (a sure-hit dome is enormous; nothing else in a domain is) as the barrier.
+	local DOM_WORDS = { "domain", "expansion", "malevolent", "shrine", "unlimited", "void", "chimera", "selfembodiment", "coffin", "horizon" }
+	local function looksLikeDomain(name)
+		local n = string.lower(tostring(name)):gsub("[%s_%-]", "")
+		for _, w in ipairs(DOM_WORDS) do if string.find(n, w, 1, true) then return true end end
+		return false
+	end
+	local function openPart(d)
+		if not d:IsA("BasePart") then return end
+		local sz = d.Size
+		local huge = (sz.X > 55 or sz.Y > 55 or sz.Z > 55)     -- a sure-hit dome; regular props are not this big
+		if huge or isBarrier(d.Name) or isBarrier((d.Parent and d.Parent.Name) or "") then
+			pcall(function() d.CanCollide = false; d.CanTouch = false; d.CanQuery = false end)
+		end
+	end
+	local function sweepDomains()
+		local roots = {}
+		local folder = workspace:FindFirstChild("Domains")
+		if folder then roots[#roots + 1] = folder end
+		for _, v in ipairs(workspace:GetChildren()) do
+			if v ~= folder and looksLikeDomain(v.Name) then roots[#roots + 1] = v end
+		end
+		for _, root in ipairs(roots) do
+			for _, d in ipairs(root:GetDescendants()) do openPart(d) end
+		end
+	end
 	task.spawn(function()
 		while true do
-			if walkDomOn then
-				local domains = workspace:FindFirstChild("Domains")
-				if domains then for _, d in ipairs(domains:GetDescendants()) do
-					if d:IsA("BasePart") and (isBarrier(d.Name) or isBarrier((d.Parent and d.Parent.Name) or "")) then
-						pcall(function() d.CanCollide = false; d.CanTouch = false end)
-					end
-				end end
-			end
-			task.wait(0.4)
+			if walkDomOn then pcall(sweepDomains) end
+			task.wait(0.35)
 		end
+	end)
+	-- LIVE: a domain cast AFTER you switched this on has to be opened on the frame it appears, not up to
+	-- 0.35s later - by then the sure-hit has already closed around you. This catches it as it spawns.
+	workspace.DescendantAdded:Connect(function(d)
+		if not walkDomOn then return end
+		if not d:IsA("BasePart") then return end
+		task.defer(function()
+			if not walkDomOn or not d.Parent then return end
+			local a = d
+			for _ = 1, 6 do                              -- walk up a few levels looking for a domain container
+				if not a or a == workspace then return end
+				if looksLikeDomain(a.Name) then openPart(d); return end
+				a = a.Parent
+			end
+		end)
 	end)
 
 	-- ---------- SPAM DASH NOISES ----------
@@ -12732,7 +12831,7 @@ local Config = {
     -- The grace period (in seconds) to hold the block after a threat passes.
     -- 0.34: hold the shield THROUGH fast M1 strings AND dash-cancel mixups (0.26 still dropped between some
     -- strings and the re-raise came back a frame late = you ate the next M1).
-    ComboDelay = 0.34,
+    ComboDelay = 0.46,   -- HOLD LONGER. 0.34 dropped the shield between hits of a combo string, so the 2nd/3rd M1 of a rush landed clean. 0.46 rides the whole string and still releases fast enough to act between engagements.
     
     -- Feature toggles linked to the Vaultix Hub UI checkboxes.
     Blocks = BlockFlags,
@@ -13280,7 +13379,7 @@ local function FaceTarget(targetPosition)
 end
 
 -- Calculates predictive hitbox extensions based on the enemy's velocity.
-local BLOCK_RANGE_MULT = 1.3   -- GLOBAL reaction-range boost: every threat triggers the shield from ~30% farther = faster/stronger blocks
+local BLOCK_RANGE_MULT = 1.6   -- GLOBAL reaction-range boost. Raising this is the single biggest 'react faster' lever: the shield goes up while the attacker is still closing, instead of once they are already on top of you. 1.6 = the block registers well before contact even at dash speed.
 local function GetDynamicRequiredDist(animData, myHRP, enemyHRP)
     -- Static attacks ignore dynamic physics
     if animData.ReqDist then return animData.ReqDist * BLOCK_RANGE_MULT end
@@ -13289,7 +13388,7 @@ local function GetDynamicRequiredDist(animData, myHRP, enemyHRP)
         local vel = enemyHRP.AssemblyLinearVelocity
         local flatVel = Vector3.new(vel.X, 0, vel.Z)
         local speed = flatVel.Magnitude
-        local baseDist = 9.5  -- was 8.5: raise the shield one step earlier so a FAST M1 can't land before the block registers
+        local baseDist = 11.5  -- raise the shield earlier still; a lunging M1 covers the last few studs faster than the block can register from 9.5
 
         -- If the enemy is lunging at high speeds, extend the danger zone to compensate for server ping
         if speed > 3.0 then
@@ -13449,7 +13548,7 @@ RunService.RenderStepped:Connect(function()
                 local serverTime = workspace:GetServerTimeNow()
                 
                 -- Check if they are actively in an M1 combo string
-                if currentM1 > 0 and (serverTime - lastM1) < 0.80 then
+                if currentM1 > 0 and (serverTime - lastM1) < 1.05 then   -- 0.80 missed the tail of slower combo strings, so the last hit went unblocked
                     local distance = (enemyHRP.Position - myHRP.Position).Magnitude
                     local toMeDir = (myHRP.Position - enemyHRP.Position)
                     
@@ -13461,7 +13560,7 @@ RunService.RenderStepped:Connect(function()
                         local vel = enemyHRP.AssemblyLinearVelocity
                         local flatVel = Vector3.new(vel.X, 0, vel.Z)
                         local speed = flatVel.Magnitude
-                        local requiredDist = 9.5  -- was 8.5: block a step earlier vs fast M1 combos
+                        local requiredDist = 12.5  -- 'if a player punches you it should automatically block the M1': they start the swing from further out than 9.5, and the shield has to already be up when it lands
 
                         if speed > 3.0 then
                             local approachDot = flatVel.Unit:Dot(toMeDir)
@@ -13470,11 +13569,11 @@ RunService.RenderStepped:Connect(function()
                             end
                         end
 
-                        local requiredDot = 0.50
-                        if distance <= 5.5 then 
+                        local requiredDot = 0.22   -- 0.50 required them to be almost perfectly facing you, so a punch thrown while strafing or mid-turn was never blocked
+                        if distance <= 7.5 then    -- widened: inside this range block regardless of facing (360 defence)
                             -- 360-Degree Defense against ping-based teleports behind the local player
                             requiredDot = -1.0 
-                        elseif distance < 7.0 then
+                        elseif distance < 10.0 then
                             -- Low angle threshold for shoulder-to-shoulder hitboxes
                             requiredDot = 0.100
                         end
