@@ -6655,12 +6655,35 @@ do
 	-- before, so this gate is STRICT: no proof you are Todo, no fire. Proof comes from your own Moveset (the
 	-- four moves are unique to Todo) or from the character-service resolver the combo module already uses.
 	local TODO_MOVES = { ["swiftkick"] = true, ["bruteforce"] = true, ["pebblethrow"] = true, ["elbowdrop"] = true }
+	-- The move capture reads Players.LocalPlayer.Character.Moveset, but everything else in this game lives on
+	-- workspace.Characters[name] - and in JJS those are two DIFFERENT rigs. Checking only one is how a
+	-- detection like this ends up answering "you are not Todo" while you are standing there as Todo. Check both.
+	local function myRigs()
+		local out = {}
+		local chs = workspace:FindFirstChild("Characters")
+		local w = chs and chs:FindFirstChild(LP.Name)
+		if w then out[#out + 1] = w end
+		if LP.Character and LP.Character ~= w then out[#out + 1] = LP.Character end
+		return out
+	end
+	local function moveNamed(name)   -- the Moveset entry the move remotes want, from whichever rig has it
+		local want = norm(name)
+		for _, c in ipairs(myRigs()) do
+			local mv = c:FindFirstChild("Moveset")
+			if mv then
+				local direct = mv:FindFirstChild(name); if direct then return direct end
+				for _, m in ipairs(mv:GetChildren()) do if norm(m.Name) == want then return m end end
+			end
+		end
+		return nil
+	end
 	local function isTodo()
-		local c = myModel(); if not c then return false end
-		local mv = c:FindFirstChild("Moveset")
-		if mv then for _, m in ipairs(mv:GetChildren()) do if TODO_MOVES[norm(m.Name)] then return true end end end
-		local h = c:FindFirstChildOfClass("Humanoid")
-		if h and string.find(norm(h.DisplayName), "todo", 1, true) then return true end
+		for _, c in ipairs(myRigs()) do
+			local mv = c:FindFirstChild("Moveset")
+			if mv then for _, m in ipairs(mv:GetChildren()) do if TODO_MOVES[norm(m.Name)] then return true end end end
+			local h = c:FindFirstChildOfClass("Humanoid")
+			if h and string.find(norm(h.DisplayName), "todo", 1, true) then return true end
+		end
 		local ok, svc = pcall(vxMyCharSvc)
 		return ok and svc == "TodoService"
 	end
@@ -6672,31 +6695,42 @@ do
 	end
 
 	-- ═══════════════════════ TARGETING ═══════════════════════
-	-- Same scan shape the rest of the hub uses: real players, workspace.Characters, and the dummy folders.
+	-- ═══ WHICH MODEL THE REMOTE WANTS ═══ The capture is explicit:
+	--     args = { workspace:WaitForChild("Characters"):WaitForChild("Dummy") }
+	--     TodoService.RE.RightActivated:FireServer(unpack(args))
+	-- It is the workspace.Characters child, NOT Players[name].Character. Those are two DIFFERENT instances in
+	-- JJS - the game keeps live bodies under workspace.Characters and LP.Character is a separate rig - so
+	-- handing over the wrong one is a silently-rejected call, i.e. "auto swap does nothing". (The Gojo
+	-- RightActivated capture went the other way and wants the player's Character; same remote NAME, different
+	-- service, different argument. They do not generalise, so each one follows its own capture.)
+	local function asWorkspaceChar(mdl)
+		if not mdl then return nil end
+		local chs = workspace:FindFirstChild("Characters")
+		local w = chs and chs:FindFirstChild(mdl.Name)
+		return w or mdl
+	end
+	-- Deduped BY NAME, not by instance: a real player shows up twice (plr.Character and the
+	-- workspace.Characters model are different Instances with the same name) and would otherwise be counted
+	-- as two separate enemies, which skews "Random" and double-counts "Closest".
 	local function eachEnemy(fn)
 		local seen = {}
 		local function chk(m)
-			if not m or seen[m] then return end
+			if not m then return end
+			m = asWorkspaceChar(m)                      -- always hand the callback the model the remote wants
+			if seen[m.Name] then return end
 			if m.Name == LP.Name or m == LP.Character or m == myModel() then return end
 			local r = m:FindFirstChild("HumanoidRootPart"); if not r then return end
 			local h = m:FindFirstChildOfClass("Humanoid")
 			if h and h.Health <= 0 then return end          -- a corpse is not a swap target
-			seen[m] = true
+			seen[m.Name] = true
 			fn(m, r)
 		end
-		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP then chk(plr.Character) end end
 		local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do chk(m) end end
+		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP then chk(plr.Character) end end
 		for _, folderName in ipairs({ "Dummies", "Training", "NPCs", "Dummy" }) do
 			local f = workspace:FindFirstChild(folderName)
 			if f then for _, m in ipairs(f:GetChildren()) do chk(m) end end
 		end
-	end
-	-- The Gojo capture proved these RightActivated remotes want the PLAYER's .Character, not the
-	-- workspace.Characters model. Same remote family, same conversion.
-	local function asPlayerCharacter(mdl)
-		if not mdl then return nil end
-		local plr = Players:GetPlayerFromCharacter(mdl) or Players:FindFirstChild(mdl.Name)
-		return (plr and plr.Character) or mdl
 	end
 
 	local swapOn, swapMode, swapRange, swapCD = false, "Closest", 60, 2.5
@@ -6748,7 +6782,7 @@ do
 		if not isTodo() then todoWarn() return false end
 		lastSwap = tick()
 		_G.VX_TOTAL_SWAP_T = tick()
-		local ok = fireSvc("TodoService", "RightActivated", asPlayerCharacter(t))
+		local ok = fireSvc("TodoService", "RightActivated", asWorkspaceChar(t))
 		if not ok then
 			-- The remote is the real swap; the key is only here so a renamed service still does SOMETHING.
 			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.R] = tick() + 0.3
@@ -6784,8 +6818,14 @@ do
 		[Enum.KeyCode.Three] = { svc = "PebbleThrowService", move = "Pebble Throw" },
 		[Enum.KeyCode.Four]  = { svc = "ElbowDropService",   move = "Elbow Drop" },
 	}
-	local lastAction = 0
+	local lastAction, lastActionId = 0, nil
 	local animHooked = setmetatable({}, { __mode = "k" })
+	-- ═══ "USE THE ANIMATION IDS FOR THAT CHARACTER" ═══ We do not ship a hardcoded id table, because a table
+	-- we never captured means the feature is dead on that character. Instead it LEARNS: the first time you
+	-- press 1 and a move animation plays right behind it, that id is recorded as Swift Kick's id. From then on
+	-- the id alone triggers the swap - so a cast that did NOT come from a key press (mobile button, a rebind,
+	-- a move fired by another part of the hub) still gets its perfect swap.
+	local LEARNED_ID = {}     -- animation id (string) -> move name
 	local function isActionPriority(track)
 		local ok, p = pcall(function() return track.Priority end)
 		if not ok then return false end
@@ -6793,38 +6833,61 @@ do
 		local n = tostring(p)
 		return string.find(n, "Action", 1, true) ~= nil
 	end
+	local onLearnedCast   -- forward declaration: defined below, once doSwap's caller exists
 	local function hookAnims()
-		local rigs = {}
-		local chs = workspace:FindFirstChild("Characters")
-		local resolved = chs and chs:FindFirstChild(LP.Name)
-		if resolved then rigs[#rigs + 1] = resolved end
-		if LP.Character and LP.Character ~= resolved then rigs[#rigs + 1] = LP.Character end
-		for _, char in ipairs(rigs) do
+		for _, char in ipairs(myRigs()) do
 			local h = char:FindFirstChildOfClass("Humanoid")
 			local a = h and h:FindFirstChildOfClass("Animator")
 			if a and not animHooked[a] then
 				animHooked[a] = true
 				a.AnimationPlayed:Connect(function(track)
-					if isActionPriority(track) then lastAction = tick() end
+					if not isActionPriority(track) then return end
+					lastAction = tick()
+					local ok, id = pcall(function() return string.match(tostring(track.Animation.AnimationId), "%d+") end)
+					if ok and id then
+						lastActionId = id
+						local known = LEARNED_ID[id]
+						if known and onLearnedCast then onLearnedCast(known, id) end
+					end
 				end)
 			end
 		end
 	end
 	task.spawn(function() while true do if perfectOn then pcall(hookAnims) end task.wait(1) end end)
 
+	-- The swap that follows a cast. Short gap only: this is YOUR input, so it must not be throttled by the auto
+	-- loop's cooldown. Kept in one place so the key path and the learned-animation path behave identically.
+	local lastPerfect = 0
+	local function perfectSwap(moveName)
+		if not perfectOn then return end
+		if tick() - lastPerfect < 0.30 then return end
+		lastPerfect = tick()
+		if perfectDelay > 0 then task.wait(perfectDelay) end
+		pcall(doSwap, "perfect " .. tostring(moveName), 0.30)
+	end
+	onLearnedCast = function(moveName)   -- a move whose id we already learned just played, no key needed
+		_G.VX_TOTAL_MOVE_T = tick()
+		task.spawn(function() perfectSwap(moveName) end)
+	end
+
 	local function onMoveKey(kc)
 		local e = MOVE_FOR_KEY[kc]; if not e then return end
 		_G.VX_TOTAL_MOVE_T = tick()          -- a cast is in flight: Auto Swap holds off (see busy())
 		if not perfectOn then return end
 		if not isTodo() then return end
+		-- You cannot cast a move you do not own. Checking the Moveset entry first means a stray 1/2/3/4 press
+		-- on a character without that move never even starts the watcher.
+		if not moveNamed(e.move) then note("perfect swap: no Moveset entry '" .. e.move .. "' - ignoring the key") return end
 		local at = tick()
 		task.spawn(function()
+			-- A key press only counts as a CAST if an Action-priority animation starts right behind it. On
+			-- cooldown nothing plays and we stay quiet - that is the whole difference between a perfect swap
+			-- and R-spam.
 			local deadline = tick() + 0.45
 			repeat task.wait(0.03) until lastAction >= at or tick() > deadline
 			if lastAction < at then note("perfect swap: " .. e.move .. " never played (cooldown?) - not swapping") return end
-			if perfectDelay > 0 then task.wait(perfectDelay) end
-			-- Short gap only: this one is YOUR input, so it must not be throttled by the auto loop's cooldown.
-			pcall(doSwap, "perfect " .. e.move, 0.30)
+			if lastActionId then LEARNED_ID[lastActionId] = e.move end   -- remember this character's id for this move
+			perfectSwap(e.move)
 		end)
 	end
 	-- Subscribe ONLY while something here needs the keys. The shared key poll skips itself entirely when no
