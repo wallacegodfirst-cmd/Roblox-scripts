@@ -899,6 +899,45 @@ end)
 
 _G.VX_HUB_READY = false
 
+-- ═══════════════════ RESET EVERY STICKY FLAG THIS RUN INHERITS ═══════════════════
+-- _G SURVIVES BETWEEN EXECUTIONS. Timestamps are self-healing (an old tick is simply in the past), but the
+-- BOOLEANS are not - they stay exactly as the previous run left them, forever.
+--
+-- This is why "nothing black flashes any more, not even M1 BF". A dash chain sets _G.VX_BF_BORROWED = true and
+-- only clears it from a task.delay 0.55s later. Re-execute the hub inside that window - or have the previous
+-- run replaced while a chain was in flight - and the flag arrives at the new run stuck TRUE with
+-- VX_BF_BORROW_USED already spent. The engine's first two lines then read:
+--     if _G.VX_BF_BORROWED then if (_G.VX_BF_BORROW_USED or 0) > 0 then return end ... end
+-- so EVERY animation returns immediately and no windup is ever seen again, on any mode, for the rest of the
+-- session. Nothing in the file reset it: vxbfStop clears it, but only when you actively switch a mode off.
+-- Seed the lot at load so a fresh execution is always a fresh state. Cheap, and it closes a whole bug class.
+_G.VX_BF_BORROWED   = false
+_G.VX_BF_BORROW_USED = 0
+_G.VX_BF_CHAINCLICK = 0
+_G.VX_BF_DASHANIM   = 0
+_G.VX_BFAPI_ON      = false   -- the engine re-arms itself from the GUI toggles a moment later
+_G.VX_M1BF_ON       = false
+_G.VX_SYNTH_CLICK   = 0       -- a stale "this click was ours" mark suppresses your real clicks
+_G.VX_INJ_KEYS      = {}      -- same, for keys
+_G.VX_FINISHER_T    = 0
+_G.VX_TOTAL_MOVE_T  = 0
+_G.VX_LAUNCHING     = 0
+_G.VX_CROW_FLYING   = 0
+-- WATCHDOG for the same flag WITHIN a run. A borrow is meant to last ~0.55s and is handed back from a
+-- task.delay; if that callback is ever lost (an error on the way to it, a respawn, the mode switched
+-- mid-chain) the engine goes deaf for the rest of the session with every toggle still reading "on". Nothing
+-- legitimately holds a borrow for 2s, so anything older than that is a leak and gets released.
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		if _G.VX_BF_BORROWED and tick() - (tonumber(_G.VX_BF_BORROW_T) or 0) > 2.0 then
+			_G.VX_BF_BORROWED = false; _G.VX_BF_BORROW_USED = 0
+			if _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(_G.VX_BFAPI_WANT == true) end) end
+			if _G.VX_BF_DEBUG then print("[BF] borrow leaked - released by the watchdog") end
+		end
+	end
+end)
+
 -- (Removed the duplicate VX_DreamCircle button — the GUI's own logo toggle button, which uses the Dream logo
 --  image LOGO_ID = 82151574125055, is the single one now.)
 
@@ -3482,7 +3521,7 @@ do
         local borrowed = false
         if not _G.VX_BFAPI_ON and _G.VX_BFAPI_SET then
             borrowed = true
-            _G.VX_BF_BORROWED = true; _G.VX_BF_BORROW_USED = 0   -- single-shot: one flash, then the engine is deaf
+            _G.VX_BF_BORROWED = true; _G.VX_BF_BORROW_USED = 0; _G.VX_BF_BORROW_T = tick()   -- single-shot: one flash, then the engine is deaf
             pcall(function() _G.VX_BFAPI_SET(true) end)
         end
         local firedBefore = _G.VX_BF_LAST_FIRE or 0
@@ -3906,7 +3945,7 @@ do
         local borrowed = false
         if not _G.VX_BFAPI_ON and _G.VX_BFAPI_SET then
             borrowed = true
-            _G.VX_BF_BORROWED = true; _G.VX_BF_BORROW_USED = 0   -- single-shot (see the note in the BF engine)
+            _G.VX_BF_BORROWED = true; _G.VX_BF_BORROW_USED = 0; _G.VX_BF_BORROW_T = tick()   -- single-shot (see the note in the BF engine)
             pcall(function() _G.VX_BFAPI_SET(true) end)
         end
         if _G.VX_BF_RESETCOUNT then pcall(_G.VX_BF_RESETCOUNT) end   -- flash on THIS swing, not after N more
@@ -6882,6 +6921,10 @@ do
 	-- of them ON and the swap becomes REACTIVE: it waits for that moment on the target and takes it. They stack,
 	-- so you can arm dash + down and ignore M1s.
 	local trigDash, trigM1, trigDown = false, false, false
+	-- WHOSE dash / WHOSE M1. "Them" = react to the target (swap in when they commit). "Me" = react to
+	-- YOURSELF (you dash or M1, and it swaps you onto them on that beat). Down is always THEIRS - swapping
+	-- because you are the one on the floor is not a thing anyone wants - so it ignores this setting.
+	local trigWho = "Them"
 	local function anyTrigger() return trigDash or trigM1 or trigDown end
 	local DASH_SPEED = 55        -- studs/s, horizontal. Sprinting sits well under this; the game's dash impulse is ~105.
 	-- Per-target memory so an event fires ONCE per occurrence instead of every frame it is still true.
@@ -6936,9 +6979,14 @@ do
 			if now and not was[key] then fired = fired or label end
 			was[key] = now
 		end
-		edge("dash", trigDash and isDashing(t) or false, "they dashed")
-		edge("m1",   trigM1   and isM1ing(t)   or false, "they M1'd")
-		edge("down", trigDown and isDown(t)    or false, "they're down")
+		-- WHOSE dash / WHOSE M1. On "Me" the source is your own body, but the edge state still lives under the
+		-- TARGET, so switching who you are looking at re-arms cleanly instead of carrying a stale edge across.
+		local me = (trigWho == "Me") and myModel() or nil
+		local dashSrc = me or t
+		local m1Src   = me or t
+		edge("dash", trigDash and isDashing(dashSrc) or false, (me and "I dashed") or "they dashed")
+		edge("m1",   trigM1   and isM1ing(m1Src)     or false, (me and "I M1'd")   or "they M1'd")
+		edge("down", trigDown and isDown(t)          or false, "they're down")   -- always theirs
 		return fired
 	end
 
@@ -7210,14 +7258,29 @@ do
 			return known
 		end
 		if not f then for _, n in ipairs(KNOWN) do add(known, n) end return join() end
+		-- ═══ THE EXACT NAME, NOT MY SPELLING OF IT ═══ JoinService.Change takes a name string, and the server
+		-- compares it exactly - so "MeiMei" vs "Meimei" is the difference between switching and nothing
+		-- happening at all. The roster below is only used to RECOGNISE a service; the string we display and
+		-- send is always the real service's own name with "Service" removed. That is the game's spelling by
+		-- definition, so it cannot be wrong.
 		local have = {}
-		for _, s in ipairs(f:GetChildren()) do have[norm(s.Name)] = s end
-		for _, n in ipairs(KNOWN) do if have[norm(n .. "Service")] then add(known, n) end end
 		for _, s in ipairs(f:GetChildren()) do
 			local base = string.match(s.Name, "^(.-)Service$")
-			local re = s:FindFirstChild("RE")
-			if base and #base >= 3 and re and re:FindFirstChild("Activated") and not NOT_A_CHARACTER[norm(base)] then
-				add(extra, base)
+			if base then have[norm(base)] = base end
+		end
+		for _, n in ipairs(KNOWN) do local real = have[norm(n)]; if real then add(known, real) end end
+		-- ═══ "THERE ARE SO MANY BUT IT IS WEIRD" ═══ The sweep cannot tell a character service from a move
+		-- service - both are <Name>Service with RE.Activated - so it padded the list with move names. The
+		-- dropdown is for PICKING A CHARACTER, so it now shows the recognised roster only. If a game update
+		-- adds a character the roster does not know, set _G.VX_TOTAL_ALLCHARS = true before loading to get the
+		-- full sweep back, and _G.VX_TOTAL_DEBUG = true prints every service name so it can be added properly.
+		if _G.VX_TOTAL_ALLCHARS then
+			for _, s in ipairs(f:GetChildren()) do
+				local base = string.match(s.Name, "^(.-)Service$")
+				local re = s:FindFirstChild("RE")
+				if base and #base >= 3 and re and re:FindFirstChild("Activated") and not NOT_A_CHARACTER[norm(base)] then
+					add(extra, base)
+				end
 			end
 		end
 		if #known == 0 and #extra == 0 then for _, n in ipairs(KNOWN) do add(known, n) end end
@@ -7230,36 +7293,109 @@ do
 		return join()
 	end
 
+	-- ═══ SAY WHY IT DID NOT WORK ═══ "switch character dont work" with nothing on screen is a dead end for
+	-- both of us. If JoinService.RE.Change is not where we think it is, this now says so out loud once, and
+	-- prints every remote the service DOES have so the right name can be read straight off your F9.
+	local function changeRemote()
+		local re = svcRE("JoinService", "Change")
+		if re then return re end
+		if tick() - (_G.VX_TOTAL_JOINWARN or 0) > 10 then
+			_G.VX_TOTAL_JOINWARN = tick()
+			local f = svcFolder()
+			local svc = f and f:FindFirstChild("JoinService")
+			pcall(function()
+				if not f then print("[DreamHub Total] no Knit Services folder at all")
+				elseif not svc then
+					local names = {}
+					for _, s in ipairs(f:GetChildren()) do if string.find(string.lower(s.Name), "join", 1, true) or string.find(string.lower(s.Name), "select", 1, true) or string.find(string.lower(s.Name), "spawn", 1, true) then names[#names + 1] = s.Name end end
+					print("[DreamHub Total] there is NO JoinService. Closest matches = { " .. table.concat(names, ", ") .. " }  (send me this line)")
+				else
+					local names = {}
+					local r = svc:FindFirstChild("RE")
+					if r then for _, x in ipairs(r:GetChildren()) do names[#names + 1] = x.Name end end
+					print("[DreamHub Total] JoinService exists but has no RE.Change. Its remotes = { " .. table.concat(names, ", ") .. " }  (send me this line)")
+				end
+			end)
+			if VX_NOTIFY then VX_NOTIFY("Character switch: remote not found - check F9", false) end
+		end
+		return nil
+	end
 	local lastChange = 0
 	local function changeChar(name, why, bypassGap)
 		if type(name) ~= "string" or name == "" or name == "Off" then return false end
 		if not bypassGap and tick() - lastChange < 1.2 then return false end
 		lastChange = tick()
-		local ok = fireSvc("JoinService", "Change", name)
+		local re = changeRemote(); if not re then return false end
+		local ok = pcall(function() re:FireServer(name) end)
 		note("change character -> " .. name .. "  (" .. tostring(why) .. ")  ok=" .. tostring(ok))
 		return ok
 	end
 
-	-- MID-BATTLE SWITCH. The game only accepts a character pick while you are dead / at the select screen, so
-	-- a bare Change() during a fight is ignored - hence "force reset + character changer". Kill first, then
-	-- send the pick, then send it once more: the first attempt can land before the select screen is ready.
+	-- ═══ MID-BATTLE SWITCH ═══ The game only accepts a character pick while you are dead / at the select
+	-- screen. Two attempts at fixed delays was a guess at when that screen appears, and if both landed
+	-- outside the window the switch simply did not happen - which is "switch character dont work".
+	-- Instead: kill, then keep sending the pick across the whole respawn window, and STOP as soon as it
+	-- takes (your live character reports the name you asked for). Sending Change repeatedly at the select
+	-- screen is what a player does when they click a portrait, so there is nothing unusual about it.
+	local function amNow(name)
+		local want = norm(name)
+		for _, c in ipairs(myRigs()) do
+			local h = c:FindFirstChildOfClass("Humanoid")
+			if h and norm(h.DisplayName) == want then return true end
+		end
+		-- The reliable one: the same resolver the combo module uses to decide which <Char>Service is yours.
+		-- It reads your Moveset, so it answers correctly even when the rig is named after the player.
+		local ok, svc = pcall(vxMyCharSvc)
+		return ok and svc == (name .. "Service")
+	end
+	local switchGen = 0
 	local function switchNow(name)
 		if type(name) ~= "string" or name == "" or name == "Off" then return end
+		if not changeRemote() then return end            -- no remote: report once, do NOT kill the user for nothing
 		if VX_NOTIFY then VX_NOTIFY("Switching to " .. name .. "...", true) end
+		switchGen = switchGen + 1
+		local myGen = switchGen
 		if ResetApi and ResetApi.reset then pcall(ResetApi.reset) end
-		task.delay(0.9, function() changeChar(name, "mid-battle", true) end)
-		task.delay(2.2, function() changeChar(name, "mid-battle retry", true) end)
+		task.spawn(function()
+			local deadline = tick() + 6
+			while tick() < deadline do
+				if switchGen ~= myGen then return end     -- a newer switch owns this now
+				changeChar(name, "mid-battle", true)
+				task.wait(0.35)
+				if amNow(name) then
+					if VX_NOTIFY then VX_NOTIFY("Now playing " .. name, true) end
+					return
+				end
+			end
+			note("switch to " .. name .. " never took after 6s - the name may not be what the server expects")
+			if VX_NOTIFY then VX_NOTIFY("Switch to " .. name .. " did not take", false) end
+		end)
 	end
 
 	-- AUTO CHARACTER ON DEATH. JJS runs a custom health system and Humanoid.Died does not always fire, so we
 	-- hook Died where we can AND poll the health as a backstop. One switch per death, via the edge flag.
 	local deathOn, deathChar = false, nil
 	local humHooked = setmetatable({}, { __mode = "k" })
+	local deathGen = 0
 	local function onDeath()
 		if not (deathOn and deathChar) then return end
 		if tick() - lastChange < 1.2 then return end
-		task.delay(0.7, function() changeChar(deathChar, "death") end)
-		task.delay(2.0, function() changeChar(deathChar, "death retry", true) end)
+		-- Same treatment as the manual switch: two attempts at fixed delays was a guess at when the select
+		-- screen appears. Keep sending across the respawn window and stop the moment it takes. No reset here -
+		-- you are already dead, which is the whole point.
+		deathGen = deathGen + 1
+		local myGen, name = deathGen, deathChar
+		task.spawn(function()
+			task.wait(0.5)
+			local deadline = tick() + 6
+			while tick() < deadline do
+				if deathGen ~= myGen or not deathOn then return end
+				changeChar(name, "death", true)
+				task.wait(0.35)
+				if amNow(name) then return end
+			end
+			note("death switch to " .. name .. " never took")
+		end)
 	end
 	task.spawn(function()
 		local wasDead = false
@@ -7289,6 +7425,7 @@ do
 		setSwapMode  = function(v) v = (type(v) == "table") and v[1] or v; if type(v) == "string" then swapMode = v end end,
 		setSwapRange = function(v) swapRange = tonumber(v) or swapRange end,
 		setSwapCD    = function(v) swapCD = tonumber(v) or swapCD end,
+		setTrigWho   = function(v) v = (type(v) == "table") and v[1] or v; if v == "Me" or v == "Them" then trigWho = v end end,
 		setTrigDash  = function(v) trigDash = v == true end,
 		setTrigM1    = function(v) trigM1   = v == true end,
 		setTrigDown  = function(v) trigDown = v == true end,
@@ -13434,9 +13571,10 @@ do
     swapSec:Dropdown({ Name = "Swap Target", Items = { "Closest", "Random", "Lock Target" }, Default = "Closest", Callback = function(v) if TodoApi then TodoApi.setSwapMode(v) end end })
     swapSec:Slider({ Name = "Swap Range", Min = 10, Max = 200, Default = 60, Decimals = 1, Callback = function(v) if TodoApi then TodoApi.setSwapRange(v) end end })
     swapSec:Slider({ Name = "Swap Cooldown", Min = 0.3, Max = 8, Default = 2.5, Decimals = 0.1, Suffix = "s", Callback = function(v) if TodoApi then TodoApi.setSwapCD(v) end end })
-    pcall(function() swapSec:Label("Swap When: leave all three off and it swaps on the cooldown like before. Turn any on and it waits for that moment on the target instead. They stack.") end)
-    swapSec:Toggle({ Name = "Swap When They Dash", Default = false, Callback = function(b) if TodoApi then TodoApi.setTrigDash(b) end end })
-    swapSec:Toggle({ Name = "Swap When They M1", Default = false, Callback = function(b) if TodoApi then TodoApi.setTrigM1(b) end end })
+    pcall(function() swapSec:Label("Swap When: all off = swaps on the cooldown like before. Turn any on and it waits for that moment instead. They stack. 'Trigger On' picks whether the dash/M1 has to be YOURS or THEIRS - Down is always theirs.") end)
+    swapSec:Dropdown({ Name = "Trigger On", Items = { "Them", "Me" }, Default = "Them", Callback = function(v) if TodoApi then TodoApi.setTrigWho(v) end end })
+    swapSec:Toggle({ Name = "Swap On Dash", Default = false, Callback = function(b) if TodoApi then TodoApi.setTrigDash(b) end end })
+    swapSec:Toggle({ Name = "Swap On M1", Default = false, Callback = function(b) if TodoApi then TodoApi.setTrigM1(b) end end })
     swapSec:Toggle({ Name = "Swap When They're Down", Default = false, Callback = function(b) if TodoApi then TodoApi.setTrigDown(b) end end })
     swapSec:Slider({ Name = "Dash Detect Speed", Min = 30, Max = 120, Default = 55, Decimals = 1, Callback = function(v) if TodoApi then TodoApi.setDashSpeed(v) end end })   -- lower = triggers on a sprint too, higher = only a real dash
     swapSec:Toggle({ Name = "Auto Perfect Swap", Default = false, Callback = function(b) if TodoApi then TodoApi.setPerfect(b) end end })
