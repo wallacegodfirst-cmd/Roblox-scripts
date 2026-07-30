@@ -5102,7 +5102,12 @@ do
 	local function myHRP() local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character; return c and c:FindFirstChild("HumanoidRootPart") end
 	local M1_ID = "75337033003776"  -- the JJS M1 anim id
 	local function pressCounter()  -- TAP the per-character COUNTER key (short hold so it can re-counter fast M1s)
-		local ck = counterKey(); if ck then last = tick(); pcall(function() VIM:SendKeyEvent(true, ck, false, game); task.wait(0.08); VIM:SendKeyEvent(false, ck, false, game) end) end
+		-- ═══ THE LAST ZERO-INPUT PHANTOM ═══ Hakari's and Choso's counter key IS Three, which is also the Black
+		-- Flash key. This press carried no injected-key marker at all, so VXBF2's BF-key handler read it as you
+		-- tapping 3 and launched a whole dash chain - which injects an M1 you never threw and flashes it. Auto
+		-- Counter triggers on any nearby enemy attack animation within ~16 studs, so it needed no input from
+		-- you whatsoever: walk near someone, they swing at anything, and you dash and black flash. Mark it.
+		local ck = counterKey(); if ck then last = tick(); _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[ck] = tick() + 0.5; pcall(function() VIM:SendKeyEvent(true, ck, false, game); task.wait(0.08); VIM:SendKeyEvent(false, ck, false, game) end) end
 	end
 	local function isAttackId(id)   -- EVERY known attack id: M1 + the full captured list + the block dict + the counter ids
 		if not id then return false end
@@ -5978,6 +5983,9 @@ do
 	local function tapF() pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.F, false, game); task.wait(0.16); VIM:SendKeyEvent(false, Enum.KeyCode.F, false, game) end) end
 	local ADAPT_LEAD = 0.09  -- seconds to wait after the enemy STARTS the attack before pressing 4, so the adapt lands as the hit connects (raise if it fires too early, lower toward 0 if too late)
 	local function pressFour()  -- Auto Adapt presses the 4 KEY (the Adapt skill) - it never plays an animation itself
+		-- Marked, like every other injected key: 4 is one of the keys the Total page's Perfect Swap watches, and
+		-- an unmarked press would be read there as you casting Elbow Drop.
+		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Four] = tick() + 0.5
 		pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Four, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.Four, false, game) end)
 	end
 	local function clickM1()  -- an M1 click at screen-center (used by the moves that need a CLICK to adapt, not just 4)
@@ -6492,6 +6500,7 @@ do
 		UISq.InputEnded:Connect(function(input)
 			if input.KeyCode ~= Enum.KeyCode.Three then return end
 			if not (quakeOn and holding) then return end
+			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.5   -- 3 is the Black Flash key: an unmarked press launches a BF chain
 			pcall(function() VIMq:SendKeyEvent(true, Enum.KeyCode.Three, false, game) end)
 		end)
 	end
@@ -7069,6 +7078,13 @@ do
 	local KNOWN = { "Itadori", "Gojo", "Hakari", "Megumi", "Mahito", "Choso", "Todo", "Hiromi", "Yuta", "Mechamaru",
 		"Naoya", "Nanami", "Hanami", "Ryu", "Locust", "Yuki", "Charles", "Haruta", "MeiMei", "Kurourushi", "Sukuna", "Toji" }
 	local NOT_A_CHARACTER = {}
+	-- Move services this file already resolves by name elsewhere - every one of them owns RE.Activated, so
+	-- without listing them the sweep below happily offers "Block" and "Earthquake" as playable characters.
+	for _, w in ipairs({ "block", "earthquake", "cursedstrikes", "roughenergy", "redscale", "rabbitescape",
+		"reversalred", "reversalredmax", "lapseblue", "lapsebluemax", "crushingjaws", "nue", "twofoldkick",
+		"divergentfist", "blackflash", "piercingblood", "bloodedge", "hollowpurple", "divinedog", "toad" }) do
+		NOT_A_CHARACTER[w] = true
+	end
 	for _, w in ipairs({ "swiftkick", "bruteforce", "pebblethrow", "elbowdrop", "join", "anticheat", "movement",
 		"emote", "data", "camera", "effect", "sound", "music", "round", "match", "lobby", "shop", "trade", "quest",
 		"daily", "leaderboard", "chat", "notification", "ui", "replication", "ragdoll", "hitbox", "damage", "combat",
@@ -7080,28 +7096,40 @@ do
 	end
 	local function characterNames()
 		local f = svcFolder()
-		local out, seen = {}, {}
-		local function add(n) if n and n ~= "" and not seen[norm(n)] then seen[norm(n)] = true; out[#out + 1] = n end end
-		if not f then for _, n in ipairs(KNOWN) do add(n) end table.sort(out) return out end
+		-- ═══ KNOWN FIRST, THEN THE REST ═══ The sweep can never be perfectly clean - any move that owns a
+		-- service looks exactly like a character from here - so instead of relying on the blocklist being
+		-- exhaustive, we fix the ORDER. Confirmed characters are sorted and listed first; anything the sweep
+		-- turns up is sorted and appended after them. names[1] is then always a real character, which matters
+		-- because it is the default for the death-character dropdown and the pre-selection for "Switch Now".
+		-- (Previously the whole list was sorted together, so "Block" and "Earthquake" ranked ahead of
+		-- "Charles" and the default pick was a move name the server just ignores - leaving you dead as the
+		-- same character after a force reset.)
+		local known, extra, seen = {}, {}, {}
+		local function add(t, n) if n and n ~= "" and not seen[norm(n)] then seen[norm(n)] = true; t[#t + 1] = n end end
+		local function join()
+			table.sort(known); table.sort(extra)
+			for _, n in ipairs(extra) do known[#known + 1] = n end
+			return known
+		end
+		if not f then for _, n in ipairs(KNOWN) do add(known, n) end return join() end
 		local have = {}
 		for _, s in ipairs(f:GetChildren()) do have[norm(s.Name)] = s end
-		for _, n in ipairs(KNOWN) do if have[norm(n .. "Service")] then add(n) end end
+		for _, n in ipairs(KNOWN) do if have[norm(n .. "Service")] then add(known, n) end end
 		for _, s in ipairs(f:GetChildren()) do
 			local base = string.match(s.Name, "^(.-)Service$")
 			local re = s:FindFirstChild("RE")
 			if base and #base >= 3 and re and re:FindFirstChild("Activated") and not NOT_A_CHARACTER[norm(base)] then
-				add(base)
+				add(extra, base)
 			end
 		end
-		if #out == 0 then for _, n in ipairs(KNOWN) do add(n) end end
-		table.sort(out)
+		if #known == 0 and #extra == 0 then for _, n in ipairs(KNOWN) do add(known, n) end end
 		if _G.VX_TOTAL_DEBUG then
 			local all = {}
 			for _, s in ipairs(f:GetChildren()) do all[#all + 1] = s.Name end
 			table.sort(all)
 			pcall(function() print("[DreamHub Total] every Knit service = { " .. table.concat(all, ", ") .. " }") end)
 		end
-		return out
+		return join()
 	end
 
 	local lastChange = 0
@@ -7567,6 +7595,7 @@ do
 			task.wait(1.6)                                                        -- 3) FASTER charge before Red (was 3s)
 			if tr and tr.Parent then aimAt(tr.Position); note("Hollow: aim target -> Red") end  -- 4) AIM at the SAME target it did, then fire Red
 			task.wait(0.12)
+			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Two] = tick() + 0.5   -- marked: 2 is watched by the Total page's Perfect Swap
 			pcall(function() local VIM = game:GetService("VirtualInputManager"); VIM:SendKeyEvent(true, Enum.KeyCode.Two, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.Two, false, game) end)  -- CLICK 2 after Blue = combine into Hollow Purple
 			fireMove("ReversalRedMaxService", "Reversal Red MAX")                 -- + fire the remote as backup
 			task.wait(0.4); busy = false
