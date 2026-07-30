@@ -1,3 +1,20 @@
+--[[  ══════════════════════════════════════════════════════════════════════════════════════════
+      DREAM HUB - JJS  |  PUBLIC RELEASE CHANNEL
+      ──────────────────────────────────────────────────────────────────────────────────────
+      This file is the FROZEN copy your users load. It only changes when you say "release".
+      Day-to-day fixes land in DreamHub_JJS.lua (the dev file) and do NOT appear here, so
+      testing in-progress work can never break the public build.
+
+      PUBLIC loadstring (give this one out):
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/wallacegodfirst-cmd/Roblox-scripts/refs/heads/claude/improve-ai-system-tUhhn/DreamHub_JJS_Public.lua"))()
+
+      DEV loadstring (yours only - always the newest build):
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/wallacegodfirst-cmd/Roblox-scripts/refs/heads/claude/improve-ai-system-tUhhn/DreamHub_JJS.lua"))()
+
+      Tiers work exactly the same on both: set _G.JJS_FREE / _G.JJS_PLUS / _G.JJS_PREMIUM first.
+      To publish the current dev build here, just say "release it".
+      ══════════════════════════════════════════════════════════════════════════════════════ ]]
+
 --[[  VAULTIX HUB - JJS combined build  (auto block + auto black flash + bf chain)
       ONE big script for now; will be split into Free / Premium / Plus tiers later.
       Sources: friend's Auto Block engine, Autoblackflash.lua, ULTIMATE BACK-LOCK BF CHAIN.
@@ -958,42 +975,8 @@ do
 	-- A chain that wants to flash on THIS swing resets the counter first; otherwise it inherits however many
 	-- swings were already counted and appears to "need 2 or 3 M1s" even with BF After (M1s) set to 1.
 	_G.VX_BF_RESETCOUNT = function() swingCount = 0; lastSwing = 0 end
-	-- "if I M1 but there's no target, no dummy, near me it should not click 3" - checked in the ENGINE itself
-	-- so that every path into it (M1 BF, Auto BF, any borrowed chain) obeys it. Nothing downstream can bypass.
-	local function bfEnemyNear()
-		local me = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-		do
-			local chs = workspace:FindFirstChild("Characters")
-			local rig = chs and chs:FindFirstChild(player.Name)
-			me = (rig and rig:FindFirstChild("HumanoidRootPart")) or me
-		end
-		if not me then return false end
-		local lim = tonumber(_G.VX_BF_RANGE) or 20
-		local function chk(m)
-			if not m or m.Name == player.Name then return false end
-			local r = m:FindFirstChild("HumanoidRootPart"); if not r then return false end
-			local h = m:FindFirstChildOfClass("Humanoid")
-			if h and h.Health <= 0 then return false end
-			return (r.Position - me.Position).Magnitude <= lim
-		end
-		for _, plr in ipairs(player.Parent:GetPlayers()) do
-			if plr ~= player and chk(plr.Character) then return true end
-		end
-		local chs = workspace:FindFirstChild("Characters")
-		if chs then for _, m in ipairs(chs:GetChildren()) do if chk(m) then return true end end end
-		-- training dummies usually live outside workspace.Characters
-		for _, fn in ipairs({ "Dummies", "Training", "NPCs", "Dummy" }) do
-			local f = workspace:FindFirstChild(fn)
-			if f then for _, m in ipairs(f:GetChildren()) do if chk(m) then return true end end end
-		end
-		return false
-	end
 	local function onAnim(track)
 		if not enabled then return end
-		if not bfEnemyNear() then
-			if _G.VX_BF_DEBUG then print("[BF] swing with nobody in range - not pressing 3") end
-			return
-		end
 		-- ═══ "I TURNED M1 BLACK FLASH OFF AND IT STILL FLASHES ON MY M1s" ═══
 		-- The dash modes ARM this engine for their own flash beat (_G.VX_BFAPI_SET(true)) and hand it back a
 		-- second later. During that window the engine is indistinguishable from M1 Black Flash being switched
@@ -1035,11 +1018,7 @@ do
 			if tick() - lastSwing > 1.2 then swingCount = 0 end   -- new combo. 1.2 not 2.5: JJS drops a combo at ~1.2s, so a 2.5s window kept counting into a combo the game had already reset and the press landed on the wrong swing index
 			lastSwing = tick()
 			swingCount = swingCount + 1
-			-- ═══ WHY "BF AFTER 2/3" BROKE THE CHAIN ═══ _G.VX_BF_AFTER gates BOTH the chain's own swing count
-			-- AND this engine's flash count. At 3 the chain correctly waited three swings and then fired - but
-			-- the engine had also only seen ONE windup by then, so it counted 1/3 and never flashed. When a
-			-- chain is driving (borrowed), the chain has already done the counting: flash on this windup.
-			local need = _G.VX_BF_BORROWED and 1 or (tonumber(_G.VX_BF_AFTER) or 1)
+			local need = tonumber(_G.VX_BF_AFTER) or 1
 			if swingCount < need then return end   -- wait until your chosen number of M1s
 			swingCount = 0
 			_G.VX_BF_LAST_FIRE = tick(); _G.VX_BF_LASTMSG = "flash fired (M1 tap + key 3)"
@@ -3318,11 +3297,7 @@ do
         DashKey = Enum.KeyCode.Q, DashRange = 80, DashCooldown = 0.20,
         SideChoice = "Auto", SideCurveTime = 0.35, SideM1 = true, SideFaceAfter = true,
         Enabled = false, Mode = "Side Dash", BFKey = Enum.KeyCode.Three,
-        -- ═══ 1.35, NOT 0.5 ═══ A chain lands your swing AND the engine's re-click - two combo advances. At a
-        -- 0.5s cooldown two chains stack to the game's 4th M1, which IS Divergent Fist, so mashing produced
-        -- "divergent fist lots of times" instead of flashes. JJS drops a combo at ~1.2s, so waiting past that
-        -- means every chain starts from hit 1 and lands as a flash.
-        BFCooldown = 1.35, BFTeleportDist = 3.0, BFM1 = false,
+        BFCooldown = 0.5, BFTeleportDist = 3.0, BFM1 = false,
         SideAssist = false, BackAssist = false,
     }
     local AnimationTriggers = {
@@ -3428,12 +3403,7 @@ do
             end)
         end
         if borrowed then
-            -- ═══ "M1 BF STILL WORKS ON SIDE DASH WHEN I DON'T WANT IT" ═══ The borrow was held for 1.2s and
-            -- only closed early if the chain's own flash fired. When it did NOT fire, the engine sat armed for
-            -- the rest of that second and flashed whatever you swung next - with the dropdown showing Side
-            -- Dash and the M1 BF toggle showing off. 0.55s is long enough for this chain's own windup and
-            -- short enough that it cannot reach your next swing.
-            task.delay(0.55, function()
+            task.delay(1.2, function()  -- covers the swing, the flash frame AND the retry above before handing back
                 if _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(_G.VX_BFAPI_WANT == true) end) end
                 _G.VX_BF_BORROWED = false; _G.VX_BF_BORROW_USED = 0
             end)
@@ -3631,16 +3601,11 @@ do
         -- this a far lock became a several-hundred-stud blink - exactly what gets you kicked.
         local _mr = GetRoot()
         if _mr and (e.Position - _mr.Position).Magnitude > Settings.DashRange then R.bfActive = false; return end
-        -- "teleport bf chain is good, just make it always BF and always hit the back."
+        -- "for teleport it should just teleport behind the back" - one write, no arc, no dash key.
         if not tpBehind(t) then R.bfActive = false; return end
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
-        task.wait(0.06)
-        -- Re-place on the spine right before the swing: they can turn during that beat, and a flash thrown at
-        -- where they USED to be is exactly "sometimes it doesn't hit the back".
-        tpBehind(t); faceBackOf(t)
-        m1ThenBF()
-        task.delay(0.3, function() R.bfActive = false end); status("BF Teleport")
+        task.wait(0.1); m1ThenBF(); task.delay(0.3, function() R.bfActive = false end); status("BF Teleport")
     end
     local function doBFJump()
         if tick() - R.bfCD < Settings.BFCooldown or R.bfActive then return end
@@ -3657,11 +3622,7 @@ do
             if h and h.FloorMaterial ~= Enum.Material.Air then h.Jump = true end
         end)
         task.wait(0.12)                                                  -- let the jump actually leave the ground
-        -- "remove the m1 bf chain mode inside the jump": no orbit chain here either. Real jump, real dash key,
-        -- then land on the spine - the same shape as Back Dash but airborne, so the two stay distinguishable.
-        VKeyTap(Settings.DashKey, 0.04)
-        task.wait(0.07)
-        if not tpBehind(t) then R.bfActive = false; return end
+        dashToBack(t, { duration = 0.30, extraSweep = math.pi * 0.30, endRadius = 5.0, yArc = 7 })
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
         task.wait(0.12)                                   -- let the dash settle before we test the distance
@@ -3683,9 +3644,6 @@ do
         -- "for a side dash you need to make it more legit and fast" - the shortest, flattest clip of any mode:
         -- 0.14s, a tight 0.10pi sweep, no vertical arc, ending just off the spine. Reads as a real Q dash.
         dashToBack(t, { duration = 0.10, extraSweep = math.pi * 0.12, endRadius = 4.2, endBias = 0, yArc = 0 })
-        -- "make it black flash and always hit the back": the arc can end slightly off the spine if they turned
-        -- mid-dash, so snap onto the back before the swing. Without this the flash lands beside them.
-        tpBehind(t)
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
         task.wait(0.12)                                   -- let the dash settle before we test the distance
@@ -3725,13 +3683,13 @@ do
                 end
             end
         end
-        -- ═══ BACK DASH REBUILT ═══ "bad animation, doesn't really hit the back, glides". The glide was the
-        -- orbit: it interpolates your CFrame across its whole window, and a wide 0.60pi sweep is a long visible
-        -- slide that also often ended off the spine. This drops the orbit entirely - press the real dash key so
-        -- the game plays its OWN dash animation, then land exactly behind them. Short, and always on the back.
-        VKeyTap(Settings.DashKey, 0.04)
-        task.wait(0.07)                      -- let the game's dash animation start before we place the landing
-        if not tpBehind(t) then R.bfActive = false; return end
+        if facingMe then
+            -- wide half-circle around to the back; distinct from the Side Dash clip
+            dashToBack(t, { duration = 0.28, extraSweep = math.pi * 0.60, endRadius = 4.8, endBias = 0 })
+        else
+            -- their back is already turned: the short flat Side Dash shape
+            dashToBack(t, { duration = 0.14, extraSweep = math.pi * 0.10, endRadius = 4.4, endBias = 0 })
+        end
         if _G.VX_BF_DEBUG then print("[DreamHub BF] back dash: target " .. (facingMe and "FACING you -> around to the back" or "turned away -> short side dash")) end
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
@@ -3884,9 +3842,6 @@ do
         -- Hand the flash engine back IMMEDIATELY on stop. Waiting for the queued hand-back is what let a mode
         -- you had already switched off keep flashing your next few M1s.
         _G.VX_BF_BORROWED = false; _G.VX_BF_BORROW_USED = 0
-        R.chainUntil = 0
-        -- "when I turn off m1 chain it needs to be OFF" - hand the engine straight back to whatever the M1
-        -- Black Flash / Auto Black Flash toggles actually say, right now, not on a queued timer.
         if _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(_G.VX_BFAPI_WANT == true) end) end
         R.lockTarget = nil; R.lockKind = nil; R.lockEnd = 0
         R.bfActive = false; R.curving = false
