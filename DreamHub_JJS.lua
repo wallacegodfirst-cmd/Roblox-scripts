@@ -2089,11 +2089,18 @@ function vxHardWrite(char, hrp, cf)
 		-- an offset, and the re-pin (which measures HRP vs target) then never converges - it re-writes every
 		-- frame for the whole hold. That reads exactly as "Instant did nothing / I jitter".
 		if char.PrimaryPart ~= hrp then pcall(function() char.PrimaryPart = hrp end) end
+		-- Measure the move BEFORE the write - afterwards hrp.Position already equals the target.
+		local delta = cf.Position - hrp.Position
+		local dist = delta.Magnitude
 		char:PivotTo(cf)
 		if (hrp.Position - cf.Position).Magnitude > 0.5 then hrp.CFrame = cf end   -- pivot still missed: correct it
-		-- DO NOT ZERO VELOCITY. A several-hundred-stud position change on one frame while velocity reads
-		-- exactly 0,0,0 is physically impossible, and the server's own simulation flags that desync and
-		-- reverts you. Leaving your real velocity intact makes the jump look like ordinary motion.
+		-- DO NOT ZERO VELOCITY, and do not leave it inert either. A large position change on one frame with
+		-- velocity reading exactly 0,0,0 is impossible physics and the server's own simulation reverts it. The
+		-- recorder data is explicit: the writes that STUCK carried real momentum in the direction travelled.
+		-- So hand the server a velocity that agrees with the move it just saw.
+		if dist > 1 then
+			hrp.AssemblyLinearVelocity = delta.Unit * math.clamp(dist * 2, 16, 60)
+		end
 	end)
 end
 -- FLIGHT PATH CHECK: is the straight line to the target blocked by anything solid (a building)?
@@ -3637,18 +3644,27 @@ do
         R.backDashT = tick()
         local jumpThis = R.backDashAlt == false   -- false after the 2nd toggle -> the jump variant
         aimCameraAt(e.Position)
-        -- Same short clip as the (good) Side Dash. The alternate press does a REAL jump first rather than a
-        -- fake vertical CFrame lift, so it reads as a player jumping and dashing rather than floating.
-        if jumpThis then
-            pcall(function()
-                local c = GetChar(); local h = c and c:FindFirstChildOfClass("Humanoid")
-                if h and h.FloorMaterial ~= Enum.Material.Air then h.Jump = true end
-            end)
-            task.wait(0.10)
+        -- ═══ FACING CHECK ═══ "if the target is looking forward it'll automatically back dash behind them".
+        -- Looking at you  -> go AROUND to their back (wide sweep) so the flash lands on their spine.
+        -- Looking away    -> they already have their back to you, so a normal short side dash is enough.
+        local facingMe = false
+        do
+            local p = GetRoot()
+            if p then
+                local toMe = p.Position - e.Position
+                if toMe.Magnitude > 0.1 then
+                    facingMe = e.CFrame.LookVector:Dot(toMe.Unit) > 0.45
+                end
+            end
         end
-        -- Distinct from Side Dash on purpose: a wider half-circle sweep that reads as going AROUND them
-        -- rather than clipping past their side.
-        dashToBack(t, { duration = 0.26, extraSweep = math.pi * 0.55, endRadius = 4.8 })
+        if facingMe then
+            -- wide half-circle around to the back; distinct from the Side Dash clip
+            dashToBack(t, { duration = 0.28, extraSweep = math.pi * 0.60, endRadius = 4.8, endBias = 0 })
+        else
+            -- their back is already turned: the short flat Side Dash shape
+            dashToBack(t, { duration = 0.14, extraSweep = math.pi * 0.10, endRadius = 4.4, endBias = 0 })
+        end
+        if _G.VX_BF_DEBUG then print("[DreamHub BF] back dash: target " .. (facingMe and "FACING you -> around to the back" or "turned away -> short side dash")) end
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
         task.wait(0.12)                                   -- let the dash settle before we test the distance
@@ -3659,7 +3675,7 @@ do
         end
         m1ThenBF()
         task.delay(0.3, function() R.bfActive = false end)
-        status(jumpThis and "BF Back Chain (jump)" or "BF Back Chain")
+        status("BF Back Chain")   -- the dash shape now comes from the facing check, not from alternation
     end
     -- ═══ ENGAGEMENT RANGE ═══ The chain may only ever act on someone you are ALREADY fighting. DashRange (80)
     -- is the ranged-search radius for the assist keys; using it here is what made one M1 glide you across the
@@ -4518,9 +4534,12 @@ do
 		-- from the 2nd swing onward and the NEXT swing comes out as the uppercut / down slam. That is the timing
 		-- that already works for the slam, so the uppercut now uses it too. Each has its own cooldown below, so
 		-- acting from swing 2 cannot spam: one finisher per combo.
-		-- Act on swing 3 so M1 #4 comes out as the uppercut / down slam. The direction has to be held and
-		-- named BEFORE the finisher lands - once the game commits to an ordinary M1 the remote is too late.
-		local need = 3
+		-- Separate counts, because they are different moves at different points of the combo:
+		-- Down Slam lands on M1 #3, Uppercut on M1 #4. The direction is held and named on the swing BEFORE
+		-- the finisher, since once the game commits to an ordinary M1 the remote arrives too late to change it.
+		local needSlam = 2      -- act on swing 2 -> M1 #3 is the slam
+		local needUpper = 3     -- act on swing 3 -> M1 #4 is the uppercut
+		local need = (mode == "Uppercut") and needUpper or needSlam
 		if mode == "Down Slam" then
 			-- ALREADY IN THE AIR? Then this swing IS the slam, whatever the count says - an air M1 is a slam.
 			if airborneNow() then
@@ -7499,6 +7518,31 @@ do
 			if key then tapKey(key) end
 			return false
 		end
+		-- ═══ CHARACTER SERVICE FIRST ═══ The only remote path this game was ever OBSERVED to use is the
+		-- character-named one: <Char>Service.RE.Activated(<move>, ...). Five of the seven services this module
+		-- fired were MOVE-named guesses (RoughEnergyService, CrushJawService, RedScaleService,
+		-- RabbitEscapeService, ReversalRedService) - and the only two that follow the observed pattern,
+		-- MegumiService and GojoService, are the two that were reported working. A move-named service that
+		-- does not exist means the call silently does nothing, which is exactly "auto air doesn't work".
+		-- So: resolve YOUR character's service from your moveset and fire that; only fall back to the
+		-- move-named guess if the character service has no such remote; only then press the key.
+		local function fireMove(moveSvc, re, key, ...)
+			local charSvc = vxMyCharSvc()
+			if charSvc and svcRE(charSvc, re) then
+				local a = table.pack(...)
+				local ok = pcall(function() svcRE(charSvc, re):FireServer(table.unpack(a, 1, a.n)) end)
+				dbgAir((ok and "fired " or "FAILED ") .. charSvc .. "." .. re .. "  (character service)")
+				if ok then return true end
+			end
+			if moveSvc and svcRE(moveSvc, re) then return fireSvc(moveSvc, re, ...) end
+			if tick() - (_G.VX_AIRMISS_T or 0) > 2 then
+				_G.VX_AIRMISS_T = tick()
+				print("[DreamHub AutoAir] no remote for " .. re .. ": tried " .. tostring(charSvc)
+					.. " and " .. tostring(moveSvc) .. (key and " - pressing the key instead" or ""))
+			end
+			if key then tapKey(key) end
+			return false
+		end
 		local function airTarget()   -- the capture used workspace.Characters.Dummy; live play wants the real enemy
 			local e = nearestEnemyChar(); if e then return e end
 			local chs = workspace:FindFirstChild("Characters"); return chs and chs:FindFirstChild("Dummy")
@@ -7517,7 +7561,7 @@ do
 		if airOK and airOpt.Vessel and kc == Enum.KeyCode.One and (hasMove("Cursed Strikes") or charIs("vessel","itadori","sukuna","divergent")) then
 			_G.VX_BUSY = tick() + 1.2; dbgAir("Vessel 1 -> Cursed Strikes")
 			task.delay(0.05, function()
-				local mv = moveObj("Cursed Strikes"); if autoAirOn and mv then fireSvc("CursedStrikesService", "Activated", mv, true) end   -- no key fallback: it would just re-press the key you already hit
+				local mv = moveObj("Cursed Strikes"); if autoAirOn and mv then fireMove("CursedStrikesService", "Activated", nil, mv, true) end   -- no key fallback: it would just re-press the key you already hit
 			end)
 		end
 
@@ -7526,7 +7570,7 @@ do
 			_G.VX_BUSY = tick() + 1.4; dbgAir("Hakari 3 -> jump + Rough Energy")
 			task.spawn(function() holdJump() end)
 			task.delay(0.10, function()
-				local mv = moveObj("Rough Energy"); if autoAirOn then if mv then fireSvc("RoughEnergyService", "Activated", mv, true) else tapKey(Enum.KeyCode.Three) end end
+				local mv = moveObj("Rough Energy"); if autoAirOn then if mv then fireMove("RoughEnergyService", "Activated", Enum.KeyCode.Three, mv, true) else tapKey(Enum.KeyCode.Three) end end
 			end)
 
 		-- ── LOCUST — key 3 -> Crushing Jaws. Your key 3 already casts it, so we add NOTHING here; the single
@@ -7550,7 +7594,7 @@ do
 			_G.VX_BUSY = tick() + 1.4; dbgAir("Choso 2 -> jump + Flowing Red Scale")
 			task.spawn(function() holdJump() end)
 			task.delay(0.08, function()
-				local mv = moveObj("Flowing Red Scale"); if autoAirOn then if mv then fireSvc("RedScaleService", "Activated", mv, true) else tapKey(Enum.KeyCode.Two) end end
+				local mv = moveObj("Flowing Red Scale"); if autoAirOn then if mv then fireMove("RedScaleService", "Activated", Enum.KeyCode.Two, mv, true) else tapKey(Enum.KeyCode.Two) end end
 			end)
 		end
 
@@ -7561,7 +7605,7 @@ do
 			task.delay(0.03, function()
 				if not autoAirOn then return end
 				local mv = moveObj("Rabbit Escape")
-				if mv and svcRE("RabbitEscapeService", "Activated") then fireSvc("RabbitEscapeService", "Activated", mv, airTarget())
+				if mv and svcRE("RabbitEscapeService", "Activated") then fireMove("RabbitEscapeService", "Activated", Enum.KeyCode.One, mv, airTarget())
 				else tapKey(Enum.KeyCode.One) end        -- no Moveset/remote -> just press 1
 			end)
 		end
@@ -7578,7 +7622,7 @@ do
 			_G.VX_BUSY = tick() + 1.6; dbgAir("Gojo 1 -> + Reversal Red")
 			task.delay(0.24, function()
 				if not autoAirOn then return end
-				local mvr = moveObj("Reversal Red"); if mvr then fireSvc("ReversalRedService", "Activated", mvr) end
+				local mvr = moveObj("Reversal Red"); if mvr then fireMove("ReversalRedService", "Activated", nil, mvr) end
 				fireSvc("GojoService", "RightActivated", asPlayerCharacter(airTarget()))   -- this remote wants the PLAYER's .Character
 			end)
 		end
