@@ -936,7 +936,11 @@ do
 	local function pressKey(keyCode)
 		-- mark this as our own injected press so other key-3 features (e.g. Auto Earthquake) don't treat the
 		-- Black Flash press as a real player tap and cross-trigger.
-		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[keyCode] = tick() + 0.2
+		-- ═══ 0.2s WAS TOO SHORT ═══ The mark has to still be live when InputBegan DELIVERS the press to every
+		-- other handler, and the press itself is held for 0.09s below. VXBF2's own markThree already uses 0.4
+		-- for exactly this reason. At 0.2 the BF-key handler in VXBF2 could see this press as a real player tap
+		-- and launch a whole dash chain off it - see the guard added there.
+		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[keyCode] = tick() + 0.5
 		VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
 		task.wait(0.09)   -- hold the key a touch (JJS eats instant taps for abilities); this is what makes 3 register
 		VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
@@ -1025,14 +1029,38 @@ do
 		-- that character's animation happens to be prioritised.
 		if not delayTime then
 			local nid = tostring(id):match("%d+")
-			if nid and _G.VX_M1_IDS and _G.VX_M1_IDS[nid] and tick() - (_G.VX_LAST_CLICK or 0) < 0.5 then
+			-- HUMAN click, not any click: the engine's own re-click lands a real extra in-game M1, so the swing
+			-- it produces carries a genuine M1 id and would otherwise flash again - and re-click again. While
+			-- you actually hold the button the poll re-stamps the human clock every frame, so a real held combo
+			-- is unaffected; only a swing that nothing but our own injection is behind gets refused.
+			if nid and _G.VX_M1_IDS and _G.VX_M1_IDS[nid] and tick() - (_G.VX_LAST_HUMAN_CLICK or 0) < 0.5 then
 				delayTime = 0.19
 			end
 		end
-		if not delayTime then
+		-- ═══ THE LOOSE FALLBACK IS WHERE EVERY FALSE FLASH COMES FROM ═══ A known M1 id (above) is proof; this
+		-- is a guess - "any Action-priority track behind a recent click". It exists so a character whose M1 ids
+		-- were never captured still flashes, and it must stay, but it is now refused in the two situations
+		-- where it is reliably WRONG:
+		--   * mid-dash. VXBF2 taps the real dash key on the way to the target, and the game's dash clip is
+		--     Action priority landing right after your click - exactly this shape. While borrowed it SPENT the
+		--     chain's single-shot flash on the dash, so the real M1 windup 0.1s later was thrown away as
+		--     "already used": the mode dashed perfectly and never flashed.
+		--   * while borrowed. A borrow may produce exactly one flash, so it must be spent on a swing we are
+		--     sure about - and _G.VX_M1_IDS already covers all 20 characters' M1s, which is what a chain's
+		--     click produces. Note this deliberately sits BELOW the id lookups: a known M1 is never blocked by
+		--     either rule, which is what keeps M1 Chain (it rides YOUR swing, mid-dash) flashing.
+		local looseOK = not _G.VX_BF_BORROWED and tick() >= (tonumber(_G.VX_BF_DASHANIM) or 0)
+		if not delayTime and not looseOK and _G.VX_BF_DEBUG then
+			print("[BF] unknown Action anim during a dash/borrow - not treating it as a windup")
+		end
+		if not delayTime and looseOK then
 			local pr = track.Priority
 			local isAction = pr == Enum.AnimationPriority.Action or pr == Enum.AnimationPriority.Action2 or pr == Enum.AnimationPriority.Action3 or pr == Enum.AnimationPriority.Action4
-			local clickedRecently = tick() - (_G.VX_LAST_CLICK or 0) < 0.5
+			-- VX_LAST_HUMAN_CLICK, not VX_LAST_CLICK: the engine's own re-click refreshes VX_LAST_CLICK (the poll
+			-- cannot tell an injected press from a real one), so the swing that re-click produces looked like a
+			-- fresh player M1 and flashed again, which re-clicked again. That self-feeding loop is the other half
+			-- of "it M1s and black flashes on its own when I walk up to someone".
+			local clickedRecently = tick() - (_G.VX_LAST_HUMAN_CLICK or 0) < 0.5
             if isAction and clickedRecently then delayTime = 0.19 end
 		end
 		if delayTime then
@@ -1320,7 +1348,10 @@ do
 		local tp0 = targetHRP.Position
 		local rel0 = Vector3.new(h0.Position.X - tp0.X, 0, h0.Position.Z - tp0.Z)
 		local startRadius = rel0.Magnitude; if startRadius < 1.5 then startRadius = 6 end
-		if startRadius > 24 then return end                                    -- target too FAR: a giant arc from here is the 'fling across the map' - skip the orbit, the chain still works
+		-- 26, matching dashToBack's own MAXDASH. At 24 there was a silent 24-26 stud band where dashToBack
+		-- happily started a dash and this returned without drawing any arc at all, so the mode's only movement
+		-- became a raw 25-stud tpBehind blink.
+		if startRadius > 26 then return end                                    -- target too FAR: a giant arc from here is the 'fling across the map' - skip the orbit, the chain still works
 		dur = dur + startRadius * 0.006                                        -- a longer path gets a touch more time (constant SPEED, not constant time = no whip)
 		local startAngle = math.atan2(rel0.Z, rel0.X)
 		local baseY = h0.Position.Y
@@ -1359,8 +1390,19 @@ do
 				endAngle = math.atan2(bd.Z, bd.X) + endBias
 			end
 			local diff = ((endAngle - startAngle + math.pi) % (2 * math.pi)) - math.pi
-			diff = diff + sweepDir * extraSweep                               -- widen the arc in a stable direction (real circling)
-			local angle = startAngle + diff * e
+			-- ═══ WHY NO ARC EVER LANDED ON THE SPINE ═══ extraSweep used to be added straight into `diff`, and
+			-- `diff` is what the arc is interpolated across - so the sweep was a permanent offset on the FINAL
+			-- angle, not a bulge along the way. Side Dash asks for 0.12pi and therefore always finished ~21
+			-- degrees BESIDE their back; tpBehind then had to blink the remainder 0.12s later. Arc, freeze,
+			-- blink - that is the stutter, and it is why the dashes read as "weird".
+			-- Split it: whole laps still land you on the same angle, so those stay additive (Back Dash's 2pi
+			-- lap is a real full circle and must keep going all the way round). The leftover under a full lap
+			-- becomes a sine bulge that is widest mid-arc and resolves to ZERO at the end, so the arc still
+			-- visibly circles them but terminates exactly on the live behind-angle.
+			local laps  = math.floor(extraSweep / (2 * math.pi) + 1e-6) * (2 * math.pi)
+			local bulge = extraSweep - laps
+			diff = diff + sweepDir * laps
+			local angle = startAngle + diff * e + sweepDir * bulge * math.sin(e * math.pi)
 			local radius = startRadius + (endRadius - startRadius) * e + radialBias * math.sin(e * math.pi)
 			if radius < 4.5 then radius = 4.5 end                             -- never INSIDE their body (that overlap is what launches THEM)
 			local y = baseY + (tp.Y - tp0.Y) + yArc * math.sin(e * math.pi)   -- follow their height + optional jump arc
@@ -1873,6 +1915,7 @@ do
 	local UIS = game:GetService("UserInputService")
 	local LPc = game:GetService("Players").LocalPlayer
 	_G.VX_LAST_CLICK = 0
+	_G.VX_LAST_HUMAN_CLICK = 0   -- same stamp, minus the clicks the hub injects itself (see the shared poll below)
 	UIS.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then _G.VX_LAST_CLICK = tick() end end)
 	pcall(function() LPc:GetMouse().Button1Down:Connect(function() _G.VX_LAST_CLICK = tick() end) end)
 
@@ -1942,6 +1985,14 @@ do
 					-- is both "auto uppercut/down slam don't work" and "it doesn't black flash".
 					-- Button still down = still attacking, so the stamp stays fresh while it is held.
 					_G.VX_LAST_CLICK = tick()
+					-- ═══ AND A SEPARATE STAMP THAT EXCLUDES OUR OWN CLICKS ═══ VirtualInputManager clicks are
+					-- visible to IsMouseButtonPressed, so the line above cannot tell an injected click from
+					-- yours - and every gate in the file that asks "was that really the player?" reads it. The
+					-- Black Flash engine's re-click therefore refreshed it, its follow-up swing looked like a
+					-- fresh player M1, flashed, re-clicked... a loop that only stops when nobody is in range.
+					-- _G.VX_SYNTH_CLICK is already set by every injector immediately before it clicks, so this
+					-- stamp simply skips those windows.
+					if tick() >= (tonumber(_G.VX_SYNTH_CLICK) or 0) then _G.VX_LAST_HUMAN_CLICK = tick() end
 					-- SUBSCRIBERS stay on the rising edge: they are per-click actions and must not repeat every
 					-- frame. A click WE injected stamps the timing above but never re-enters them.
 					if not wasDown and tick() >= (tonumber(_G.VX_SYNTH_CLICK) or 0) then
@@ -1956,7 +2007,9 @@ do
 		if not track or not track.Animation then return false end
 		local id = tostring(track.Animation.AnimationId):match("%d+")
 		if not (id and _G.VX_M1_IDS[id]) then return false end
-		return tick() - (_G.VX_LAST_CLICK or 0) < 0.4   -- anim + a click within 0.4s = a real M1 swing
+		-- HUMAN click: an injected re-click also produces a real M1 swing, and counting that as "a real M1"
+		-- is what lets a flash feed the next flash for as long as somebody is standing near you.
+		return tick() - (_G.VX_LAST_HUMAN_CLICK or 0) < 0.4   -- anim + a click within 0.4s = a real M1 swing
 	end
 end
 
@@ -2591,6 +2644,11 @@ local MOVE_TO_CHARSVC = {         -- move you own  ->  the character service tha
 	["crow"]          = "MeiMei",   ["blackbird"]     = "MeiMei",
 	["worldcutting"]  = "Toji",     ["playfulcloud"]  = "Toji",     ["inverted"]    = "Toji",
 	["rika"]          = "Yuta",     ["truelove"]      = "Yuta",
+	-- Todo, from the user's captures. He NEEDS to be here rather than left to the scan below: his four moves
+	-- each own a real <Move>Service with RE.Activated (SwiftKickService, BruteForceService, PebbleThrowService,
+	-- ElbowDropService), so the name scan happily matched "SwiftKickService" off his own Moveset and fired
+	-- Down/Up at a MOVE service. Listing him here means step 1 answers TodoService and the scan is never reached.
+	["swiftkick"]     = "Todo",     ["bruteforce"]    = "Todo",     ["pebblethrow"] = "Todo", ["elbowdrop"] = "Todo",
 }
 local function vxNorm(x) return (string.gsub(string.lower(tostring(x or "")), "[^%a%d]", "")) end
 local function vxServicesFolder()
@@ -2630,10 +2688,15 @@ local function vxMyCharSvc()  -- which <Char>Service to fire for M1 / Down / Up
 		local hay = vxNorm(c.Name)
 		local hum = c:FindFirstChildOfClass("Humanoid"); if hum then hay = hay .. vxNorm(hum.DisplayName) end
 		local mv = c:FindFirstChild("Moveset")
-		if mv then for _, m in ipairs(mv:GetChildren()) do hay = hay .. vxNorm(m.Name) end end
+		-- ═══ A MOVE SERVICE IS NOT A CHARACTER SERVICE ═══ hay includes your Moveset names, and several moves
+		-- own a service of their own with RE.Activated - so this scan would match "SwiftKickService" off Todo's
+		-- own move list and hand Down/Up to the wrong remote entirely. Remember the move names and refuse any
+		-- candidate whose base name IS one of them.
+		local isMoveName = {}
+		if mv then for _, m in ipairs(mv:GetChildren()) do local nm = vxNorm(m.Name); hay = hay .. nm; isMoveName[nm] = true end end
 		for _, sv in ipairs(svcs:GetChildren()) do
 			local base = sv.Name:gsub("Service$", "")
-			if #base >= 4 and string.find(hay, vxNorm(base), 1, true) and vxSvcHasActivated(sv.Name) then
+			if #base >= 4 and not isMoveName[vxNorm(base)] and string.find(hay, vxNorm(base), 1, true) and vxSvcHasActivated(sv.Name) then
 				if _G.VX_M1_DEBUG then print("[M1COMBO] service via scan -> " .. sv.Name) end
 				return sv.Name
 			end
@@ -3350,9 +3413,23 @@ do
     local function GetChar() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LocalPlayer.Name)) or LocalPlayer.Character end
     local function GetRoot() local c = GetChar(); return c and c:FindFirstChild("HumanoidRootPart") end
     local function IsAlive() local c = GetChar(); local h = c and c:FindFirstChildOfClass("Humanoid"); return h ~= nil and h.Health > 0 end
-    local function VKeyDown(k) if not k then return end R.stamp[k] = tick(); if not R.held[k] then R.held[k] = true; VIM:SendKeyEvent(true, k, false, game) end end
-    local function VKeyUp(k) if not k then return end if R.held[k] then R.held[k] = nil; VIM:SendKeyEvent(false, k, false, game) end end
-    local function VKeyTap(k, hold) VKeyDown(k); task.wait(hold or 0.05); VKeyUp(k) end
+    -- R.stamp is PRIVATE to this module. Every other key consumer in the file guards on the SHARED
+    -- _G.VX_INJ_KEYS, so without stamping that too, our injected dash key was read as a real player press by
+    -- the Dash module - which fired its own MovementService dash (105 studs/s) and played a FORWARD dash clip
+    -- straight over a sideways arc. Two movement systems fighting on the same body for 0.15s, with a clip that
+    -- does not belong to the mode: that is "the animations are weird / the side dashes are weird".
+    local function VKeyDown(k) if not k then return end R.stamp[k] = tick(); _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[k] = tick() + 0.4; if not R.held[k] then R.held[k] = true; VIM:SendKeyEvent(true, k, false, game) end end
+    local function VKeyUp(k) if not k then return end _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[k] = tick() + 0.15; if R.held[k] then R.held[k] = nil; VIM:SendKeyEvent(false, k, false, game) end end
+    -- ═══ A DASH IS NOT A WINDUP ═══ Every mode taps the real dash key so the game plays its own dash
+    -- animation. That animation is Action priority (it has to override walk/run) and it lands right after you
+    -- clicked, which is precisely the shape of the flash engine's universal windup fallback - so the engine
+    -- read our dash as an M1 and spent the chain's single-shot borrow on it. The real M1 windup arriving a
+    -- moment later was then rejected as "already used". Tell the engine to ignore anything for the length of
+    -- the dash.
+    local function VKeyTap(k, hold)
+        if k == Settings.DashKey then _G.VX_BF_DASHANIM = tick() + 0.30 end
+        VKeyDown(k); task.wait(hold or 0.05); VKeyUp(k)
+    end
     -- A synthetic click CANCELS an in-flight Crow ult, so every scripted click is suppressed while it is out.
     local function VMouseClick()
         if tick() < (tonumber(_G.VX_CROW_FLYING) or 0) then return end
@@ -3555,7 +3632,13 @@ do
             local cf = CFrame.lookAt(dest, Vector3.new(e.Position.X, dest.Y, e.Position.Z))
             if c then c:PivotTo(cf) else p.CFrame = cf end
             -- never a dead zero: a position change with (0,0,0) velocity is the desync the server reverts
-            p.AssemblyLinearVelocity = Vector3.new(0, -2, 0)
+            -- KEEP YOUR VERTICAL MOTION WHEN YOU ARE MEANT TO BE IN THE AIR. Jump mode really jumps, and this
+            -- ran ~0.19s later, at the top of the rise - forcing Y to -2 there dropped you out of your own
+            -- jump animation mid-clip, which is a large part of "the animations are weird".
+            local vy = -2
+            local hh = c and c:FindFirstChildOfClass("Humanoid")
+            if hh and hh.FloorMaterial == Enum.Material.Air then vy = math.max(p.AssemblyLinearVelocity.Y, -2) end
+            p.AssemblyLinearVelocity = Vector3.new(0, vy, 0)
         end)
         aimCameraAt(e.Position)
         return true
@@ -3905,6 +3988,16 @@ do
 
     UserInputService.InputBegan:Connect(function(input, _)
         if UserInputService:GetFocusedTextBox() then return end
+        -- ═══ THE PHANTOM: "I GO TO A PERSON AND IT M1s AND BLACK FLASHES WITHOUT ME CLICKING THREE" ═══
+        -- This handler's only "was that press mine?" test was R.stamp, and R.stamp[Three] is written by exactly
+        -- ONE function in the file: markThree(), used only by VXBF2's own pressBF(). The Black Flash ENGINE is
+        -- a different module and presses 3 through its own pressKey(), which stamps _G.VX_INJ_KEYS and never
+        -- touches R.stamp. So: engine flashes your ordinary M1 -> injects key 3 -> this handler reads it as a
+        -- real player tap -> doBlackFlash() -> a full dash chain -> m1ThenBF() injects an M1 you never threw ->
+        -- that swing flashes -> key 3 again -> round and round, for as long as somebody is inside DashRange.
+        -- That is the phantom M1 + phantom flash, and it is also "the side dashes are weird": those dashes are
+        -- unrequested chains. _G.VX_INJ_KEYS is the file's shared injected-key marker; honour it here.
+        do local injK = _G.VX_INJ_KEYS; if injK and injK[input.KeyCode] and tick() < injK[input.KeyCode] then return end end
         local st = R.stamp[input.KeyCode]; if st and tick() - st < WIN then return end
         if input.KeyCode == Settings.BFKey and Settings.Enabled and Settings.Mode ~= "M1" then
             doBlackFlash(); return
@@ -4010,6 +4103,9 @@ do
     -- assist keys: Q = side dash assist, E = back dash assist (only when their toggle is on)
     UserInputService.InputBegan:Connect(function(input, _)
         if UserInputService:GetFocusedTextBox() then return end
+        -- Same injected-key guard as the BF-key handler above: every dash this module performs taps the real
+        -- dash key, and without this an assist could fire off our own tap and chain into itself.
+        do local injK = _G.VX_INJ_KEYS; if injK and injK[input.KeyCode] and tick() < injK[input.KeyCode] then return end end
         local st = R.stamp[input.KeyCode]; if st and tick() - st < WIN then return end
         if input.KeyCode == Enum.KeyCode.Q and Settings.SideAssist and not Settings.Enabled then doSideDash(false) end
         if input.KeyCode == Enum.KeyCode.E and Settings.BackAssist then doBackDash(false) end
@@ -4613,7 +4709,10 @@ do
 	-- ONE place fires the slam, with ONE cooldown, so the animation path and the raw-click path below cannot
 	-- both announce the same slam (that double-fire burned the cooldown and the second one did nothing).
 	local function doSlam(why)
-		if tick() - (State.lastDown or 0) < 0.30 then return false end
+		-- 0.30s was SHORTER than the 0.35s spacing of a held combo's swings, so one combo fired this three
+		-- times. 1.0s is longer than any single combo and shorter than the game's 1.2s combo drop, so it is
+		-- exactly one slam per combo and a genuinely new combo is never blocked.
+		if tick() - (State.lastDown or 0) < 1.00 then return false end
 		State.lastDown = tick()
 		slamArmed = 0
 		State.m1Count = 0
@@ -4638,8 +4737,12 @@ do
 	local function slamOnClick()
 		if mode ~= "Down Slam" then return end
 		if tick() >= slamArmed then return end
-		-- NO airborne re-check. FloorMaterial lags the hop by a frame or two, so this test kept rejecting the
-		-- very click it was armed for. We hopped you ourselves 3 swings ago - the arming window IS the proof.
+		-- The airborne test is BACK, now that the slam only ever fires off the ground. Without it this path
+		-- stayed armed for 1.6s after a slam, so the first click of your NEXT combo - long after you had
+		-- landed - sent another grounded "Down" and wiped the combo counter on its way out. airborneNow()
+		-- accepts the Freefall/Jumping humanoid state as well as FloorMaterial, so it does not suffer the
+		-- one-frame lag the old comment here was worried about.
+		if not airborneNow() then return end
 		doSlam("armed click")
 	end
 	local function onSwing()
@@ -4682,9 +4785,14 @@ do
 			if n >= need then
 				State.m1Count = 0
 				State.lastFire = now
-				-- THE SIMPLE PATH FIRST: announce the direction on this swing exactly the way the capture shows.
-				-- The hop below is only a fallback for characters whose slam needs you off the ground.
-				doSlam("swing " .. n)
+				-- ═══ "IT KEEPS MOVING ME BACK" ═══ There used to be a doSlam("swing "..n) right here, and the
+				-- very next lines prove it fired from the GROUND: they test FloorMaterial ~= Air to decide
+				-- whether to hop you. A grounded directional M1 is not the down slam - it is a different move
+				-- with its own recoil, and that recoil is the shove. Worse, doSlam's own gate was 0.30s while
+				-- a held combo puts swings 0.35s apart, so the same combo sent THREE "Down"s: this grounded
+				-- one, then the airborne branch above on swing 3, then again on swing 4.
+				-- Now: hop first, and let the airborne branch be the single fire point. One "Down", off the
+				-- ground, on the swing that is actually the slam.
 				task.spawn(function()
 					local c = myModel()
 					local h = c and c:FindFirstChildOfClass("Humanoid")
@@ -4703,6 +4811,17 @@ do
 						pcall(function() h.Jump = true end)
 					end
 					slamArmed = tick() + 1.6      -- your next M1 within this window announces the slam again
+					-- SAFETY NET. Everything above now depends on the hop landing, so if the lift is swallowed
+					-- (the combo animation owns the humanoid state, a stun, a domain floor) the slam would
+					-- simply never fire and the feature would look dead. Give it 0.45s; if you are still on
+					-- the ground by then, send it anyway. One grounded Down as a last resort is much better
+					-- than no slam - and it is one, not the three the old path sent every combo.
+					task.delay(0.45, function()
+						if mode ~= "Down Slam" then return end
+						if airborneNow() then return end                       -- the hop worked; the airborne branch owns it
+						if tick() - (State.lastDown or 0) < 1.00 then return end  -- already slammed this combo
+						doSlam("hop never left the ground")
+					end)
 				end)
 			end
 		elseif mode == "Uppercut" then
@@ -4712,10 +4831,18 @@ do
 			-- On the Nth swing, hold the direction across the swing and name it on the remote. It used to fire
 			-- on EVERY swing, which spent the move on hit 1 of a combo where the game only accepts it on the
 			-- finisher - and made it look like it "does nothing".
-			if n >= need and tick() - (State.lastUp or 0) >= 0.9 then
+			-- ═══ WHY THE UPPERCUT NEVER WORKED AND THE SLAM DID ═══ This fired on swing 3, then zeroed the
+			-- counter AND started a 0.9s lockout. A held combo puts swings 0.35s apart (recorder-proven), so
+			-- swing 4 - the finisher, the only beat JJS accepts a launcher on - arrived with n back at 1
+			-- (fails n >= 3) and 0.35s elapsed (fails the 0.9s cooldown). BOTH gates rejected it, so
+			-- Activated("Up") was never sent on the swing that matters.
+			-- The slam has exactly the same early fire, and only survives it because its airborne branch above
+			-- re-sends "Down" on the later swings with a cooldown SHORTER than the swing spacing. That single
+			-- asymmetry is "down slam works, upper cut dnt work". Mirror the slam: keep counting, and use a
+			-- cooldown under the 0.35s spacing so "Up" also lands on the finisher.
+			if n >= need and tick() - (State.lastUp or 0) >= 0.30 then
 				State.lastUp = tick()
 				State.lastFire = now
-				State.m1Count = 0
 				-- (This print used to concatenate a variable that no longer exists. Concatenating nil THROWS, and
 				-- it threw BEFORE the key hold and the remote below - so with debug on, the uppercut never ran
 				-- at all. That was "auto uppercut doesn't even work" in every debug-enabled test.)
@@ -4898,6 +5025,11 @@ do
 	end
 	UIS.InputBegan:Connect(function(input, gpe)
 		if not noCd or gpe then return end
+		-- ONLY YOUR OWN Q. The Black Flash dash modes tap the real dash key on their way to the target; without
+		-- this guard that tap landed here as well and fired a SECOND dash - a 105 stud/s shove in whatever
+		-- direction moveDir() guessed (Front, with no key held) plus a forward dash clip - on top of the arc
+		-- already moving you. The two fought frame by frame, which is the stutter and the wrong-looking clip.
+		do local injK = _G.VX_INJ_KEYS; if injK and injK[input.KeyCode] and tick() < injK[input.KeyCode] then return end end
 		if input.KeyCode == Enum.KeyCode.Q then local d = moveDir(); fireKnit("MovementService", "Dash", d, true); vxClientDash(d, 105, 0.15); playDash(d) end  -- remote + velocity + the real dash ANIMATION
 	end)
 	DashApi = {
@@ -6821,11 +6953,34 @@ do
 	local lastAction, lastActionId = 0, nil
 	local animHooked = setmetatable({}, { __mode = "k" })
 	-- ═══ "USE THE ANIMATION IDS FOR THAT CHARACTER" ═══ We do not ship a hardcoded id table, because a table
-	-- we never captured means the feature is dead on that character. Instead it LEARNS: the first time you
-	-- press 1 and a move animation plays right behind it, that id is recorded as Swift Kick's id. From then on
-	-- the id alone triggers the swap - so a cast that did NOT come from a key press (mobile button, a rebind,
-	-- a move fired by another part of the hub) still gets its perfect swap.
-	local LEARNED_ID = {}     -- animation id (string) -> move name
+	-- we never captured means the feature is dead on that character. Instead it LEARNS: press 1, and the move
+	-- animation that plays right behind it is recorded as a candidate for Swift Kick. After the same id turns
+	-- up twice it is trusted, and from then on the id alone triggers the swap - so a cast that did NOT come
+	-- from a key press (mobile button, a rebind, a move fired elsewhere in the hub) still gets its swap.
+	local LEARNED_ID = {}     -- animation id (string) -> move name  (committed, safe to fire on)
+	local LEARN_SEEN = {}     -- move name -> { id -> how many separate presses produced it }
+	local LEARN_RIG = nil     -- which rig the table was learned on; a character change wipes it
+	-- ═══ A LEARNER THAT CANNOT BE POISONED ═══ Naively recording "the last Action track after the key press"
+	-- is dangerous: JJS M1 swings, dashes and the flash itself are ALL Action priority, so one press landing
+	-- while you were mid-combo would record an M1 id as "Pebble Throw" - and from then on every ordinary M1
+	-- would fire a swap. That is a phantom, and phantoms are what we are trying to remove. So:
+	--   * never learn an id that _G.VX_M1_IDS already knows is an M1 (it covers all 20 characters)
+	--   * never learn while a real click is in flight - that track is a swing, not a move
+	--   * require the SAME id from two separate presses of that key before trusting it
+	--   * wipe everything when the rig changes (respawn, character swap): ids belong to a character
+	local function learnId(id, moveName)
+		if not id or not moveName then return end
+		if _G.VX_M1_IDS and _G.VX_M1_IDS[id] then return end
+		if tick() - (tonumber(_G.VX_LAST_HUMAN_CLICK) or 0) < 0.6 then return end
+		local rig = myRigs()[1]
+		if rig ~= LEARN_RIG then LEARNED_ID = {}; LEARN_SEEN = {}; LEARN_RIG = rig end
+		local seen = LEARN_SEEN[moveName]; if not seen then seen = {}; LEARN_SEEN[moveName] = seen end
+		seen[id] = (seen[id] or 0) + 1
+		if seen[id] >= 2 then
+			LEARNED_ID[id] = moveName
+			note("learned " .. moveName .. " animation id " .. id)
+		end
+	end
 	local function isActionPriority(track)
 		local ok, p = pcall(function() return track.Priority end)
 		if not ok then return false end
@@ -6866,12 +7021,19 @@ do
 		pcall(doSwap, "perfect " .. tostring(moveName), 0.30)
 	end
 	onLearnedCast = function(moveName)   -- a move whose id we already learned just played, no key needed
+		if not perfectOn or not isTodo() then return end
 		_G.VX_TOTAL_MOVE_T = tick()
 		task.spawn(function() perfectSwap(moveName) end)
 	end
 
 	local function onMoveKey(kc)
 		local e = MOVE_FOR_KEY[kc]; if not e then return end
+		-- ═══ NOT EVERY 1/2/3/4 IS YOURS ═══ The shared key poll uses IsKeyDown, which sees VirtualInputManager
+		-- presses, and every consumer in this file is expected to filter its own. The Black Flash engine injects
+		-- key THREE on every single flash - so without this, every auto black flash was read as "the user cast
+		-- Pebble Throw" and yanked you onto an enemy. The check goes BEFORE the stamp on purpose: stamping off
+		-- our own key 3 would also make busy() true for a second after every flash and starve Auto Swap.
+		do local injK = _G.VX_INJ_KEYS; if injK and injK[kc] and tick() < injK[kc] then return end end
 		_G.VX_TOTAL_MOVE_T = tick()          -- a cast is in flight: Auto Swap holds off (see busy())
 		if not perfectOn then return end
 		if not isTodo() then return end
@@ -6886,7 +7048,7 @@ do
 			local deadline = tick() + 0.45
 			repeat task.wait(0.03) until lastAction >= at or tick() > deadline
 			if lastAction < at then note("perfect swap: " .. e.move .. " never played (cooldown?) - not swapping") return end
-			if lastActionId then LEARNED_ID[lastActionId] = e.move end   -- remember this character's id for this move
+			learnId(lastActionId, e.move)
 			perfectSwap(e.move)
 		end)
 	end
@@ -13148,6 +13310,12 @@ do
     local charSec = totalSub:Section({ Name = "Character", Side = 2 })
     pcall(function() charSec:Label("Names are read from the game's own service list. 'Switch Now' force resets you and picks the character.") end)
     do
+        -- ═══ THIS FLAG MUST BE LEXICAL, NOT GLOBAL ═══ It guards a one-click switch that KILLS you, and this
+        -- UI library fires a dropdown's callback once while constructing it. As a bare global it would survive
+        -- into the next execution of the hub, so re-injecting mid-fight would find a minutes-old timestamp,
+        -- decide the guard had expired, and force reset you while the menu was still building. A local is nil
+        -- on every fresh run, which is exactly the behaviour the guard is for.
+        local uiReady = nil
         local names = { "Gojo" }
         pcall(function() if CharSwapApi then names = CharSwapApi.names() end end)
         if #names == 0 then names = { "Gojo" } end
@@ -13162,19 +13330,22 @@ do
             -- One-click switch, as asked - but NEVER during the first few seconds. Several UI libs fire a
             -- dropdown's callback once while building it, and without this guard simply opening the hub would
             -- force reset you on the spot.
-            if VX_UI_READY and tick() - VX_UI_READY > 3 and CharSwapApi then CharSwapApi.switchNow(v) end
+            if uiReady and tick() - uiReady > 3 and CharSwapApi then CharSwapApi.switchNow(v) end
         end })
         charSec:Button({ Name = "Switch Now (force reset)", Callback = function() if CharSwapApi then CharSwapApi.switchNow(pick) end end })
         charSec:Button({ Name = "Refresh Character List", Callback = function()
             local fresh = (CharSwapApi and CharSwapApi.names()) or names
             if #fresh == 0 then return end
             names = fresh
+            -- Refresh re-applies the default on some UI backends, which would re-enter the switch callback.
+            -- Close the window for a beat so a list refresh can never reset you.
+            uiReady = tick()
             pcall(function() if deathDD and deathDD.Refresh then deathDD:Refresh(fresh) end end)
             pcall(function() if switchDD and switchDD.Refresh then switchDD:Refresh(fresh) end end)
             if VX_NOTIFY then VX_NOTIFY("Characters: " .. #fresh .. " found", true) end
         end })
+        uiReady = tick()   -- everything above is built; the one-click switch is armed 3s from now
     end
-    VX_UI_READY = tick()   -- everything above is built; the one-click switch is armed 3s from now
 
     -- ===================== TARGET (type a username -> act on that player) =====================
     local TargetPage = Window:Page({ Name = "Target", Icon = "crosshair" })
