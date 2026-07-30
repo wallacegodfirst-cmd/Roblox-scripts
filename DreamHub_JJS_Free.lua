@@ -20,9 +20,13 @@ if not _G.VX_AC_HOOKED then
 	print("[JJS Bypass] Loaded: anti-cheat remotes destroyed by the hub; instant teleport.")
 end
 
+-- ═══ POINTS AT THE FROZEN PUBLIC FILE, NOT THE DEV FILE ═══
+-- This used to fetch DreamHub_JJS.lua, which is the dev build and changes constantly - so every user
+-- picked up half-finished work the moment it was pushed. It now fetches DreamHub_JJS_Public.lua, which
+-- only changes when a build is deliberately released. Testers use DreamHub_JJS_Update.lua instead.
 local URLS = {
-	"https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/claude/improve-ai-system-tUhhn/DreamHub_JJS.lua",
-	"https://github.com/wallacegodfirst-cmd/roblox-scripts/raw/claude/improve-ai-system-tUhhn/DreamHub_JJS.lua",
+	"https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/claude/improve-ai-system-tUhhn/DreamHub_JJS_Public.lua",
+	"https://github.com/wallacegodfirst-cmd/roblox-scripts/raw/claude/improve-ai-system-tUhhn/DreamHub_JJS_Public.lua",
 }
 local StarterGui = game:GetService("StarterGui")
 local function toast(msg, dur)
