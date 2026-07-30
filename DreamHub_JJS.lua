@@ -990,6 +990,18 @@ do
 	end
 	local function onAnim(track)
 		if not enabled then return end
+		-- ═══ "IT M1s AND BLACK FLASHES WITHOUT ME PRESSING 3" ═══ A chain borrows this engine, which arms it
+		-- wholesale - so any swing during that window flashed, including an ordinary M1 thrown while walking up
+		-- to someone. A borrow now only authorises the swing produced by the chain's OWN injected click:
+		-- _G.VX_BF_CHAINCLICK is stamped the instant the chain clicks, and a windup arriving outside that short
+		-- window is yours, not the chain's, so it is ignored while borrowed.
+		if _G.VX_BF_BORROWED then
+			if (_G.VX_BF_BORROW_USED or 0) > 0 then return end
+			if tick() - (tonumber(_G.VX_BF_CHAINCLICK) or 0) > 0.45 then
+				if _G.VX_BF_DEBUG then print("[BF] borrowed, but this swing is not the chain's - ignoring") end
+				return
+			end
+		end
 		if not bfEnemyNear() then
 			if _G.VX_BF_DEBUG then print("[BF] swing with nobody in range - not pressing 3") end
 			return
@@ -3405,6 +3417,11 @@ do
         -- chain throws EXACTLY ONE click. R.chainUntil is the window both of those check.
         R.chainUntil = tick() + 1.0
         local myGen = R.gen or 0
+        -- ═══ THE ONE THAT KILLED EVERY MODE BUT TELEPORT ═══ The engine's phantom-flash guard only lets a
+        -- BORROWED flash through for a swing that arrived within 0.45s of _G.VX_BF_CHAINCLICK. doBFM1Chain
+        -- stamped it; this function - which is the flash beat for Teleport, Jump, Side Dash AND Back Dash -
+        -- did not. So every borrowed chain armed the engine, threw the click, and then had its own windup
+        -- rejected by the guard: perfect dash, no flash. Stamp it on the same line we click.
         -- ═══ DO NOT DISABLE THE RE-CLICK ═══ This used to set _G.VX_BF_RECLICK = false to stop the M1 spam,
         -- but the engine's own note is explicit: the re-click IS the primary Black Flash trigger. Killing it
         -- left the engine pressing key 3 alone, which by that same note often does nothing - so every mode
@@ -3412,6 +3429,7 @@ do
         -- start the swing, one re-tap on the windup frame to land the flash. The duplicate sources that
         -- actually caused "M1 M1 M1" are the InputBegan path and the retry, and both are gated on
         -- R.chainUntil below - so the spam stays fixed without switching the flash off.
+        _G.VX_BF_CHAINCLICK = tick()
         VMouseClick()
         if not _G.VX_BFAPI_ON then      -- no engine at all -> best-effort blind press so something happens
             task.wait(0.19); pressBF()
@@ -3665,11 +3683,21 @@ do
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
         task.wait(0.12)                                   -- let the dash settle before we test the distance
-        if not arrivedAt(t, 0.5) then
-            if _G.VX_BF_DEBUG then print("[DreamHub BF] never reached the target - not flashing from range") end
+        -- ═══ THE SAME RECIPE TELEPORT USES ═══ Teleport is the one mode that reliably flashes, and the only
+        -- thing it does differently is re-place you on the spine on the beat BEFORE the swing. The dash modes
+        -- placed you once and then waited 0.12s+, and in that window the target turns, walks off, or the
+        -- server nudges you - so the swing left from beside them and never became a flash.
+        -- arrivedAt is now only a settle-wait (it returns the instant you are inside M1 reach). tpBehind is
+        -- the real guarantee: it puts you on the spine AND refuses on its own when the target is genuinely
+        -- out of DashRange, so we still never blink across the map - but a mode can no longer dash correctly
+        -- and then silently decline to flash, which is exactly what you were seeing.
+        arrivedAt(t, 0.5)
+        if not tpBehind(t) then
+            if _G.VX_BF_DEBUG then print("[DreamHub BF] target out of range at the swing - not flashing") end
             R.bfActive = false
             return
         end
+        faceBackOf(t)
         m1ThenBF()
         task.delay(0.3, function() R.bfActive = false end); status("BF Jump Chain")
     end
@@ -3683,17 +3711,28 @@ do
         -- "for a side dash you need to make it more legit and fast" - the shortest, flattest clip of any mode:
         -- 0.14s, a tight 0.10pi sweep, no vertical arc, ending just off the spine. Reads as a real Q dash.
         dashToBack(t, { duration = 0.10, extraSweep = math.pi * 0.12, endRadius = 4.2, endBias = 0, yArc = 0 })
-        -- "make it black flash and always hit the back": the arc can end slightly off the spine if they turned
-        -- mid-dash, so snap onto the back before the swing. Without this the flash lands beside them.
-        tpBehind(t)
-        faceBackOf(t)
+        -- ═══ "THE SIDE DASHES ARE WEIRD" ═══ There used to be a tpBehind snap RIGHT HERE, on top of an arc
+        -- that already ends behind the spine (dashToBack passes endBehind = true) - and then a second snap
+        -- 0.12s later. Three movements for one dash: arc, blink, blink. That stutter is the weirdness. The arc
+        -- lands you behind them on its own; the single placement on the beat before the swing (below) is all
+        -- the correction it needs, and it happens close enough to the swing that they cannot turn out of it.
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
         task.wait(0.12)                                   -- let the dash settle before we test the distance
-        if not arrivedAt(t, 0.5) then
-            if _G.VX_BF_DEBUG then print("[DreamHub BF] never reached the target - not flashing from range") end
+        -- ═══ THE SAME RECIPE TELEPORT USES ═══ Teleport is the one mode that reliably flashes, and the only
+        -- thing it does differently is re-place you on the spine on the beat BEFORE the swing. The dash modes
+        -- placed you once and then waited 0.12s+, and in that window the target turns, walks off, or the
+        -- server nudges you - so the swing left from beside them and never became a flash.
+        -- arrivedAt is now only a settle-wait (it returns the instant you are inside M1 reach). tpBehind is
+        -- the real guarantee: it puts you on the spine AND refuses on its own when the target is genuinely
+        -- out of DashRange, so we still never blink across the map - but a mode can no longer dash correctly
+        -- and then silently decline to flash, which is exactly what you were seeing.
+        arrivedAt(t, 0.5)
+        if not tpBehind(t) then
+            if _G.VX_BF_DEBUG then print("[DreamHub BF] target out of range at the swing - not flashing") end
             R.bfActive = false
             return
         end
+        faceBackOf(t)
         m1ThenBF()
         task.delay(0.3, function() R.bfActive = false end); status("BF Side Chain")
     end
@@ -3736,11 +3775,21 @@ do
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
         task.wait(0.12)                                   -- let the dash settle before we test the distance
-        if not arrivedAt(t, 0.5) then
-            if _G.VX_BF_DEBUG then print("[DreamHub BF] never reached the target - not flashing from range") end
+        -- ═══ THE SAME RECIPE TELEPORT USES ═══ Teleport is the one mode that reliably flashes, and the only
+        -- thing it does differently is re-place you on the spine on the beat BEFORE the swing. The dash modes
+        -- placed you once and then waited 0.12s+, and in that window the target turns, walks off, or the
+        -- server nudges you - so the swing left from beside them and never became a flash.
+        -- arrivedAt is now only a settle-wait (it returns the instant you are inside M1 reach). tpBehind is
+        -- the real guarantee: it puts you on the spine AND refuses on its own when the target is genuinely
+        -- out of DashRange, so we still never blink across the map - but a mode can no longer dash correctly
+        -- and then silently decline to flash, which is exactly what you were seeing.
+        arrivedAt(t, 0.5)
+        if not tpBehind(t) then
+            if _G.VX_BF_DEBUG then print("[DreamHub BF] target out of range at the swing - not flashing") end
             R.bfActive = false
             return
         end
+        faceBackOf(t)
         m1ThenBF()
         task.delay(0.3, function() R.bfActive = false end)
         status("BF Back Chain")   -- the dash shape now comes from the facing check, not from alternation
@@ -3778,6 +3827,8 @@ do
             pcall(function() _G.VX_BFAPI_SET(true) end)
         end
         if _G.VX_BF_RESETCOUNT then pcall(_G.VX_BF_RESETCOUNT) end   -- flash on THIS swing, not after N more
+        -- M1 Chain rides YOUR swing instead of injecting one, so authorise the swing you just threw.
+        _G.VX_BF_CHAINCLICK = tick()
         -- No engine at all (very old build): press 3 ourselves on the same beat the engine would have. Still no
         -- extra click - the swing being flashed is the one you already threw.
         if not _G.VX_BFAPI_ON then task.delay(0.19, function() pressBF() end) end
@@ -4569,12 +4620,16 @@ do
 		if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] DOWN SLAM (" .. tostring(why) .. ")") end
 		-- Symmetric with the uppercut: hold the DIRECTION key across the swing and name it on the remote. Firing
 		-- the remote alone is what did nothing, exactly as it did for "Up".
-		downDown()
+		-- ═══ NO KEY AT ALL ═══ S is the BACKWARD movement key, so ANY hold walks you backwards - shortening it
+		-- to 0.12s reduced the push but did not remove it, because the press itself is the movement. The remote
+		-- is what performs the move: fireDir is the same call that makes the slam land, and it is proven to
+		-- reach the server. So the key press was never doing the work, only the pushing. Same reasoning kills
+		-- the uppercut's key: Space made you jump, W did nothing, and neither is needed if the remote lands.
 		fireDir("Down")
-		-- ═══ "IT PUSHES ME BACK A LITTLE" ═══ S is the BACKWARD movement key, so a 0.40s hold literally walks
-		-- you backwards for four tenths of a second. The game only needs the direction held at the instant the
-		-- swing registers, not across the whole animation - 0.12s covers that and is too short to move you.
-		task.delay(0.12, function() downUp() end)
+		downUp()   -- release anything an older build left held
+		-- Tell the rest of the hub a finisher is in flight. Auto Swap (Total) reads this and refuses to swap
+		-- while a slam/uppercut is mid-animation - a swap yanks you to the target and cancels the move.
+		_G.VX_FINISHER_T = tick()
 		return true
 	end
 	-- THE RAW-CLICK SLAM PATH. onSwing() is animation-driven, and an AIRBORNE M1 usually plays a different
@@ -4665,11 +4720,11 @@ do
 				-- it threw BEFORE the key hold and the remote below - so with debug on, the uppercut never ran
 				-- at all. That was "auto uppercut doesn't even work" in every debug-enabled test.)
 				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] swing " .. n .. " -> UPPERCUT") end
-				spaceDown()
+				-- Remote only, no held key. Space made you jump, W did nothing at all, and the slam proves the
+				-- remote alone performs the move. Holding a key was only ever adding a side effect.
 				fireDir("Up")
-				-- 0.40, not 0.22: the game reads the held direction when the swing LANDS, and a JJS M1 takes
-				-- longer than 0.22s to connect - so the old hold was released before it was ever read.
-				task.delay(0.40, function() spaceUp() end)
+				spaceUp()   -- release anything an older build left held
+				_G.VX_FINISHER_T = tick()   -- see doSlam: Auto Swap must not interrupt a finisher
 			end
 		end
 	end
@@ -6550,6 +6605,352 @@ do
 	DashNoiseApi  = { set = function(v) dashNoiseOn = v == true end }
 	EmoteSlotApi  = { unlock = unlockEmoteSlot }
 	InstaRespawnApi = { set = function(v) instaOn = v == true end, now = requestRespawn }   -- now() = respawn RIGHT NOW (the button)
+end
+
+-- ============================================================
+-- MODULE: TOTAL  (Todo's swap + the character changer)
+--   Auto Swap          - fire TodoService.RE.RightActivated at a target (Closest / Random / Lock Target)
+--   Auto Perfect Swap  - you cast a Todo move (1/2/3/4), we swap the instant it commits
+--   Auto Character     - pick a character; re-pick it automatically when you die
+--   Switch Character   - force reset + JoinService.RE.Change("<Name>") on demand
+-- Every remote here is one the user captured verbatim; nothing in this module guesses a remote name.
+-- ============================================================
+do
+	local Players = game:GetService("Players")
+	local RS = game:GetService("ReplicatedStorage")
+	local VIM = game:GetService("VirtualInputManager")
+	local LP = Players.LocalPlayer
+
+	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
+	local function myHRP() local m = myModel(); return m and m:FindFirstChild("HumanoidRootPart") end
+	local function norm(s) return (string.gsub(string.lower(tostring(s or "")), "[^%a%d]", "")) end
+	local function note(msg) if _G.VX_TOTAL_DEBUG then pcall(function() print("[DreamHub Total] " .. tostring(msg)) end) end end
+
+	local function svcFolder()
+		local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); return k and k:FindFirstChild("Services")
+	end
+	local function svcRE(svc, re)
+		local f = svcFolder(); local s = f and f:FindFirstChild(svc); local r = s and s:FindFirstChild("RE")
+		return r and r:FindFirstChild(re)
+	end
+	-- A missing remote is reported OUT LOUD (throttled), the same lesson Auto Air taught us: a silently
+	-- absent service is indistinguishable from "the feature does nothing" and costs a whole test round.
+	local function fireSvc(svc, re, ...)
+		local r = svcRE(svc, re)
+		if not r then
+			if tick() - (_G.VX_TOTAL_MISS_T or 0) > 2 then
+				_G.VX_TOTAL_MISS_T = tick()
+				pcall(function() print("[DreamHub Total] remote MISSING: " .. svc .. ".RE." .. re .. "  (send me this line)") end)
+			end
+			return false
+		end
+		local a = table.pack(...)
+		local ok = pcall(function() r:FireServer(table.unpack(a, 1, a.n)) end)
+		note((ok and "fired " or "FAILED ") .. svc .. "." .. re)
+		return ok
+	end
+
+	-- ═══════════════════════ WHO AM I ═══════════════════════
+	-- The swap remote belongs to Todo. Firing another character's remote is exactly what earned a 267 kick
+	-- before, so this gate is STRICT: no proof you are Todo, no fire. Proof comes from your own Moveset (the
+	-- four moves are unique to Todo) or from the character-service resolver the combo module already uses.
+	local TODO_MOVES = { ["swiftkick"] = true, ["bruteforce"] = true, ["pebblethrow"] = true, ["elbowdrop"] = true }
+	local function isTodo()
+		local c = myModel(); if not c then return false end
+		local mv = c:FindFirstChild("Moveset")
+		if mv then for _, m in ipairs(mv:GetChildren()) do if TODO_MOVES[norm(m.Name)] then return true end end end
+		local h = c:FindFirstChildOfClass("Humanoid")
+		if h and string.find(norm(h.DisplayName), "todo", 1, true) then return true end
+		local ok, svc = pcall(vxMyCharSvc)
+		return ok and svc == "TodoService"
+	end
+	local function todoWarn()
+		if tick() - (_G.VX_TOTAL_WARN_T or 0) < 8 then return end
+		_G.VX_TOTAL_WARN_T = tick()
+		if VX_NOTIFY then VX_NOTIFY("Total: you are not playing Todo - swap is off", false) end
+		note("not Todo; refusing to fire TodoService (firing another character's remote is a 267 risk)")
+	end
+
+	-- ═══════════════════════ TARGETING ═══════════════════════
+	-- Same scan shape the rest of the hub uses: real players, workspace.Characters, and the dummy folders.
+	local function eachEnemy(fn)
+		local seen = {}
+		local function chk(m)
+			if not m or seen[m] then return end
+			if m.Name == LP.Name or m == LP.Character or m == myModel() then return end
+			local r = m:FindFirstChild("HumanoidRootPart"); if not r then return end
+			local h = m:FindFirstChildOfClass("Humanoid")
+			if h and h.Health <= 0 then return end          -- a corpse is not a swap target
+			seen[m] = true
+			fn(m, r)
+		end
+		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP then chk(plr.Character) end end
+		local chs = workspace:FindFirstChild("Characters"); if chs then for _, m in ipairs(chs:GetChildren()) do chk(m) end end
+		for _, folderName in ipairs({ "Dummies", "Training", "NPCs", "Dummy" }) do
+			local f = workspace:FindFirstChild(folderName)
+			if f then for _, m in ipairs(f:GetChildren()) do chk(m) end end
+		end
+	end
+	-- The Gojo capture proved these RightActivated remotes want the PLAYER's .Character, not the
+	-- workspace.Characters model. Same remote family, same conversion.
+	local function asPlayerCharacter(mdl)
+		if not mdl then return nil end
+		local plr = Players:GetPlayerFromCharacter(mdl) or Players:FindFirstChild(mdl.Name)
+		return (plr and plr.Character) or mdl
+	end
+
+	local swapOn, swapMode, swapRange, swapCD = false, "Closest", 60, 2.5
+	local perfectOn, perfectDelay = false, 0.12
+
+	local function lockedTarget()
+		local g = _G.VX_LOCK
+		local t = (g and g.get) and g.get() or nil
+		return (t and t.Parent) and t or nil
+	end
+	local function pickTarget()
+		if swapMode == "Lock Target" then return lockedTarget() end   -- no fallback: "Lock Target" means THAT one or none
+		local hrp = myHRP(); if not hrp then return nil end
+		if swapMode == "Random" then
+			local pool = {}
+			eachEnemy(function(m, r) if (r.Position - hrp.Position).Magnitude <= swapRange then pool[#pool + 1] = m end end)
+			if #pool == 0 then return nil end
+			return pool[math.random(1, #pool)]
+		end
+		local best, bd
+		eachEnemy(function(m, r)
+			local d = (r.Position - hrp.Position).Magnitude
+			if d <= swapRange and (not bd or d < bd) then best, bd = m, d end
+		end)
+		return best
+	end
+
+	-- ═══════════════════════ THE BUSY GATE ═══════════════════════
+	-- "not random when they doing an upper cut or down slam or in a combo." A swap teleports you onto the
+	-- target and cancels whatever you were mid-way through, so Auto Swap only fires in a GAP.
+	--   VX_FINISHER_T  - stamped by the combo module the moment a slam/uppercut goes out
+	--   VX_LAST_CLICK  - stamped EVERY FRAME the M1 button is held, so a held combo reads busy for its whole
+	--                    length (that is the same stamp the Black Flash engine relies on)
+	--   VX_BF_LAST_FIRE- a flash just landed; the follow-through is still playing
+	local function busy()
+		local now = tick()
+		if now - (tonumber(_G.VX_FINISHER_T) or 0) < 2.0 then return true end
+		if now - (tonumber(_G.VX_LAST_CLICK) or 0) < 1.2 then return true end
+		if now - (tonumber(_G.VX_BF_LAST_FIRE) or 0) < 1.0 then return true end
+		if now - (tonumber(_G.VX_TOTAL_MOVE_T) or 0) < 1.0 then return true end   -- you just cast 1/2/3/4
+		return false
+	end
+
+	local lastSwap = 0
+	local function doSwap(why, minGap, forced)
+		local t = forced or pickTarget()
+		if not t then note("no target (" .. tostring(why) .. ")") return false end
+		if tick() - lastSwap < (minGap or swapCD) then return false end
+		if not isTodo() then todoWarn() return false end
+		lastSwap = tick()
+		_G.VX_TOTAL_SWAP_T = tick()
+		local ok = fireSvc("TodoService", "RightActivated", asPlayerCharacter(t))
+		if not ok then
+			-- The remote is the real swap; the key is only here so a renamed service still does SOMETHING.
+			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.R] = tick() + 0.3
+			pcall(function()
+				VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game)
+				task.wait(0.03)
+				VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game)
+			end)
+		end
+		note("swap -> " .. tostring(t.Name) .. "  (" .. tostring(why) .. ")")
+		return true
+	end
+
+	task.spawn(function()
+		while true do
+			if swapOn then
+				if not busy() then pcall(doSwap, "auto", swapCD) end
+				task.wait(0.2)
+			else
+				task.wait(0.4)
+			end
+		end
+	end)
+
+	-- ═══════════════════════ AUTO PERFECT SWAP ═══════════════════════
+	-- You press 1/2/3/4; we swap the instant the move actually commits.
+	-- "use the animation ids for that character" - we do not need a hardcoded id table for that. A key press
+	-- only counts as a CAST if an Action-priority animation starts right behind it; on cooldown nothing plays
+	-- and we stay quiet. That is the whole difference between a perfect swap and R-spam.
+	local MOVE_FOR_KEY = {
+		[Enum.KeyCode.One]   = { svc = "SwiftKickService",   move = "Swift Kick" },
+		[Enum.KeyCode.Two]   = { svc = "BruteForceService",  move = "Brute Force" },
+		[Enum.KeyCode.Three] = { svc = "PebbleThrowService", move = "Pebble Throw" },
+		[Enum.KeyCode.Four]  = { svc = "ElbowDropService",   move = "Elbow Drop" },
+	}
+	local lastAction = 0
+	local animHooked = setmetatable({}, { __mode = "k" })
+	local function isActionPriority(track)
+		local ok, p = pcall(function() return track.Priority end)
+		if not ok then return false end
+		-- Action2/3/4 only exist on newer engine builds; compare by name so an older client cannot error here.
+		local n = tostring(p)
+		return string.find(n, "Action", 1, true) ~= nil
+	end
+	local function hookAnims()
+		local rigs = {}
+		local chs = workspace:FindFirstChild("Characters")
+		local resolved = chs and chs:FindFirstChild(LP.Name)
+		if resolved then rigs[#rigs + 1] = resolved end
+		if LP.Character and LP.Character ~= resolved then rigs[#rigs + 1] = LP.Character end
+		for _, char in ipairs(rigs) do
+			local h = char:FindFirstChildOfClass("Humanoid")
+			local a = h and h:FindFirstChildOfClass("Animator")
+			if a and not animHooked[a] then
+				animHooked[a] = true
+				a.AnimationPlayed:Connect(function(track)
+					if isActionPriority(track) then lastAction = tick() end
+				end)
+			end
+		end
+	end
+	task.spawn(function() while true do if perfectOn then pcall(hookAnims) end task.wait(1) end end)
+
+	local function onMoveKey(kc)
+		local e = MOVE_FOR_KEY[kc]; if not e then return end
+		_G.VX_TOTAL_MOVE_T = tick()          -- a cast is in flight: Auto Swap holds off (see busy())
+		if not perfectOn then return end
+		if not isTodo() then return end
+		local at = tick()
+		task.spawn(function()
+			local deadline = tick() + 0.45
+			repeat task.wait(0.03) until lastAction >= at or tick() > deadline
+			if lastAction < at then note("perfect swap: " .. e.move .. " never played (cooldown?) - not swapping") return end
+			if perfectDelay > 0 then task.wait(perfectDelay) end
+			-- Short gap only: this one is YOUR input, so it must not be throttled by the auto loop's cooldown.
+			pcall(doSwap, "perfect " .. e.move, 0.30)
+		end)
+	end
+	-- Subscribe ONLY while something here needs the keys. The shared key poll skips itself entirely when no
+	-- module is subscribed, and a permanent subscription from a switched-off feature would put that per-frame
+	-- sweep back on the hot path for everyone - the exact cost the lag pass removed.
+	local function syncKeySub()
+		if not _G.VX_ON_KEY then return end
+		_G.VX_ON_KEY("totalperfect", (swapOn or perfectOn) and onMoveKey or nil)
+	end
+
+	-- ═══════════════════════ CHARACTER CHANGER ═══════════════════════
+	-- JoinService.RE.Change:FireServer("Gojo")
+	-- The name list comes from the SERVICE names, as asked. Every playable character owns a <Name>Service with
+	-- RE.Activated - but so do a few MOVE services (SwiftKickService, BruteForceService...), and the system
+	-- services obviously are not characters. So: start from the known roster, keep the ones whose service is
+	-- really there, then add any other <Name>Service that has RE.Activated and is not an obvious non-character.
+	local KNOWN = { "Itadori", "Gojo", "Hakari", "Megumi", "Mahito", "Choso", "Todo", "Hiromi", "Yuta", "Mechamaru",
+		"Naoya", "Nanami", "Hanami", "Ryu", "Locust", "Yuki", "Charles", "Haruta", "MeiMei", "Kurourushi", "Sukuna", "Toji" }
+	local NOT_A_CHARACTER = {}
+	for _, w in ipairs({ "swiftkick", "bruteforce", "pebblethrow", "elbowdrop", "join", "anticheat", "movement",
+		"emote", "data", "camera", "effect", "sound", "music", "round", "match", "lobby", "shop", "trade", "quest",
+		"daily", "leaderboard", "chat", "notification", "ui", "replication", "ragdoll", "hitbox", "damage", "combat",
+		"skill", "move", "animation", "particle", "vfx", "spectate", "report", "ban", "admin", "gamepass", "product",
+		"purchase", "reward", "crate", "spin", "level", "stat", "title", "badge", "friend", "party", "server",
+		"teleport", "region", "weather", "time", "player", "character", "input", "client", "network", "save",
+		"setting", "settings", "tutorial", "codes", "code", "rank", "session", "analytics", "todoservice" }) do
+		NOT_A_CHARACTER[w] = true
+	end
+	local function characterNames()
+		local f = svcFolder()
+		local out, seen = {}, {}
+		local function add(n) if n and n ~= "" and not seen[norm(n)] then seen[norm(n)] = true; out[#out + 1] = n end end
+		if not f then for _, n in ipairs(KNOWN) do add(n) end table.sort(out) return out end
+		local have = {}
+		for _, s in ipairs(f:GetChildren()) do have[norm(s.Name)] = s end
+		for _, n in ipairs(KNOWN) do if have[norm(n .. "Service")] then add(n) end end
+		for _, s in ipairs(f:GetChildren()) do
+			local base = string.match(s.Name, "^(.-)Service$")
+			local re = s:FindFirstChild("RE")
+			if base and #base >= 3 and re and re:FindFirstChild("Activated") and not NOT_A_CHARACTER[norm(base)] then
+				add(base)
+			end
+		end
+		if #out == 0 then for _, n in ipairs(KNOWN) do add(n) end end
+		table.sort(out)
+		if _G.VX_TOTAL_DEBUG then
+			local all = {}
+			for _, s in ipairs(f:GetChildren()) do all[#all + 1] = s.Name end
+			table.sort(all)
+			pcall(function() print("[DreamHub Total] every Knit service = { " .. table.concat(all, ", ") .. " }") end)
+		end
+		return out
+	end
+
+	local lastChange = 0
+	local function changeChar(name, why, bypassGap)
+		if type(name) ~= "string" or name == "" or name == "Off" then return false end
+		if not bypassGap and tick() - lastChange < 1.2 then return false end
+		lastChange = tick()
+		local ok = fireSvc("JoinService", "Change", name)
+		note("change character -> " .. name .. "  (" .. tostring(why) .. ")  ok=" .. tostring(ok))
+		return ok
+	end
+
+	-- MID-BATTLE SWITCH. The game only accepts a character pick while you are dead / at the select screen, so
+	-- a bare Change() during a fight is ignored - hence "force reset + character changer". Kill first, then
+	-- send the pick, then send it once more: the first attempt can land before the select screen is ready.
+	local function switchNow(name)
+		if type(name) ~= "string" or name == "" or name == "Off" then return end
+		if VX_NOTIFY then VX_NOTIFY("Switching to " .. name .. "...", true) end
+		if ResetApi and ResetApi.reset then pcall(ResetApi.reset) end
+		task.delay(0.9, function() changeChar(name, "mid-battle", true) end)
+		task.delay(2.2, function() changeChar(name, "mid-battle retry", true) end)
+	end
+
+	-- AUTO CHARACTER ON DEATH. JJS runs a custom health system and Humanoid.Died does not always fire, so we
+	-- hook Died where we can AND poll the health as a backstop. One switch per death, via the edge flag.
+	local deathOn, deathChar = false, nil
+	local humHooked = setmetatable({}, { __mode = "k" })
+	local function onDeath()
+		if not (deathOn and deathChar) then return end
+		if tick() - lastChange < 1.2 then return end
+		task.delay(0.7, function() changeChar(deathChar, "death") end)
+		task.delay(2.0, function() changeChar(deathChar, "death retry", true) end)
+	end
+	task.spawn(function()
+		local wasDead = false
+		while true do
+			if deathOn and deathChar then
+				local m = myModel()
+				local h = m and m:FindFirstChildOfClass("Humanoid")
+				if h and not humHooked[h] then
+					humHooked[h] = true
+					pcall(function() h.Died:Connect(onDeath) end)
+				end
+				-- Only a live humanoid at 0 HP counts. Treating "no model" as death would fire every time the
+				-- rig is being rebuilt during a normal respawn.
+				local dead = (h ~= nil) and h.Health <= 0
+				if dead and not wasDead then onDeath() end
+				wasDead = dead
+				task.wait(0.25)
+			else
+				wasDead = false
+				task.wait(0.4)
+			end
+		end
+	end)
+
+	TodoApi = {
+		setSwap      = function(v) swapOn = v == true; syncKeySub(); if swapOn and not isTodo() then todoWarn() end end,
+		setSwapMode  = function(v) v = (type(v) == "table") and v[1] or v; if type(v) == "string" then swapMode = v end end,
+		setSwapRange = function(v) swapRange = tonumber(v) or swapRange end,
+		setSwapCD    = function(v) swapCD = tonumber(v) or swapCD end,
+		setPerfect   = function(v) perfectOn = v == true; syncKeySub(); if perfectOn then pcall(hookAnims) end end,   -- hook NOW, not up to a second from now, or the first cast after switching on is missed
+		setPerfectDelay = function(v) perfectDelay = math.max(0, tonumber(v) or 0) end,
+		swapNow      = function() return doSwap("manual", 0) end,
+		isTodo       = isTodo,
+	}
+	CharSwapApi = {
+		names       = characterNames,
+		setDeath    = function(v) deathOn = v == true end,
+		setDeathChar= function(v) v = (type(v) == "table") and v[1] or v; if type(v) == "string" then deathChar = v end end,
+		getDeathChar= function() return deathChar end,
+		switchNow   = switchNow,
+		change      = function(n) return changeChar(n, "manual", true) end,
+	}
 end
 
 -- ============================================================
@@ -12665,6 +13066,52 @@ do
     auSec:Toggle({ Name = "Auto Farm", Callback = function(b) if FarmApi then FarmApi.set(b) end end })
     auSec:Dropdown({ Name = "Farm Target", Items = playerList(), Default = "Nearest", Callback = function(v) if FarmApi then FarmApi.setTarget((type(v) == "table") and v[1] or v) end end })   -- unwrap: a table here made the farm loop error out and stay dead until re-execute
     auSec:Toggle({ Name = "Auto Train", Callback = function(b) if TrainApi then TrainApi.setAuto(b) end end })
+
+    -- ===================== TOTAL (Todo's swap + the character changer) =====================
+    -- Ungated on purpose: free, VIP and plus all get this. It lives in the UPDATE build for now, so it only
+    -- reaches your users on the next release.
+    local TotalPage = Window:Page({ Name = "Total", Icon = "repeat" })
+    local totalSub = TotalPage:SubPage({ Name = "Total", Columns = 2 })
+    local swapSec = totalSub:Section({ Name = "Total", Side = 1 })
+    pcall(function() swapSec:Label("Todo only. Auto Swap waits for a gap - it never fires during an uppercut, a down slam or a live M1 combo.") end)
+    swapSec:Toggle({ Name = "Auto Swap", Default = false, Callback = function(b) if TodoApi then TodoApi.setSwap(b) end end })
+    swapSec:Dropdown({ Name = "Swap Target", Items = { "Closest", "Random", "Lock Target" }, Default = "Closest", Callback = function(v) if TodoApi then TodoApi.setSwapMode(v) end end })
+    swapSec:Slider({ Name = "Swap Range", Min = 10, Max = 200, Default = 60, Decimals = 1, Callback = function(v) if TodoApi then TodoApi.setSwapRange(v) end end })
+    swapSec:Slider({ Name = "Swap Cooldown", Min = 0.3, Max = 8, Default = 2.5, Decimals = 0.1, Suffix = "s", Callback = function(v) if TodoApi then TodoApi.setSwapCD(v) end end })
+    swapSec:Toggle({ Name = "Auto Perfect Swap", Default = false, Callback = function(b) if TodoApi then TodoApi.setPerfect(b) end end })
+    swapSec:Slider({ Name = "Perfect Swap Delay", Min = 0, Max = 0.6, Default = 0.12, Decimals = 0.01, Suffix = "s", Callback = function(v) if TodoApi then TodoApi.setPerfectDelay(v) end end })
+    swapSec:Button({ Name = "Swap Now", Callback = function() if TodoApi then TodoApi.swapNow() end end })
+
+    local charSec = totalSub:Section({ Name = "Character", Side = 2 })
+    pcall(function() charSec:Label("Names are read from the game's own service list. 'Switch Now' force resets you and picks the character.") end)
+    do
+        local names = { "Gojo" }
+        pcall(function() if CharSwapApi then names = CharSwapApi.names() end end)
+        if #names == 0 then names = { "Gojo" } end
+        charSec:Toggle({ Name = "Auto Character On Death", Default = false, Callback = function(b) if CharSwapApi then CharSwapApi.setDeath(b) end end })
+        local deathDD = charSec:Dropdown({ Name = "Character On Death", Items = names, Default = names[1], Callback = function(v) if CharSwapApi then CharSwapApi.setDeathChar(v) end end })
+        pcall(function() if CharSwapApi then CharSwapApi.setDeathChar(names[1]) end end)   -- the UI lib does not always fire the build-time callback
+        local pick = names[1]
+        local switchDD = charSec:Dropdown({ Name = "Switch To", Items = names, Default = names[1], Callback = function(v)
+            v = (type(v) == "table") and v[1] or v
+            if type(v) ~= "string" then return end
+            pick = v
+            -- One-click switch, as asked - but NEVER during the first few seconds. Several UI libs fire a
+            -- dropdown's callback once while building it, and without this guard simply opening the hub would
+            -- force reset you on the spot.
+            if VX_UI_READY and tick() - VX_UI_READY > 3 and CharSwapApi then CharSwapApi.switchNow(v) end
+        end })
+        charSec:Button({ Name = "Switch Now (force reset)", Callback = function() if CharSwapApi then CharSwapApi.switchNow(pick) end end })
+        charSec:Button({ Name = "Refresh Character List", Callback = function()
+            local fresh = (CharSwapApi and CharSwapApi.names()) or names
+            if #fresh == 0 then return end
+            names = fresh
+            pcall(function() if deathDD and deathDD.Refresh then deathDD:Refresh(fresh) end end)
+            pcall(function() if switchDD and switchDD.Refresh then switchDD:Refresh(fresh) end end)
+            if VX_NOTIFY then VX_NOTIFY("Characters: " .. #fresh .. " found", true) end
+        end })
+    end
+    VX_UI_READY = tick()   -- everything above is built; the one-click switch is armed 3s from now
 
     -- ===================== TARGET (type a username -> act on that player) =====================
     local TargetPage = Window:Page({ Name = "Target", Icon = "crosshair" })
