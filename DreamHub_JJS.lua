@@ -3363,7 +3363,13 @@ do
         -- chain throws EXACTLY ONE click. R.chainUntil is the window both of those check.
         R.chainUntil = tick() + 1.0
         local myGen = R.gen or 0
-        _G.VX_BF_RECLICK = false                    -- the chain's own click IS the M1; no second one
+        -- ═══ DO NOT DISABLE THE RE-CLICK ═══ This used to set _G.VX_BF_RECLICK = false to stop the M1 spam,
+        -- but the engine's own note is explicit: the re-click IS the primary Black Flash trigger. Killing it
+        -- left the engine pressing key 3 alone, which by that same note often does nothing - so every mode
+        -- dashed correctly and then simply did not flash. Two clicks is what a real player throws: one to
+        -- start the swing, one re-tap on the windup frame to land the flash. The duplicate sources that
+        -- actually caused "M1 M1 M1" are the InputBegan path and the retry, and both are gated on
+        -- R.chainUntil below - so the spam stays fixed without switching the flash off.
         VMouseClick()
         if not _G.VX_BFAPI_ON then      -- no engine at all -> best-effort blind press so something happens
             task.wait(0.19); pressBF()
@@ -3379,7 +3385,6 @@ do
                 pressBF()
             end)
         end
-        task.delay(1.0, function() _G.VX_BF_RECLICK = _G.VX_BF_RECLICK_USER ~= false end)   -- give the setting back
         if borrowed then
             task.delay(1.2, function()  -- covers the swing, the flash frame AND the retry above before handing back
                 if _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(_G.VX_BFAPI_WANT == true) end) end
@@ -3540,11 +3545,15 @@ do
             -- It never calls pressBF/m1ThenBF, so pressing Q can never flash.
             -- SMALL, FAST, SHARP: a quick clip around to the CORNER of their back (endBias offsets off the
             -- spine so the M1 does not land the knockdown), not a long orbit.
-            dashToBack(t, { duration = 0.16, extraSweep = math.pi * 0.18, endBias = 0.55 })
+            -- ═══ "DON'T GLIDE, MAKE IT FASTER" ═══ The glide IS the arc duration: the orbit interpolates your
+            -- CFrame across the whole window, so a longer window is literally a longer visible slide. 0.16 ->
+            -- 0.10 nearly halves it, and the tighter sweep means less distance to cover in that time, so it
+            -- reads as a sharp snap around them rather than a drift. The follow-up M1 moves in to match.
+            dashToBack(t, { duration = 0.10, extraSweep = math.pi * 0.12, endBias = 0.45, endRadius = 4.2 })
             faceBackOf(t)
         end)
-        if Settings.SideM1 and not isBF then task.delay(0.34, function() aimCameraAt((t:FindFirstChild("HumanoidRootPart") or e).Position); VMouseClick() end) end
-        task.delay(0.55, function() R.curving = false; if R.lockKind == "cam" then R.lockTarget = nil; R.lockKind = nil end end)
+        if Settings.SideM1 and not isBF then task.delay(0.20, function() aimCameraAt((t:FindFirstChild("HumanoidRootPart") or e).Position); VMouseClick() end) end
+        task.delay(0.34, function() R.curving = false; if R.lockKind == "cam" then R.lockTarget = nil; R.lockKind = nil end end)
         if not isBF then status("Side Dash L") end
         return true
     end
@@ -3617,7 +3626,7 @@ do
         -- ("it dashes behind them but doesn't black flash"). Dash to their back FIRST, then flash.
         -- "for a side dash you need to make it more legit and fast" - the shortest, flattest clip of any mode:
         -- 0.14s, a tight 0.10pi sweep, no vertical arc, ending just off the spine. Reads as a real Q dash.
-        dashToBack(t, { duration = 0.14, extraSweep = math.pi * 0.10, endRadius = 4.4, endBias = 0.35, yArc = 0 })
+        dashToBack(t, { duration = 0.10, extraSweep = math.pi * 0.12, endRadius = 4.2, endBias = 0, yArc = 0 })
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
         task.wait(0.12)                                   -- let the dash settle before we test the distance
@@ -4425,17 +4434,21 @@ do
 	-- was the key each holds: the slam holds S, the uppercut held Space. Space is JUMP, not a direction - so
 	-- the uppercut was hopping you instead of naming a direction, which is both why it did nothing and why it
 	-- made you jump. S means "down", so the symmetric key for "up" is W. Same shape as the slam now.
+	-- ═══ UP IS SPACE, NOT W ═══ W was a symmetry guess off the working Down-Slam-uses-S pattern, and it does
+	-- not work. Space is the version that was explicitly confirmed working ("upper cut is good, just don't make
+	-- me jump when I don't M1"). The jumping complaint was never the Space press - it was onSwing firing on
+	-- animations that were not real M1s, and realM1Now() fixes that at the trigger. So: Space, guarded.
 	local function spaceDown()
 		if State.spaceHeld then return end
 		State.spaceHeld = true
-		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.W] = tick() + 3   -- our own key: Auto Air/feints must ignore it
-		VIM:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 3   -- our own key: Auto Air/feints must ignore it
+		VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
 	end
 	local function spaceUp()
 		if not State.spaceHeld then return end
 		State.spaceHeld = false
-		VIM:SendKeyEvent(false, Enum.KeyCode.W, false, game)
-		pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)   -- release any Space an older build left held
+		VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+		pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.W, false, game) end)   -- release any W an older build left held
 	end
 	-- DOWN SLAM / UPPERCUT are decided by your PHYSICAL STATE (airborne / holding space), not by a string
 	-- argument. The old path fired Activated("Down"), which JJS does not accept - so nothing happened. Both
@@ -4496,7 +4509,10 @@ do
 		-- the remote alone is what did nothing, exactly as it did for "Up".
 		downDown()
 		fireDir("Down")
-		task.delay(0.40, function() downUp() end)   -- same reason as the uppercut's Space hold
+		-- ═══ "IT PUSHES ME BACK A LITTLE" ═══ S is the BACKWARD movement key, so a 0.40s hold literally walks
+		-- you backwards for four tenths of a second. The game only needs the direction held at the instant the
+		-- swing registers, not across the whole animation - 0.12s covers that and is too short to move you.
+		task.delay(0.12, function() downUp() end)
 		return true
 	end
 	-- THE RAW-CLICK SLAM PATH. onSwing() is animation-driven, and an AIRBORNE M1 usually plays a different
