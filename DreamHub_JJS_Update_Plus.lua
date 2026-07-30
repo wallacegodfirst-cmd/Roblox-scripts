@@ -1,34 +1,33 @@
---[[  Dream Hub · Jujutsu Shenanigans — UPDATE / BETA build (hardened loader)
+--[[  Dream Hub · Jujutsu Shenanigans — UPDATE / BETA build, PLUS tier (hardened loader)
 
       This is the SAME loader shape as DreamHub_JJS_Free.lua, with one difference that is the whole
       point of the file: it fetches DreamHub_JJS.lua (the DEV build, updated constantly) instead of
       DreamHub_JJS_Public.lua (the frozen build your users load).
 
       ── WHO GETS WHAT ──────────────────────────────────────────────────────────────────────────
-        Your users    ->  DreamHub_JJS_Free.lua        ->  DreamHub_JJS_Public.lua  (frozen)
-        You / testers ->  DreamHub_JJS_Update.lua      ->  DreamHub_JJS.lua  (newest, FREE tier)
-                      ->  DreamHub_JJS_Update_VIP.lua  ->  DreamHub_JJS.lua  (newest, VIP tier)
-                      ->  DreamHub_JJS_Update_Plus.lua ->  DreamHub_JJS.lua  (newest, PLUS tier)
-      The three UPDATE loaders are the same build at a different tier - loading one IS the tier, so
-      there is no flag to remember and no leftover flag from a previous run to trip over.
+        Your users   ->  DreamHub_JJS_Free.lua      ->  fetches DreamHub_JJS_Public.lua  (frozen)
+        You / testers ->  DreamHub_JJS_Update_Plus.lua -> fetches DreamHub_JJS.lua  (newest, PLUS)
 
       So day-to-day fixes never reach your users until you say "release it" and the public file is
       updated. Until then they stay on the last build you approved, and nothing you are mid-way
       through testing can break them.
 
       ── LOAD IT ────────────────────────────────────────────────────────────────────────────────
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/wallacegodfirst-cmd/Roblox-scripts/refs/heads/claude/improve-ai-system-tUhhn/DreamHub_JJS_Update.lua"))()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/wallacegodfirst-cmd/Roblox-scripts/refs/heads/claude/improve-ai-system-tUhhn/DreamHub_JJS_Update_Plus.lua"))()
 
-      Tier defaults to FREE to match the free build it mirrors. To test another tier, set the flag
-      BEFORE this loadstring:  _G.JJS_PLUS = true   /   _G.JJS_PREMIUM = true
+      This loader is hard-wired to PLUS. The FREE-tier equivalent is DreamHub_JJS_Update.lua, and your
+      users are unaffected either way - they load DreamHub_JJS_Free.lua, which fetches the frozen build.
 
       Some executors' HttpGet proxy returns corrupted/empty junk instead of the real script; a plain
       one-line loader then runs `loadstring(nil)()` = "attempt to call a nil value". This loader
       VALIDATES every download, retries through several fetch methods, and reports what happened.  ]]
 
--- Tier: FREE unless you already set one above. Same trimmed feature set as the public free build,
--- so what you test here is what your users will get when you release.
-if not (_G.JJS_PLUS or _G.JJS_PLUSS or _G.JJS_PREMIUM or _G.JJS_PREM) then _G.JJS_FREE = true end
+-- Tier: PLUS, always. This file exists so you can test the newest dev build at PLUS WITHOUT having to
+-- remember to set a flag first - loading it IS the tier. PLUS unlocks everything VIP has plus the plus-only extras.
+-- The flags are consumed by the hub on load (they live in _G and would otherwise leak between runs), so a
+-- previous FREE or PLUS run cannot bleed into this one.
+_G.JJS_FREE, _G.JJS_PLUS, _G.JJS_PLUSS, _G.JJS_PREMIUM, _G.JJS_PREM = nil, nil, nil, nil, nil
+_G.JJS_PLUS = true
 _G.__DreamReportWebhook = _G.__DreamReportWebhook or ("https://discord.com/api/webhooks/1527849806108692500/".."Ryczyznv3EQVLJF_Y-AYsMqhK".."_fvBC5T3wu2d1uO5BBmSgMARN0_hST5vRRlzQZHkLyg")   -- bug reports land in your Discord
 
 -- ═══════════════════════════════════════════════════════════
@@ -49,10 +48,10 @@ local URLS = {
 }
 local StarterGui = game:GetService("StarterGui")
 local function toast(msg, dur)
-	pcall(function() StarterGui:SetCore("SendNotification", {Title="Dream Hub UPDATE", Text=msg, Duration=dur or 6}) end)
-	print("[Dream Hub update loader] "..tostring(msg))
+	pcall(function() StarterGui:SetCore("SendNotification", {Title="Dream Hub UPDATE PLUS", Text=msg, Duration=dur or 6}) end)
+	print("[Dream Hub update loader PLUS] "..tostring(msg))
 end
-toast("JJS UPDATE (beta) loader running - fetching newest build...")
+toast("JJS UPDATE PLUS (beta) loader running - fetching newest build...")
 
 -- the real script is ~600KB, starts with a --[[ comment, and contains our banner
 local function valid(src)
@@ -95,7 +94,7 @@ if not src then
 	end
 	return
 end
-toast("download verified via "..how.." - starting Dream Hub UPDATE (beta)...")
+toast("download verified via "..how.." - starting Dream Hub UPDATE PLUS (beta)...")
 local fn, err = loadstring(src)
 if not fn then toast("compile error (send this to support): "..tostring(err), 14) return end
 local ok, rerr = pcall(fn)

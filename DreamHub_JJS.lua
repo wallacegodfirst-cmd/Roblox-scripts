@@ -6876,6 +6876,71 @@ do
 
 	local swapOn, swapMode, swapRange, swapCD = false, "Closest", 60, 2.5
 	local perfectOn, perfectDelay = false, 0.12
+	-- ═══════════════════════ SWAP TRIGGERS ═══════════════════════
+	-- "make it work when they dash, m1, or when the target is on the floor."
+	-- All three OFF = the original behaviour, a swap whenever the cooldown is up and you are not busy. Turn any
+	-- of them ON and the swap becomes REACTIVE: it waits for that moment on the target and takes it. They stack,
+	-- so you can arm dash + down and ignore M1s.
+	local trigDash, trigM1, trigDown = false, false, false
+	local function anyTrigger() return trigDash or trigM1 or trigDown end
+	local DASH_SPEED = 55        -- studs/s, horizontal. Sprinting sits well under this; the game's dash impulse is ~105.
+	-- Per-target memory so an event fires ONCE per occurrence instead of every frame it is still true.
+	local seenState = setmetatable({}, { __mode = "k" })
+	local function trackOf(t)    -- what the target is playing right now, by id
+		local h = t and t:FindFirstChildOfClass("Humanoid")
+		local a = h and h:FindFirstChildOfClass("Animator")
+		if not a then return nil end
+		local ok, tracks = pcall(function() return a:GetPlayingAnimationTracks() end)
+		if not ok or not tracks then return nil end
+		return tracks
+	end
+	-- ON THE FLOOR = knocked down. JJS expresses this several different ways depending on what put them there,
+	-- so accept any of them rather than betting on one: the ragdoll humanoid states, PlatformStand, and the
+	-- Ragdoll/Ragdolled value the anti-ragdoll module already looks for on the character's Info folder.
+	local function isDown(t)
+		local h = t and t:FindFirstChildOfClass("Humanoid")
+		if not h then return false end
+		if h.PlatformStand then return true end
+		local ok, st = pcall(function() return h:GetState() end)
+		if ok and (st == Enum.HumanoidStateType.Physics or st == Enum.HumanoidStateType.Ragdoll
+			or st == Enum.HumanoidStateType.FallingDown or st == Enum.HumanoidStateType.GettingUp) then return true end
+		if h:GetAttribute("Ragdoll") == true or h:GetAttribute("Ragdolled") == true or h:GetAttribute("Downed") == true then return true end
+		local info = t:FindFirstChild("Info")
+		local rag = info and (info:FindFirstChild("Ragdoll") or info:FindFirstChild("Ragdolled"))
+		if rag and rag:IsA("ValueBase") and rag.Value == true then return true end
+		return false
+	end
+	local function isDashing(t)
+		local r = t and t:FindFirstChild("HumanoidRootPart"); if not r then return false end
+		local v = r.AssemblyLinearVelocity
+		-- HORIZONTAL only: falling is not dashing, and a knockback launch would otherwise read as one.
+		return Vector3.new(v.X, 0, v.Z).Magnitude >= DASH_SPEED
+	end
+	local function isM1ing(t)
+		local tracks = trackOf(t); if not tracks then return false end
+		for _, tr in ipairs(tracks) do
+			local ok, id = pcall(function() return string.match(tostring(tr.Animation.AnimationId), "%d+") end)
+			-- _G.VX_M1_IDS is the captured M1 id table for all 20 characters - the same one the flash engine
+			-- trusts - so this works on whoever you happen to be fighting, with no per-character setup.
+			if ok and id and _G.VX_M1_IDS and _G.VX_M1_IDS[id] and tr.TimePosition < 0.45 then return true end
+		end
+		return false
+	end
+	-- Returns the trigger name if one just BECAME true for this target, else nil. Edge-detected: holding a
+	-- dash or lying on the floor is one event, not sixty.
+	local function triggerFired(t)
+		if not t then return nil end
+		local was = seenState[t]; if not was then was = {}; seenState[t] = was end
+		local fired = nil
+		local function edge(key, now, label)
+			if now and not was[key] then fired = fired or label end
+			was[key] = now
+		end
+		edge("dash", trigDash and isDashing(t) or false, "they dashed")
+		edge("m1",   trigM1   and isM1ing(t)   or false, "they M1'd")
+		edge("down", trigDown and isDown(t)    or false, "they're down")
+		return fired
+	end
 
 	local function lockedTarget()
 		local g = _G.VX_LOCK
@@ -6906,11 +6971,16 @@ do
 	--   VX_LAST_CLICK  - stamped EVERY FRAME the M1 button is held, so a held combo reads busy for its whole
 	--                    length (that is the same stamp the Black Flash engine relies on)
 	--   VX_BF_LAST_FIRE- a flash just landed; the follow-through is still playing
-	local function busy()
+	-- reactive = a Swap When trigger asked for this specific moment. A finisher is still untouchable (that was
+	-- the original ask: never interrupt an uppercut or a down slam), but the "you clicked recently" and "you
+	-- just cast a move" blocks are dropped - in a real fight you are almost always inside those windows, so
+	-- keeping them would mean the triggers essentially never fire, which is not what asking for them means.
+	local function busy(reactive)
 		local now = tick()
 		if now - (tonumber(_G.VX_FINISHER_T) or 0) < 2.0 then return true end
+		if now - (tonumber(_G.VX_BF_LAST_FIRE) or 0) < (reactive and 0.35 or 1.0) then return true end
+		if reactive then return false end
 		if now - (tonumber(_G.VX_LAST_CLICK) or 0) < 1.2 then return true end
-		if now - (tonumber(_G.VX_BF_LAST_FIRE) or 0) < 1.0 then return true end
 		if now - (tonumber(_G.VX_TOTAL_MOVE_T) or 0) < 1.0 then return true end   -- you just cast 1/2/3/4
 		return false
 	end
@@ -6940,8 +7010,36 @@ do
 	task.spawn(function()
 		while true do
 			if swapOn then
-				if not busy() then pcall(doSwap, "auto", swapCD) end
-				task.wait(0.2)
+				if anyTrigger() then
+					-- REACTIVE. Poll fast: a dash is over in ~0.15s and an M1 windup in ~0.2s, so at the
+					-- 0.2s idle rate we would miss most of them.
+					-- Watch EVERYONE in range, not just pickTarget(): "swap when they dash" means whoever
+					-- dashes. Resolving a single target each tick would also re-roll "Random" every 60ms and
+					-- reset the edge detector before it ever saw an edge. Lock Target still means only them.
+					local hit, hitWhy, hitD
+					if swapMode == "Lock Target" then
+						local lt = lockedTarget()
+						local w = lt and triggerFired(lt) or nil
+						if w then hit, hitWhy = lt, w end
+					else
+						local hrp = myHRP()
+						if hrp then
+							eachEnemy(function(m, r)
+								local d = (r.Position - hrp.Position).Magnitude
+								if d > swapRange then return end
+								local w = triggerFired(m)                       -- called for EVERY enemy: the edge
+								if w and (not hitD or d < hitD) then            -- state has to stay live for all of them
+									hit, hitWhy, hitD = m, w, d
+								end
+							end)
+						end
+					end
+					if hit and not busy(true) then pcall(doSwap, hitWhy, swapCD, hit) end
+					task.wait(0.06)
+				else
+					if not busy() then pcall(doSwap, "auto", swapCD) end
+					task.wait(0.2)
+				end
 			else
 				task.wait(0.4)
 			end
@@ -7191,6 +7289,10 @@ do
 		setSwapMode  = function(v) v = (type(v) == "table") and v[1] or v; if type(v) == "string" then swapMode = v end end,
 		setSwapRange = function(v) swapRange = tonumber(v) or swapRange end,
 		setSwapCD    = function(v) swapCD = tonumber(v) or swapCD end,
+		setTrigDash  = function(v) trigDash = v == true end,
+		setTrigM1    = function(v) trigM1   = v == true end,
+		setTrigDown  = function(v) trigDown = v == true end,
+		setDashSpeed = function(v) DASH_SPEED = tonumber(v) or DASH_SPEED end,
 		setPerfect   = function(v) perfectOn = v == true; syncKeySub(); if perfectOn then pcall(hookAnims) end end,   -- hook NOW, not up to a second from now, or the first cast after switching on is missed
 		setPerfectDelay = function(v) perfectDelay = math.max(0, tonumber(v) or 0) end,
 		swapNow      = function() return doSwap("manual", 0) end,
@@ -13332,6 +13434,11 @@ do
     swapSec:Dropdown({ Name = "Swap Target", Items = { "Closest", "Random", "Lock Target" }, Default = "Closest", Callback = function(v) if TodoApi then TodoApi.setSwapMode(v) end end })
     swapSec:Slider({ Name = "Swap Range", Min = 10, Max = 200, Default = 60, Decimals = 1, Callback = function(v) if TodoApi then TodoApi.setSwapRange(v) end end })
     swapSec:Slider({ Name = "Swap Cooldown", Min = 0.3, Max = 8, Default = 2.5, Decimals = 0.1, Suffix = "s", Callback = function(v) if TodoApi then TodoApi.setSwapCD(v) end end })
+    pcall(function() swapSec:Label("Swap When: leave all three off and it swaps on the cooldown like before. Turn any on and it waits for that moment on the target instead. They stack.") end)
+    swapSec:Toggle({ Name = "Swap When They Dash", Default = false, Callback = function(b) if TodoApi then TodoApi.setTrigDash(b) end end })
+    swapSec:Toggle({ Name = "Swap When They M1", Default = false, Callback = function(b) if TodoApi then TodoApi.setTrigM1(b) end end })
+    swapSec:Toggle({ Name = "Swap When They're Down", Default = false, Callback = function(b) if TodoApi then TodoApi.setTrigDown(b) end end })
+    swapSec:Slider({ Name = "Dash Detect Speed", Min = 30, Max = 120, Default = 55, Decimals = 1, Callback = function(v) if TodoApi then TodoApi.setDashSpeed(v) end end })   -- lower = triggers on a sprint too, higher = only a real dash
     swapSec:Toggle({ Name = "Auto Perfect Swap", Default = false, Callback = function(b) if TodoApi then TodoApi.setPerfect(b) end end })
     swapSec:Slider({ Name = "Perfect Swap Delay", Min = 0, Max = 0.6, Default = 0.12, Decimals = 0.01, Suffix = "s", Callback = function(v) if TodoApi then TodoApi.setPerfectDelay(v) end end })
     swapSec:Button({ Name = "Swap Now", Callback = function() if TodoApi then TodoApi.swapNow() end end })
