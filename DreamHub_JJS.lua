@@ -1076,21 +1076,22 @@ do
 				delayTime = 0.19
 			end
 		end
-		-- ═══ THE LOOSE FALLBACK IS WHERE EVERY FALSE FLASH COMES FROM ═══ A known M1 id (above) is proof; this
-		-- is a guess - "any Action-priority track behind a recent click". It exists so a character whose M1 ids
-		-- were never captured still flashes, and it must stay, but it is now refused in the two situations
-		-- where it is reliably WRONG:
-		--   * mid-dash. VXBF2 taps the real dash key on the way to the target, and the game's dash clip is
-		--     Action priority landing right after your click - exactly this shape. While borrowed it SPENT the
-		--     chain's single-shot flash on the dash, so the real M1 windup 0.1s later was thrown away as
-		--     "already used": the mode dashed perfectly and never flashed.
-		--   * while borrowed. A borrow may produce exactly one flash, so it must be spent on a swing we are
-		--     sure about - and _G.VX_M1_IDS already covers all 20 characters' M1s, which is what a chain's
-		--     click produces. Note this deliberately sits BELOW the id lookups: a known M1 is never blocked by
-		--     either rule, which is what keeps M1 Chain (it rides YOUR swing, mid-dash) flashing.
-		local looseOK = not _G.VX_BF_BORROWED and tick() >= (tonumber(_G.VX_BF_DASHANIM) or 0)
+		-- ═══ I OVER-TIGHTENED THIS AND IT COST EVERY UNCAPTURED CHARACTER ITS FLASH ═══
+		-- This fallback ("any Action-priority track behind a recent click") is what lets a character whose M1
+		-- ids were never captured flash at all. I had also refused it WHILE BORROWED, on the reasoning that a
+		-- borrow is single-shot so it should only be spent on an id we are sure about. That reasoning silently
+		-- assumed _G.VX_M1_IDS covers whoever you are playing - and it does not. Todo, Hakari and anyone else
+		-- added since that table was captured have no entry, so for them a borrowed chain had NO route to a
+		-- windup whatsoever: the mode dashed perfectly, saw the swing, and refused it. That is "BF MODES ARE
+		-- NOT BLACK FLASHING ALL OF THEM".
+		-- The dash blind stays, because that one is precise and is the real thief: VXBF2 taps the game's own
+		-- dash key on the way in, and its clip is Action priority landing right after your click - exactly this
+		-- shape. Blocking the dash window alone fixes the theft without blinding uncaptured characters, and the
+		-- borrow guard at the top of this function already requires the swing to arrive within 0.45s of the
+		-- chain's own click, which is a much better filter than "must be a known id".
+		local looseOK = tick() >= (tonumber(_G.VX_BF_DASHANIM) or 0)
 		if not delayTime and not looseOK and _G.VX_BF_DEBUG then
-			print("[BF] unknown Action anim during a dash/borrow - not treating it as a windup")
+			print("[BF] unknown Action anim inside the dash window - not treating it as a windup")
 		end
 		if not delayTime and looseOK then
 			local pr = track.Priority
@@ -2323,8 +2324,12 @@ end
 -- pass was fired during the move -- now every few hops we fire it so the server accepts the motion. VX_TP_METHOD
 -- picks Glide (default) / Instant / Auto; VX_TP_SPEED is the hop size (lower = gentler if a server still resists).
 local function safeTeleport(targetCFrame, holdTime)
-	local char = vxMyChar(); if not char then return false end
-	local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return false end
+	-- Both of these used to fail SILENTLY, and a teleport that never starts looks identical to one that gets
+	-- reverted. Say which it was.
+	local char = vxMyChar()
+	if not char then if VX_NOTIFY then VX_NOTIFY("Teleport: your character isn't loaded yet", false) end return false end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp then if VX_NOTIFY then VX_NOTIFY("Teleport: no HumanoidRootPart (respawning?)", false) end return false end
 	for _, v in ipairs(char:GetDescendants()) do
 		if v:IsA("AlignPosition") or v:IsA("AlignOrientation") or v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("BodyGyro") or v:IsA("BodyAngularVelocity") or v:IsA("VectorForce") or v:IsA("LinearVelocity") then
 			pcall(function() v:Destroy() end)
@@ -2531,6 +2536,27 @@ local function safeTeleport(targetCFrame, holdTime)
 				end)
 			end
 			vxCurrentTargetCF = targetCFrame
+			-- ═══ THE GLIDE PATH NEVER CHECKED WHETHER IT ARRIVED ═══ The instant path measures, retries once
+			-- and reports. This one - which is the DEFAULT method - was fire-and-forget: if the flight was
+			-- reverted, blocked, or interrupted, you simply ended up somewhere else with nothing said. From
+			-- the outside that is exactly "teleport dont work", and it gives me nothing to work from either.
+			-- Measure, re-fly once, and if it still failed say so with the number.
+			task.delay(0.35, function()
+				if myGen ~= vxTeleGen then return end
+				local cv = vxMyChar(); local hv = cv and cv:FindFirstChild("HumanoidRootPart")
+				local off = hv and (hv.Position - targetCFrame.Position).Magnitude or 9e9
+				if off <= 25 then return end
+				if _G.VX_TP_DEBUG then print(string.format("[DreamHub TP] glide landed %.0f studs off - one retry", off)) end
+				vxVelocityLeg(targetCFrame.Position, vel, myGen)
+				task.wait(0.35)
+				if myGen ~= vxTeleGen then return end
+				local cw = vxMyChar(); local hw = cw and cw:FindFirstChild("HumanoidRootPart")
+				local off2 = hw and (hw.Position - targetCFrame.Position).Magnitude or 9e9
+				if off2 > 25 then
+					if VX_NOTIFY then VX_NOTIFY(string.format("Teleport failed: %.0f studs short. Try TP Method = Instant.", off2), false) end
+					print(string.format("[DreamHub TP] FAILED: %.0f studs off after a retry (method=%s, dist=%.0f, vel=%d) - send me this line", off2, tostring(method), dist, vel))
+				end
+			end)
 		end)
 	end
 	task.delay(glideSecs + hold, function()
@@ -3546,6 +3572,9 @@ do
         -- actually caused "M1 M1 M1" are the InputBegan path and the retry, and both are gated on
         -- R.chainUntil below - so the spam stays fixed without switching the flash off.
         _G.VX_BF_CHAINCLICK = tick()
+        -- The dash is finished by the time we swing - we are standing on their spine. Clear the dash blind so
+        -- a swing that the game defers by a few frames cannot land inside a window meant for the dash clip.
+        _G.VX_BF_DASHANIM = 0
         VMouseClick()
         if not _G.VX_BFAPI_ON then      -- no engine at all -> best-effort blind press so something happens
             task.wait(0.19); pressBF()
@@ -3727,17 +3756,23 @@ do
         R.curving = true
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 0.55   -- soft camera lock (no icon), auto-expires
         task.spawn(function()
-            -- SIDE DASH ASSIST (Q) = the M1 CHAIN dash, verbatim, with NO Black Flash (per request).
-            -- Same duration and same half-circle sweep, so it whips AROUND them fast and lands on their back.
-            -- It never calls pressBF/m1ThenBF, so pressing Q can never flash.
-            -- SMALL, FAST, SHARP: a quick clip around to the CORNER of their back (endBias offsets off the
-            -- spine so the M1 does not land the knockdown), not a long orbit.
-            -- ═══ "DON'T GLIDE, MAKE IT FASTER" ═══ The glide IS the arc duration: the orbit interpolates your
-            -- CFrame across the whole window, so a longer window is literally a longer visible slide. 0.16 ->
-            -- 0.10 nearly halves it, and the tighter sweep means less distance to cover in that time, so it
-            -- reads as a sharp snap around them rather than a drift. The follow-up M1 moves in to match.
-            dashToBack(t, { duration = 0.10, extraSweep = math.pi * 0.12, endBias = 0.45, endRadius = 4.2 })
-            faceBackOf(t)
+            -- ═══ "IS GOOD JUST DONT MAKE IT TELPORT. MAKE IT LEGIT." ═══ The assist used to ride the same
+            -- orbit the BF chain uses, and that orbit is a per-frame CFrame WRITE - however short you make it,
+            -- it is your body being placed, not moved, which is what reads as a teleport.
+            -- This is now a real dash and nothing else: face the side we want to go, hold that movement key so
+            -- the game's own dash takes that direction, tap the dash key, and let the engine move you. The
+            -- only thing written is your ROTATION, to keep the camera and body on them - no position write, no
+            -- velocity write, no arc. It travels exactly as far as a player's dash travels, because it IS one.
+            local p0 = GetRoot()
+            local side = (p0 and chooseSide(p0, e, nil)) or 1          -- -1 = left, 1 = right; honours A/D if you hold them
+            local key = (side == -1) and Enum.KeyCode.A or Enum.KeyCode.D
+            aimCameraAt(e.Position)
+            VKeyDown(key)                                              -- the dash inherits your movement direction
+            task.wait(0.03)
+            VKeyTap(Settings.DashKey, 0.05)
+            task.wait(0.16)
+            VKeyUp(key)
+            faceBackOf(t)                                              -- rotation only, so it cannot shove anyone
         end)
         if Settings.SideM1 and not isBF then task.delay(0.20, function() aimCameraAt((t:FindFirstChild("HumanoidRootPart") or e).Position); VMouseClick() end) end
         task.delay(0.34, function() R.curving = false; if R.lockKind == "cam" then R.lockTarget = nil; R.lockKind = nil end end)
@@ -4886,10 +4921,19 @@ do
 				-- it threw BEFORE the key hold and the remote below - so with debug on, the uppercut never ran
 				-- at all. That was "auto uppercut doesn't even work" in every debug-enabled test.)
 				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] swing " .. n .. " -> UPPERCUT") end
-				-- Remote only, no held key. Space made you jump, W did nothing at all, and the slam proves the
-				-- remote alone performs the move. Holding a key was only ever adding a side effect.
+				-- ═══ SPACE GOES BACK IN, AND THIS TIME IT IS SAFE ═══ The only build of this that you ever
+				-- reported as working held SPACE across the swing: "UPPER CUT IS GOOD, JSUT DONT MAKE ME JUMP
+				-- WHEN I DONT M1". I read that as "the key is the problem" and removed it. It was not - the
+				-- problem was that the swing detector accepted animations with no click behind them, so it
+				-- jumped you at random. That gate is now a hard one (realM1Now at the top of onSwing), so the
+				-- only thing left to fix was the key I took out. The remote ALONE is what has never worked; the
+				-- slam is not evidence against that, because the slam has the hop doing the same job Space does
+				-- here - putting you in the state the game accepts the move from.
+				-- Held ACROSS the swing, then released. The watchdog below releases it if this task is ever lost.
+				spaceDown()
 				fireDir("Up")
-				spaceUp()   -- release anything an older build left held
+				local upTok = State.lastUp
+				task.delay(0.22, function() if State.lastUp == upTok then spaceUp() end end)
 				_G.VX_FINISHER_T = tick()   -- see doSlam: Auto Swap must not interrupt a finisher
 			end
 		end
@@ -6925,7 +6969,9 @@ do
 	-- YOURSELF (you dash or M1, and it swaps you onto them on that beat). Down is always THEIRS - swapping
 	-- because you are the one on the floor is not a thing anyone wants - so it ignores this setting.
 	local trigWho = "Them"
-	local function anyTrigger() return trigDash or trigM1 or trigDown end
+	-- Set by the shared input polls when trigWho == "Me". Read (and consumed) by triggerFired.
+	local myDashT, myM1T = 0, 0
+	local function anyTrigger() return trigWho ~= "Off" and (trigDash or trigM1 or trigDown) end
 	local DASH_SPEED = 55        -- studs/s, horizontal. Sprinting sits well under this; the game's dash impulse is ~105.
 	-- Per-target memory so an event fires ONCE per occurrence instead of every frame it is still true.
 	local seenState = setmetatable({}, { __mode = "k" })
@@ -6979,14 +7025,24 @@ do
 			if now and not was[key] then fired = fired or label end
 			was[key] = now
 		end
-		-- WHOSE dash / WHOSE M1. On "Me" the source is your own body, but the edge state still lives under the
-		-- TARGET, so switching who you are looking at re-arms cleanly instead of carrying a stale edge across.
-		local me = (trigWho == "Me") and myModel() or nil
-		local dashSrc = me or t
-		local m1Src   = me or t
-		edge("dash", trigDash and isDashing(dashSrc) or false, (me and "I dashed") or "they dashed")
-		edge("m1",   trigM1   and isM1ing(m1Src)     or false, (me and "I M1'd")   or "they M1'd")
-		edge("down", trigDown and isDown(t)          or false, "they're down")   -- always theirs
+		-- ═══ ON "ME", DO NOT GUESS FROM PHYSICS - READ THE INPUT ═══ "when I press Q, it must swap. when I
+		-- M1, it must swap." A velocity threshold and an animation lookup are both inferences about what you
+		-- did; your key and your click are the thing itself. So on "Me" the dash trigger is the Q press and the
+		-- M1 trigger is the click, both delivered by the shared input polls (see the subscriptions below) and
+		-- consumed here as a one-shot stamp. On "Them" we have no choice but to infer, so those keep the
+		-- speed test and the animation test.
+		if trigWho == "Me" then
+			local dashHit = trigDash and (tick() - (myDashT or 0) < 0.35)
+			local m1Hit   = trigM1   and (tick() - (myM1T   or 0) < 0.35)
+			if dashHit then myDashT = 0 end                -- consume: one press, one swap
+			if m1Hit   then myM1T   = 0 end
+			edge("dash", dashHit or false, "I pressed Q")
+			edge("m1",   m1Hit   or false, "I M1'd")
+		else
+			edge("dash", trigDash and isDashing(t) or false, "they dashed")
+			edge("m1",   trigM1   and isM1ing(t)   or false, "they M1'd")
+		end
+		edge("down", trigDown and isDown(t) or false, "they're down")   -- always theirs
 		return fired
 	end
 
@@ -6996,6 +7052,7 @@ do
 		return (t and t.Parent) and t or nil
 	end
 	local function pickTarget()
+		if swapMode == "Off" then return nil end                      -- the dropdown's own off switch
 		if swapMode == "Lock Target" then return lockedTarget() end   -- no fallback: "Lock Target" means THAT one or none
 		local hrp = myHRP(); if not hrp then return nil end
 		if swapMode == "Random" then
@@ -7212,7 +7269,22 @@ do
 	-- sweep back on the hot path for everyone - the exact cost the lag pass removed.
 	local function syncKeySub()
 		if not _G.VX_ON_KEY then return end
-		_G.VX_ON_KEY("totalperfect", (swapOn or perfectOn) and onMoveKey or nil)
+		local wantKeys = swapOn or perfectOn
+		_G.VX_ON_KEY("totalperfect", wantKeys and function(kc)
+			-- YOUR Q, for "Trigger On: Me". Q is already in the shared poll's watch list. Skip a Q that the
+			-- hub injected itself (the BF dash modes tap the real dash key) - swapping off our own dash would
+			-- turn one chain into a swap loop.
+			if kc == Enum.KeyCode.Q and trigWho == "Me" and trigDash then
+				local injK = _G.VX_INJ_KEYS
+				if not (injK and injK[kc] and tick() < injK[kc]) then myDashT = tick() end
+			end
+			onMoveKey(kc)
+		end or nil)
+		-- YOUR click, for "Trigger On: Me". The shared M1 poll only calls subscribers on the rising edge and
+		-- never for a click we injected, so this is your real M1 and nothing else.
+		if _G.VX_M1_SUB then
+			_G.VX_M1_SUB("totalswap", (swapOn and trigWho == "Me" and trigM1) and function() myM1T = tick() end or nil)
+		end
 	end
 
 	-- ═══════════════════════ CHARACTER CHANGER ═══════════════════════
@@ -7422,12 +7494,12 @@ do
 
 	TodoApi = {
 		setSwap      = function(v) swapOn = v == true; syncKeySub(); if swapOn and not isTodo() then todoWarn() end end,
-		setSwapMode  = function(v) v = (type(v) == "table") and v[1] or v; if type(v) == "string" then swapMode = v end end,
+		setSwapMode  = function(v) v = (type(v) == "table") and v[1] or v; if type(v) == "string" then swapMode = v end end,   -- "Off" makes pickTarget return nothing, so nothing swaps
 		setSwapRange = function(v) swapRange = tonumber(v) or swapRange end,
 		setSwapCD    = function(v) swapCD = tonumber(v) or swapCD end,
-		setTrigWho   = function(v) v = (type(v) == "table") and v[1] or v; if v == "Me" or v == "Them" then trigWho = v end end,
-		setTrigDash  = function(v) trigDash = v == true end,
-		setTrigM1    = function(v) trigM1   = v == true end,
+		setTrigWho   = function(v) v = (type(v) == "table") and v[1] or v; if v == "Me" or v == "Them" or v == "Off" then trigWho = v; syncKeySub() end end,
+		setTrigDash  = function(v) trigDash = v == true; syncKeySub() end,
+		setTrigM1    = function(v) trigM1   = v == true; syncKeySub() end,
 		setTrigDown  = function(v) trigDown = v == true end,
 		setDashSpeed = function(v) DASH_SPEED = tonumber(v) or DASH_SPEED end,
 		setPerfect   = function(v) perfectOn = v == true; syncKeySub(); if perfectOn then pcall(hookAnims) end end,   -- hook NOW, not up to a second from now, or the first cast after switching on is missed
@@ -8475,6 +8547,24 @@ do
 				if tick() - (_G.VX_AIRMISS_T or 0) > 2 then
 					_G.VX_AIRMISS_T = tick()
 					print("[DreamHub AutoAir] remote MISSING: " .. svc .. ".RE." .. re .. "  (send me this line)")
+					-- ═══ AND PUT IT ON SCREEN ═══ Printing to F9 only works if someone opens F9. "auto air dont
+					-- work" has come back several times with no console line attached, so the reason now shows
+					-- up in the game where it cannot be missed. It also names the service, which is the single
+					-- piece of information needed to fix it.
+					if VX_NOTIFY then VX_NOTIFY("Auto Air: no remote " .. svc .. "." .. re, false) end
+					-- One-shot: dump what the service folder ACTUALLY has, so a wrong guess is identifiable
+					-- from one run instead of one guess per round trip.
+					if not _G.VX_AIRDUMPED then
+						_G.VX_AIRDUMPED = true
+						pcall(function()
+							local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
+							if not k then print("[DreamHub AutoAir] no Knit.Knit.Services folder at all") return end
+							local names = {}
+							for _, s in ipairs(k:GetChildren()) do names[#names + 1] = s.Name end
+							table.sort(names)
+							print("[DreamHub AutoAir] every service that EXISTS = { " .. table.concat(names, ", ") .. " }")
+						end)
+					end
 				end
 				return false
 			end
@@ -13568,12 +13658,12 @@ do
     local swapSec = totalSub:Section({ Name = "Total", Side = 1 })
     pcall(function() swapSec:Label("Todo only. Auto Swap waits for a gap - it never fires during an uppercut, a down slam or a live M1 combo.") end)
     swapSec:Toggle({ Name = "Auto Swap", Default = false, Callback = function(b) if TodoApi then TodoApi.setSwap(b) end end })
-    swapSec:Dropdown({ Name = "Swap Target", Items = { "Closest", "Random", "Lock Target" }, Default = "Closest", Callback = function(v) if TodoApi then TodoApi.setSwapMode(v) end end })
+    swapSec:Dropdown({ Name = "Swap Target", Items = { "Off", "Closest", "Random", "Lock Target" }, Default = "Closest", Callback = function(v) if TodoApi then TodoApi.setSwapMode(v) end end })
     swapSec:Slider({ Name = "Swap Range", Min = 10, Max = 200, Default = 60, Decimals = 1, Callback = function(v) if TodoApi then TodoApi.setSwapRange(v) end end })
     swapSec:Slider({ Name = "Swap Cooldown", Min = 0.3, Max = 8, Default = 2.5, Decimals = 0.1, Suffix = "s", Callback = function(v) if TodoApi then TodoApi.setSwapCD(v) end end })
-    pcall(function() swapSec:Label("Swap When: all off = swaps on the cooldown like before. Turn any on and it waits for that moment instead. They stack. 'Trigger On' picks whether the dash/M1 has to be YOURS or THEIRS - Down is always theirs.") end)
-    swapSec:Dropdown({ Name = "Trigger On", Items = { "Them", "Me" }, Default = "Them", Callback = function(v) if TodoApi then TodoApi.setTrigWho(v) end end })
-    swapSec:Toggle({ Name = "Swap On Dash", Default = false, Callback = function(b) if TodoApi then TodoApi.setTrigDash(b) end end })
+    pcall(function() swapSec:Label("Swap When: all off = swaps on the cooldown like before. Trigger On = Me means YOUR Q and YOUR click do it; Them means it reacts to the target. Off turns all three triggers off. Down is always theirs.") end)
+    swapSec:Dropdown({ Name = "Trigger On", Items = { "Off", "Them", "Me" }, Default = "Them", Callback = function(v) if TodoApi then TodoApi.setTrigWho(v) end end })
+    swapSec:Toggle({ Name = "Swap On Dash (Q)", Default = false, Callback = function(b) if TodoApi then TodoApi.setTrigDash(b) end end })
     swapSec:Toggle({ Name = "Swap On M1", Default = false, Callback = function(b) if TodoApi then TodoApi.setTrigM1(b) end end })
     swapSec:Toggle({ Name = "Swap When They're Down", Default = false, Callback = function(b) if TodoApi then TodoApi.setTrigDown(b) end end })
     swapSec:Slider({ Name = "Dash Detect Speed", Min = 30, Max = 120, Default = 55, Decimals = 1, Callback = function(v) if TodoApi then TodoApi.setDashSpeed(v) end end })   -- lower = triggers on a sprint too, higher = only a real dash
