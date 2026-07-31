@@ -1138,6 +1138,13 @@ do
 		local ok, id = pcall(function() return track.Animation.AnimationId end)
 		if not ok then return end
 		local delayTime = AnimationTriggers[normalizeAnimationId(id)]
+		-- The cast animation of the chain-trigger press itself (see VX_BF_TRIG3 at the chain key handler) must
+		-- not be a windup: it would spend the chain's single-shot flash before the chain's M1 ever swings.
+		-- Only trigger-table ids are gated - chain M1s authorise via VX_M1_IDS / the loose route, untouched.
+		if delayTime and tick() - (tonumber(_G.VX_BF_TRIG3) or 0) < 0.6 then
+			if _G.VX_BF_DEBUG then print("[BF] this is the trigger press's own cast - not a windup") end
+			return
+		end
 		-- ═══ WHY THIS ONLY EVER WORKED ON THE VESSEL ═══ Every id in AnimationTriggers is an ITADORI move
 		-- (Black Flash 1, Black Flash 2, Focus Strike, Straight Hit). Any other character had no entry, so it
 		-- could only reach the priority fallback below - and a swing whose track is not authored at an Action
@@ -1204,6 +1211,7 @@ do
 			local need = _G.VX_BF_BORROWED and 1 or (tonumber(_G.VX_BF_AFTER) or 1)
 			if swingCount < need then return end   -- wait until your chosen number of M1s
 			swingCount = 0
+			local prevFire = _G.VX_BF_LAST_FIRE
 			_G.VX_BF_LAST_FIRE = tick(); _G.VX_BF_LASTMSG = "flash fired (M1 tap + key 3)"
 			-- CONSUME the chain's authorisation. Without this, a held combo landing a second swing inside the
 			-- same 0.5s window would be authorised again and press 3 twice off one chain.
@@ -1212,7 +1220,14 @@ do
 			if _G.VX_BF_BORROWED then _G.VX_BF_BORROW_USED = (_G.VX_BF_BORROW_USED or 0) + 1 end
 			if _G.VX_BF_DEBUG then pcall(function() print(string.format("[BF] windup id=%s  ->  firing flash (M1 tap + key 3) in %.2fs", tostring(id), math.max(0, delayTime + offset))) end) end
 			task.delay(math.max(0, delayTime + offset), function()
-				if not enabled then return end
+				if not enabled then
+					-- The press was swallowed (a hand-back or mode switch disabled the engine inside this
+					-- 0.19s gap) - so ROLL BACK the accounting above, or the state says a flash fired that
+					-- never did and the chain's fallback press stands down for nothing.
+					_G.VX_BF_LAST_FIRE = prevFire
+					if _G.VX_BF_BORROWED then _G.VX_BF_BORROW_USED = 0 end
+					return
+				end
 				-- Black Flash lands on a PERFECTLY-TIMED KEY 3 on the M1 windup. That is the whole mechanism in
 				-- the source AutoBlackFlash script and it is what happens below. The optional re-click is a
 				-- second, weaker theory that also lands an EXTRA in-game M1 per swing (the M1 M1 M1 spam and
@@ -3922,7 +3937,11 @@ do
         -- and short enough to be clear of a normal re-press.
         task.delay(0.9, function()
             if _G.VX_BF_BORROW_ID ~= myBorrow then return end            -- a newer chain owns the engine now
-            if borrowed and _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(_G.VX_BFAPI_WANT == true) end) end
+            -- ═══ ALWAYS restore, not only when WE armed it ═══ Two overlapping chains could interleave so
+            -- that chain 1's hand-back bailed on the token and chain 2's skipped the restore because IT had
+            -- not armed the engine - leaving the engine permanently on with every toggle reading off. The
+            -- restore is idempotent (it writes the user's recorded choice), so the token match alone decides.
+            if _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(_G.VX_BFAPI_WANT == true) end) end
             _G.VX_BF_BORROWED = false; _G.VX_BF_BORROW_USED = 0
         end)
     end
@@ -4135,41 +4154,47 @@ do
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.4   -- camera stays on them through the hold
         task.spawn(function()
             if not isBF then
-                -- ═══ A REAL DASH, FULL STOP ═══ "when they click Q, it must side dash - not glide, no
-                -- teleport." The orbit is a per-frame CFrame write, and however fast it runs it reads as a
-                -- glide. So the assist now does exactly what a player does: face across them, hold the strafe
-                -- key so the game's dash takes that direction, tap the REAL dash key, and let the engine move
-                -- you. Nothing writes your position during the dash.
-                local p0 = GetRoot()
-                local side = (p0 and chooseSide(p0, e, nil)) or 1
-                local strafe = (side == -1) and Enum.KeyCode.A or Enum.KeyCode.D
+                -- ═══ THE Q YOU PRESSED IS ALREADY THE DASH ═══ Q is the game's own dash key, so by the time
+                -- this runs the game has ALREADY dashed you - a real, legit side dash. Injecting a second
+                -- dash on top is what made it feel wrong. So we do NOT dash again: we stamp the dash-blind (so
+                -- the engine and the combo counter know a dash clip is playing), wait that window out, then
+                -- get behind them and swing. When the caller is programmatic (doSide, no real Q), we DO need
+                -- to produce the dash - detect that by whether a dash key is actually down.
+                local realQ = UserInputService:IsKeyDown(Settings.DashKey) or UserInputService:IsKeyDown(Enum.KeyCode.Q)
+                _G.VX_BF_DASHANIM = tick() + 0.30
                 aimCameraAt(e.Position)
-                VKeyDown(strafe)
-                game:GetService("RunService").RenderStepped:Wait()
-                VKeyTap(Settings.DashKey, 0.04)
-                task.wait(0.18)                            -- the dash owns the movement; we just wait it out
-                VKeyUp(strafe)
+                if not realQ then
+                    -- programmatic call: produce a real dash toward their side, once
+                    local p0 = GetRoot()
+                    local side = (p0 and chooseSide(p0, e, nil)) or 1
+                    local strafe = (side == -1) and Enum.KeyCode.A or Enum.KeyCode.D
+                    VKeyDown(strafe)
+                    game:GetService("RunService").RenderStepped:Wait()
+                    VKeyTap(Settings.DashKey, 0.04)
+                    task.wait(0.02)
+                    VKeyUp(strafe)
+                end
+                -- Wait for the dash to actually END before repositioning - an M1 or a CFrame write during
+                -- dash recovery is refused (the file's own rule), and holdBack fighting the dash's leftover
+                -- momentum is the rubber-band. Poll the blind, capped.
+                local dl = tick() + 0.5
+                while tick() < (tonumber(_G.VX_BF_DASHANIM) or 0) and tick() < dl do task.wait() end
                 faceBackOf(t)                              -- rotation only - never a position write
-                -- THEN the M1s, from behind them, while holdBack trails their spine so a turning target
-                -- cannot walk out of the swings.
-                local hold = tonumber(_G.VX_SIDE_HOLD) or 1.0
+                local hold = tonumber(_G.VX_SIDE_HOLD) or 0.8
                 task.spawn(function() holdBack(t, hold) end)
+                task.wait(0.06)                            -- let holdBack settle you on the spine first
                 local n = math.clamp(tonumber(_G.VX_SIDE_M1S) or 1, 0, 4)
                 if n > 0 then
                     aimCameraAt((t:FindFirstChild("HumanoidRootPart") or e).Position)
-                    -- ONE HELD press, n swings: the recorder capture proved JJS advances the combo while the
-                    -- button is DOWN. n taps only ever landed the first.
+                    -- ONE HELD press, n swings: JJS advances the combo while the button is DOWN (recorder-proven).
                     local dur = 0.12 + (n - 1) * 0.35
-                    _G.VX_SYNTH_CLICK = tick() + dur + 0.25
                     local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
                     local cx, cy = (vp and vp.X / 2) or 400, (vp and vp.Y / 2) or 300
                     pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0) end)
                     local t0 = tick()
                     while tick() - t0 < dur do
-                        -- SYNTH keeps the M1 subscribers from re-entering; HUMAN keeps the swings COUNTING.
-                        -- You pressed Q - these swings are yours, and Auto Down Slam / the flash engine must
-                        -- treat them that way. Without the human stamp, side dashing mid-combo silently
-                        -- disqualified every following swing and the slam never fired.
+                        -- SYNTH stops the per-click subscribers re-entering; HUMAN keeps the swings COUNTING
+                        -- so Auto Down Slam still fires if you side dash mid-combo.
                         _G.VX_SYNTH_CLICK = tick() + 0.25
                         _G.VX_LAST_HUMAN_CLICK = tick()
                         task.wait(0.05)
@@ -4319,7 +4344,7 @@ do
         if tick() - (R.backDashT or 0) > 6 then R.backDashAlt = false end
         R.backDashAlt = not R.backDashAlt
         R.backDashT = tick()
-        local jumpThis = R.backDashAlt == false   -- false after the 2nd toggle -> the jump variant
+        local _jumpThis = R.backDashAlt == false   -- (kept: the alternation still resets engagement timing)
         aimCameraAt(e.Position)
         -- ═══ FACING CHECK ═══ "if the target is looking forward it'll automatically back dash behind them".
         -- Looking at you  -> go AROUND to their back (wide sweep) so the flash lands on their spine.
@@ -4334,18 +4359,15 @@ do
                 end
             end
         end
-        -- ═══ BACK DASH REBUILT ═══ "bad animation, doesn't really hit the back, glides". The glide was the
-        -- orbit: it interpolates your CFrame across its whole window, and a wide 0.60pi sweep is a long visible
-        -- slide that also often ended off the spine. This drops the orbit entirely - press the real dash key so
-        -- the game plays its OWN dash animation, then land exactly behind them. Short, and always on the back.
-        -- Same as the other modes: the dash key costs us the M1. Back Dash keeps its shape from the placement
-        -- below, not from the key.
-        task.wait(0.07)
-        if not tpBehind(t) then R.bfActive = false; return end
-        if _G.VX_BF_DEBUG then print("[DreamHub BF] back dash: target " .. (facingMe and "FACING you -> around to the back" or "turned away -> short side dash")) end
+        -- ═══ BACK DASH HAD NO TRAVEL AT ALL ═══ Removing the dash KEY (right, it costs the M1) accidentally
+        -- left this mode with two tpBehind snaps and nothing between them - a blink, not a dash. It now uses
+        -- the SAME noKey arc the user confirmed looks good on Side Dash, just wider: a full half-circle when
+        -- they are facing you (go around to the spine), a short sweep when they already face away. noKey means
+        -- no dash-recovery state, so the M1 that follows is accepted.
+        local sweep = facingMe and (math.pi * 0.9) or (math.pi * 0.3)
+        dashToBack(t, { duration = 0.30, extraSweep = sweep, endRadius = 4.6, endBias = 0, noKey = true })
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
-        task.wait(0.12)                                   -- let the dash settle before we test the distance
         -- ═══ THE SAME RECIPE TELEPORT USES ═══ Teleport is the one mode that reliably flashes, and the only
         -- thing it does differently is re-place you on the spine on the beat BEFORE the swing. The dash modes
         -- placed you once and then waited 0.12s+, and in that window the target turns, walks off, or the
@@ -4396,6 +4418,9 @@ do
         local borrowed = not _G.VX_BFAPI_ON and _G.VX_BFAPI_SET ~= nil
         _G.VX_BF_BORROWED = true; _G.VX_BF_BORROW_USED = 0; _G.VX_BF_BORROW_T = tick()   -- single-shot (see the note in the BF engine)
         _G.VX_BF_BORROW_STRICT = borrowed
+        -- Token, same as m1ThenBF: without it a Side Dash chain's queued hand-back could disable the engine
+        -- in the middle of THIS chain's borrow window.
+        local myBorrow = tick(); _G.VX_BF_BORROW_ID = myBorrow
         if borrowed then pcall(function() _G.VX_BFAPI_SET(true) end) end
         if _G.VX_BF_RESETCOUNT then pcall(_G.VX_BF_RESETCOUNT) end   -- flash on THIS swing, not after N more
         -- M1 Chain rides YOUR swing instead of injecting one, so authorise the swing you just threw.
@@ -4422,8 +4447,9 @@ do
             _G.VX_BF_CHAINCLICK = tick()                    -- re-stamp: the swing this click produces is the chain's
             VMouseClick()
         end)
-        -- No engine at all (very old build): press 3 ourselves on the same beat the engine would have.
-        if not _G.VX_BFAPI_ON then task.delay(0.19, function() pressBF() end) end
+        -- (Removed a dead fallback here: it tested `not _G.VX_BFAPI_ON` right after this function had set it
+        --  true, so it never ran. The click above gives the armed engine its windup; m1ThenBF's own 0.19s
+        --  fallback is what covers a swallowed press. There is no third case for this to handle.)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.4   -- camera stays on them through the chain
         -- side dash AROUND to their back (real dash key + anti-fling arc). If the dash itself declines - the
         -- target moved out of MAXDASH in the meantime - we stop rather than snapping to them.
@@ -4434,12 +4460,11 @@ do
         -- Side Dash's off-spine clip and Back Dash's wide half-circle.
         local dashed = dashToBack(t, { duration = 0.22, extraSweep = math.pi * 0.22, endRadius = 4.6, endBias = 0, noKey = true })
         if dashed then faceBackOf(t) end
-        if borrowed then
-            task.delay(0.6, function()   -- hand the engine back exactly as we found it
-                if _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(_G.VX_BFAPI_WANT == true) end) end
-                _G.VX_BF_BORROWED = false; _G.VX_BF_BORROW_USED = 0
-            end)
-        end
+        task.delay(0.9, function()   -- hand the engine back exactly as we found it (token: only OUR borrow)
+            if _G.VX_BF_BORROW_ID ~= myBorrow then return end
+            if _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(_G.VX_BFAPI_WANT == true) end) end
+            _G.VX_BF_BORROWED = false; _G.VX_BF_BORROW_USED = 0
+        end)
         task.delay(0.3, function() R.bfActive = false end); status("BF M1 Chain")
     end
     local function doBlackFlash()
@@ -4462,6 +4487,7 @@ do
         animator:SetAttribute("VXBFM1Hooked", true)
         animator.AnimationPlayed:Connect(function(track)
             if not (Settings.BFM1 or Settings.AutoBF) then return end
+            if _G.VX_BFAPI_ON then return end   -- the real engine is armed: it presses, this twin stands down
             local id = track.Animation and track.Animation.AnimationId
             local dly = id and AnimationTriggers[id]
             -- Otherwise ANY real M1 swing of THIS character rides the standard window. VX_IS_M1 requires a real
@@ -4509,10 +4535,17 @@ do
         do local injK = _G.VX_INJ_KEYS; if injK and injK[input.KeyCode] and tick() < injK[input.KeyCode] then return end end
         local st = R.stamp[input.KeyCode]; if st and tick() - st < WIN then return end
         if input.KeyCode == Settings.BFKey and Settings.Enabled and Settings.Mode ~= "M1" then
+            -- ═══ YOUR TRIGGER PRESS IS ALSO A CAST ═══ On Itadori, 3 IS Divergent Fist - so the press that
+            -- starts a chain also casts it, and that cast's animation is in the engine's trigger table. It
+            -- was arriving as a "windup" and SPENDING the chain's single-shot flash before the chain's own M1
+            -- ever swung - which is what killed Teleport and Back Dash outright. Stamp the press; the engine
+            -- ignores trigger-table ids for 0.6s after it. (Injected 3s bailed above, so this is only ever
+            -- a real press that a chain mode consumed - the Auto BF manual flow never stamps it.)
+            _G.VX_BF_TRIG3 = tick()
             doBlackFlash(); return
         end
         -- CLICK path for BF: covers characters whose M1 anim isn't in the database (the anim path can't catch
-        if input.UserInputType == Enum.UserInputType.MouseButton1 and (Settings.AutoBF or Settings.BFM1) then
+        if input.UserInputType == Enum.UserInputType.MouseButton1 and (Settings.AutoBF or Settings.BFM1) and not _G.VX_BFAPI_ON then
             -- A chain is running and it owns the flash. This path pressing 3 as well is one of the duplicate
             -- key-3s ("it keeps pressing 3 when I only did once").
             if tick() < (R.chainUntil or 0) then return end
@@ -5132,6 +5165,7 @@ do
 		-- character, not on whether a send succeeded.
 		local svcName = vxMyCharSvc()                     -- scans moveset -> name -> services
 		local resolved = false
+		local lastRE = nil                                -- which Instance the scanner fired (dedupe vs State.remote)
 		if svcName then
 			local svcs = game:GetService("ReplicatedStorage"):FindFirstChild("Knit")
 			svcs = svcs and svcs:FindFirstChild("Knit"); svcs = svcs and svcs:FindFirstChild("Services")
@@ -5139,15 +5173,19 @@ do
 			local re = sv and sv:FindFirstChild("RE"); re = re and re:FindFirstChild("Activated")
 			if re then
 				resolved = true
+				lastRE = re
 				local ok = pcall(function() re:FireServer(dir) end)
 				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] fired " .. svcName .. '.RE.Activated("' .. dir .. '") -> ' .. tostring(ok)) end
 			end
 		end
 		-- The v5 resolver is a SEPARATE detection path, so fire it too rather than only as a fallback: when the
 		-- two disagree one of them is right, and the wrong one is a no-op. Two sends, not eleven.
-		if State.remote then
+		-- Only when the two resolvers genuinely DISAGREE. When they land on the same Instance this was a
+		-- double send - and for the uppercut's counted 4x burst, 8 arrivals instead of 4 walks the server's
+		-- counter straight past the one that launches.
+		if State.remote and State.remote ~= lastRE then
 			local ok = pcall(function() State.remote:FireServer(dir) end)
-			if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] also fired State.remote -> " .. tostring(ok)) end
+			if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] also fired State.remote (different instance) -> " .. tostring(ok)) end
 		end
 		if not resolved and not State.remote then
 			-- Nothing identified your character at all. Sweep the real character services - only yours answers,
@@ -5306,9 +5344,15 @@ do
 			return
 		end
 		local now = tick()
-		if now - State.lastM1 > Config.M1ResetWindow then State.m1Count = 0 end
+		if now - State.lastM1 > Config.M1ResetWindow then State.m1Count = 0; State.upSwings = 0 end
 		State.lastM1 = now
 		State.m1Count = State.m1Count + 1
+		-- ═══ THE UPPERCUT'S OWN COUNTER ═══ With both toggles on, the slam fires at swing 2 and zeroes
+		-- State.m1Count - so the uppercut's n >= 3 gate could never be reached and its 4x burst never left.
+		-- That is "auto uppercut dont work" whenever Auto Down Slam is also on (which is always, for you).
+		-- upSwings counts the same swings but only the combo timeout resets it, so the two finishers stop
+		-- starving each other.
+		State.upSwings = (State.upSwings or 0) + 1
 		local n = State.m1Count
 		if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] swing " .. n .. "  mode=" .. tostring(mode)) end
 		-- SLAM: if we hopped for you and you are now airborne, THIS swing is the down slam - announce it on
@@ -5395,7 +5439,8 @@ do
 			-- re-sends "Down" on the later swings with a cooldown SHORTER than the swing spacing. That single
 			-- asymmetry is "down slam works, upper cut dnt work". Mirror the slam: keep counting, and use a
 			-- cooldown under the 0.35s spacing so "Up" also lands on the finisher.
-			if n >= need and tick() - (State.lastUp or 0) >= 0.30 then
+			if (State.upSwings or 0) >= need and tick() - (State.lastUp or 0) >= 1.0 then
+				State.upSwings = 0   -- one 4x burst per combo - the burst IS the finisher, re-firing it walks the server counter
 				State.lastUp = tick()
 				State.lastFire = now
 				-- (This print used to concatenate a variable that no longer exists. Concatenating nil THROWS, and
@@ -5415,7 +5460,9 @@ do
 				-- THE GROUND (an uppercut launches you - that is the one observable it always has) that key is
 				-- locked in and used from then on. If a locked key later stops launching, the rotation
 				-- restarts. Nothing here can leave a key held: the watchdog releases it after 1s regardless.
-				local CAND = { Enum.KeyCode.Space, Enum.KeyCode.W, Enum.KeyCode.S, false }
+				-- W and S dropped from the rotation: W was proven dead in testing, S walks you backwards, and a
+				-- rotation stuck on a bad candidate burned real combos finding that out. Space or nothing.
+				local CAND = { Enum.KeyCode.Space, false }
 				local upKey = State.upKeyLocked
 				if upKey == nil then
 					State.upTry = (State.upTry or 0) % #CAND + 1
@@ -5449,24 +5496,31 @@ do
 				-- change that. This is the whole bug, and nothing I reasoned my way to could have found it.
 				-- Spaced a few frames apart so they arrive as four distinct calls rather than one batched burst.
 				do
-					local n = math.max(1, tonumber(_G.VX_UPPER_FIRES) or 4)
+					local fires = math.max(1, tonumber(_G.VX_UPPER_FIRES) or 4)   -- renamed off 'n' so it cannot shadow the swing count
 					task.spawn(function()
-						for i = 1, n do
+						for i = 1, fires do
 							fireDir("Up")
-							if i < n then task.wait(0.06) end
+							if i < fires then task.wait(0.06) end
 						end
 					end)
 				end
 				-- Did it launch? Sample just after the move would have taken effect.
 				do
 					local tok = State.lastUp
-					task.delay(0.30, function()
+					-- Sample a 0.2-0.6s WINDOW, not a single 0.30s reading: the burst itself takes ~0.18s to
+					-- send, so a launch that starts on the 4th call peaks after the old single sample - and a
+					-- miss rotated the key away from Space for nothing.
+					task.delay(0.20, function()
 						if State.lastUp ~= tok then return end          -- another uppercut superseded this one
-						local c = myModel(); local h = c and c:FindFirstChildOfClass("Humanoid")
 						local up = false
-						if h then
-							local r = c:FindFirstChild("HumanoidRootPart")
-							up = (h.FloorMaterial == Enum.Material.Air) or (r and r.AssemblyLinearVelocity.Y > 12) or false
+						local t0 = tick()
+						while tick() - t0 < 0.4 do
+							local c = myModel(); local h = c and c:FindFirstChildOfClass("Humanoid")
+							if h then
+								local r = c:FindFirstChild("HumanoidRootPart")
+								if (h.FloorMaterial == Enum.Material.Air) or (r and r.AssemblyLinearVelocity.Y > 12) then up = true break end
+							end
+							task.wait(0.06)
 						end
 						if up then
 							if State.upKeyLocked == nil then
@@ -5518,6 +5572,10 @@ do
 						-- Name compare, not an enum index: Action2/3/4 do not exist on older clients, and an
 						-- index error here would kill this AnimationPlayed handler - taking Auto Down Slam and
 						-- Auto Upper Cut with it on exactly the characters that need this fallback.
+						-- And NEVER during a dash window: the dash clip is Action priority right behind a real
+						-- click, so it counted as a phantom swing and burned the slam's cooldown mid-dash -
+						-- "when I side dash during the M1s I dont down slam", the other half.
+						if tick() < (tonumber(_G.VX_BF_DASHANIM) or 0) then return end
 						local pr = track.Priority
 						local action = string.find(tostring(pr), "Action", 1, true) ~= nil
 						local clickedJustNow = (tick() - (tonumber(_G.VX_LAST_CLICK) or 0)) < 0.45
@@ -6643,7 +6701,9 @@ do
 	local function pressFour()  -- Auto Adapt presses the 4 KEY (the Adapt skill) - it never plays an animation itself
 		-- Marked, like every other injected key: 4 is one of the keys the Total page's Perfect Swap watches, and
 		-- an unmarked press would be read there as you casting Elbow Drop.
-		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Four] = tick() + 0.5
+		-- 0.15, not 0.5: the press lasts 0.05s and the rising-edge poll catches it within a frame. The wide
+		-- stamp meant Auto Adapt's own 4 could eat YOUR real 4 for half a second - and Twofold listens on 4.
+		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Four] = tick() + 0.15
 		pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Four, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.Four, false, game) end)
 	end
 	local function clickM1()  -- an M1 click at screen-center (used by the moves that need a CLICK to adapt, not just 4)
@@ -7498,21 +7558,22 @@ do
 			end
 			return false
 		end
-		-- ═══ THE STATE HALF OF THE UPPERCUT ═══ The four fires are the count the server wants; SPACE is the
-		-- state it wants them in. The manual Auto Uppercut works with Space held across the swing (the one
-		-- config you ever reported working), and this assist was firing the remote flat-footed - the server
-		-- counted four requests from a body in the wrong state and ignored the lot. Hold Space across the
-		-- burst, marked as ours so Auto Air and the feints do not read it, then release.
-		local VIMf = game:GetService("VirtualInputManager")
-		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 1
-		_G.VX_INJECT_UNTIL = tick() + 1
-		pcall(function() VIMf:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)
+		-- ═══ GROUNDED, SETTLED, THEN THE BURST ═══ Your capture of the working uppercut was four bare
+		-- Activated("Up") calls - NO Space. The Space hold this used to inject caused a real jump, so the
+		-- four fires left a RISING body, and a launcher is a ground move: counted, then ignored. Mirror the
+		-- slam's state discipline instead - kill horizontal drift, assert a grounded state, then send the
+		-- four calls the capture shows.
+		pcall(function()
+			local c = myModel()
+			local r = c and c:FindFirstChild("HumanoidRootPart")
+			local h = c and c:FindFirstChildOfClass("Humanoid")
+			if r then local v = r.AssemblyLinearVelocity; r.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0) end
+			if h and h.FloorMaterial ~= Enum.Material.Air then h:ChangeState(Enum.HumanoidStateType.Landed) end
+		end)
 		for i = 1, 4 do
 			fireKnit(svc, "Activated", "Up")
 			if i < 4 then task.wait(0.06) end
 		end
-		task.wait(0.12)
-		pcall(function() VIMf:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
 		return true
 	end
 	local function slamNow()
@@ -7658,9 +7719,28 @@ do
 		local svc = vxMyCharSvc()
 		if svc then fireKnit(svc, "Activated", "Down") end
 	end
+	-- ═══ TWOFOLD KICK IS THE 4TH MOVE, NOT THE 2ND ═══ It was hardcoded to key 2 because that is what the
+	-- first description said; you have since said it is the 4th, and a hardcoded slot would be wrong again
+	-- the next time the game reorders anything. So we ASK YOUR MOVESET which slot holds it and listen on that
+	-- key - the same trick that made the universal air cast work on any character.
+	local SLOTKEY = { Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.KeyCode.Four }
+	local function twofoldKey()
+		for _, c in ipairs({ myModel(), LP.Character }) do
+			local mv = c and c:FindFirstChild("Moveset")
+			if mv then
+				for i, m in ipairs(mv:GetChildren()) do
+					if norm(m.Name) == "twofoldkick" and SLOTKEY[i] then return SLOTKEY[i] end
+				end
+			end
+		end
+		return Enum.KeyCode.Four   -- what you told us; used when the moveset cannot be read
+	end
 	local function sequence()
 		if running then return end
 		running = true
+		-- WATCHDOG: whatever happens inside, the latch opens again. One uncaught error here used to brick
+		-- Twofold for the entire session with no message (the nil-global twofoldKey call did exactly that).
+		task.delay(3, function() running = false end)
 		task.spawn(function()
 			local t = nearest()
 			-- 1) the kick itself. Say out loud whether the remote was found - "twofold kick dont work" with
@@ -7699,22 +7779,6 @@ do
 	end
 	-- Fires on YOUR key 2. Skips a 2 the hub injected itself (Hollow Purple presses 2), so it can never
 	-- chain off its own automation.
-	-- ═══ TWOFOLD KICK IS THE 4TH MOVE, NOT THE 2ND ═══ It was hardcoded to key 2 because that is what the
-	-- first description said; you have since said it is the 4th, and a hardcoded slot would be wrong again
-	-- the next time the game reorders anything. So we ASK YOUR MOVESET which slot holds it and listen on that
-	-- key - the same trick that made the universal air cast work on any character.
-	local SLOTKEY = { Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.KeyCode.Four }
-	local function twofoldKey()
-		for _, c in ipairs({ myModel(), LP.Character }) do
-			local mv = c and c:FindFirstChild("Moveset")
-			if mv then
-				for i, m in ipairs(mv:GetChildren()) do
-					if norm(m.Name) == "twofoldkick" and SLOTKEY[i] then return SLOTKEY[i] end
-				end
-			end
-		end
-		return Enum.KeyCode.Four   -- what you told us; used when the moveset cannot be read
-	end
 	if _G.VX_ON_KEY then
 		_G.VX_ON_KEY("twofold", function(kc)
 			if not on or kc ~= twofoldKey() then return end
@@ -14694,9 +14758,16 @@ do
     -- M1 BF as a direct TOGGLE too: the Mode dropdown callback is flaky on this UI lib (that is why Feint M1
     -- is a toggle), so selecting "M1 BF" from the dropdown sometimes never fired and M1 BF stayed off. This
     -- toggle always fires, so it is the reliable way to turn M1 Black Flash on.
+    -- ═══ WHY M1 BF WAS SILENT WHILE AUTO BF FLASHED ═══ The two toggles run the IDENTICAL bfSync into the
+    -- identical engine - the only difference was this line, which also armed VXBF2's parallel flash system
+    -- (its own anim hook + a click path that pressed 3 at click+0.14s, BEFORE the flash frame). That early
+    -- press cast plain Divergent Fist, spending the move on its real cooldown, so the engine's correctly
+    -- timed press then hit a move on cooldown: nothing. Auto BF never armed the twin (setAutoBF is only ever
+    -- called with false), which is exactly why it worked. The dropdown's own "M1 BF" branch already passes
+    -- setBFM1(false) - the toggle now matches it. One engine, one press.
     bfSec:Toggle({ Name = "M1 Black Flash", Default = false, Callback = function(b)
         bfM1On = (b == true); bfSync()
-        if _G.VXBF2 then _G.VXBF2.setBFM1(bfM1On) end
+        if _G.VXBF2 then _G.VXBF2.setBFM1(false) end
     end })
     _G.VX_BF_AFTER = 1
     -- Governs BOTH M1 Black Flash and the M1 Chain: pick which swing of your combo the flash lands on.
