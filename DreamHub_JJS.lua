@@ -942,19 +942,8 @@ end)
 --  image LOGO_ID = 82151574125055, is the single one now.)
 
 -- ===================== SHARED STATE (the GUI flips these; the modules read them) =====================
--- ═══ AUTO BLOCK IS ONE SWITCH NOW ═══ It used to be four: Dash Block, M1 Block, Abilities Block and Camera
--- Follow. Splitting them only ever produced half-blocks - a shield that stopped M1s and then ate a dash - and
--- nobody wants "block some attacks". One toggle arms every category.
--- The engine reads Config.Blocks.Dash / .M1 / .Abilities in a dozen places, so rather than edit every one,
--- those three answer with the master flag. CameraFollow answers false and can never be turned on: you asked
--- for the CHARACTER to turn, not the camera, and the camera write is gone from FaceTarget entirely.
-local BlockFlags = setmetatable({ On = false }, {
-	__index = function(t, k)
-		if k == "Dash" or k == "M1" or k == "Abilities" then return rawget(t, "On") == true end
-		if k == "CameraFollow" then return false end
-		return nil
-	end,
-})
+-- (BlockFlags is gone. Auto Block was rebuilt from scratch further down the file and is driven by one
+--  toggle through AutoBlockApi; there is nothing left to share through a flag table.)
 local BFApi    -- forward-declared: Auto Black Flash control API (assigned in its module below)
 local ChainApi -- forward-declared: BF Chain control API (assigned in its module below)
 
@@ -13984,8 +13973,11 @@ do
         bfSec:Slider({ Name = "Range", Min = 10, Max = 60, Default = 30, Decimals = 1, Callback = function(v) if ChainApi then ChainApi.setLockRange(v) end end })
     end
     local blockSec = bfSub:Section({ Name = "Auto Block", Side = 2 })
-    pcall(function() blockSec:Label("One switch. On = it blocks M1 strings, dashes and ability casts, and turns your CHARACTER to face the attacker. The camera is never touched.") end)
-    blockSec:Toggle({ Name = "Auto Block", Default = false, Callback = function(b) rawset(BlockFlags, "On", b == true) end })
+    pcall(function() blockSec:Label("One switch. It blocks ANY attack animation from anyone near you - M1 strings, dashes, ability casts - plus anything thrown at you, on every character. Your BODY turns to face it; the camera is never touched.") end)
+    blockSec:Toggle({ Name = "Auto Block", Default = false, Callback = function(b) if AutoBlockApi then AutoBlockApi.set(b) end end })
+    blockSec:Slider({ Name = "Block Range", Min = 8, Max = 120, Default = 42, Decimals = 1, Callback = function(v) if AutoBlockApi then AutoBlockApi.setRange(v) end end })
+    blockSec:Slider({ Name = "Block Hold", Min = 0.05, Max = 2, Default = 0.46, Decimals = 0.01, Suffix = "s", Callback = function(v) if AutoBlockApi then AutoBlockApi.setHold(v) end end })   -- how long the shield stays up after the last threat; longer rides a whole combo string
+    blockSec:Toggle({ Name = "Turn To Face Attacker", Default = true, Callback = function(b) if AutoBlockApi then AutoBlockApi.setTurn(b) end end })   -- body only, never the camera
 
     local skSub = CombatPage:SubPage({ Name = "Skills", Columns = 2 })
     local skSec = skSub:Section({ Name = "Skills & M1", Side = 1 })
@@ -14715,1413 +14707,233 @@ pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 end
 
 -- ============================================================
--- MODULE: AUTO BLOCK ENGINE  (friend's engine; its own GUI removed. It is driven by ONE toggle now - the
--- shared BlockFlags table answers Dash/M1/Abilities with a single master flag, and CameraFollow is gone.)
+-- MODULE: AUTO BLOCK  (rebuilt from scratch)
+--
+-- WHY IT WAS REBUILT
+-- The previous engine was ~1400 lines and almost all of it was per-character special cases: a hard lock for
+-- Hakari's Reserve Balls, a Mahito Spike Wrath holder, a Megumi Rabbit-Escape caster memory, a Naoya
+-- Decisive Strike teleport counter, Mechamaru cannon charge timers, and a name list of ~20 projectile parts.
+-- That is the same shape as the old Auto Air, and it fails the same way: it only defends against characters
+-- somebody hardcoded, so anyone the list does not know hits you for free - and the list can never be
+-- complete, because every update adds moves.
+--
+-- WHAT REPLACES IT
+-- One rule, no character names anywhere: an enemy near you who STARTS AN ATTACK is a threat. The game itself
+-- tells us what an attack is - attack animations are authored at Action priority so they override walk/run,
+-- and every captured id table we already keep is consulted as a bonus. Projectiles are handled the same way:
+-- anything moving fast TOWARDS you is a threat, judged on its velocity, not its name.
+-- That covers Jawbreaker, Todo, and whoever ships next, without a line of new code.
+--
+-- Blocking here is DIRECTIONAL, so the body is turned to face the threat. The camera is never touched.
 -- ============================================================
 do
--- ==========================================
--- ROBLOX SERVICES INITIALIZATION
--- Fetching essential game services required for core mechanics, physics, and UI rendering.
--- ==========================================
-local Players = game:GetService("Players") -- Manages all players in the server.
-local RunService = game:GetService("RunService") -- Provides frame-by-frame execution (RenderStepped) for zero-latency hitboxes.
-local Workspace = game:GetService("Workspace") -- Handles 3D world interactions, Raycasting, and spatial queries.
-local Lighting = game:GetService("Lighting") -- Used here to detect global visual changes, such as Domain Expansions.
-local ReplicatedStorage = game:GetService("ReplicatedStorage") -- Stores client-server communication channels (RemoteEvents).
-local CoreGui = game:GetService("CoreGui")
-
--- ==========================================
--- LOCAL PLAYER ENVIRONMENT
--- ==========================================
-local LocalPlayer = Players.LocalPlayer -- The client running this script.
-local Camera = Workspace.CurrentCamera -- The local viewport, manipulated for the 'Camera Follow' feature.
-
--- ==========================================
--- MAIN CONFIGURATION MODULE
--- Controls the script's behavior, timings, and remote event pathways.
--- ==========================================
-local Config = {
-    -- The grace period (in seconds) to hold the block after a threat passes.
-    -- 0.34: hold the shield THROUGH fast M1 strings AND dash-cancel mixups (0.26 still dropped between some
-    -- strings and the re-raise came back a frame late = you ate the next M1).
-    ComboDelay = 0.46,   -- HOLD LONGER. 0.34 dropped the shield between hits of a combo string, so the 2nd/3rd M1 of a rush landed clean. 0.46 rides the whole string and still releases fast enough to act between engagements.
-    
-    -- Feature toggles linked to the Vaultix Hub UI checkboxes.
-    Blocks = BlockFlags,
-    
-    -- Specific network pathways to the game's server for movement and combat.
-    Remotes = {
-        BlockActivate = ReplicatedStorage:WaitForChild("Knit"):WaitForChild("Knit"):WaitForChild("Services"):WaitForChild("BlockService"):WaitForChild("RE"):WaitForChild("Activated"),
-        BlockDeactivate = ReplicatedStorage:WaitForChild("Knit"):WaitForChild("Knit"):WaitForChild("Services"):WaitForChild("BlockService"):WaitForChild("RE"):WaitForChild("Deactivated"),
-        Dash = ReplicatedStorage:WaitForChild("Knit"):WaitForChild("Knit"):WaitForChild("Services"):WaitForChild("MovementService"):WaitForChild("RE"):WaitForChild("Dash")
-    }
-}
-
--- ==========================================
--- COMBAT STATE VARIABLES
--- These variables track the real-time defensive status of the local player.
--- ==========================================
-local isBlocking = false -- Boolean flag determining if the server has been told to raise the shield.
-local comboDropTime = 0 -- The exact tick() timestamp when the shield should be lowered.
-local currentThreatInstance = nil -- Stores the specific enemy Character model triggering the defense.
-local lastBlockedInstance = nil -- Remembers the last targeted enemy to prevent spamming redundant RemoteEvents.
-local lastBlockedThreatName = "" -- Stores the string name of the attack for debugging purposes.
-
--- ==========================================
--- MEMORY CACHE & ENEMY TRACKING TABLES
--- Utilized to maintain high FPS by preventing redundant Workspace scans.
--- ==========================================
-local ActiveThreatTracks = {} -- Stores currently playing animations from enemies that pose a threat.
-local CharacterConnections = {} -- Maps a character to their active RBXScriptConnections (used to prevent memory leaks).
-local MonitoredEnemies = {} -- Keeps track of which enemies currently have hooks attached to them.
-local NearbyEnemies = {} -- An optimized list of enemies within a 150-stud radius, updated every 0.2 seconds.
-
-local CachedProjectiles = {} -- Stores active projectiles/effects in the workspace (Zero-Lag lookup).
-local CachedDomains = {} -- Stores active Domain Expansions.
-
--- ==========================================
--- SPECIFIC SKILL LOCKS & TIMERS
--- Custom logic variables to handle specific, rule-breaking attacks.
--- ==========================================
-local reverseBallLock = false -- Hard lock for Hakari's Reverse Balls.
-local reverseBallLockTime = 0 -- Timestamp to forcibly drop the Reverse Ball lock if the projectile fails to spawn.
-local spikeWrathLock = nil -- Holds the Mahito character instance while Spike Wrath is casting continuously.
-local rabbitCaster = nil -- Remembers which Megumi casted Rabbit Escape to track the summoner instead of the rabbit part.
-local myDomainEndTime = 0 -- Timestamp predicting when the LocalPlayer's Domain Expansion ends (grants immunity).
-local myCasts = {} -- Stores the LocalPlayer's own attacks to prevent the script from blocking its own projectiles.
-local naoyaDecisiveCount = {} -- Tracks how many times Naoya has teleported during 'Decisive Strike'.
-local mechaCannonTimers = {} -- Timestamp tracking the charge-up phase of Granite Blast / Ultracannon.
-
--- A helper function to check if the script should perform any threat analysis.
-local function IsAnyBlockActive()
-    return Config.Blocks.Dash or Config.Blocks.M1 or Config.Blocks.Abilities
-end
-
--- ==========================================
--- EFFECTS CACHE MANAGER (ZERO LAG OPTIMIZATION)
--- Instead of iterating through thousands of parts per frame, this system 
--- simply "listens" for specific parts entering/leaving the game and catalogs them.
--- ==========================================
-local PartToSkillMap = {
-    ["Doors"] = "Shutter Doors", ["Reverse"] = "Reverse Balls", ["RedExplode"] = "Reversal Red", 
-    ["LapseBlue"] = "Lapse Blue", ["RoughEnergy"] = "Rough Energy", ["Nue"] = "Nue", 
-    ["TongueGrab"] = "Toad", ["Rabbit"] = "Rabbit Escape", ["Totality"] = "Divine Dog",
-    ["PebbleProjectile"] = "Pebble Throw", ["GavelThrow"] = "Gavel Throw",
-    ["Ball"] = "Garuda Rebound", ["ArmProjectile"] = "Detach", ["Swarm"] = "Roach Swarm",
-    ["ToadNue"] = "Toad/ToadNue", ["NueToad"] = "Toad/ToadNue"
-}
-
--- Checks if an incoming 3D Object matches any known deadly projectiles.
-local function IsTrackableProjectile(name)
-    if PartToSkillMap[name] then return true end
-    if name == "Rika" or name == "Crow" or name == "Bullet" or name == "Supernova" then return true end
-    if string.find(name, "Rabbit") then return true end
-    return false
-end
-
--- Fires whenever a new effect spawns in the Workspace.
-local function OnProjectileAdded(child)
-    if IsTrackableProjectile(child.Name) then
-        CachedProjectiles[child] = true -- Add to high-speed lookup cache
-    end
-end
-
--- Fires whenever an effect is destroyed, cleaning up memory.
-local function OnProjectileRemoved(child)
-    CachedProjectiles[child] = nil
-end
-
--- Establish event listeners for projectile folders
-local EffectsFolder = Workspace:WaitForChild("Effects")
-EffectsFolder.ChildAdded:Connect(OnProjectileAdded)
-EffectsFolder.ChildRemoved:Connect(OnProjectileRemoved)
-for _, child in ipairs(EffectsFolder:GetChildren()) do OnProjectileAdded(child) end
-
-local BulletsFolder = Workspace:FindFirstChild("Bullets")
-if BulletsFolder then
-    BulletsFolder.ChildAdded:Connect(OnProjectileAdded)
-    BulletsFolder.ChildRemoved:Connect(OnProjectileRemoved)
-    for _, child in ipairs(BulletsFolder:GetChildren()) do OnProjectileAdded(child) end
-end
-
--- Establish event listeners for Domain Expansions
-local DomainsFolder = Workspace:WaitForChild("Domains")
-local CharactersFolder = Workspace:WaitForChild("Characters")
-DomainsFolder.ChildAdded:Connect(function(child)
-    if child.Name == "Domain" and child:IsA("MeshPart") then CachedDomains[child] = true end
-end)
-DomainsFolder.ChildRemoved:Connect(function(child) CachedDomains[child] = nil end)
-for _, child in ipairs(DomainsFolder:GetChildren()) do
-    if child.Name == "Domain" and child:IsA("MeshPart") then CachedDomains[child] = true end
-end
-
--- ==========================================
--- ENEMY TRACKING & MEMORY MANAGEMENT
--- ==========================================
-
--- Removes all event listeners tied to an enemy when they die or leave the 150-stud radius.
--- Essential for avoiding memory leaks and frame drops in long gaming sessions.
-local function CleanupEnemy(char)
-    if CharacterConnections[char] then
-        for _, conn in ipairs(CharacterConnections[char]) do conn:Disconnect() end
-        CharacterConnections[char] = nil
-    end
-    naoyaDecisiveCount[char] = nil
-    mechaCannonTimers[char] = nil
-    MonitoredEnemies[char] = nil
-end
-
--- Hooks into an enemy's core components to monitor their actions globally.
-local function SetupEnemy(char)
-    if char == LocalPlayer.Character then return end
-    if MonitoredEnemies[char] then return end
-    
-    MonitoredEnemies[char] = true
-    CharacterConnections[char] = {}
-
-    -- Track changes in the enemy's Moveset StringValue (crucial for adaptive defenses)
-    local info = char:WaitForChild("Info", 5)
-    if info then
-        local moveset = info:FindFirstChild("Moveset")
-        if moveset then
-            char:SetAttribute("CachedMoveset", moveset.Value)
-            local conn = moveset:GetPropertyChangedSignal("Value"):Connect(function()
-                char:SetAttribute("CachedMoveset", moveset.Value)
-            end)
-            table.insert(CharacterConnections[char], conn)
-        end
-    end
-
-    -- Hook into the enemy's Animation Controller to detect attacks frame 1
-    local humanoid = char:WaitForChild("Humanoid", 5)
-    local animator = humanoid and humanoid:WaitForChild("Animator", 5)
-    if animator then
-        local conn = animator.AnimationPlayed:Connect(function(track)
-            if _G.OnAnimationPlayed then _G.OnAnimationPlayed(char, track) end
-        end)
-        table.insert(CharacterConnections[char], conn)
-    end
-    
-    -- HOOK: Choso's Convergence (Dynamic Unblockable Piercing Blood logic)
-    task.spawn(function()
-        local setAssets = char:WaitForChild("SetAssets", 5)
-        if setAssets and CharacterConnections[char] then
-            local function hookConvergence(conv)
-                if conv.Name == "Convergence" then
-                    -- Detects when Choso consumes a Blood attachment
-                    local conn = conv.ChildRemoved:Connect(function(child)
-                        if string.match(child.Name, "Blood") then
-                            -- Flags the enemy as firing an unblockable beam
-                            char:SetAttribute("PiercingUnblockable", true)
-                            
-                            -- Instantly wipe the active Piercing Blood threat from memory to force the shield down
-                            local i = #ActiveThreatTracks
-                            while i >= 1 do
-                                if ActiveThreatTracks[i].Char == char and ActiveThreatTracks[i].Data.Name == "Piercing Blood" then
-                                    table.remove(ActiveThreatTracks, i)
-                                end
-                                i = i - 1
-                            end
-                            
-                            -- Wait exactly 8 seconds to safely reset the unblockable status
-                            task.delay(8, function()
-                                if char then char:SetAttribute("PiercingUnblockable", false) end
-                            end)
-                        end
-                    end)
-                    table.insert(CharacterConnections[char], conn)
-                end
-            end
-            
-            for _, child in ipairs(setAssets:GetChildren()) do hookConvergence(child) end
-            local connAsset = setAssets.ChildAdded:Connect(hookConvergence)
-            table.insert(CharacterConnections[char], connAsset)
-        end
-    end)
-end
-
--- Optimized Global Scan Routine (Strictly Lua 5.1 Compatible / No "continue" syntax)
--- Scans the map every 0.2s and caches enemies within 150 studs. 
-task.spawn(function()
-    while true do
-        -- ═══ LAG ═══ This was `while task.wait(0.05)`, i.e. it woke 20 times a second FOREVER just to test a
-        -- boolean, even with every block toggle off. Now it idles at 0.5s when off and scans at 0.12s when on -
-        -- still comfortably ahead of a rushing enemy's first M1, at a quarter of the wakeups.
-        if not IsAnyBlockActive() then task.wait(0.5) else task.wait(0.12) end
-        local selfChar = CharactersFolder:FindFirstChild(LocalPlayer.Name) or LocalPlayer.Character  -- JJS live body is under workspace.Characters (LP.Character can lag)
-        if IsAnyBlockActive() and selfChar then
-            local myHRP = selfChar:FindFirstChild("HumanoidRootPart")
-            if myHRP then
-                local tempCache = {}
-                for _, char in ipairs(CharactersFolder:GetChildren()) do
-                    if char ~= selfChar and char ~= LocalPlayer.Character and char.Name ~= LocalPlayer.Name then
-                        local hrp = char:FindFirstChild("HumanoidRootPart")
-                        if hrp then
-                            local dist = (hrp.Position - myHRP.Position).Magnitude
-                            -- Spatial filtering: Only track enemies that are close enough to be a threat
-                            if dist <= 150 then
-                                table.insert(tempCache, char)
-                                if not MonitoredEnemies[char] then task.spawn(SetupEnemy, char) end  -- non-blocking: a rig missing Info/Humanoid must not stall the whole scan thread (WaitForChild 5s x2)
-                            else
-                                -- Garbage collection: Enemy left the area, unhook them to save CPU cycles
-                                if MonitoredEnemies[char] then CleanupEnemy(char) end
-                            end
-                        end
-                    end
-                end
-                NearbyEnemies = tempCache -- Update the fast-read table used by RenderStepped
-            end
-        end
-    end
-end)
-
-CharactersFolder.ChildRemoved:Connect(CleanupEnemy)
-
--- ==========================================
--- ANIMATION DICTIONARY (THE THREAT DATABASE)
--- Maps specific Animation IDs to logic templates (Required Distance, Angle, Category).
--- ==========================================
-local AnimDict = {
-    -- NEW GLOBAL MELEES
-    ["95981277479213"]  = {Name = "Global Melee 1", Category = "Melee", ReqDot = 0.50},
-    ["134438232117051"] = {Name = "Global Melee 2", Category = "Melee", ReqDot = 0.50},
-    ["83712266760883"]  = {Name = "Global Melee 3", Category = "Melee", ReqDot = 0.50},
-    ["117871121041895"] = {Name = "Global Melee 4", Category = "Melee", ReqDot = 0.50},
-    -- NEW GLOBAL DASHES
-    ["86430725083594"]  = {Name = "Global Dash New", Category = "DashRule"},
-    -- HAKARI
-    ["94588892125071"]  = {Name = "Hakari M1 1", Category = "Melee", ReqDot = 0.50},
-    ["97868312130612"]  = {Name = "Hakari M1 2", Category = "Melee", ReqDot = 0.50},
-    ["140588454098230"] = {Name = "Hakari M1 3", Category = "Melee", ReqDot = 0.50},
-    ["138826758216894"] = {Name = "Hakari M1 4", Category = "Melee", ReqDot = 0.50},
-    ["82541714192027"]  = {Name = "Reverse Balls", Category = "ReverseRule", ReqDot = 0.90, ReqDist = 65.0},
-    ["72063002791216"]  = {Name = "Shutter Doors", Category = "Skill", ReqDot = 0.85, ReqDist = 11.0},
-    ["72467492674240"]  = {Name = "Rough Energy", Category = "Skill", GroundIsUnblockable = true, ReqDot = 0.80, ReqDist = 14.8},
-    ["108123475959041"] = {Name = "Fever Breaker", Category = "Skill", ReqDot = 0.85, ReqDist = 13.0},  
-    ["95901746347992"]  = {Name = "Lucky Volley", Category = "Melee", ReqDot = 0.70},
-    -- GOJO
-    ["137865634124104"] = {Name = "Lapse Blue", Category = "Target", ReqDot = 0.85, ReqDist = 36.6},
-    ["137654778575373"] = {Name = "Reversal Red", Category = "Target", ReqDot = 0.85, ReqDist = 45.0},
-    ["95421145178968"]  = {Name = "Rapid Punches", Category = "Unblockable"},
-    ["104749346956269"] = {Name = "Twofold Kick", Category = "Skill", ReqDot = 0.85, ReqDist = 10.0},
-    ["127851700400958"] = {Name = "Gojo/MahitoArmor/Todo M1/M4", Category = "Melee", ReqDot = 0.50},
-    ["72548435296350"]  = {Name = "Gojo Melee 2", Category = "Melee", ReqDot = 0.50},
-    ["84547415708554"]  = {Name = "Gojo Melee 3", Category = "Melee", ReqDot = 0.50},
-    -- ITADORI
-    ["77200218033775"]  = {Name = "Cursed Strike", Category = "Rush", AirIsUnblockable = true, ReqDot = 0.80, ReqDist = 30.0},
-    ["124901309160375"] = {Name = "Crushing Blow", Category = "Rush", GroundIsUnblockable = true, ReqDot = 0.85, ReqDist = 30.0},
-    ["131506102901134"] = {Name = "Dismantle", Category = "Target", ReqDot = 0.70, ReqDist = 27.0},
-    ["100962226150441"] = {Name = "Divergent Fist", Category = "Rush", ReqDot = 0.85, ReqDist = 19.0},
-    ["121984128639453"] = {Name = "Malevolent Shrine", Category = "DomainCast"},
-    ["95295463826732"]  = {Name = "Itadori M1 1", Category = "Melee", ReqDot = 0.50},
-    ["105077924973072"] = {Name = "Ita/Ryu/Cho M1 2", Category = "Melee", ReqDot = 0.50},
-    ["124862357369335"] = {Name = "Itadori M1 3", Category = "Melee", ReqDot = 0.50},
-    ["81630213087988"]  = {Name = "Itadori M1 4", Category = "Melee", ReqDot = 0.55},
-    ["110146909061402"] = {Name = "Itadori Ult M1 1", Category = "Melee", ReqDot = 0.60, ReqDist = 20.0},
-    ["123414935051274"] = {Name = "Itadori Ult M1 2", Category = "Melee", ReqDot = 0.60, ReqDist = 20.0},
-    ["108636011034323"] = {Name = "Itadori Ult M1 3", Category = "Melee", ReqDot = 0.60, ReqDist = 20.0},
-    ["105376952884290"] = {Name = "Itadori Ult M1 4", Category = "Melee", ReqDot = 0.60, ReqDist = 20.0},
-    -- MEGUMI / MAHORAGA / TOTALITY
-    ["132653290201368"] = {Name = "Rabbit Escape", Category = "Target", ReqDot = 0.90, ReqDist = 36.6},
-    ["116432619539029"] = {Name = "Toad/ToadNue", Category = "Target", ReqDot = 0.90, ReqDist = 36.6},
-    ["81112033595734"]  = {Name = "Divine Dog", Category = "Target", ReqDot = 0.85, ReqDist = 10.0},
-    ["85024950165903"]  = {Name = "Earthquake", Category = "Target", ReqDot = 0.35, ReqDist = 12.0},
-    ["109718372214725"] = {Name = "Megumi/Maho M1 1", Category = "Melee", ReqDot = 0.55},
-    ["121800365664070"] = {Name = "Megumi/Maho M1 2", Category = "Melee", ReqDot = 0.55},
-    ["96513213736303"]  = {Name = "Megumi/Maho M1 3", Category = "Melee", ReqDot = 0.55},
-    ["79037514387169"]  = {Name = "Megumi/Maho M1 4", Category = "Melee", ReqDot = 0.55},
-    ["75337033003776"]  = {Name = "Megumi/Maho M1 5", Category = "Melee", ReqDot = 0.55},
-    ["138489871864252"] = {Name = "Megumi/Maho M1 6", Category = "Melee", ReqDot = 0.55},
-    ["96185406489877"]  = {Name = "Megumi/Maho M1 7", Category = "Melee", ReqDot = 0.55},
-    ["105287938257399"] = {Name = "Megumi/Maho M1 8", Category = "Melee", ReqDot = 0.55},
-    ["81688837573130"]  = {Name = "Totality Attack 1", Category = "Melee", ReqDot = 0.55, ReqDist = 30.0},
-    ["95250225969869"]  = {Name = "Totality Attack 2", Category = "Melee", ReqDot = 0.55, ReqDist = 30.0},
-    ["130336833420143"] = {Name = "Totality Attack 3", Category = "Melee", ReqDot = 0.55, ReqDist = 30.0},
-    -- MAHITO
-    ["134461702265323"] = {Name = "Blade Mode", Category = "Rush", ReqDot = 0.90, ReqDist = 42.09},
-    ["103493656287292"] = {Name = "Stockpile", Category = "Target", ReqDist = 18.0},
-    ["89092734635186"]  = {Name = "Soulfire", Category = "Target", ReqDot = 0.90, ReqDist = 120.0},
-    ["72475960800126"]  = {Name = "Focus Strike", Category = "Rush", ReqDot = 0.85, ReqDist = 30.0},
-    ["127727754867974"] = {Name = "Spike Wrath", Category = "SpikeWrath", ReqDot = -1.0, ReqDist = 75.0},
-    ["126277739156443"] = {Name = "Mahito Base M1 1", Category = "Melee", ReqDot = 0.55},
-    ["99710481887795"]  = {Name = "Mahito Base M1 2", Category = "Melee", ReqDot = 0.55},
-    ["121322029260156"] = {Name = "Mahito Base/Ryu M1 3", Category = "Melee", ReqDot = 0.55},
-    ["122655618588472"] = {Name = "Mahito Base M1 4", Category = "Melee", ReqDot = 0.55},
-    ["71784337627181"]  = {Name = "Mahito Armor M1 1", Category = "Melee", ReqDot = 0.50},
-    ["125120382787311"] = {Name = "Mahito Armor M1 2", Category = "Melee", ReqDot = 0.50},
-    ["119042572747325"] = {Name = "Mahito Armor/Choso M3", Category = "Melee", ReqDot = 0.50},
-    ["98365018553171"]  = {Name = "Mahito Club M1 1", Category = "Melee", ReqDot = 0.50},
-    ["80150988150906"]  = {Name = "Mahito Club M1 2", Category = "Melee", ReqDot = 0.50},
-    ["86918383671100"]  = {Name = "Mahito Club M1 3", Category = "Melee", ReqDot = 0.50},
-    ["85887300265206"]  = {Name = "Mahito Club M1 4", Category = "Melee", ReqDot = 0.50},
-    ["79568627671998"]  = {Name = "Mahito Sword M1 1", Category = "Melee", ReqDot = 0.50},
-    ["105870773841535"] = {Name = "Mahito Sword M1 2", Category = "Melee", ReqDot = 0.50},
-    ["130659585624615"] = {Name = "Mahito Sword M1 3", Category = "Melee", ReqDot = 0.50},
-    ["138626478088332"] = {Name = "Mahito Sword M1 4", Category = "Melee", ReqDot = 0.50},
-    -- CHOSO
-    ["96185406489877"]  = {Name = "Choso M1 1", Category = "Melee", ReqDot = 0.55},
-    ["105077924973072"] = {Name = "Choso M1 2", Category = "Melee", ReqDot = 0.55},
-    ["119042572747325"] = {Name = "Choso M1 3", Category = "Melee", ReqDot = 0.55},
-    ["105287938257399"] = {Name = "Choso M1 4", Category = "Melee", ReqDot = 0.55},
-    ["127171275866632"] = {Name = "Piercing Blood", Category = "PiercingBlood", ReqDot = 0.85, ReqDist = 30.0},
-    ["84039122607068"]  = {Name = "Flowing Red Scale", Category = "Rush", ReqDot = 0.75, ReqDist = 19.0},
-    ["100446064103831"] = {Name = "Blood Edge", Category = "Rush", ReqDot = 0.85, ReqDist = 10.0},
-    ["95097480425566"]  = {Name = "Wing King", Category = "Rush", ReqDot = 0.80, ReqDist = 10.0},
-    ["117371289990421"] = {Name = "Blood Rain", Category = "BloodRain", ReqDist = 35.5},
-    -- TODO
-    ["96327114254575"]  = {Name = "Todo M1 1", Category = "Melee", ReqDot = 0.50},
-    ["107029561762376"] = {Name = "Todo M1 2", Category = "Melee", ReqDot = 0.50},
-    ["117831239064143"] = {Name = "Todo M1 3 / Hiromi M2 4", Category = "Melee", ReqDot = 0.50},
-    ["131358603583212"] = {Name = "Clap 1", Category = "Skill", ReqDot = 0.85, ReqDist = 60.0},
-    ["91074768993486"]  = {Name = "Clap 2", Category = "Skill", ReqDot = 0.85, ReqDist = 60.0},
-    ["116040503139675"] = {Name = "Clap 3", Category = "Skill", ReqDot = 0.85, ReqDist = 60.0},
-    ["94720627091769"]  = {Name = "Swift Kick", Category = "Rush", ReqDot = 0.85, ReqDist = 30.0},
-    ["111720035828971"] = {Name = "Pebble Throw", Category = "Target", ReqDot = 0.85, ReqDist = 50.0},
-    -- HIROMI
-    ["133936641185614"] = {Name = "Hiromi M1 1", Category = "Melee", ReqDot = 0.50},
-    ["122573730331631"] = {Name = "Hiromi M1 2", Category = "Melee", ReqDot = 0.70},
-    ["82400997593751"]  = {Name = "Hiromi M1 3", Category = "Melee", ReqDot = 0.70},
-    ["118634493886688"] = {Name = "Hiromi M1 4", Category = "Melee", ReqDot = 0.70},
-    ["139280948741186"] = {Name = "Hiromi M2 1", Category = "Melee", ReqDot = 0.70},
-    ["109340494549365"] = {Name = "Hiromi M2 2", Category = "Melee", ReqDot = 0.70},
-    ["98577624776161"]  = {Name = "Hiromi M2 3", Category = "Melee", ReqDot = 0.70},
-    ["117831239064143"] = {Name = "Hiromi M2 3", Category = "Melee", ReqDot = 0.55},
-    ["86362077638309"]  = {Name = "Gavel Throw", Category = "Target", ReqDot = 0.90, ReqDist = 50.0},
-    ["89652378115594"]  = {Name = "Extend Swing", Category = "Rush", ReqDot = 0.80, ReqDist = 35.0},
-    ["133869529005453"] = {Name = "Judgements Reach", Category = "Target", ReqDot = 0.90, ReqDist = 30.0},
-    ["71186534081075"]  = {Name = "Grapple", Category = "Rush", ReqDot = 0.80, ReqDist = 70.0},
-    ["135411487367370"] = {Name = "Pressing Charges", Category = "Rush", ReqDot = 0.85, ReqDist = 4.0},
-    ["132754851925571"] = {Name = "Veredict", Category = "Skill", ReqDot = 0.85, ReqDist = 15.5},
-    ["124243904748268"] = {Name = "Triple Sentence", Category = "Rush", ReqDist = 100.0},
-    -- YUTA
-    ["133240987753043"] = {Name = "Yuta M1 1", Category = "Melee", ReqDot = 0.50},
-    ["130806585141471"] = {Name = "Yuta M1 2", Category = "Melee", ReqDot = 0.50},
-    ["131967150738931"] = {Name = "Yuta M1 3", Category = "Melee", ReqDot = 0.50},
-    ["84442064935420"]  = {Name = "Yuta M1 4", Category = "Melee", ReqDot = 0.50},
-    ["109432265703187"] = {Name = "Yuta Ult M1 1", Category = "Melee", ReqDot = 0.50},
-    ["137919635923292"] = {Name = "Yuta Ult M1 2", Category = "Melee", ReqDot = 0.50},
-    ["135256592475167"] = {Name = "Yuta Ult M1 3", Category = "Melee", ReqDot = 0.50},
-    ["121403322067812"] = {Name = "Yuta Ult M1 4", Category = "Melee", ReqDot = 0.50},
-    ["104824728032437"] = {Name = "Severing Path", Category = "Rush", ReqDot = 0.85, ReqDist = 15.0},
-    ["125904281673524"] = {Name = "Severing Path2", Category = "Rush", ReqDot = 0.85, ReqDist = 15.0},
-    ["130834106305514"] = {Name = "Severing Path3", Category = "Rush", ReqDot = 0.85, ReqDist = 15.0},
-    ["117178057848472"] = {Name = "Veilstep", Category = "Area", ReqDist = 8.5},
-    ["95077220586856"]  = {Name = "Outburst", Category = "Skill", ReqDot = 0.80, ReqDist = 28.0},
-    ["108418554887656"] = {Name = "Second Wind", Category = "Rush", ReqDot = 0.85, ReqDist = 35.0},
-    ["88005970155216"]  = {Name = "Copy", Category = "Skill", ReqDist = 35.0, ReqDot = 0.0},
-    -- MECHAMARU
-    ["98783064085844"]  = {Name = "Mechamaru M1 1", Category = "Melee", ReqDot = 0.70},
-    ["85148168523745"]  = {Name = "Mechamaru M1 2", Category = "Melee", ReqDot = 0.70},
-    ["108686045412945"] = {Name = "Mechamaru M1 3", Category = "Melee", ReqDot = 0.70},
-    ["79718433989469"]  = {Name = "Mechamaru M1 4", Category = "Melee", ReqDot = 0.70},
-    ["80504019426174"]  = {Name = "Mechamaru M2 1", Category = "Melee", ReqDot = 0.70},
-    ["100835844904897"] = {Name = "Mechamaru M2 2", Category = "Melee", ReqDot = 0.70},
-    ["120136894011461"] = {Name = "Ultraspin", Category = "Rush", ReqDot = 0.80, ReqDist = 38.5},
-    ["93901924492394"]  = {Name = "Ultracannon", Category = "Ultracannon", ReqDot = 0.85, ReqDist = 75.0},
-    ["114277419400774"] = {Name = "Heat Emission", Category = "Rush", ReqDot = 0.80, ReqDist = 40.5},
-    -- BOTS MECHAMARU
-    ["139105275342427"] = {Name = "Bot User", Category = "Melee", ReqDot = 0.50},
-    ["73522808400163"]  = {Name = "Bot Grab", Category = "Melee", ReqDot = 0.50},
-    ["130123540243667"] = {Name = "Bot Kick", Category = "Melee", ReqDot = 0.50},
-    -- NAOYA
-    ["101283990868172"] = {Name = "Naoya M1 1", Category = "Melee", ReqDot = 0.50},
-    ["108708446862011"] = {Name = "Naoya M1 2", Category = "Melee", ReqDot = 0.50},
-    ["77583711129628"]  = {Name = "Naoya M1 3", Category = "Melee", ReqDot = 0.50},
-    ["77284264481284"]  = {Name = "Naoya M2 1", Category = "Melee", ReqDot = 0.50},
-    ["108376755316792"] = {Name = "Naoya M2 2", Category = "Melee", ReqDot = 0.50},
-    ["74580112757879"]  = {Name = "Naoya M2 3", Category = "Melee", ReqDot = 0.50},
-    ["101107501526373"] = {Name = "Naoya M2 4", Category = "Melee", ReqDot = 0.50},
-    ["105121164520635"] = {Name = "Projection Breaker", Category = "Rush", ReqDot = 0.75, ReqDist = 16.5},
-    ["86045680364061"]  = {Name = "Decisive Strike", Category = "NaoyaThrice", ReqDot = 0.50, ReqDist = 60.0},
-    ["129944486689528"] = {Name = "Acceleration", Category = "Area", ReqDist = 16.5},
-    -- DASHES (Global)
-    ["110978068388232"] = {Name = "Universal Dash", Category = "DashRule"},
-    ["132855702748568"] = {Name = "Hiromi Dash", Category = "DashRule"},
-    ["130135202362252"] = {Name = "Yuta Dash", Category = "DashRule"},
-    ["81708642912019"]  = {Name = "Nanami Dash", Category = "DashRule"},
-    ["83782195794718"]  = {Name = "Ryu Dash", Category = "DashRule"},
-    ["130284226842903"] = {Name = "Locust/Yuki Dash", Category = "DashRule"},
-    ["140597320237985"] = {Name = "Charles Dash", Category = "DashRule"},
-    ["134917827147266"] = {Name = "Haruta Dash 1", Category = "DashRule"},
-    ["122074769949629"] = {Name = "Haruta Dash 2", Category = "DashRule"},
-    ["128267680345523"] = {Name = "MeiMei Dash", Category = "DashRule"},
-    ["105571879949076"] = {Name = "Kuro Dash", Category = "DashRule"},
-    -- NANAMI
-    ["84359513001979"]  = {Name = "Nanami M1 1", Category = "Melee", ReqDot = 0.50},
-    ["79436586236026"]  = {Name = "Nanami M1 2", Category = "Melee", ReqDot = 0.50},
-    ["102285403332509"] = {Name = "Nanami M1 3", Category = "Melee", ReqDot = 0.50},
-    ["104137631480391"] = {Name = "Nanami M1 4", Category = "Melee", ReqDot = 0.50},
-    ["114913455544468"] = {Name = "Nanami M2 1", Category = "Melee", ReqDot = 0.50},
-    ["84602523265622"]  = {Name = "Nanami M2 2", Category = "Melee", ReqDot = 0.50},
-    ["102085681670810"] = {Name = "Nanami M2 3", Category = "Melee", ReqDot = 0.50},
-    ["115446267797335"] = {Name = "Nanami M2 4", Category = "Melee", ReqDot = 0.50},
-    ["81210313723714"]  = {Name = "Cleaving Whirlwind", Category = "NanamiRatio", ReqDot = 0.85, ReqDist = 41.0},
-    ["130957217409359"] = {Name = "Severance Kick", Category = "Rush", ReqDot = 0.85, ReqDist = 10.5},
-    ["100811576955331"] = {Name = "Blunt Cut", Category = "NanamiRatio", ReqDot = 0.85, ReqDist = 36.5},
-    ["113359849246757"] = {Name = "Stabilize", Category = "NanamiRatio", ReqDot = 0.85, ReqDist = 10.0},
-    -- RYU
-    ["92698956945928"]  = {Name = "Ryu M1 3_2", Category = "Melee", ReqDot = 0.50, ReqDist = 25.0},
-    ["73243807139765"]  = {Name = "Granite Blast", Category = "Granite", ReqDot = 0.60, ReqDist = 78.5},
-    ["114822879878184"] = {Name = "Unsatisfied", Category = "Rush", ReqDot = 0.80, ReqDist = 30.0},
-    ["70394890117813"]  = {Name = "Appetizer", Category = "Rush", ReqDot = 0.80, ReqDist = 80.0},   
-    -- HANAMI
-    ["138169151223960"] = {Name = "Disaster Root", Category = "Target", ReqDot = 0.70, ReqDist = 60.0},
-    ["111083699259354"] = {Name = "Hanami M1 1", Category = "Melee", ReqDot = 0.50},
-    ["88849926869776"]  = {Name = "Hanami M1 2", Category = "Melee", ReqDot = 0.50},
-    ["89537672683114"]  = {Name = "Hanami M1 3", Category = "Melee", ReqDot = 0.50},
-    ["92595499555055"]  = {Name = "Surging Thorns", Category = "Area", ReqDist = 35.0}, 
-    ["96466374346823"]  = {Name = "Bud Shot", Category = "Target", ReqDot = 0.84, ReqDist = 70.0},
-    -- LOCUST
-    ["85068785050521"]  = {Name = "Locust M1 1", Category = "Melee", ReqDot = 0.50},
-    ["79086910454958"]  = {Name = "Locust M1 2", Category = "Melee", ReqDot = 0.50},
-    ["108027796023968"] = {Name = "Locust M1 3", Category = "Melee", ReqDot = 0.50},
-    ["99205259396653"]  = {Name = "Locust M1 4", Category = "Melee", ReqDot = 0.50},
-    ["129678103897608"] = {Name = "Clever", Category = "Rush", ReqDot = 0.60, ReqDist = 35.6},
-    ["134777193523837"] = {Name = "Crushing Jaws", Category = "Rush", ReqDot = 0.85, ReqDist = 30.0},
-    ["121550561336691"] = {Name = "Wing Throw", Category = "Rush", ReqDot = 0.80, ReqDist = 12.0},
-    -- YUKI
-    ["131909724908049"] = {Name = "Yuki M1 1", Category = "Melee", ReqDot = 0.50},
-    ["72575786212990"]  = {Name = "Yuki M1 2", Category = "Melee", ReqDot = 0.50},
-    ["119248903710146"] = {Name = "Yuki M1 3", Category = "Melee", ReqDot = 0.50},
-    ["123168328205349"] = {Name = "Yuki M1 4", Category = "Melee", ReqDot = 0.50},
-    ["115097960689033"] = {Name = "Garuda Rebound", Category = "Rush", ReqDot = 0.85, ReqDist = 100.0}, 
-    ["94347210073500"]  = {Name = "Rising Star", Category = "Rush", ReqDot = 0.55, ReqDist = 17.5},
-    -- CHARLES
-    ["125689391910002"] = {Name = "Charles M1 1", Category = "Melee", ReqDot = 0.50},
-    ["84080901810314"]  = {Name = "Charles M1 2", Category = "Melee", ReqDot = 0.50},
-    ["139833047658617"] = {Name = "Charles M1 3", Category = "Melee", ReqDot = 0.50},
-    ["79271374075726"]  = {Name = "Charles M1 4", Category = "Melee", ReqDot = 0.50},
-    ["103013818601982"] = {Name = "Dispair", Category = "CharlesDispair", ReqDist = 12.0},
-    ["79860101129549"]  = {Name = "Shut Up!", Category = "CharlesShutUp", ReqDot = -0.80, ReqDist = 8.0},
-    -- HARUTA
-    ["133447840605824"] = {Name = "Haruta M1 1", Category = "Melee", ReqDot = 0.50},
-    ["113963875117859"] = {Name = "Haruta M1 2", Category = "Melee", ReqDot = 0.50},
-    ["106282708121342"] = {Name = "Haruta M1 3", Category = "Melee", ReqDot = 0.50},
-    ["101681158700275"] = {Name = "Haruta M1 4", Category = "Melee", ReqDot = 0.50},
-    ["120914276661831"] = {Name = "Ambush", Category = "HarutaAmbush", ReqDot = 0.50, ReqDist = 15.0},
-    ["95494223368246"]  = {Name = "Stinger", Category = "Rush", ReqDot = 0.78, ReqDist = 5.0},
-    ["103960582499076"] = {Name = "Ankle Cutter", Category = "HarutaNPC"},
-    ["93028763593631"]  = {Name = "High Time", Category = "Skill", ReqDot = 0.85, ReqDist = 20.0},
-    ["102053631728986"] = {Name = "Trip", Category = "Rush", ReqDot = 0.50, ReqDist = 15.0},
-    ["76957377224584"]  = {Name = "Cheap Shot", Category = "Target", ReqDot = 0.85, ReqDist = 60.0},
-    ["124759375124281"] = {Name = "Dirt Play", Category = "Target", ReqDot = 0.85, ReqDist = 60.0},
-    -- MEIMEI
-    ["114985590391235"] = {Name = "MeiMei M1 1", Category = "Melee", ReqDot = 0.50},
-    ["108449614447004"] = {Name = "MeiMei M1 2", Category = "Melee", ReqDot = 0.50},
-    ["122170399962557"] = {Name = "MeiMei M1 3", Category = "Melee", ReqDot = 0.50},
-    ["117638619792450"] = {Name = "MeiMei M1 4", Category = "Melee", ReqDot = 0.50},
-    ["126362899488198"] = {Name = "Impetus Updraft", Category = "Rush", ReqDot = 0.60, ReqDist = 9.0},
-    ["92081142332466"]  = {Name = "Impetus New", Category = "Rush", ReqDot = 0.80, ReqDist = 5.0},
-    ["90781290293652"]  = {Name = "Circling", Category = "Circling"},
-    ["81007905598407"]  = {Name = "Murmurate", Category = "Area", ReqDist = 35.0},
-    -- KUROURUSHI
-    ["105961366724096"] = {Name = "Kuro M1 1", Category = "Melee", ReqDot = 0.30},
-    ["86519781516542"]  = {Name = "Kuro M1 2", Category = "Melee", ReqDot = 0.30},
-    ["123591522021548"] = {Name = "Kuro M1 3", Category = "Melee", ReqDot = 0.30},
-    ["124726819047447"] = {Name = "Kuro M1 4", Category = "Melee", ReqDot = 0.30},
-    ["97901397284754"]  = {Name = "Kuro M2 1", Category = "Melee", ReqDot = 0.30},
-    ["135686778593679"] = {Name = "Kuro M2 2", Category = "Melee", ReqDot = 0.30},
-    ["92796867394473"]  = {Name = "Kuro M2 3", Category = "Melee", ReqDot = 0.30},
-    ["81426568444338"]  = {Name = "Kuro M2 4", Category = "Melee", ReqDot = 0.30},
-    ["83430571986421"]  = {Name = "Festering Strikes", Category = "Rush", ReqDot = 0.80, ReqDist = 22.0},
-    ["78636717376287"]  = {Name = "Detach", Category = "Target", ReqDot = 0.85, ReqDist = 120.0},
-    ["104082985552315"] = {Name = "Reattach", Category = "Target", ReqDot = 0.85, ReqDist = 120.0},
-    ["85938446097801"]  = {Name = "Chokehold", Category = "Rush", ReqDot = 0.35, ReqDist = 10.5}, 
-    ["116119661056362"] = {Name = "Roach Swarm", Category = "Rush", GroundIsUnblockable = true, ReqDist = 32.5}
-}
-
--- ==========================================
--- SCRIPT UTILITIES & HELPERS
--- ==========================================
-
--- Parses URL strings to grab the raw Asset ID number.
-local function ExtractID(url)
-    if not url then return nil end
-    return string.match(url, "%d+")
-end
-
--- Checks if the provided enemy is Naoya (whose dash is harmless).
-local function IsNaoya(enemyMoveset)
-    if enemyMoveset and string.find(enemyMoveset, "Naoya") then return true end
-    return false
-end
-
--- Checks whether an incoming attack bypasses normal defenses (e.g., enemy is in mid-air).
-local function IsUnblockableMove(animData, enemyHumanoid, enemyChar)
-    if not animData then return false end
-    if animData.Category == "Unblockable" then return true end
-    
-    local isAir = (enemyHumanoid.FloorMaterial == Enum.Material.Air or enemyHumanoid:GetState() == Enum.HumanoidStateType.Freefall or enemyHumanoid:GetState() == Enum.HumanoidStateType.Jumping)
-    
-    -- Ground or Air unblockable states overriding normal block rules
-    if animData.GroundIsUnblockable and not isAir then return true end
-    if animData.AirIsUnblockable and isAir then return true end
-
-    -- Dynamic check for Choso's Piercing Blood if blood has been consumed.
-    if animData.Category == "PiercingBlood" and enemyChar then
-        if enemyChar:GetAttribute("PiercingUnblockable") == true then
-            return true 
-        end
-    end
-    
-    return false
-end
-
--- Specific function handling Nanami's perfect ratio timing blocks.
-local function CheckNanamiRatio()
-    if not LocalPlayer.Character then return false end
-    local info = LocalPlayer.Character:FindFirstChild("Info")
-    if info and info:FindFirstChild("Ratio") and info:GetAttribute("CurrentTiming") then
-        return true
-    end
-    return false
-end
-
--- Turns the local player's BODY to face the attacker. Blocking in this game is directional, so the rotation
--- is what makes the shield actually cover the hit.
--- ═══ THE CAMERA IS NEVER TOUCHED ═══ There used to be a Camera.CFrame lerp here behind a "Camera Follow"
--- toggle. Yanking someone's view mid-fight is disorienting and it fights your own aim, so it is gone - not
--- defaulted off, removed. Your character turns; where you are looking stays yours.
-local function FaceTarget(targetPosition)
-    local myChar = CharactersFolder:FindFirstChild(LocalPlayer.Name) or LocalPlayer.Character  -- same live-body resolution as detection: block is DIRECTIONAL, must rotate the REAL body
-    local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
-    if not myHRP then return end
-
-    local direction = targetPosition - myHRP.Position
-    if direction.Magnitude > 0.1 then
-        -- Rotation ONLY - same position, so this can never shove you or the target. Y is taken from your own
-        -- root so a tall or airborne attacker cannot tip you over.
-        myHRP.CFrame = CFrame.lookAt(myHRP.Position, Vector3.new(targetPosition.X, myHRP.Position.Y, targetPosition.Z))
-    end
-end
-
--- Calculates predictive hitbox extensions based on the enemy's velocity.
-local BLOCK_RANGE_MULT = 1.6   -- GLOBAL reaction-range boost. Raising this is the single biggest 'react faster' lever: the shield goes up while the attacker is still closing, instead of once they are already on top of you. 1.6 = the block registers well before contact even at dash speed.
-local function GetDynamicRequiredDist(animData, myHRP, enemyHRP)
-    -- Static attacks ignore dynamic physics
-    if animData.ReqDist then return animData.ReqDist * BLOCK_RANGE_MULT end
-
-    if animData.Category == "Melee" then
-        local vel = enemyHRP.AssemblyLinearVelocity
-        local flatVel = Vector3.new(vel.X, 0, vel.Z)
-        local speed = flatVel.Magnitude
-        local baseDist = 11.5  -- raise the shield earlier still; a lunging M1 covers the last few studs faster than the block can register from 9.5
-
-        -- If the enemy is lunging at high speeds, extend the danger zone to compensate for server ping
-        if speed > 3.0 then
-            local toMeDir = (myHRP.Position - enemyHRP.Position)
-            if toMeDir.Magnitude > 0.1 then
-                toMeDir = toMeDir.Unit
-                local approachDot = flatVel.Unit:Dot(toMeDir)
-
-                -- Only expand the hitbox if they are actively moving *towards* you
-                if approachDot > 0.30 then
-                    return baseDist + (speed * approachDot * 0.32)  -- was 0.25: bigger lead vs fast lunges
-                end
-            end
-        end
-        return baseDist
-    end
-    
-    return 10.0 
-end
-
--- Initializes event listeners for the local player's character.
-local function SetupLocalPlayer(char)
-    local humanoid = char:WaitForChild("Humanoid", 5)
-    local animator = humanoid and humanoid:WaitForChild("Animator", 5)
-    if animator then
-        animator.AnimationPlayed:Connect(function(track)
-            if not track.Animation then return end
-            local id = ExtractID(track.Animation.AnimationId)
-            -- If casting Malevolent Shrine, grant immunity timer
-            if id == "121984128639453" then
-                myDomainEndTime = tick() + 25 
-            end
-            local animData = AnimDict[id]
-            -- Log local attacks to prevent self-blocking
-            if animData then
-                myCasts[animData.Name] = tick() + 10
-            end
-        end)
-    end
-end
-
-if LocalPlayer.Character then SetupLocalPlayer(LocalPlayer.Character) end
-LocalPlayer.CharacterAdded:Connect(SetupLocalPlayer)
-_G.VX_ANIMDICT = AnimDict  -- expose the attack-animation-id map so Auto Counter can block the instant a known enemy attack plays
-
--- ==========================================
--- ANIMATION EVENT HANDLER
--- Evaluates incoming animation data on frame 1 to preemptively raise defenses.
--- ==========================================
-_G.OnAnimationPlayed = function(enemyChar, track)
-    if not IsAnyBlockActive() then return end
-
-    local myChar = CharactersFolder:FindFirstChild(LocalPlayer.Name) or LocalPlayer.Character  -- JJS live body (LP.Character lag = missed instant reactions)
-    local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
-    local enemyHRP = enemyChar:FindFirstChild("HumanoidRootPart") or enemyChar.PrimaryPart
-    local enemyInfo = enemyChar:FindFirstChild("Info")
-    local enemyHumanoid = enemyChar:FindFirstChildOfClass("Humanoid") or enemyChar:FindFirstChildOfClass("AnimationController")
-    
-    if not (myHRP and enemyHRP and enemyHumanoid and track.Animation) then return end
-    
-    local trackID = ExtractID(track.Animation.AnimationId)
-    local animData = AnimDict[trackID]
-    
-    if animData then
-        local cat = animData.Category
-        local isMelee = (cat == "Melee" or cat == "MechaBotMelee")
-        local isDash = (cat == "DashRule")
-        local isAbil = not isMelee and not isDash
-        local isValid = true
-
-        -- Module Filtering: Stop processing if the user disabled this specific defense type
-        if isMelee and not Config.Blocks.M1 then isValid = false end
-        if isDash and not Config.Blocks.Dash then isValid = false end
-        if isAbil and not Config.Blocks.Abilities then isValid = false end
-
-        if isValid then
-            -- Clean out old duplicates of the same threat to keep memory light
-            local i = #ActiveThreatTracks
-            while i >= 1 do
-                if ActiveThreatTracks[i].Char == enemyChar then
-                    table.remove(ActiveThreatTracks, i)
-                end
-                i = i - 1
-            end
-            
-            table.insert(ActiveThreatTracks, {
-                Track = track,
-                Char = enemyChar,
-                Data = animData,
-                StartTime = tick()
-            })
-            
-            if animData.Name == "Rabbit Escape" then rabbitCaster = enemyChar end
-            
-            if animData.Category ~= "DomainCast" then
-                if animData.Category == "TodoClap" then
-                    local clapTarget = enemyInfo and enemyInfo:FindFirstChild("ClapTarget")
-                    if clapTarget and clapTarget.Value == myChar.Name then
-                        local dist = (enemyHRP.Position - myHRP.Position).Magnitude
-                        -- Only blocks clap teleportation if within valid range
-                        if dist > 26.0 and dist <= 60.0 then
-                            FaceTarget(enemyHRP.Position)
-                            currentThreatInstance = enemyChar
-                            lastBlockedThreatName = animData.Name
-                            comboDropTime = tick() + Config.ComboDelay
-                            if not isBlocking then
-                                isBlocking = true
-                                Config.Remotes.BlockActivate:FireServer(enemyChar)
-                            end
-                        end
-                    end
-                elseif animData.Category == "NaoyaThrice" then
-                    local count = naoyaDecisiveCount[enemyChar] or 0
-                    if count < 2 then 
-                        naoyaDecisiveCount[enemyChar] = count + 1
-                        task.delay(1.5, function() naoyaDecisiveCount[enemyChar] = 0 end)
-                    end
-                elseif animData.Category == "NanamiRatio" then
-                    if CheckNanamiRatio() then
-                        -- Check valid, doing nothing explicit here allows normal block fallback
-                    end
-                end
-            end
-        end
-    end
-end
-
--- ==========================================
--- MAIN RENDER STEPPED (PREDICTIVE HITBOX ENGINE)
--- The absolute core of the script. Runs 60 times a second.
--- ==========================================
-RunService.RenderStepped:Connect(function()
-    -- If all modules are turned off, drop the shield immediately and return
-    if not IsAnyBlockActive() then 
-        if isBlocking then
-            Config.Remotes.BlockDeactivate:FireServer()
-            isBlocking = false
-        end
-        return 
-    end
-    
-    local myChar = CharactersFolder:FindFirstChild(LocalPlayer.Name) or LocalPlayer.Character  -- JJS live body (LP.Character lag made blocking miss/late)
-    local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
-    if not myHRP then return end
-
-    local isThreatCurrentlyActive = false
-    local facePosition = nil
-    -- Read the server clock ONCE per frame. It used to be called inside the per-enemy loop below, so a lobby
-    -- with 15 people nearby made 15 engine calls every frame for a value that cannot change within one frame.
-    local frameServerTime = workspace:GetServerTimeNow()
-
-    -- 1. DATA READER: M1 COMBO SUSTAIN WITH PREDICTIVE HITBOX
-    -- Handles smooth defensive chains when an enemy is mashing M1
-    if Config.Blocks.M1 then
-        for _, enemyChar in ipairs(NearbyEnemies) do
-            local enemyHRP = enemyChar:FindFirstChild("HumanoidRootPart")
-            if enemyHRP then
-                local currentM1 = enemyChar:GetAttribute("CurrentM1") or 0
-                local lastM1 = enemyChar:GetAttribute("LastM1") or 0
-                local serverTime = frameServerTime   -- hoisted: this was one engine call PER ENEMY PER FRAME
-                
-                -- Check if they are actively in an M1 combo string
-                if currentM1 > 0 and (serverTime - lastM1) < 1.05 then   -- 0.80 missed the tail of slower combo strings, so the last hit went unblocked
-                    local distance = (enemyHRP.Position - myHRP.Position).Magnitude
-                    local toMeDir = (myHRP.Position - enemyHRP.Position)
-                    
-                    if toMeDir.Magnitude > 0.1 then
-                        toMeDir = toMeDir.Unit
-                        local dot = enemyHRP.CFrame.LookVector:Dot(toMeDir)
-                        
-                        -- Gather physics data to predict where the enemy will be next frame
-                        local vel = enemyHRP.AssemblyLinearVelocity
-                        local flatVel = Vector3.new(vel.X, 0, vel.Z)
-                        local speed = flatVel.Magnitude
-                        local requiredDist = 12.5  -- 'if a player punches you it should automatically block the M1': they start the swing from further out than 9.5, and the shield has to already be up when it lands
-
-                        if speed > 3.0 then
-                            local approachDot = flatVel.Unit:Dot(toMeDir)
-                            if approachDot > 0.30 then
-                                requiredDist = 9.5 + (speed * approachDot * 0.32)  -- bigger lead vs fast lunges
-                            end
-                        end
-
-                        local requiredDot = 0.22   -- 0.50 required them to be almost perfectly facing you, so a punch thrown while strafing or mid-turn was never blocked
-                        if distance <= 7.5 then    -- widened: inside this range block regardless of facing (360 defence)
-                            -- 360-Degree Defense against ping-based teleports behind the local player
-                            requiredDot = -1.0 
-                        elseif distance < 10.0 then
-                            -- Low angle threshold for shoulder-to-shoulder hitboxes
-                            requiredDot = 0.100
-                        end
-                        
-                        -- If the enemy breaches the required parameters, lock defense
-                        if distance <= requiredDist and dot >= requiredDot then 
-                            isThreatCurrentlyActive = true
-                            currentThreatInstance = enemyChar
-                            facePosition = enemyHRP.Position
-                            lastBlockedThreatName = "Combo M1 (" .. currentM1 .. ")"
-                            comboDropTime = tick() + Config.ComboDelay
-                            break
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    -- 2. ACTIVE ANIMATION CHECKS (FULLY NESTED LOGIC, ZERO 'CONTINUE' COMMANDS)
-    if not isThreatCurrentlyActive then
-        local i = #ActiveThreatTracks
-        while i >= 1 do
-            local threat = ActiveThreatTracks[i]
-            local track = threat.Track
-            local enemyChar = threat.Char
-            local animData = threat.Data
-            
-            if not track.IsPlaying or not enemyChar.Parent then
-                table.remove(ActiveThreatTracks, i)
-            else
-                local cat = animData.Category
-                local isMelee = (cat == "Melee" or cat == "MechaBotMelee")
-                local isDash = (cat == "DashRule")
-                local isAbil = not isMelee and not isDash
-                local isValid = true
-
-                if isMelee and not Config.Blocks.M1 then isValid = false end
-                if isDash and not Config.Blocks.Dash then isValid = false end
-                if isAbil and not Config.Blocks.Abilities then isValid = false end
-                if animData.Category == "DomainCast" then isValid = false end
-
-                if isValid then
-                    local enemyHRP = enemyChar:FindFirstChild("HumanoidRootPart") or enemyChar.PrimaryPart
-                    local enemyInfo = enemyChar:FindFirstChild("Info")
-                    local enemyHumanoid = enemyChar:FindFirstChildOfClass("Humanoid") or enemyChar:FindFirstChildOfClass("AnimationController")
-                    local enemyMoveset = enemyChar:GetAttribute("CachedMoveset") or (enemyChar.Name == "Naoya" and "Naoya" or "")
-                    
-                    if enemyHRP and enemyHumanoid then
-                        local distance = (enemyHRP.Position - myHRP.Position).Magnitude
-                        local toMeDir = (myHRP.Position - enemyHRP.Position).Unit
-                        local dot = enemyHRP.CFrame.LookVector:Dot(toMeDir)
-                        local moveProcessed = false
-                        
-                        -- SPATIAL LOGIC: Area (Pure Radius Detection ignoring camera angle)
-                        if animData.Category == "Area" then
-                            if distance <= animData.ReqDist then
-                                isThreatCurrentlyActive = true
-                                currentThreatInstance = enemyChar
-                                facePosition = enemyHRP.Position
-                                lastBlockedThreatName = animData.Name
-                                comboDropTime = tick() + Config.ComboDelay
-                            end
-                            moveProcessed = true
-                        end
-
-                        -- 360-DEGREE SPATIAL LOGIC: Spike Wrath Lock (Mahito)
-                        if not moveProcessed and animData.Category == "SpikeWrath" then
-                            if distance <= animData.ReqDist then 
-                                spikeWrathLock = enemyChar
-                                isThreatCurrentlyActive = true
-                                currentThreatInstance = enemyChar
-                                facePosition = enemyHRP.Position
-                                lastBlockedThreatName = "Spike Wrath (Cast)"
-                                comboDropTime = tick() + Config.ComboDelay
-                            end
-                            moveProcessed = true
-                        end
-
-                        -- CHARLES LOGIC: Dispair (Continuous Rotation Checking)
-                        if not moveProcessed and animData.Category == "CharlesDispair" then
-                            if distance <= animData.ReqDist and dot >= 0.45 then
-                                isThreatCurrentlyActive = true
-                                currentThreatInstance = enemyChar
-                                facePosition = enemyHRP.Position
-                                lastBlockedThreatName = animData.Name
-                                comboDropTime = tick() + Config.ComboDelay
-                            end
-                            moveProcessed = true
-                        end
-
-                        -- CHARLES LOGIC: Shut Up (Sustained Block until animation finishes)
-                        if not moveProcessed and animData.Category == "CharlesShutUp" then
-                            if distance <= animData.ReqDist and dot <= animData.ReqDot then
-                                isThreatCurrentlyActive = true
-                                currentThreatInstance = enemyChar
-                                facePosition = enemyHRP.Position
-                                lastBlockedThreatName = animData.Name
-                                comboDropTime = tick() + Config.ComboDelay
-                            end
-                            moveProcessed = true
-                        end
-                        
-                        -- HARUTA LOGIC: Perfect Block on Ambush (0.2s explicit delay)
-                        if not moveProcessed and animData.Category == "HarutaAmbush" then
-                            local elapsed = tick() - threat.StartTime
-                            if elapsed >= 0.20 then
-                                if distance <= animData.ReqDist and dot >= animData.ReqDot then
-                                    isThreatCurrentlyActive = true
-                                    currentThreatInstance = enemyChar
-                                    facePosition = enemyHRP.Position
-                                    lastBlockedThreatName = "Ambush (Perfect Block)"
-                                    comboDropTime = tick() + Config.ComboDelay
-                                end
-                            end
-                            moveProcessed = true
-                        end
-                        
-                        -- RYU LOGIC: Granite Blast (Initial Block + Drops if skill charge is canceled)
-                        if not moveProcessed and animData.Category == "Granite" then
-                            local elapsed = tick() - threat.StartTime
-                            local inSkill = enemyInfo and enemyInfo:FindFirstChild("InSkill")
-                            
-                            if elapsed <= 0.5 then
-                                if distance <= animData.ReqDist and dot >= animData.ReqDot then
-                                    isThreatCurrentlyActive = true
-                                    currentThreatInstance = enemyChar
-                                    facePosition = enemyHRP.Position
-                                    lastBlockedThreatName = "Granite Blast (Cast Initial)"
-                                    comboDropTime = tick() + Config.ComboDelay
-                                end
-                            else
-                                if not inSkill and elapsed < 1.1 then
-                                    if distance <= animData.ReqDist and dot >= animData.ReqDot then
-                                        isThreatCurrentlyActive = true
-                                        currentThreatInstance = enemyChar
-                                        facePosition = enemyHRP.Position
-                                        lastBlockedThreatName = "Granite Blast (Main Blast)"
-                                        comboDropTime = tick() + Config.ComboDelay
-                                    end
-                                end
-                            end
-                            moveProcessed = true
-                        end
-
-                        -- REVISED CIRCLING: Hard blocks for exactly 1.1 seconds (Range: 18, Dot: 0.30)
-                        if not moveProcessed and animData.Category == "Circling" then
-                            local elapsed = tick() - threat.StartTime
-                            if elapsed <= 1.1 then
-                                if distance <= 18.0 and dot >= 0.30 then
-                                    isThreatCurrentlyActive = true
-                                    currentThreatInstance = enemyChar
-                                    facePosition = enemyHRP.Position
-                                    lastBlockedThreatName = "Circling"
-                                    comboDropTime = tick() + Config.ComboDelay
-                                end
-                            end
-                            moveProcessed = true
-                        end
-
-                        -- DASH RULE: Ignores Naoya since his dash lacks direct damage
-                        if not moveProcessed and animData.Category == "DashRule" then
-                            if not IsNaoya(enemyMoveset) then
-                                if distance <= 15.0 and dot >= 0.50 then
-                                    isThreatCurrentlyActive = true
-                                    currentThreatInstance = enemyChar
-                                    facePosition = enemyHRP.Position
-                                    lastBlockedThreatName = "Dash Anim (" .. animData.Name .. ")"
-                                    comboDropTime = tick() + Config.ComboDelay
-                                end
-                            end
-                            moveProcessed = true
-                        end
-                        
-                        -- MECHAMARU LOGIC: Ultracannon vulnerability window mapping
-                        if not moveProcessed and animData.Category == "Ultracannon" then
-                            local elapsed = tick() - threat.StartTime
-                            if elapsed > 1.3 then
-                                table.remove(ActiveThreatTracks, i)
-                            else
-                                if distance <= animData.ReqDist and dot >= animData.ReqDot then
-                                    isThreatCurrentlyActive = true
-                                    currentThreatInstance = enemyChar
-                                    facePosition = enemyHRP.Position
-                                    lastBlockedThreatName = "Ultracannon"
-                                    comboDropTime = tick() + Config.ComboDelay
-                                end
-                            end
-                            moveProcessed = true
-                        end
-                        
-                        -- YUTA LOGIC: Fast Outburst reaction limit
-                        if not moveProcessed and animData.Category == "Outburst" then
-                            local outBurstCharge = enemyInfo and enemyInfo:FindFirstChild("OutburstCharge")
-                            if not outBurstCharge and tick() - threat.StartTime < 0.4 and distance <= 15 then
-                                isThreatCurrentlyActive = true
-                                currentThreatInstance = enemyChar
-                                facePosition = enemyHRP.Position
-                                lastBlockedThreatName = "Outburst"
-                                comboDropTime = tick() + Config.ComboDelay
-                            end
-                            moveProcessed = true
-                        end
-                        
-                        -- DEFAULT MELEE / RUSH LOGIC EVALUATION
-                        if not moveProcessed then
-                            local requiredDot = animData.ReqDot or 0.85
-                            
-                            if animData.Category == "Melee" then
-                                if distance <= 7.0 then
-                                    requiredDot = -1.0 -- All close-quarters melee at <= 7 studs ignores DOT (360-degree block)
-                                elseif distance < 9.0 then
-                                    requiredDot = 0.100
-                                end
-                            end
-                            
-                            local requiredDist = GetDynamicRequiredDist(animData, myHRP, enemyHRP)
-                            local unblockable = false
-                            
-                            if enemyHumanoid:IsA("Humanoid") then
-                                unblockable = IsUnblockableMove(animData, enemyHumanoid, enemyChar)
-                            end
-                            
-                            -- Ultimate verification gateway
-                            if distance <= requiredDist and dot >= requiredDot and not unblockable then
-                                if animData.Category == "ReverseRule" then
-                                    reverseBallLock = true
-                                    reverseBallLockTime = tick()
-                                end
-                                
-                                isThreatCurrentlyActive = true
-                                currentThreatInstance = enemyChar
-                                facePosition = enemyHRP.Position
-                                lastBlockedThreatName = animData.Name
-                                
-                                if animData.Name == "Ultraspin" and enemyChar.Name == "MechamaruBot" then
-                                    comboDropTime = tick() + 0.1
-                                else
-                                    comboDropTime = tick() + Config.ComboDelay
-                                end
-                            end
-                        end
-                        
-                        if isThreatCurrentlyActive then break end -- Threat found, break out of the while loop safely
-                    end
-                end
-            end
-            i = i - 1
-        end
-    end
-
-    -- 3. MECHAMARU BOTS (Module: Abilities)
-    if not isThreatCurrentlyActive and Config.Blocks.Abilities then
-        for _, char in ipairs(CharactersFolder:GetChildren()) do
-            if char.Name == "MechamaruBot" then
-                local owner = char:FindFirstChild("Owner")
-                if owner and owner.Value ~= myChar then
-                    local info = char:FindFirstChild("Info")
-                    local botHRP = char:FindFirstChild("HumanoidRootPart")
-                    
-                    if info and botHRP then
-                        local inSkill = info:FindFirstChild("InSkill")
-                        local knockback = info:FindFirstChild("Knockback")
-                        
-                        local dist = (botHRP.Position - myHRP.Position).Magnitude
-                        local toMeDir = (myHRP.Position - botHRP.Position).Unit
-                        local dot = botHRP.CFrame.LookVector:Dot(toMeDir)
-                        
-                        if inSkill and dist <= 38.5 and dot >= 0.50 then
-                            isThreatCurrentlyActive = true
-                            currentThreatInstance = owner.Value
-                            facePosition = botHRP.Position
-                            lastBlockedThreatName = "MechamaruBot (Attack/Spin)"
-                            comboDropTime = tick() + Config.ComboDelay
-                            break
-                        elseif knockback and dist <= 30.0 then
-                            isThreatCurrentlyActive = true
-                            currentThreatInstance = owner.Value
-                            facePosition = botHRP.Position
-                            lastBlockedThreatName = "MechamaruBot (Explosion)"
-                            comboDropTime = tick() + Config.ComboDelay
-                            break
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    -- 4. SPIKE WRATH SUSTAIN LOCK (Module: Abilities)
-    if not isThreatCurrentlyActive and spikeWrathLock and spikeWrathLock.Parent and Config.Blocks.Abilities then
-        local lockHRP = spikeWrathLock:FindFirstChild("HumanoidRootPart")
-        local lockInfo = spikeWrathLock:FindFirstChild("Info")
-        if lockHRP and lockInfo then
-            local inSkill = lockInfo:FindFirstChild("InSkill")
-            if inSkill and inSkill.Value == true then
-                local dist = (lockHRP.Position - myHRP.Position).Magnitude
-                if dist <= 75.0 then
-                    isThreatCurrentlyActive = true
-                    currentThreatInstance = spikeWrathLock
-                    facePosition = lockHRP.Position
-                    lastBlockedThreatName = "Spike Wrath (Sustained)"
-                    comboDropTime = tick() + Config.ComboDelay
-                else
-                    spikeWrathLock = nil 
-                end
-            else
-                spikeWrathLock = nil 
-            end
-        else
-            spikeWrathLock = nil
-        end
-    end
-
-    -- 5. RAW PHYSICAL DASH (Module: Dash)
-    if not isThreatCurrentlyActive and Config.Blocks.Dash then
-        for _, enemyChar in ipairs(NearbyEnemies) do
-            local enemyHRP = enemyChar:FindFirstChild("HumanoidRootPart")
-            local enemyInfo = enemyChar:FindFirstChild("Info")
-            local enemyMoveset = enemyChar:GetAttribute("CachedMoveset") or ""
-            
-            if enemyHRP and enemyInfo and not enemyInfo:FindFirstChild("Stun") and not enemyInfo:FindFirstChild("Knockback") then
-                -- Bypass Naoya since his dash is for repositioning, not damage
-                if not IsNaoya(enemyMoveset) then
-                    local distance = (enemyHRP.Position - myHRP.Position).Magnitude
-                    local isDashing = enemyInfo:FindFirstChild("Dash")
-                    
-                    local toMeDir = (myHRP.Position - enemyHRP.Position)
-                    if toMeDir.Magnitude > 0.1 then
-                        toMeDir = toMeDir.Unit
-                        local dot = enemyHRP.CFrame.LookVector:Dot(toMeDir)
-
-                        -- Primary Collision Block (widened 15->20 studs, looser angle: react to less-direct dashes too)
-                        if isDashing and distance <= 20.0 and dot >= 0.40 then
-                            isThreatCurrentlyActive = true
-                            currentThreatInstance = enemyChar
-                            facePosition = enemyHRP.Position
-                            lastBlockedThreatName = "Collision Dash (Physical 20 Studs)"
-                            comboDropTime = tick() + Config.ComboDelay
-                            break
-                        -- Secondary Aggressive Approach Block (widened 25->34 studs)
-                        elseif (isDashing or enemyInfo:FindFirstChild("Chase")) then
-                            if dot >= 0.45 and distance <= 34 and enemyHRP.Velocity.Unit:Dot(toMeDir) >= 0.55 then
-                                isThreatCurrentlyActive = true
-                                currentThreatInstance = enemyChar
-                                facePosition = enemyHRP.Position
-                                lastBlockedThreatName = "Aggressive Dash"
-                                comboDropTime = tick() + Config.ComboDelay
-                                break
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    -- 6. GLOBAL EFFECTS & NPCS DETECTION (Module: Abilities - Fast Cache Read)
-    if not isThreatCurrentlyActive and Config.Blocks.Abilities then
-        -- First, check enemies in the region for unmapped spatial effects
-        for _, enemyChar in ipairs(NearbyEnemies) do
-            local setAssets = enemyChar:FindFirstChild("SetAssets")
-            if setAssets then
-                local supernova = setAssets:FindFirstChild("Supernova")
-                if supernova and supernova:IsA("BasePart") then
-                    local dist = (supernova.Position - myHRP.Position).Magnitude
-                    if dist <= 10.5 then
-                        isThreatCurrentlyActive = true
-                        currentThreatInstance = enemyChar
-                        facePosition = supernova.Position
-                        lastBlockedThreatName = "Supernova Explosion"
-                        comboDropTime = tick() + Config.ComboDelay
-                        break
-                    end
-                end
-            end
-            
-            if not isThreatCurrentlyActive then
-                local enemyHRP = enemyChar:FindFirstChild("HumanoidRootPart")
-                local info = enemyChar:FindFirstChild("Info")
-                if enemyHRP and info then
-                    local rainHold = info:FindFirstChild("RainHold")
-                    if rainHold then
-                        local dist = (enemyHRP.Position - myHRP.Position).Magnitude
-                        if dist <= 35.5 then
-                            isThreatCurrentlyActive = true
-                            currentThreatInstance = enemyChar
-                            facePosition = enemyHRP.Position
-                            lastBlockedThreatName = "Blood Rain (Sustained)"
-                            comboDropTime = tick() + Config.ComboDelay
-                            break
-                        end
-                    end
-                end
-                
-                if not isThreatCurrentlyActive then
-                    local isNPC = enemyChar.Name == "HarutaSwordNPC"
-                    if isNPC then
-                        local owner = enemyChar:FindFirstChild("Owner")
-                        if owner and owner.Value ~= myChar then
-                            local hrp = enemyChar:FindFirstChild("HumanoidRootPart")
-                            if hrp and info then
-                                local dist = (hrp.Position - myHRP.Position).Magnitude
-                                if info:FindFirstChild("InSkill") and dist <= 5.0 then
-                                    local tgt = info:FindFirstChild("Sword") and info.Sword:FindFirstChild("Target")
-                                    if not tgt or tgt.Value == myChar.Name then
-                                        isThreatCurrentlyActive = true
-                                        currentThreatInstance = owner.Value
-                                        facePosition = hrp.Position
-                                        lastBlockedThreatName = "NPC Attack (" .. enemyChar.Name .. ")"
-                                        comboDropTime = tick() + Config.ComboDelay
-                                        break
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            if isThreatCurrentlyActive then break end
-        end
-
-        -- Domain Cache Evaluation
-        if not isThreatCurrentlyActive then
-            local domainCC = Lighting:FindFirstChild("DomainCC")
-            local inDomainArea = false
-            for domainPart, _ in pairs(CachedDomains) do
-                if domainPart.Parent then
-                    if tick() > myDomainEndTime then 
-                        local radius = (domainPart.Size.X / 2) + 15
-                        local dist = (domainPart.Position - myHRP.Position).Magnitude
-                        if dist <= radius then
-                            inDomainArea = true
-                            facePosition = domainPart.Position
-                            break
-                        end
-                    end
-                else
-                    CachedDomains[domainPart] = nil
-                end
-            end
-            if (inDomainArea or domainCC) and tick() > myDomainEndTime then
-                isThreatCurrentlyActive = true
-                lastBlockedThreatName = "Domain Expansion"
-                comboDropTime = tick() + Config.ComboDelay
-            end
-        end
-
-        -- Fast Cache Projectile Evaluation (Zero-Lag Array mapping)
-        if not isThreatCurrentlyActive then
-            for part, _ in pairs(CachedProjectiles) do
-                if part.Parent then
-                    local mappedSkill = PartToSkillMap[part.Name]
-                    local skipProjectile = false
-                    if mappedSkill and myCasts[mappedSkill] and tick() < myCasts[mappedSkill] then 
-                        skipProjectile = true 
-                    end
-
-                    if not skipProjectile then
-                        local partOwner = part:FindFirstChild("Owner") or part:FindFirstChild("Creator")
-                        if partOwner and (partOwner.Value == myChar or partOwner.Value == LocalPlayer) then 
-                            skipProjectile = true 
-                        end
-                        
-                        if not skipProjectile then
-                            if part.Name == "Crow" and part:IsA("Model") then
-                                local crowHRP = part:FindFirstChild("HumanoidRootPart")
-                                if crowHRP then
-                                    local dist = (crowHRP.Position - myHRP.Position).Magnitude
-                                    local toMeDir = (myHRP.Position - crowHRP.Position).Unit
-                                    local vel = crowHRP.AssemblyLinearVelocity
-                                    
-                                    local isApproaching = false
-                                    if vel.Magnitude > 3.0 then
-                                        if vel.Unit:Dot(toMeDir) > 0.0 then isApproaching = true end
-                                    else
-                                        isApproaching = true
-                                    end
-
-                                    if dist <= 20.0 and isApproaching then
-                                        isThreatCurrentlyActive = true
-                                        currentThreatInstance = partOwner and partOwner.Value or nil
-                                        facePosition = crowHRP.Position
-                                        lastBlockedThreatName = "Crow (Mei Mei)"
-                                        comboDropTime = tick() + Config.ComboDelay
-                                        break
-                                    end
-                                end
-                            elseif part.Name == "Rika" then
-                                local aim = part:FindFirstChild("Aim")
-                                local info = part:FindFirstChild("Info")
-                                if aim and info then
-                                    local inSkill = info:FindFirstChild("InSkill")
-                                    local dist = (part.Position - myHRP.Position).Magnitude
-                                    if inSkill and dist <= 20.0 then
-                                        isThreatCurrentlyActive = true
-                                        currentThreatInstance = partOwner and partOwner.Value or nil
-                                        facePosition = part.Position
-                                        lastBlockedThreatName = "Rika (Sustained InSkill)"
-                                        comboDropTime = tick() + 1
-                                        break
-                                    end
-                                end
-                            elseif part.Name == "Rabbit" or string.find(part.Name, "Rabbit") then
-                                local dist = (part.Position - myHRP.Position).Magnitude
-                                if dist <= 36.6 then
-                                    isThreatCurrentlyActive = true
-                                    lastBlockedThreatName = "Active Rabbits"
-                                    if rabbitCaster and rabbitCaster:FindFirstChild("HumanoidRootPart") then
-                                        facePosition = rabbitCaster.HumanoidRootPart.Position
-                                        currentThreatInstance = rabbitCaster
-                                    else
-                                        facePosition = part.Position
-                                    end
-                                    comboDropTime = tick() + Config.ComboDelay
-                                    break
-                                end
-                            elseif part.Name == "Bullet" then
-                                local speed = part.Velocity.Magnitude
-                                local dist = (part.Position - myHRP.Position).Magnitude
-                                if dist <= 120.0 and speed >= 15 then
-                                    local toMeDir = (myHRP.Position - part.Position).Unit
-                                    if part.Velocity.Unit:Dot(toMeDir) > 0.85 and (dist / speed) < 0.4 then
-                                        isThreatCurrentlyActive = true
-                                        lastBlockedThreatName = "Soulfire (Bullet)"
-                                        facePosition = part.Position
-                                        comboDropTime = tick() + Config.ComboDelay
-                                        break
-                                    end
-                                end
-                            elseif part.Name == "TongueGrab" then
-                                local dist = (part.Position - myHRP.Position).Magnitude
-                                if dist <= 36.6 then
-                                    isThreatCurrentlyActive = true
-                                    lastBlockedThreatName = "Toad (Tongue)"
-                                    facePosition = part.Position
-                                    comboDropTime = tick() + Config.ComboDelay
-                                    break
-                                end
-                            elseif part.Name == "Totality" then
-                                local tgt = part:FindFirstChild("Target")
-                                if tgt then
-                                    local isTargetMe = (tgt.Value == myChar) or (tostring(tgt.Value) == myChar.Name)
-                                    if isTargetMe then
-                                        isThreatCurrentlyActive = true
-                                        lastBlockedThreatName = "Divine Dog (Sustained Fallback)"
-                                        facePosition = part.PrimaryPart and part.PrimaryPart.Position or part.Position
-                                        comboDropTime = tick() + Config.ComboDelay
-                                        break
-                                    end
-                                end
-                            elseif part.Name == "Reverse" and (part:IsA("BasePart") or part:IsA("Model")) then
-                                local corePart = part:IsA("Model") and part.PrimaryPart or part
-                                if corePart then
-                                    local dist = (corePart.Position - myHRP.Position).Magnitude
-                                    if dist <= 65.0 then
-                                        isThreatCurrentlyActive = true
-                                        lastBlockedThreatName = "Reverse Balls"
-                                        facePosition = corePart.Position
-                                        reverseBallLockTime = tick()
-                                        reverseBallLock = true
-                                        comboDropTime = tick() + Config.ComboDelay
-                                        break
-                                    end
-                                end
-                            elseif part.Name == "RedExplode" and part:IsA("BasePart") then
-                                local dist = (part.Position - myHRP.Position).Magnitude
-                                if dist <= 35 then
-                                    isThreatCurrentlyActive = true
-                                    lastBlockedThreatName = "Reversal Red Explosion"
-                                    facePosition = part.Position
-                                    comboDropTime = tick() + Config.ComboDelay + 0.50
-                                    break
-                                end
-                            elseif part.Name == "LapseBlue" or part.Name == "Doors" or part.Name == "RoughEnergy" or part.Name == "Nue" or part.Name == "HammerL" or part.Name == "HammerR" or part.Name == "PebbleProjectile" or part.Name == "GavelThrow" or part.Name == "Ball" or part.Name == "ArmProjectile" or part.Name == "Swarm" or part.Name == "Barrage" or part.Name == "PiercingBlood" or part.Name == "ToadNue" or part.Name == "NueToad" then
-                                local corePart = part:IsA("Model") and part.PrimaryPart or part
-                                if corePart and corePart:IsA("BasePart") then
-                                    local dist = (corePart.Position - myHRP.Position).Magnitude
-                                    if dist <= (part.Name == "LapseBlue" and 36.6 or (part.Name == "Barrage" and 12 or 15)) then
-                                        isThreatCurrentlyActive = true
-                                        lastBlockedThreatName = "Dangerous Object (" .. part.Name .. ")"
-                                        facePosition = corePart.Position
-                                        comboDropTime = tick() + Config.ComboDelay
-                                        break
-                                    end
-                                end
-                            end
-                        end
-                    end
-                else
-                    CachedProjectiles[part] = nil
-                end
-            end
-        end
-    end
-
-    -- 7. REVERSE BALLS ETERNAL LOCK BRIDGE
-    -- Holds the block open while waiting for the projectile instance to spawn
-    if not isThreatCurrentlyActive and reverseBallLock and Config.Blocks.Abilities then
-        if tick() - reverseBallLockTime < 1.5 then
-            isThreatCurrentlyActive = true
-            lastBlockedThreatName = "Reverse Balls (Awaiting Part)"
-            comboDropTime = tick() + Config.ComboDelay
-        else
-            reverseBallLock = false
-        end
-    end
-
-    -- ==========================================
-    -- FINAL EXECUTION: THE STEEL GATE
-    -- Commands the server to actually raise or lower the shield based on logic above.
-    -- ==========================================
-    if isThreatCurrentlyActive or tick() <= comboDropTime then
-        if facePosition then FaceTarget(facePosition) end
-        
-        if not isBlocking then
-            isBlocking = true
-            lastBlockedInstance = currentThreatInstance
-            Config.Remotes.BlockActivate:FireServer(currentThreatInstance)
-        end
-    else
-        if isBlocking then
-            isBlocking = false
-            currentThreatInstance = nil
-            Config.Remotes.BlockDeactivate:FireServer()
-        end
-    end
-end)
+	local Players = game:GetService("Players")
+	local RunService = game:GetService("RunService")
+	local RS = game:GetService("ReplicatedStorage")
+	local LP = Players.LocalPlayer
+
+	local CFG = {
+		Range        = 42,    -- an attack started further away than this cannot reach you before we re-check
+		ProjRange    = 60,    -- projectiles are watched further out; they close the distance themselves
+		ProjSpeed    = 28,    -- studs/s. Below this it is debris, not an attack
+		Hold         = 0.46,  -- keep the shield up this long after the last threat: rides a whole combo string
+		FacingDot    = -0.15, -- how much they must be turned towards you (-0.15 = slightly generous)
+		Turn         = true,  -- rotate your BODY to face the threat (never the camera)
+		Scan         = 0.10,  -- seconds between enemy-list rebuilds
+	}
+
+	local on = false
+	local blocking, holdUntil, threat, threatPos = false, 0, nil, nil
+	local lastReason = ""
+
+	-- ---------- remotes ----------
+	local function svc(name, re)
+		local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
+		local s = k and k:FindFirstChild(name); local r = s and s:FindFirstChild("RE")
+		return r and r:FindFirstChild(re)
+	end
+	local function blockOn(t)  local r = svc("BlockService", "Activated");   if r then pcall(function() r:FireServer(t) end) end end
+	local function blockOff()  local r = svc("BlockService", "Deactivated"); if r then pcall(function() r:FireServer() end) end end
+
+	-- ---------- me ----------
+	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
+	local function myHRP() local m = myModel(); return m and m:FindFirstChild("HumanoidRootPart") end
+
+	-- ---------- the enemy list, rebuilt on a slow timer instead of per frame ----------
+	-- The old engine walked workspace every frame in several places. This keeps one list, refreshed 10x a
+	-- second, and the per-frame work is then a handful of distance checks.
+	local enemies = {}
+	task.spawn(function()
+		while true do
+			if on then
+				local hrp = myHRP()
+				local out = {}
+				if hrp then
+					local seen = {}
+					local function add(m)
+						if not m or seen[m] or m == myModel() or m.Name == LP.Name then return end
+						local r = m:FindFirstChild("HumanoidRootPart"); if not r then return end
+						local h = m:FindFirstChildOfClass("Humanoid")
+						if h and h.Health <= 0 then return end
+						if (r.Position - hrp.Position).Magnitude > CFG.ProjRange + 40 then return end
+						seen[m] = true
+						out[#out + 1] = { model = m, root = r, hum = h }
+					end
+					local chs = workspace:FindFirstChild("Characters")
+					if chs then for _, m in ipairs(chs:GetChildren()) do add(m) end end
+					for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP then add(plr.Character) end end
+					for _, fn in ipairs({ "Dummies", "Training", "NPCs", "Dummy" }) do
+						local f = workspace:FindFirstChild(fn)
+						if f then for _, m in ipairs(f:GetChildren()) do add(m) end end
+					end
+				end
+				enemies = out
+				task.wait(CFG.Scan)
+			else
+				enemies = {}
+				task.wait(0.4)
+			end
+		end
+	end)
+
+	-- ---------- is that an attack? ----------
+	-- No id database is required. An attack animation has to override the walk/run tracks, which means the
+	-- game authors it at Action priority - so "Action priority, and it only just started" IS the universal
+	-- signal. The captured id tables are still consulted first, because a known id is proof rather than
+	-- inference and lets us react to ids that are authored at a lower priority.
+	local function startedAttacking(e)
+		local h = e.hum; if not h then return false end
+		local a = h:FindFirstChildOfClass("Animator"); if not a then return false end
+		local ok, tracks = pcall(function() return a:GetPlayingAnimationTracks() end)
+		if not ok or not tracks then return false end
+		for _, tr in ipairs(tracks) do
+			if tr.IsPlaying and tr.TimePosition < 0.55 then         -- only the WINDUP; a finished swing is not a threat
+				local okid, id = pcall(function() return string.match(tostring(tr.Animation.AnimationId), "%d+") end)
+				if okid and id then
+					if (_G.VX_ANIMDICT and _G.VX_ANIMDICT[id])
+						or (_G.VX_ADAPT_IDS and _G.VX_ADAPT_IDS[id])
+						or (_G.VX_M1_IDS and _G.VX_M1_IDS[id]) then return true, "known attack" end
+				end
+				local okp, pr = pcall(function() return tostring(tr.Priority) end)
+				if okp and string.find(pr, "Action", 1, true) then return true, "attack animation" end
+			end
+		end
+		return false
+	end
+
+	-- Are they pointed at you? A swing aimed elsewhere is not yours to block, and blocking it just wastes
+	-- your shield. Generous on purpose - people strafe while they attack.
+	local function facingMe(e, hrp)
+		local to = hrp.Position - e.root.Position
+		if to.Magnitude < 0.1 then return true end
+		return e.root.CFrame.LookVector:Dot(to.Unit) > CFG.FacingDot
+	end
+
+	-- Reach scales with how fast they are closing: someone dashing at you from 30 studs will be on top of you
+	-- before the next animation frame, so the shield has to go up now, not when they arrive.
+	local function inReach(e, hrp)
+		local d = (e.root.Position - hrp.Position).Magnitude
+		local closing = 0
+		local v = e.root.AssemblyLinearVelocity
+		local flat = Vector3.new(v.X, 0, v.Z)
+		if flat.Magnitude > 1 then
+			local to = (hrp.Position - e.root.Position)
+			if to.Magnitude > 0.1 then closing = math.max(0, flat:Dot(to.Unit)) end
+		end
+		return d <= CFG.Range + closing * 0.35, d
+	end
+
+	-- ---------- projectiles, by behaviour rather than by name ----------
+	-- The old engine matched ~20 hardcoded part names ("Doors", "RedExplode", "PebbleProjectile"...). Anything
+	-- not on that list flew straight through. A projectile is simply a part that is MOVING FAST TOWARDS YOU,
+	-- which is true of every one of them and needs no names at all.
+	local function incomingProjectile(hrp)
+		local best, bd
+		for _, d in ipairs(workspace:GetChildren()) do
+			if d:IsA("BasePart") and not d.Anchored then
+				local off = d.Position - hrp.Position
+				local dist = off.Magnitude
+				if dist <= CFG.ProjRange and dist > 1 then
+					local v = d.AssemblyLinearVelocity
+					if v.Magnitude >= CFG.ProjSpeed and v.Unit:Dot((-off).Unit) > 0.55 then
+						-- ...and it is not one of ours (our own casts must not make us block)
+						if not d:IsDescendantOf(myModel() or workspace) then
+							if not bd or dist < bd then best, bd = d, dist end
+						end
+					end
+				end
+			end
+		end
+		return best
+	end
+
+	-- ---------- face the threat: BODY ONLY ----------
+	-- Blocking is directional, so this is what makes the shield actually cover the hit. Rotation only, at your
+	-- own position and your own Y, so it cannot shove you or tip you over against an airborne attacker. The
+	-- camera is deliberately never written - your view stays yours.
+	local function faceThreat(pos)
+		if not CFG.Turn or not pos then return end
+		local hrp = myHRP(); if not hrp then return end
+		local flat = Vector3.new(pos.X, hrp.Position.Y, pos.Z)
+		if (flat - hrp.Position).Magnitude < 0.1 then return end
+		pcall(function() hrp.CFrame = CFrame.lookAt(hrp.Position, flat) end)
+	end
+
+	-- ---------- the one loop ----------
+	RunService.Heartbeat:Connect(function()
+		if not on then
+			if blocking then blocking = false; threat = nil; blockOff() end
+			return
+		end
+		local hrp = myHRP()
+		if not hrp then
+			if blocking then blocking = false; threat = nil; blockOff() end
+			return
+		end
+
+		local found, foundPos, why = nil, nil, nil
+		for _, e in ipairs(enemies) do
+			if e.model.Parent and e.root.Parent then
+				local reach, d = inReach(e, hrp)
+				if reach and facingMe(e, hrp) then
+					local atk, reason = startedAttacking(e)
+					if atk then found, foundPos, why = e.model, e.root.Position, reason; break end
+				end
+			end
+		end
+		if not found then
+			local p = incomingProjectile(hrp)
+			if p then foundPos, why = p.Position, "incoming projectile" end
+		end
+
+		if foundPos then
+			holdUntil = tick() + CFG.Hold
+			threat, threatPos, lastReason = found or threat, foundPos, why
+		end
+
+		if tick() <= holdUntil then
+			faceThreat(threatPos)
+			if not blocking then
+				blocking = true
+				blockOn(threat)
+				if _G.VX_BLOCK_DEBUG then print("[AutoBlock] up - " .. tostring(lastReason)) end
+			end
+		elseif blocking then
+			blocking = false
+			threat, threatPos = nil, nil
+			blockOff()
+			if _G.VX_BLOCK_DEBUG then print("[AutoBlock] down") end
+		end
+	end)
+
+	AutoBlockApi = {
+		set        = function(v) on = v == true; if not on and blocking then blocking = false; threat = nil; pcall(blockOff) end end,
+		setRange   = function(v) CFG.Range = math.clamp(tonumber(v) or CFG.Range, 8, 120) end,
+		setHold    = function(v) CFG.Hold  = math.clamp(tonumber(v) or CFG.Hold, 0.05, 2) end,
+		setTurn    = function(v) CFG.Turn  = v == true end,
+		isBlocking = function() return blocking end,
+	}
+	_G.VX_AUTOBLOCK_SET = AutoBlockApi.set   -- shared handle, in case another feature ever needs to drop the shield
 end
 
 -- ON-SCREEN DEBUG HUD (opt-in via "Debug On Screen"): a tiny corner readout so you can confirm BF + Quake
