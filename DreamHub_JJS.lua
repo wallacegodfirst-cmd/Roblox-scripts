@@ -2429,7 +2429,10 @@ local function safeTeleport(targetCFrame, holdTime)
 	vxTeleGen = vxTeleGen + 1
 	local myGen = vxTeleGen
 	vxLockChar = char            -- stamp the hold with the rig that owns it (a respawn voids it)        -- overlap guard: a newer teleport supersedes this one's hops + lock
-	local method = _G.VX_TP_METHOD or "Glide"
+	-- Instant is the default everywhere now. "Glide" (the physical velocity flight) only runs if you pick
+	-- it from the TP Method dropdown yourself - "no glide" has been the request for a while, and the GUI
+	-- default already said Instant; this fallback was the only place still saying otherwise.
+	local method = _G.VX_TP_METHOD or "Instant"
 	local step = tonumber(_G.VX_TP_SPEED) or 60
 	local from = hrp.Position
 	local dist = (targetCFrame.Position - from).Magnitude
@@ -2503,6 +2506,15 @@ local function safeTeleport(targetCFrame, holdTime)
 						-- watching. _G.VX_TP_STEPSPEED overrides.
 						local PACE  = tonumber(_G.VX_TP_STEPSPEED) or (populated and 90 or 400)
 						local GAP   = STEP / math.max(1, PACE)
+						-- ═══ YOUR OWN TEST IS THE SPEC ═══ "when you are close to a location you can teleport,
+						-- maybe 30 distance or below" - in a PUBLIC server. So a single ~28-stud write is inside
+						-- the envelope the anti-cheat accepts, proven by you, not theorised. A long trip is now a
+						-- CHAIN of exactly those proven writes with a short beat between them: each hop mimics the
+						-- case that works, and the beat (0.1s) keeps them from collapsing into one frame - which
+						-- is what made the old walker an 840 studs/s blur. Net ~280 studs/s: a map crossing lands
+						-- in about 1.5s, and anything within 30 studs is ONE write - genuinely instant.
+						STEP = tonumber(_G.VX_TP_STEP) or 28
+						GAP  = 0.1
 						-- Within one step = ONE write. No walking, no glide feel - just there.
 						local hops  = (total <= STEP) and 1 or math.clamp(math.ceil(total / STEP), 1, 400)
 					for k = 1, hops do
@@ -4110,30 +4122,58 @@ do
     end
     local function doSideDash(isBF)
         if tick() - R.lastDash < Settings.DashCooldown and not isBF then return false end
-        if R.curving then return false end
+        -- ═══ "IF I DO 1 M1, THEN SIDE DASH IT NO WORK" ═══ That is these two flags left stuck by whatever ran
+        -- before you pressed Q. R.curving used to hard-refuse re-entry, and a chain that bailed early could
+        -- leave R.bfActive true - so the assist was dead until both happened to decay. Your Q press is the
+        -- authority here: clear the stale state and run.
+        if R.curving and not isBF then R.curving = false end
+        if not isBF then R.bfActive = false end
         local t = GetClosestTarget(Settings.DashRange); if not t then return false end
         local e = t:FindFirstChild("HumanoidRootPart"); if not e then return false end
         if not isBF then R.lastDash = tick() end
         R.curving = true
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.4   -- camera stays on them through the hold
         task.spawn(function()
-            -- FASTER. 0.22 -> 0.13 and a tighter sweep: same shape, roughly half the travel time, so it reads
-            -- as a snap around them rather than a glide. Still the travelling orbit - no position write, not a
-            -- teleport, and the assist never calls tpBehind or the flash.
-            local bias = (_G.VX_SIDE_END == "Back") and 0 or 0.45
-            dashToBack(t, { duration = 0.13, extraSweep = math.pi * 0.16, endRadius = 4.6, endBias = bias })
-            faceBackOf(t)
             if not isBF then
-                -- HOW MANY M1s BEHIND THEM - your choice, 1 to 4. They are spaced at the game's real combo
-                -- rhythm (~0.35s, recorder-proven), because faster than that and the game drops them.
+                -- ═══ A REAL DASH, FULL STOP ═══ "when they click Q, it must side dash - not glide, no
+                -- teleport." The orbit is a per-frame CFrame write, and however fast it runs it reads as a
+                -- glide. So the assist now does exactly what a player does: face across them, hold the strafe
+                -- key so the game's dash takes that direction, tap the REAL dash key, and let the engine move
+                -- you. Nothing writes your position during the dash.
+                local p0 = GetRoot()
+                local side = (p0 and chooseSide(p0, e, nil)) or 1
+                local strafe = (side == -1) and Enum.KeyCode.A or Enum.KeyCode.D
+                aimCameraAt(e.Position)
+                VKeyDown(strafe)
+                game:GetService("RunService").RenderStepped:Wait()
+                VKeyTap(Settings.DashKey, 0.04)
+                task.wait(0.18)                            -- the dash owns the movement; we just wait it out
+                VKeyUp(strafe)
+                faceBackOf(t)                              -- rotation only - never a position write
+                -- THEN the M1s, from behind them, while holdBack trails their spine so a turning target
+                -- cannot walk out of the swings.
                 local hold = tonumber(_G.VX_SIDE_HOLD) or 1.0
                 task.spawn(function() holdBack(t, hold) end)
                 local n = math.clamp(tonumber(_G.VX_SIDE_M1S) or 1, 0, 4)
-                for k = 1, n do
+                if n > 0 then
                     aimCameraAt((t:FindFirstChild("HumanoidRootPart") or e).Position)
-                    VMouseClick()
-                    if k < n then task.wait(0.35) end
+                    -- ONE HELD press, n swings: the recorder capture proved JJS advances the combo while the
+                    -- button is DOWN. n taps only ever landed the first.
+                    local dur = 0.12 + (n - 1) * 0.35
+                    _G.VX_SYNTH_CLICK = tick() + dur + 0.25
+                    local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
+                    local cx, cy = (vp and vp.X / 2) or 400, (vp and vp.Y / 2) or 300
+                    pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0) end)
+                    local t0 = tick()
+                    while tick() - t0 < dur do _G.VX_SYNTH_CLICK = tick() + 0.25; task.wait(0.05) end
+                    pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0) end)
                 end
+            else
+                -- BF chains keep the arc (noKey, so no dash-recovery state) - their M1 must be ACCEPTED, and
+                -- the flash beat that follows depends on it.
+                local bias = (_G.VX_SIDE_END == "Back") and 0 or 0.45
+                dashToBack(t, { duration = 0.13, extraSweep = math.pi * 0.16, endRadius = 4.6, endBias = bias, noKey = true })
+                faceBackOf(t)
             end
         end)
         task.delay(0.34, function() R.curving = false; if R.lockKind == "cam" then R.lockTarget = nil; R.lockKind = nil end end)
@@ -4362,8 +4402,16 @@ do
         -- off by default now.
         _G.VX_BF_DASHANIM = 0
         local chainGen = R.gen or 0
-        task.delay(0.02, function()
+        -- ═══ CLICK AFTER YOU ARRIVE, NOT WHILE YOU TRAVEL ═══ This clicked 0.02s after arming - the dash
+        -- below runs 0.22s, so the swing fired from your OLD position while the arc was still carrying you.
+        -- The game refuses or whiffs an M1 thrown mid-travel, so there was no windup for the engine to time
+        -- against: perfect dash, no flash. The click now waits out the dash, snaps to their back, and swings
+        -- from there.
+        task.delay(0.30, function()
             if (R.gen or 0) ~= chainGen then return end     -- the mode was switched off in the meantime
+            local tt = R.lockTarget
+            if tt and tt.Parent then tpBehind(tt); faceBackOf(tt) end
+            _G.VX_BF_CHAINCLICK = tick()                    -- re-stamp: the swing this click produces is the chain's
             VMouseClick()
         end)
         -- No engine at all (very old build): press 3 ourselves on the same beat the engine would have.
@@ -7441,10 +7489,21 @@ do
 			end
 			return false
 		end
+		-- ═══ THE STATE HALF OF THE UPPERCUT ═══ The four fires are the count the server wants; SPACE is the
+		-- state it wants them in. The manual Auto Uppercut works with Space held across the swing (the one
+		-- config you ever reported working), and this assist was firing the remote flat-footed - the server
+		-- counted four requests from a body in the wrong state and ignored the lot. Hold Space across the
+		-- burst, marked as ours so Auto Air and the feints do not read it, then release.
+		local VIMf = game:GetService("VirtualInputManager")
+		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 1
+		_G.VX_INJECT_UNTIL = tick() + 1
+		pcall(function() VIMf:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)
 		for i = 1, 4 do
 			fireKnit(svc, "Activated", "Up")
 			if i < 4 then task.wait(0.06) end
 		end
+		task.wait(0.12)
+		pcall(function() VIMf:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
 		return true
 	end
 	local function slamNow()
@@ -7599,7 +7658,16 @@ do
 			local cast = _G.VX_CAST_MOVE and _G.VX_CAST_MOVE("Twofold Kick") or false
 			if not cast then
 				print("[DreamHub Twofold] could not cast Twofold Kick - no TwofoldKickService, or it is not in your Moveset")
-				if VX_NOTIFY then VX_NOTIFY("Twofold Kick: remote not found", false) end
+				if VX_NOTIFY then VX_NOTIFY("Twofold Kick: remote missing - pressing the key instead", false) end
+				-- ═══ DEGRADE, DO NOT DIE ═══ A missing remote used to end the sequence right here, so one bad
+				-- lookup meant no kick, no M1s, no slam - "twofold kick dont work". The key the game itself
+				-- binds to the move still exists, so press it and carry on with the rest of the sequence.
+				local kk = twofoldKey()
+				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[kk] = tick() + 0.5
+				pcall(function()
+					local V = game:GetService("VirtualInputManager")
+					V:SendKeyEvent(true, kk, false, game); task.wait(0.05); V:SendKeyEvent(false, kk, false, game)
+				end)
 			elseif VX_NOTIFY and not _G.VX_TF_OK then
 				_G.VX_TF_OK = true
 				VX_NOTIFY("Twofold Kick: 3 M1s then slam", true)
