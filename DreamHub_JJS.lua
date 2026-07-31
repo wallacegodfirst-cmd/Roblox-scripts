@@ -4043,6 +4043,36 @@ do
 
     -- SIDE DASH: orbit LEFT around the enemy (proven anti-fling arc _G.VX_ORBIT), soft-lock the camera on them
     -- the whole time, then auto-release (no lingering lock icon). Matches "click Q -> side around left, lock, off".
+    -- ═══ HOLD THE BACK FOR A BEAT ═══ "when I do it, it must lock to the back for a sec, make sure it goes
+    -- to the back." The arc lands you there, but a target that is walking or turning drifts out of it within
+    -- a few frames. This follows their spine for a moment afterwards, so the M1s below actually land behind
+    -- them instead of beside them.
+    -- Collisions are dropped for the hold and restored on exit - lockClipOff exists for exactly this, and
+    -- holding a SOLID body overlapping theirs is what the file's own notes blame for the BF fling.
+    -- It follows, it does not blink: the write each frame is a small correction to a position you are already
+    -- standing on, which is a different thing from a teleport.
+    local function holdBack(t, dur)
+        local e = t and t:FindFirstChild("HumanoidRootPart"); if not e then return end
+        pcall(lockClipOff)
+        local t0 = tick()
+        while tick() - t0 < (dur or 1.0) do
+            if not (t.Parent and e.Parent) then break end
+            local p = GetRoot(); if not p then break end
+            local fwd = Vector3.new(e.CFrame.LookVector.X, 0, e.CFrame.LookVector.Z)
+            if fwd.Magnitude > 0.01 then
+                fwd = fwd.Unit
+                local bias = (_G.VX_SIDE_END == "Back") and 0 or 0.45
+                local side = Vector3.new(-fwd.Z, 0, fwd.X) * (bias * 3.0)
+                local dest = e.Position - fwd * 4.4 + side
+                pcall(function()
+                    p.CFrame = CFrame.lookAt(Vector3.new(dest.X, p.Position.Y, dest.Z), Vector3.new(e.Position.X, p.Position.Y, e.Position.Z))
+                    p.AssemblyLinearVelocity = Vector3.new(0, p.AssemblyLinearVelocity.Y, 0)
+                end)
+            end
+            RunService.Heartbeat:Wait()
+        end
+        pcall(lockClipOn)
+    end
     local function doSideDash(isBF)
         if tick() - R.lastDash < Settings.DashCooldown and not isBF then return false end
         if R.curving then return false end
@@ -4050,26 +4080,27 @@ do
         local e = t:FindFirstChild("HumanoidRootPart"); if not e then return false end
         if not isBF then R.lastDash = tick() end
         R.curving = true
-        R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 0.55   -- soft camera lock (no icon), auto-expires
+        R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.4   -- camera stays on them through the hold
         task.spawn(function()
-            -- ═══ "USE M1 BF SIDE DASH AND PUT IT INSIDE THE SIDE DASH ASSIST" ═══ You said the M1 BF mode's
-            -- side dash looks right, so the assist now runs that exact movement rather than my key-only
-            -- version. These are the M1 chain's own parameters, verbatim: a short arc that ends behind the
-            -- spine, ridden on the anti-fling orbit (speed-capped, collisions off, velocity zeroed per frame).
-            -- The assist still never flashes - it does not call pressBF or m1ThenBF - so pressing Q can only
-            -- ever dash you around them.
-            -- "it should side dash around the CORNER of their back and m1": endBias offsets the landing off
-            -- the spine, so you finish on the corner rather than dead centre - which is also where an M1
-            -- lands as a hit instead of the knockdown that ends the fight early. The M1 follows below.
-            -- WHERE THE DASH ENDS is yours to pick: "Corner" finishes off the spine (an M1 there lands as a
-            -- hit rather than the knockdown that ends the fight early), "Back" finishes dead centre behind
-            -- them. Either way this is the ORBIT, which travels - it is not a teleport, and the assist never
-            -- calls tpBehind, so nothing here writes you onto a position.
+            -- FASTER. 0.22 -> 0.13 and a tighter sweep: same shape, roughly half the travel time, so it reads
+            -- as a snap around them rather than a glide. Still the travelling orbit - no position write, not a
+            -- teleport, and the assist never calls tpBehind or the flash.
             local bias = (_G.VX_SIDE_END == "Back") and 0 or 0.45
-            dashToBack(t, { duration = 0.22, extraSweep = math.pi * 0.22, endRadius = 4.6, endBias = bias })
+            dashToBack(t, { duration = 0.13, extraSweep = math.pi * 0.16, endRadius = 4.6, endBias = bias })
             faceBackOf(t)
+            if not isBF then
+                -- HOW MANY M1s BEHIND THEM - your choice, 1 to 4. They are spaced at the game's real combo
+                -- rhythm (~0.35s, recorder-proven), because faster than that and the game drops them.
+                local hold = tonumber(_G.VX_SIDE_HOLD) or 1.0
+                task.spawn(function() holdBack(t, hold) end)
+                local n = math.clamp(tonumber(_G.VX_SIDE_M1S) or 1, 0, 4)
+                for k = 1, n do
+                    aimCameraAt((t:FindFirstChild("HumanoidRootPart") or e).Position)
+                    VMouseClick()
+                    if k < n then task.wait(0.35) end
+                end
+            end
         end)
-        if Settings.SideM1 and not isBF then task.delay(0.20, function() aimCameraAt((t:FindFirstChild("HumanoidRootPart") or e).Position); VMouseClick() end) end
         task.delay(0.34, function() R.curving = false; if R.lockKind == "cam" then R.lockTarget = nil; R.lockKind = nil end end)
         if not isBF then status("Side Dash L") end
         return true
@@ -5317,7 +5348,22 @@ do
 					local upTok = State.lastUp
 					task.delay(0.22, function() if State.lastUp == upTok then keyUp(upKey) end end)
 				end
-				fireDir("Up")
+				-- ═══════════ THE UPPERCUT NEEDS THE REMOTE **FOUR TIMES**, NOT ONCE ═══════════
+				-- Straight from your capture: "when I run this 4 times, on the 4th time that is when it does the
+				-- uppercut." Each Activated("Up") advances a counter on the server and only the FOURTH produces the
+				-- launcher. We have been firing it exactly once, every single build - so the server was counting to
+				-- one and waiting, and no amount of key-holding, state-forcing or swing-timing was ever going to
+				-- change that. This is the whole bug, and nothing I reasoned my way to could have found it.
+				-- Spaced a few frames apart so they arrive as four distinct calls rather than one batched burst.
+				do
+					local n = math.max(1, tonumber(_G.VX_UPPER_FIRES) or 4)
+					task.spawn(function()
+						for i = 1, n do
+							fireDir("Up")
+							if i < n then task.wait(0.06) end
+						end
+					end)
+				end
 				-- Did it launch? Sample just after the move would have taken effect.
 				do
 					local tok = State.lastUp
@@ -7268,6 +7314,120 @@ do
 end
 
 -- ============================================================
+-- MODULE: FINISHER ASSIST  (Uppercut Assist / Down Slam Assist - PLUS only)
+-- "when a player is ragdoll, as the player is down, it is going to do down slam / uppercut on them. if their
+--  body is far away, it will do 3 M1s, dash to them side dash, and do the 4th remote uppercut/downslam."
+-- So there are two cases and the distance decides which one runs:
+--   CLOSE  -> they are already down and within reach: send the finisher now.
+--   FAR    -> close the gap first (side dash), throw the M1s, then the finisher on the 4th.
+-- The finisher itself is the captured remote: <Char>Service.RE.Activated("Up") four times for the uppercut
+-- (the fourth is the one the server acts on), or the proven Auto Down Slam path for the slam.
+-- ============================================================
+do
+	local Players = game:GetService("Players")
+	local LP = Players.LocalPlayer
+	local upOn, downOn = false, false
+	local nearDist, farDist = 12, 90
+	local busyUntil = 0
+	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
+	local function myHRP() local m = myModel(); return m and m:FindFirstChild("HumanoidRootPart") end
+	local function isDown(t)
+		local h = t and t:FindFirstChildOfClass("Humanoid"); if not h then return false end
+		if h.PlatformStand then return true end
+		local ok, st = pcall(function() return h:GetState() end)
+		if ok and (st == Enum.HumanoidStateType.Physics or st == Enum.HumanoidStateType.Ragdoll
+			or st == Enum.HumanoidStateType.FallingDown or st == Enum.HumanoidStateType.GettingUp) then return true end
+		if h:GetAttribute("Ragdoll") == true or h:GetAttribute("Ragdolled") == true then return true end
+		local info = t:FindFirstChild("Info")
+		local rag = info and (info:FindFirstChild("Ragdoll") or info:FindFirstChild("Ragdolled"))
+		return (rag and rag:IsA("ValueBase") and rag.Value == true) or false
+	end
+	-- The nearest DOWNED enemy, and how far away they are.
+	local function downedTarget()
+		local hrp = myHRP(); if not hrp then return nil, nil end
+		local best, bd
+		local function chk(m)
+			if not m or m.Name == LP.Name or m == myModel() then return end
+			local r = m:FindFirstChild("HumanoidRootPart"); if not r then return end
+			local h = m:FindFirstChildOfClass("Humanoid")
+			if h and h.Health <= 0 then return end
+			if not isDown(m) then return end
+			local d = (r.Position - hrp.Position).Magnitude
+			if d <= farDist and (not bd or d < bd) then best, bd = m, d end
+		end
+		local chs = workspace:FindFirstChild("Characters")
+		if chs then for _, m in ipairs(chs:GetChildren()) do chk(m) end end
+		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP then chk(plr.Character) end end
+		return best, bd
+	end
+	local function click()
+		_G.VX_SYNTH_CLICK = tick() + 0.25
+		local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
+		local cx, cy = (vp and vp.X / 2) or 400, (vp and vp.Y / 2) or 300
+		pcall(function()
+			local VIM = game:GetService("VirtualInputManager")
+			VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.03)
+			VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+		end)
+	end
+	local function faceAt(t)
+		local hrp = myHRP(); local r = t and t:FindFirstChild("HumanoidRootPart")
+		if hrp and r then pcall(function() hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(r.Position.X, hrp.Position.Y, r.Position.Z)) end) end
+	end
+	-- The uppercut, exactly as captured: FOUR calls, the fourth is the one that lands.
+	local function upNow()
+		local svc = vxMyCharSvc(); if not svc then return false end
+		for i = 1, 4 do
+			fireKnit(svc, "Activated", "Up")
+			if i < 4 then task.wait(0.06) end
+		end
+		return true
+	end
+	local function slamNow()
+		if M1ComboApi and M1ComboApi.slamNow then M1ComboApi.slamNow(); return true end
+		local svc = vxMyCharSvc(); if svc then return fireKnit(svc, "Activated", "Down") end
+		return false
+	end
+	local function run(which)
+		if tick() < busyUntil then return end
+		local t, d = downedTarget()
+		if not t then return end
+		busyUntil = tick() + 2.5
+		task.spawn(function()
+			if d and d > nearDist then
+				-- FAR: close the gap the way you described - side dash in, three M1s, then the finisher.
+				if _G.VXBF2 and _G.VXBF2.doSide then pcall(_G.VXBF2.doSide) end
+				task.wait(0.30)
+				for i = 1, 3 do
+					faceAt(t)
+					click()
+					if i < 3 then task.wait(0.35) end
+				end
+				task.wait(0.20)
+			end
+			faceAt(t)
+			if which == "Up" then upNow() else slamNow() end
+		end)
+	end
+	task.spawn(function()
+		while true do
+			if upOn or downOn then
+				pcall(function() run(upOn and "Up" or "Down") end)
+				task.wait(0.18)
+			else
+				task.wait(0.4)
+			end
+		end
+	end)
+	FinisherAssistApi = {
+		setUpper = function(v) upOn = v == true end,
+		setSlam  = function(v) downOn = v == true end,
+		setNear  = function(v) nearDist = math.clamp(tonumber(v) or nearDist, 4, 40) end,
+		setFar   = function(v) farDist  = math.clamp(tonumber(v) or farDist, 20, 250) end,
+	}
+end
+
+-- ============================================================
 -- MODULE: GOJO TWOFOLD KICK  ("when u do 2, it will do 3 m1s, then down slam for you")
 -- Cast remote is the user's capture verbatim:
 --   TwofoldKickService.RE.Activated(Moveset["Twofold Kick"])
@@ -7374,9 +7534,25 @@ do
 	end
 	-- Fires on YOUR key 2. Skips a 2 the hub injected itself (Hollow Purple presses 2), so it can never
 	-- chain off its own automation.
+	-- ═══ TWOFOLD KICK IS THE 4TH MOVE, NOT THE 2ND ═══ It was hardcoded to key 2 because that is what the
+	-- first description said; you have since said it is the 4th, and a hardcoded slot would be wrong again
+	-- the next time the game reorders anything. So we ASK YOUR MOVESET which slot holds it and listen on that
+	-- key - the same trick that made the universal air cast work on any character.
+	local SLOTKEY = { Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.KeyCode.Four }
+	local function twofoldKey()
+		for _, c in ipairs({ myModel(), LP.Character }) do
+			local mv = c and c:FindFirstChild("Moveset")
+			if mv then
+				for i, m in ipairs(mv:GetChildren()) do
+					if norm(m.Name) == "twofoldkick" and SLOTKEY[i] then return SLOTKEY[i] end
+				end
+			end
+		end
+		return Enum.KeyCode.Four   -- what you told us; used when the moveset cannot be read
+	end
 	if _G.VX_ON_KEY then
 		_G.VX_ON_KEY("twofold", function(kc)
-			if not on or kc ~= Enum.KeyCode.Two then return end
+			if not on or kc ~= twofoldKey() then return end
 			local injK = _G.VX_INJ_KEYS
 			if injK and injK[kc] and tick() < injK[kc] then return end
 			if not hasTwofold() then
@@ -9201,6 +9377,21 @@ do
 							task.wait(0.08)
 							VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
 						end)
+						-- AIR CAST POWER %. A plain jump is not much height, and some moves want more before
+						-- they read as airborne. Above 100% we top up the upward velocity on the way past -
+						-- only the Y component, so it lifts you without throwing you across the map.
+						local pw = tonumber(_G.VX_AIR_POWER) or 100
+						if pw > 100 then
+							pcall(function()
+								local chs2 = workspace:FindFirstChild("Characters")
+								local c2 = (chs2 and chs2:FindFirstChild(LP.Name)) or LP.Character
+								local r2 = c2 and c2:FindFirstChild("HumanoidRootPart")
+								if r2 then
+									local v2 = r2.AssemblyLinearVelocity
+									r2.AssemblyLinearVelocity = Vector3.new(v2.X, math.max(v2.Y, 50 * (pw / 100)), v2.Z)
+								end
+							end)
+						end
 						task.wait(0.13)
 						local ok = _G.VX_CAST_MOVE and _G.VX_CAST_MOVE(mv.Name)
 						dbgAir("universal air: slot " .. slot .. " = " .. mv.Name .. "  -> " .. (ok and "cast" or "no service"))
@@ -14449,6 +14640,14 @@ do
             v = (type(v) == "table") and v[1] or v
             if v == "Corner" or v == "Back" then _G.VX_SIDE_END = v end
         end })
+        -- How many M1s it throws once it is behind them, at the game's real combo rhythm.
+        _G.VX_SIDE_M1S = 1
+        counterSec:Dropdown({ Name = "M1s Behind Them", Items = { "0", "1", "2", "3", "4" }, Default = "1", Callback = function(v)
+            v = (type(v) == "table") and v[1] or v; _G.VX_SIDE_M1S = tonumber(v) or 1
+        end })
+        -- How long it holds their back afterwards, so a target that walks or turns cannot drift out of it.
+        _G.VX_SIDE_HOLD = 1.0
+        counterSec:Slider({ Name = "Back Lock Time", Min = 0, Max = 2.5, Default = 1, Decimals = 0.05, Suffix = "s", Callback = function(v) _G.VX_SIDE_HOLD = tonumber(v) or 1 end })
         counterSec:Toggle({ Name = "Back Dash Assist (E)", Callback = function(b) if _G.VXBF2 then _G.VXBF2.setBackAssist(b) end end })
     end
     counterSec:Toggle({ Name = "Anti Counter", Callback = function(b) if AntiCounterApi then AntiCounterApi.set(b) end end })
@@ -14483,6 +14682,14 @@ do
     -- character toggles. They are also FREE, on every tier - they were already ungated, just buried.
     acSec:Toggle({ Name = "Auto Down Slam", Default = false, Callback = function(b) if M1ComboApi and M1ComboApi.setSlam then M1ComboApi.setSlam(b) end end })
     acSec:Toggle({ Name = "Auto Upper Cut", Default = false, Callback = function(b) if M1ComboApi and M1ComboApi.setUpper then M1ComboApi.setUpper(b) end end })
+    -- FINISHER ASSIST - PLUS only, as asked. Watches for a DOWNED enemy and punishes them: in reach it sends
+    -- the finisher straight away, out of reach it side dashes in, throws three M1s and finishes on the fourth.
+    if VX_TIER == "plus" then
+        acSec:Toggle({ Name = "Upper Cut Assist (on downed)", Default = false, Callback = function(b) if FinisherAssistApi then FinisherAssistApi.setUpper(b) end end })
+        acSec:Toggle({ Name = "Down Slam Assist (on downed)", Default = false, Callback = function(b) if FinisherAssistApi then FinisherAssistApi.setSlam(b) end end })
+        acSec:Slider({ Name = "Assist Reach", Min = 4, Max = 40, Default = 12, Decimals = 1, Callback = function(v) if FinisherAssistApi then FinisherAssistApi.setNear(v) end end })   -- closer than this = finish now; further = dash in first
+        acSec:Slider({ Name = "Assist Max Range", Min = 20, Max = 250, Default = 90, Decimals = 1, Callback = function(v) if FinisherAssistApi then FinisherAssistApi.setFar(v) end end })
+    end
     -- GOJO TWOFOLD KICK: press 2 -> kick -> 3 M1s -> down slam once they hit the floor. Free / VIP / PLUS.
     acSec:Toggle({ Name = "Twofold Kick Assist (2 -> 3 M1s -> slam)", Default = false, Callback = function(b) if TwofoldApi then TwofoldApi.set(b) end end })
     acSec:Button({ Name = "Twofold Now", Callback = function() if TwofoldApi then TwofoldApi.now() end end })
@@ -14514,6 +14721,10 @@ do
             _G.VX_AIR_UNIVERSAL = (b == true)
             if AutoAirApi_set then AutoAirApi_set(b) end
         end })
+        -- Scales the launch the air cast gives you. 100% is a normal jump; higher throws you further up so a
+        -- move that needs real height has it. It only touches the jump, never the move itself.
+        _G.VX_AIR_POWER = 100
+        acSec:Slider({ Name = "Air Cast Power %", Min = 50, Max = 300, Default = 100, Decimals = 1, Suffix = "%", Callback = function(v) _G.VX_AIR_POWER = math.clamp(tonumber(v) or 100, 25, 400) end })
     end
     -- (The "Uppercut Key" / "Uppercut On M1 #" dropdowns are gone - you asked for it to just work. The module
     --  cycles the key itself now; the globals still exist if a build ever needs pinning by hand.)
