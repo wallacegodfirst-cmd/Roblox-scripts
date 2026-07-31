@@ -3897,28 +3897,14 @@ do
         R.curving = true
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 0.55   -- soft camera lock (no icon), auto-expires
         task.spawn(function()
-            -- ═══ "IS GOOD JUST DONT MAKE IT TELPORT. MAKE IT LEGIT." ═══ The assist used to ride the same
-            -- orbit the BF chain uses, and that orbit is a per-frame CFrame WRITE - however short you make it,
-            -- it is your body being placed, not moved, which is what reads as a teleport.
-            -- This is now a real dash and nothing else: face the side we want to go, hold that movement key so
-            -- the game's own dash takes that direction, tap the dash key, and let the engine move you. The
-            -- only thing written is your ROTATION, to keep the camera and body on them - no position write, no
-            -- velocity write, no arc. It travels exactly as far as a player's dash travels, because it IS one.
-            local p0 = GetRoot()
-            local side = (p0 and chooseSide(p0, e, nil)) or 1          -- -1 = left, 1 = right; honours A/D if you hold them
-            local key = (side == -1) and Enum.KeyCode.A or Enum.KeyCode.D
-            -- FASTER. Every wait here is dead time before the game's dash starts, so they are as short as the
-            -- input pipeline allows: the direction key goes down one frame ahead (the dash reads your movement
-            -- direction at the moment it fires, so it only has to be down BEFORE it, not long before), the dash
-            -- key is tapped immediately, and the direction is released as soon as the dash owns the movement.
-            -- Total scripted time is ~0.09s against the old 0.24s, and none of it is a CFrame write.
-            aimCameraAt(e.Position)
-            VKeyDown(key)
-            game:GetService("RunService").RenderStepped:Wait()
-            VKeyTap(Settings.DashKey, 0.03)
-            faceBackOf(t)                                              -- rotation only, so it cannot shove anyone
-            task.wait(0.05)
-            VKeyUp(key)
+            -- ═══ "USE M1 BF SIDE DASH AND PUT IT INSIDE THE SIDE DASH ASSIST" ═══ You said the M1 BF mode's
+            -- side dash looks right, so the assist now runs that exact movement rather than my key-only
+            -- version. These are the M1 chain's own parameters, verbatim: a short arc that ends behind the
+            -- spine, ridden on the anti-fling orbit (speed-capped, collisions off, velocity zeroed per frame).
+            -- The assist still never flashes - it does not call pressBF or m1ThenBF - so pressing Q can only
+            -- ever dash you around them.
+            dashToBack(t, { duration = 0.22, extraSweep = math.pi * 0.22, endRadius = 4.6, endBias = 0 })
+            faceBackOf(t)
         end)
         if Settings.SideM1 and not isBF then task.delay(0.20, function() aimCameraAt((t:FindFirstChild("HumanoidRootPart") or e).Position); VMouseClick() end) end
         task.delay(0.34, function() R.curving = false; if R.lockKind == "cam" then R.lockTarget = nil; R.lockKind = nil end end)
@@ -5103,17 +5089,45 @@ do
 				-- only thing left to fix was the key I took out. The remote ALONE is what has never worked; the
 				-- slam is not evidence against that, because the slam has the hop doing the same job Space does
 				-- here - putting you in the state the game accepts the move from.
-				-- ═══ AND IF SPACE IS STILL NOT IT, YOU CAN SAY SO WITHOUT WAITING FOR ME ═══ I have now
-				-- guessed at this key four times (Space, W, none, Space again) and each round costs you a
-				-- test and me a build. The key is a dropdown now: Space / W / S / None, on the Auto tab.
-				-- Whichever one makes the uppercut come out, tell me and it becomes the default.
-				local upKey = _G.VX_UPPER_KEY
-				if upKey ~= nil and upKey ~= false then
+				-- ═══ AUTOMATIC, NO DROPDOWN ═══ You asked for it to just work, so it tunes itself instead of
+				-- asking you. Each attempt uses the next candidate key; the moment an attempt actually LEAVES
+				-- THE GROUND (an uppercut launches you - that is the one observable it always has) that key is
+				-- locked in and used from then on. If a locked key later stops launching, the rotation
+				-- restarts. Nothing here can leave a key held: the watchdog releases it after 1s regardless.
+				local CAND = { Enum.KeyCode.Space, Enum.KeyCode.W, Enum.KeyCode.S, false }
+				local upKey = State.upKeyLocked
+				if upKey == nil then
+					State.upTry = (State.upTry or 0) % #CAND + 1
+					upKey = CAND[State.upTry]
+				end
+				if upKey ~= false then
 					keyDown(upKey)
 					local upTok = State.lastUp
 					task.delay(0.22, function() if State.lastUp == upTok then keyUp(upKey) end end)
 				end
 				fireDir("Up")
+				-- Did it launch? Sample just after the move would have taken effect.
+				do
+					local tok = State.lastUp
+					task.delay(0.30, function()
+						if State.lastUp ~= tok then return end          -- another uppercut superseded this one
+						local c = myModel(); local h = c and c:FindFirstChildOfClass("Humanoid")
+						local up = false
+						if h then
+							local r = c:FindFirstChild("HumanoidRootPart")
+							up = (h.FloorMaterial == Enum.Material.Air) or (r and r.AssemblyLinearVelocity.Y > 12) or false
+						end
+						if up then
+							if State.upKeyLocked == nil then
+								State.upKeyLocked = upKey
+								if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] uppercut works with key = " .. tostring(upKey and upKey.Name or "none") .. " - locked in") end
+							end
+						elseif State.upKeyLocked ~= nil then
+							State.upKeyLocked = nil                     -- it stopped working; start trying again
+							if _G.VX_M1_DEBUG then print("[M1COMBO] locked uppercut key stopped launching - re-trying the others") end
+						end
+					end)
+				end
 				_G.VX_FINISHER_T = tick()   -- see doSlam: Auto Swap must not interrupt a finisher
 			end
 		end
@@ -8744,6 +8758,70 @@ do
 				print("[DreamHub AutoAir] " .. tostring(input.KeyCode.Name) .. " did nothing: " .. _airWhy)
 			end
 		end
+		-- ═══════════════ AUTO AIR FOR EVERY CHARACTER, NOT A LIST OF EIGHT ═══════════════
+		-- "u made auto swap work for remotes. so why not auto air work" - because until now Auto Air was
+		-- nothing BUT hardcoded sequences: Vessel, Gojo, Megumi, Hakari, Choso, Locust. You are playing
+		-- Jawbreaker, so not one line of this module has ever run for you. No amount of fixing those branches
+		-- was going to change that.
+		-- Auto Swap works because it derives its remote instead of hardcoding it, and moves work the same way:
+		-- a move's service is its own name without spaces plus "Service" (your Swift Kick / Reserve Balls /
+		-- Shutter Doors captures all agree). So this branch does the generic thing for ANY character:
+		--   you press 1/2/3/4  ->  we jump  ->  we cast the move that slot owns, in the air.
+		-- Nothing is character-specific, so it works on Jawbreaker and on whoever the next update adds.
+		local UNIVERSAL_SLOT = {
+			[Enum.KeyCode.One] = 1, [Enum.KeyCode.Two] = 2, [Enum.KeyCode.Three] = 3, [Enum.KeyCode.Four] = 4,
+		}
+		local function moveInSlot(n)
+			local chs = workspace:FindFirstChild("Characters")
+			for _, c in ipairs({ (chs and chs:FindFirstChild(LP.Name)) or nil, LP.Character }) do
+				local mv = c and c:FindFirstChild("Moveset")
+				if mv then
+					-- A slot number on the entry wins if the game provides one; otherwise child order IS the
+					-- bar order (Jawbreaker: Ambush, Backstab, Trip, Cheap Shot = 1,2,3,4).
+					for _, m in ipairs(mv:GetChildren()) do
+						local sl = m:GetAttribute("Slot") or m:GetAttribute("Key") or m:GetAttribute("Index")
+						if tonumber(sl) == n then return m end
+					end
+					local kids = mv:GetChildren()
+					if kids[n] then return kids[n] end
+				end
+			end
+			return nil
+		end
+		if autoAirOn and airOK and not injBlocked then
+			local slot = UNIVERSAL_SLOT[input.KeyCode]
+			if slot and _G.VX_AIR_UNIVERSAL ~= false then
+				local mv = moveInSlot(slot)
+				if mv then
+					task.spawn(function()
+						-- Jump first so the cast happens off the ground - that is the whole point of "air".
+						-- Written out rather than calling holdJump(), which is declared further down this
+						-- function: referencing it from here would read a nil GLOBAL, not that local, and the
+						-- whole branch would die on the first press.
+						_G.VX_INJECT_UNTIL = tick() + 0.35
+						_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Space] = tick() + 0.5
+						airSelfInj[Enum.KeyCode.Space] = tick() + 0.5
+						pcall(function()
+							VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+							task.wait(0.08)
+							VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+						end)
+						task.wait(0.13)
+						local ok = _G.VX_CAST_MOVE and _G.VX_CAST_MOVE(mv.Name)
+						dbgAir("universal air: slot " .. slot .. " = " .. mv.Name .. "  -> " .. (ok and "cast" or "no service"))
+						if not ok and tick() - (_G.VX_AIRUNI_T or 0) > 3 then
+							_G.VX_AIRUNI_T = tick()
+							print("[DreamHub AutoAir] no service for '" .. mv.Name .. "' (looked for "
+								.. (mv.Name:gsub("%s+", "")) .. "Service) - send me this line")
+						end
+					end)
+				elseif tick() - (_G.VX_AIRUNI_T or 0) > 3 then
+					_G.VX_AIRUNI_T = tick()
+					dbgAir("universal air: nothing in slot " .. slot .. " of your Moveset")
+				end
+			end
+		end
+
 		-- BULLETPROOF character check: detected name, model name, DISPLAY name, or any Moveset entry containing the word.
 		local function charIs(...)
 			local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
@@ -13988,21 +14066,9 @@ do
     acSec:Toggle({ Name = "Auto Hakari (1 + 2 together)", Default = false, Callback = function(b) if HakariApi then HakariApi.set(b) end end })
     acSec:Slider({ Name = "Hakari Rate", Min = 0.5, Max = 10, Default = 3, Decimals = 0.1, Suffix = "s", Callback = function(v) if HakariApi then HakariApi.setRate(v) end end })
     acSec:Button({ Name = "Hakari Cast Now", Callback = function() if HakariApi then HakariApi.now() end end })
-    -- The uppercut key has been guessed four times now (Space, W, none, Space). Rather than spend another
-    -- test round on my guess, pick it yourself - whichever one makes the move come out, tell me and it
-    -- becomes the default. Down Slam is not affected by this at all.
+    -- (The "Uppercut Key" / "Uppercut On M1 #" dropdowns are gone - you asked for it to just work. The module
+    --  cycles the key itself now; the globals still exist if a build ever needs pinning by hand.)
     _G.VX_UPPER_KEY = Enum.KeyCode.Space
-    acSec:Dropdown({ Name = "Uppercut Key (try each)", Items = { "Space", "W", "S", "None" }, Default = "Space", Callback = function(v)
-        v = (type(v) == "table") and v[1] or v
-        local map = { Space = Enum.KeyCode.Space, W = Enum.KeyCode.W, S = Enum.KeyCode.S, None = false }
-        _G.VX_UPPER_KEY = map[v]
-        if VX_NOTIFY then VX_NOTIFY("Uppercut key: " .. tostring(v), true) end
-    end })
-    acSec:Dropdown({ Name = "Uppercut On M1 #", Items = { "2", "3", "4", "5" }, Default = "4", Callback = function(v)
-        v = (type(v) == "table") and v[1] or v
-        _G.VX_UPPER_ON = tonumber(v) or 4     -- the swing the launcher is announced on; we act one swing early
-        if VX_NOTIFY then VX_NOTIFY("Uppercut on M1 #" .. tostring(v), true) end
-    end })
     -- "Slam / Uppercut on M1 #" dropdown REMOVED - it is automatic now (see the note in onSwing).
     -- (Removed the "Launcher after N hits" slider — the mechanic is now the FIXED real game rule per the wiki:
     -- Uppercut = 4 M1s with Space held, Down Slam = 3 M1s then jump+M1. No slider needed or accurate anymore.)
