@@ -3711,12 +3711,16 @@ do
             end)
         end
         if borrowed then
-            -- ═══ "M1 BF STILL WORKS ON SIDE DASH WHEN I DON'T WANT IT" ═══ The borrow was held for 1.2s and
-            -- only closed early if the chain's own flash fired. When it did NOT fire, the engine sat armed for
-            -- the rest of that second and flashed whatever you swung next - with the dropdown showing Side
-            -- Dash and the M1 BF toggle showing off. 0.55s is long enough for this chain's own windup and
-            -- short enough that it cannot reach your next swing.
-            task.delay(0.55, function()
+            -- ═══ LET YOUR OWN M1 SPEND THE FLASH IF OURS DOES NOT ═══ 0.55s was sized to cover exactly the
+            -- injected swing above and nothing else, on the reasoning that a longer window would flash your
+            -- next ordinary M1 by accident. But the injected swing is the unreliable half of this: the game
+            -- can refuse a synthetic click during dash recovery, and when it does there is no windup, no
+            -- flash, and the chain has nothing left to try - "it dashes perfectly and never flashes".
+            -- 1.5s keeps the engine armed long enough that if our click was eaten, the M1 YOU throw right
+            -- after the dash lands the flash instead. That is not an accident any more - you pressed 3 to get
+            -- a flash, so flashing your next swing is the whole point. It is still SINGLE-SHOT, so you get
+            -- one flash out of it either way, never a stream.
+            task.delay(1.5, function()
                 if _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(_G.VX_BFAPI_WANT == true) end) end
                 _G.VX_BF_BORROWED = false; _G.VX_BF_BORROW_USED = 0
             end)
@@ -3882,7 +3886,10 @@ do
             -- spine, ridden on the anti-fling orbit (speed-capped, collisions off, velocity zeroed per frame).
             -- The assist still never flashes - it does not call pressBF or m1ThenBF - so pressing Q can only
             -- ever dash you around them.
-            dashToBack(t, { duration = 0.22, extraSweep = math.pi * 0.22, endRadius = 4.6, endBias = 0 })
+            -- "it should side dash around the CORNER of their back and m1": endBias offsets the landing off
+            -- the spine, so you finish on the corner rather than dead centre - which is also where an M1
+            -- lands as a hit instead of the knockdown that ends the fight early. The M1 follows below.
+            dashToBack(t, { duration = 0.22, extraSweep = math.pi * 0.22, endRadius = 4.6, endBias = 0.45 })
             faceBackOf(t)
         end)
         if Settings.SideM1 and not isBF then task.delay(0.20, function() aimCameraAt((t:FindFirstChild("HumanoidRootPart") or e).Position); VMouseClick() end) end
@@ -3978,7 +3985,10 @@ do
         -- ("it dashes behind them but doesn't black flash"). Dash to their back FIRST, then flash.
         -- "for a side dash you need to make it more legit and fast" - the shortest, flattest clip of any mode:
         -- 0.14s, a tight 0.10pi sweep, no vertical arc, ending just off the spine. Reads as a real Q dash.
-        dashToBack(t, { duration = 0.10, extraSweep = math.pi * 0.12, endRadius = 4.2, endBias = 0, yArc = 0 })
+        -- ═══ THE SAME DASH THE ASSIST USES ═══ You said the assist's side dash looks right and the BF modes'
+        -- do not, so they are the same movement now: same duration, same sweep, same radius, same corner
+        -- bias. The only difference between the assist and this is that this one flashes at the end.
+        dashToBack(t, { duration = 0.22, extraSweep = math.pi * 0.22, endRadius = 4.6, endBias = 0.45, yArc = 0 })
         -- ═══ "THE SIDE DASHES ARE WEIRD" ═══ There used to be a tpBehind snap RIGHT HERE, on top of an arc
         -- that already ends behind the spine (dashToBack passes endBehind = true) - and then a second snap
         -- 0.12s later. Three movements for one dash: arc, blink, blink. That stutter is the weirdness. The arc
@@ -7014,6 +7024,114 @@ do
 end
 
 -- ============================================================
+-- MODULE: GOJO TWOFOLD KICK  ("when u do 2, it will do 3 m1s, then down slam for you")
+-- Cast remote is the user's capture verbatim:
+--   TwofoldKickService.RE.Activated(Moveset["Twofold Kick"])
+-- and the service name is derived, not guessed - _G.VX_CAST_MOVE resolves it from the move's own name.
+-- The kick pops them up and ragdolls them; the sequence then throws three M1s and finishes with the down
+-- slam, which is announced the same way the combo module announces it: <Char>Service.RE.Activated("Down").
+-- ============================================================
+do
+	local Players = game:GetService("Players")
+	local VIM = game:GetService("VirtualInputManager")
+	local LP = Players.LocalPlayer
+	local on, running = false, false
+	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
+	local function myHRP() local m = myModel(); return m and m:FindFirstChild("HumanoidRootPart") end
+	local function norm(s) return (string.gsub(string.lower(tostring(s or "")), "[^%a%d]", "")) end
+	local function hasTwofold()
+		for _, c in ipairs({ myModel(), LP.Character }) do
+			local mv = c and c:FindFirstChild("Moveset")
+			if mv then for _, m in ipairs(mv:GetChildren()) do if norm(m.Name) == "twofoldkick" then return true end end end
+		end
+		return false
+	end
+	local function click()
+		_G.VX_SYNTH_CLICK = tick() + 0.25   -- ours: the shared M1 detector must not re-enter its subscribers
+		local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
+		local cx, cy = (vp and vp.X / 2) or 400, (vp and vp.Y / 2) or 300
+		pcall(function()
+			VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.03)
+			VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+		end)
+	end
+	local function nearest()
+		local hrp = myHRP(); if not hrp then return nil end
+		local g = _G.VX_LOCK; local lt = (g and g.get) and g.get() or nil
+		if lt and lt.Parent then return lt end
+		local best, bd
+		local chs = workspace:FindFirstChild("Characters")
+		if chs then for _, m in ipairs(chs:GetChildren()) do
+			if m.Name ~= LP.Name and m ~= myModel() then
+				local r = m:FindFirstChild("HumanoidRootPart"); local h = m:FindFirstChildOfClass("Humanoid")
+				if r and (not h or h.Health > 0) then
+					local d = (r.Position - hrp.Position).Magnitude
+					if not bd or d < bd then best, bd = m, d end
+				end
+			end
+		end end
+		return best
+	end
+	-- "it will do down slam for you AFTER they ragdoll". The kick is what ragdolls them, so rather than guess
+	-- a delay we watch for it: the same knocked-down signals Auto Block reads, on the target we kicked.
+	local function isDown(t)
+		local h = t and t:FindFirstChildOfClass("Humanoid"); if not h then return false end
+		if h.PlatformStand then return true end
+		local ok, st = pcall(function() return h:GetState() end)
+		if ok and (st == Enum.HumanoidStateType.Physics or st == Enum.HumanoidStateType.Ragdoll
+			or st == Enum.HumanoidStateType.FallingDown or st == Enum.HumanoidStateType.GettingUp) then return true end
+		if h:GetAttribute("Ragdoll") == true or h:GetAttribute("Ragdolled") == true then return true end
+		local info = t:FindFirstChild("Info")
+		local rag = info and (info:FindFirstChild("Ragdoll") or info:FindFirstChild("Ragdolled"))
+		return (rag and rag:IsA("ValueBase") and rag.Value == true) or false
+	end
+	local function slam()
+		local svc = vxMyCharSvc()
+		if svc then fireKnit(svc, "Activated", "Down") end
+	end
+	local function sequence()
+		if running then return end
+		running = true
+		task.spawn(function()
+			local t = nearest()
+			-- 1) the kick itself
+			if _G.VX_CAST_MOVE then _G.VX_CAST_MOVE("Twofold Kick") end
+			task.wait(0.25)
+			-- 2) three M1s, spaced the way a held combo actually swings (~0.35s apart, recorder-proven)
+			for _ = 1, 3 do
+				click()
+				task.wait(0.35)
+			end
+			-- 3) the down slam, once they are actually on the floor. Wait for the ragdoll rather than
+			--    guessing a delay; give up after a second so a whiffed kick does not leave this hanging.
+			local deadline = tick() + 1.0
+			while tick() < deadline do
+				if t and isDown(t) then break end
+				task.wait(0.05)
+			end
+			slam()
+			task.wait(0.4)
+			running = false
+		end)
+	end
+	-- Fires on YOUR key 2. Skips a 2 the hub injected itself (Hollow Purple presses 2), so it can never
+	-- chain off its own automation.
+	if _G.VX_ON_KEY then
+		_G.VX_ON_KEY("twofold", function(kc)
+			if not on or kc ~= Enum.KeyCode.Two then return end
+			local injK = _G.VX_INJ_KEYS
+			if injK and injK[kc] and tick() < injK[kc] then return end
+			if not hasTwofold() then
+				if VX_NOTIFY and tick() - (_G.VX_TF_WARN or 0) > 8 then _G.VX_TF_WARN = tick(); VX_NOTIFY("Twofold Kick: you do not have that move", false) end
+				return
+			end
+			sequence()
+		end)
+	end
+	TwofoldApi = { set = function(v) on = v == true end, now = sequence }
+end
+
+-- ============================================================
 -- MODULE: AUTO HAKARI  (Reserve Balls + Shutter Doors together - "it uses 1 and 2 at the same time")
 -- Both remotes verbatim from the user's captures:
 --   ReserveBallService.RE.Activated(Moveset["Reserve Balls"])
@@ -8798,8 +8916,15 @@ do
 						dbgAir("universal air: slot " .. slot .. " = " .. mv.Name .. "  -> " .. (ok and "cast" or "no service"))
 						if not ok and tick() - (_G.VX_AIRUNI_T or 0) > 3 then
 							_G.VX_AIRUNI_T = tick()
-							print("[DreamHub AutoAir] no service for '" .. mv.Name .. "' (looked for "
-								.. (mv.Name:gsub("%s+", "")) .. "Service) - send me this line")
+							local guess = (mv.Name:gsub("%s+", "")) .. "Service"
+							print("[DreamHub AutoAir] no service for '" .. mv.Name .. "' (looked for " .. guess .. ") - send me this line")
+							-- On screen too. Every round of "auto air dont work" so far has come with no console
+							-- line attached, and this one sentence is the entire fix: it names the move and the
+							-- service that does not exist.
+							if VX_NOTIFY then VX_NOTIFY("Auto Air: no " .. guess .. " for " .. mv.Name, false) end
+						elseif ok and not _G.VX_AIRUNI_OK then
+							_G.VX_AIRUNI_OK = true
+							if VX_NOTIFY then VX_NOTIFY("Auto Air: cast " .. mv.Name .. " in the air", true) end
 						end
 					end)
 				elseif tick() - (_G.VX_AIRUNI_T or 0) > 3 then
@@ -14079,6 +14204,10 @@ do
     -- AUTO HAKARI: Reserve Balls + Shutter Doors on the same beat ("it use 1 and 2 at the same time").
     -- Both remotes are your captures verbatim; neither service name is guessed - they are derived from the
     -- move names, which is the rule every capture in this project follows.
+    -- GOJO TWOFOLD KICK: press 2 -> kick -> 3 M1s -> down slam once they hit the floor. The kick remote is
+    -- your capture verbatim; the slam is announced the same way Auto Down Slam announces it.
+    acSec:Toggle({ Name = "Gojo Twofold Kick (2 -> 3 M1s -> slam)", Default = false, Callback = function(b) if TwofoldApi then TwofoldApi.set(b) end end })
+    acSec:Button({ Name = "Twofold Now", Callback = function() if TwofoldApi then TwofoldApi.now() end end })
     acSec:Toggle({ Name = "Auto Hakari (1 + 2 together)", Default = false, Callback = function(b) if HakariApi then HakariApi.set(b) end end })
     acSec:Slider({ Name = "Hakari Rate", Min = 0.5, Max = 10, Default = 3, Decimals = 0.1, Suffix = "s", Callback = function(v) if HakariApi then HakariApi.setRate(v) end end })
     acSec:Button({ Name = "Hakari Cast Now", Callback = function() if HakariApi then HakariApi.now() end end })
@@ -14179,11 +14308,11 @@ do
     auSec:Dropdown({ Name = "Farm Target", Items = playerList(), Default = "Nearest", Callback = function(v) if FarmApi then FarmApi.setTarget((type(v) == "table") and v[1] or v) end end })   -- unwrap: a table here made the farm loop error out and stay dead until re-execute
     auSec:Toggle({ Name = "Auto Train", Callback = function(b) if TrainApi then TrainApi.setAuto(b) end end })
 
-    -- ===================== TOTAL (Todo's swap + the character changer) =====================
+    -- ===================== TOTAL (Todo's swap) - now a sub-page of the AUTO tab =====================
+    -- Moved off its own top-level page: "put todo + this and everything new inside the auto tab".
     -- Ungated on purpose: free, VIP and plus all get this. It lives in the UPDATE build for now, so it only
     -- reaches your users on the next release.
-    local TotalPage = Window:Page({ Name = "Total", Icon = "repeat" })
-    local totalSub = TotalPage:SubPage({ Name = "Total", Columns = 2 })
+    local totalSub = AutoPage:SubPage({ Name = "Total", Columns = 2 })
     local swapSec = totalSub:Section({ Name = "Total", Side = 1 })
     pcall(function() swapSec:Label("Todo only. Auto Swap waits for a gap - it never fires during an uppercut, a down slam or a live M1 combo.") end)
     swapSec:Toggle({ Name = "Auto Swap", Default = false, Callback = function(b) if TodoApi then TodoApi.setSwap(b) end end })
@@ -14199,7 +14328,6 @@ do
     swapSec:Toggle({ Name = "Auto Perfect Swap", Default = false, Callback = function(b) if TodoApi then TodoApi.setPerfect(b) end end })
     swapSec:Slider({ Name = "Perfect Swap Delay", Min = 0, Max = 0.6, Default = 0.12, Decimals = 0.01, Suffix = "s", Callback = function(v) if TodoApi then TodoApi.setPerfectDelay(v) end end })
     swapSec:Button({ Name = "Swap Now", Callback = function() if TodoApi then TodoApi.swapNow() end end })
-
 
     -- ===================== TARGET (type a username -> act on that player) =====================
     local TargetPage = Window:Page({ Name = "Target", Icon = "crosshair" })
