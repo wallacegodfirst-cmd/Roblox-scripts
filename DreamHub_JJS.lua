@@ -7094,8 +7094,16 @@ do
 		running = true
 		task.spawn(function()
 			local t = nearest()
-			-- 1) the kick itself
-			if _G.VX_CAST_MOVE then _G.VX_CAST_MOVE("Twofold Kick") end
+			-- 1) the kick itself. Say out loud whether the remote was found - "twofold kick dont work" with
+			--    nothing on screen is a dead end, and the cast is the one step that can fail silently.
+			local cast = _G.VX_CAST_MOVE and _G.VX_CAST_MOVE("Twofold Kick") or false
+			if not cast then
+				print("[DreamHub Twofold] could not cast Twofold Kick - no TwofoldKickService, or it is not in your Moveset")
+				if VX_NOTIFY then VX_NOTIFY("Twofold Kick: remote not found", false) end
+			elseif VX_NOTIFY and not _G.VX_TF_OK then
+				_G.VX_TF_OK = true
+				VX_NOTIFY("Twofold Kick: 3 M1s then slam", true)
+			end
 			task.wait(0.25)
 			-- 2) three M1s, spaced the way a held combo actually swings (~0.35s apart, recorder-proven)
 			for _ = 1, 3 do
@@ -8715,7 +8723,17 @@ do
 	-- Combat page exposes one toggle each. A sequence only runs if BOTH the master Auto Air toggle and its own
 	-- switch are on AND you actually own the move.
 	local airOpt = { Vessel = true, Twofold = true, Hakari = true, Megumi = true, Choso = true, LapseBlue = true, LapseRed = true, Locust = true }
-	AutoAirOptSet = function(k, v) if k ~= nil then airOpt[k] = v == true end end
+	-- ═══ NO MASTER SWITCH ═══ "remove the word auto air, and just put the things as it is, when I use each
+	-- one it does what it must do." Each sequence is its own toggle now, so switching one on arms the engine
+	-- by itself; switching the last one off stands it down again. Nothing is hidden behind a second switch
+	-- the user has to find first.
+	AutoAirOptSet = function(k, v)
+		if k == nil then return end
+		airOpt[k] = v == true
+		local any = false
+		for _, on in pairs(airOpt) do if on then any = true break end end
+		autoAirOn = any
+	end
 	local lastM1Tgt = nil                 -- the enemy your last LANDED M1 hit (all sequences target THEM, like the Dummy in your captures)
 	local function knitRE(svcName, reName)
 		local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
@@ -8895,7 +8913,9 @@ do
 				dbgAir("key 3 is the Black Flash input right now - not air-casting slot 3")
 				slot = nil
 			end
-			if slot and _G.VX_AIR_UNIVERSAL ~= false then
+			-- Explicit opt-in now that it has its own toggle ("Air Cast Any Character"), rather than riding
+			-- along with a character sequence somebody turned on for a different reason.
+			if slot and _G.VX_AIR_UNIVERSAL == true then
 				local mv = moveInSlot(slot)
 				if mv then
 					task.spawn(function()
@@ -14098,8 +14118,11 @@ do
         bfSec:Slider({ Name = "Range", Min = 10, Max = 60, Default = 30, Decimals = 1, Callback = function(v) if ChainApi then ChainApi.setLockRange(v) end end })
     end
     local blockSec = bfSub:Section({ Name = "Auto Block", Side = 2 })
-    pcall(function() blockSec:Label("One switch. It blocks ANY attack animation from anyone near you - M1 strings, dashes, ability casts - plus anything thrown at you, on every character. Your BODY turns to face it; the camera is never touched.") end)
     blockSec:Toggle({ Name = "Auto Block", Default = false, Callback = function(b) if AutoBlockApi then AutoBlockApi.set(b) end end })
+    -- LOCKED TARGET ONLY, in the tab where it is used. Turn on Lock Target (Combat > Lock Target), click the
+    -- person, and the shield answers to them and nobody else.
+    blockSec:Toggle({ Name = "Locked Target Only", Default = false, Callback = function(b) if AutoBlockApi then AutoBlockApi.setLocked(b) end end })
+    blockSec:Toggle({ Name = "Lock Target (click an enemy)", Default = false, Callback = function(b) if _G.VX_LOCK and _G.VX_LOCK.manual then _G.VX_LOCK.manual(b) end end })
     blockSec:Slider({ Name = "Block Range", Min = 8, Max = 120, Default = 42, Decimals = 1, Callback = function(v) if AutoBlockApi then AutoBlockApi.setRange(v) end end })
     blockSec:Slider({ Name = "Block Hold", Min = 0.05, Max = 2, Default = 0.46, Decimals = 0.01, Suffix = "s", Callback = function(v) if AutoBlockApi then AutoBlockApi.setHold(v) end end })   -- how long the shield stays up after the last threat; longer rides a whole combo string
     blockSec:Toggle({ Name = "Turn To Face Attacker", Default = true, Callback = function(b) if AutoBlockApi then AutoBlockApi.setTurn(b) end end })   -- body only, never the camera
@@ -14169,48 +14192,50 @@ do
     local acSec = autoSub:Section({ Name = "Auto Combat", Side = 1 })
     acSec:Toggle({ Name = "Auto Counter", Callback = function(b) if CounterApi then CounterApi.set(b) end end })
     acSec:Toggle({ Name = "Locked Only", Callback = function(b) if CounterApi then CounterApi.setLockedOnly(b) end end })
+    -- Lock Target lives in every tab that uses it, so you never have to go hunting for it in Combat first.
+    acSec:Toggle({ Name = "Lock Target (click an enemy)", Default = false, Callback = function(b) if _G.VX_LOCK and _G.VX_LOCK.manual then _G.VX_LOCK.manual(b) end end })
     if tier("premium") then   -- FREE: no Auto Evasive
         acSec:Toggle({ Name = "Auto Evasive", Callback = function(b) if EvasiveApi then EvasiveApi.set(b) end end })
         acSec:Dropdown({ Name = "Evasive Dir", Items = { "Cycle", "Back", "Left", "Right", "Toward Target" }, Default = "Cycle", Callback = function(v) if EvasiveApi then EvasiveApi.setDir(v) end end })
     end
     acSec:Toggle({ Name = "Auto Yuta Black Flash", Default = false, Callback = function(b) if YutaBFApi then YutaBFApi.setAuto(b) end end })
     acSec:Toggle({ Name = "Auto Ult", Callback = function(b) if AutoUltApi then AutoUltApi.set(b) end end })
-    if tier("premium") then
-        acSec:Toggle({ Name = "Auto Air", Callback = function(b) if AutoAirApi_set then AutoAirApi_set(b) end end })   -- FREE: Auto Air removed (premium only)
-        -- OFF by default: the enemy-presence gate was the reason Auto Air kept doing nothing. Turn it on only if
-        -- you find sequences firing when you did not want them to.
-        _G.VX_AIR_NEEDENEMY = false
-        acSec:Toggle({ Name = "Auto Air: need enemy nearby", Default = false, Callback = function(b) _G.VX_AIR_NEEDENEMY = (b == true) end })
-        -- (TEST buttons removed per request - the diagnostics live on in the APIs: M1ComboApi.testUp/testDown/testStatus, AutoAirApi_test("One").)
-        -- Pick which characters Auto Air runs for. Each needs the master toggle above ON as well.
-        pcall(function() acSec:Label("Auto Air - pick which ones run:") end)
-        for _, o in ipairs({
-            { "Vessel",    "Vessel (1 -> Cursed Strikes, jump -> 1)" },
-            { "Twofold",   "Gojo Twofold Kick (R after 2nd kick)" },
-            { "LapseBlue", "Gojo Lapse Blue (1 -> R)" },
-            { "LapseRed",  "Gojo Lapse Blue -> Reversal Red" },
-            { "Megumi",    "Megumi (2 -> Nue+R, R -> Rabbit+1)" },
-            { "Hakari",    "Hakari (3 -> jump + Rough Energy)" },
-            { "Choso",     "Choso (2 -> jump + Flowing Red Scale)" },
-            { "Locust",    "Locust (3 -> Crushing Jaws, R on fly-up)" },
-        }) do
-            acSec:Toggle({ Name = o[2], Default = true, Callback = function(b) if AutoAirOptSet then AutoAirOptSet(o[1], b) end end })
-        end
-    end
-    -- Two independent toggles, not one dropdown: you asked for "auto upper cut AND down slam", and the
-    -- dropdown could only ever arm one of them. Both can run in the same combo now.
+    -- ═══ THE FINISHERS FIRST ═══ You could not find these because they sat underneath a wall of eight
+    -- character toggles. They are also FREE, on every tier - they were already ungated, just buried.
     acSec:Toggle({ Name = "Auto Down Slam", Default = false, Callback = function(b) if M1ComboApi and M1ComboApi.setSlam then M1ComboApi.setSlam(b) end end })
     acSec:Toggle({ Name = "Auto Upper Cut", Default = false, Callback = function(b) if M1ComboApi and M1ComboApi.setUpper then M1ComboApi.setUpper(b) end end })
-    -- AUTO HAKARI: Reserve Balls + Shutter Doors on the same beat ("it use 1 and 2 at the same time").
-    -- Both remotes are your captures verbatim; neither service name is guessed - they are derived from the
-    -- move names, which is the rule every capture in this project follows.
-    -- GOJO TWOFOLD KICK: press 2 -> kick -> 3 M1s -> down slam once they hit the floor. The kick remote is
-    -- your capture verbatim; the slam is announced the same way Auto Down Slam announces it.
-    acSec:Toggle({ Name = "Gojo Twofold Kick (2 -> 3 M1s -> slam)", Default = false, Callback = function(b) if TwofoldApi then TwofoldApi.set(b) end end })
+    -- GOJO TWOFOLD KICK: press 2 -> kick -> 3 M1s -> down slam once they hit the floor. Free / VIP / PLUS.
+    acSec:Toggle({ Name = "Twofold Kick Assist (2 -> 3 M1s -> slam)", Default = false, Callback = function(b) if TwofoldApi then TwofoldApi.set(b) end end })
     acSec:Button({ Name = "Twofold Now", Callback = function() if TwofoldApi then TwofoldApi.now() end end })
+    -- AUTO HAKARI: Reserve Balls + Shutter Doors on the same beat. Both remotes verbatim from the captures;
+    -- neither service name is guessed - they are derived from the move names.
     acSec:Toggle({ Name = "Auto Hakari (1 + 2 together)", Default = false, Callback = function(b) if HakariApi then HakariApi.set(b) end end })
     acSec:Slider({ Name = "Hakari Rate", Min = 0.5, Max = 10, Default = 3, Decimals = 0.1, Suffix = "s", Callback = function(v) if HakariApi then HakariApi.setRate(v) end end })
     acSec:Button({ Name = "Hakari Cast Now", Callback = function() if HakariApi then HakariApi.now() end end })
+    -- ═══ NO "AUTO AIR" MASTER TOGGLE ANY MORE ═══ Each of these is its own switch and does its own thing the
+    -- moment you turn it on - there is no second switch above them to find first, and the label is gone.
+    -- They are also no longer premium-only: the whole point is that using one does what it says.
+    _G.VX_AIR_NEEDENEMY = false   -- the enemy-presence gate was the reason these kept doing nothing; off by default
+    do
+        for _, o in ipairs({
+            { "Vessel",    "Vessel: 1 -> Cursed Strikes, jump -> 1" },
+            { "Twofold",   "Gojo: R after the 2nd Twofold kick" },
+            { "LapseBlue", "Gojo: 1 -> R (Lapse Blue)" },
+            { "LapseRed",  "Gojo: Lapse Blue -> Reversal Red" },
+            { "Megumi",    "Megumi: 2 -> Nue+R, R -> Rabbit+1" },
+            { "Hakari",    "Hakari: 3 -> jump + Rough Energy" },
+            { "Choso",     "Choso: 2 -> jump + Flowing Red Scale" },
+            { "Locust",    "Locust: 3 -> Crushing Jaws, R on fly-up" },
+        }) do
+            acSec:Toggle({ Name = o[2], Default = false, Callback = function(b) if AutoAirOptSet then AutoAirOptSet(o[1], b) end end })
+        end
+        -- The universal path: any character, any moveset. Press 1/2/4 and it jumps and casts that slot.
+        -- (3 is left alone while a flash mode is armed - it is the Black Flash input.)
+        acSec:Toggle({ Name = "Air Cast Any Character (1/2/4)", Default = false, Callback = function(b)
+            _G.VX_AIR_UNIVERSAL = (b == true)
+            if AutoAirApi_set then AutoAirApi_set(b) end
+        end })
+    end
     -- (The "Uppercut Key" / "Uppercut On M1 #" dropdowns are gone - you asked for it to just work. The module
     --  cycles the key itself now; the globals still exist if a build ever needs pinning by hand.)
     _G.VX_UPPER_KEY = Enum.KeyCode.Space
@@ -14250,7 +14275,6 @@ do
     askSec:Toggle({ Name = "Special R", Callback = function(b) if SkillsApi then SkillsApi.setKey(5, b) end end })
     askSec:Toggle({ Name = "Awakening G", Callback = function(b) if SkillsApi then SkillsApi.setKey(6, b) end end })
     local charSec = autoSub:Section({ Name = "Character", Side = 2 })
-    pcall(function() charSec:Label("Names are read from the game's own service list. 'Switch Now' force resets you and picks the character.") end)
     do
         -- ═══ THIS FLAG MUST BE LEXICAL, NOT GLOBAL ═══ It guards a one-click switch that KILLS you, and this
         -- UI library fires a dropdown's callback once while constructing it. As a bare global it would survive
@@ -14314,12 +14338,12 @@ do
     -- reaches your users on the next release.
     local totalSub = AutoPage:SubPage({ Name = "Total", Columns = 2 })
     local swapSec = totalSub:Section({ Name = "Total", Side = 1 })
-    pcall(function() swapSec:Label("Todo only. Auto Swap waits for a gap - it never fires during an uppercut, a down slam or a live M1 combo.") end)
     swapSec:Toggle({ Name = "Auto Swap", Default = false, Callback = function(b) if TodoApi then TodoApi.setSwap(b) end end })
     swapSec:Dropdown({ Name = "Swap Target", Items = { "Off", "Closest", "Random", "Lock Target" }, Default = "Closest", Callback = function(v) if TodoApi then TodoApi.setSwapMode(v) end end })
+    -- Lock Target lives in every tab that uses it, so you never have to go hunting for it in Combat first.
+    swapSec:Toggle({ Name = "Lock Target (click an enemy)", Default = false, Callback = function(b) if _G.VX_LOCK and _G.VX_LOCK.manual then _G.VX_LOCK.manual(b) end end })
     swapSec:Slider({ Name = "Swap Range", Min = 10, Max = 200, Default = 60, Decimals = 1, Callback = function(v) if TodoApi then TodoApi.setSwapRange(v) end end })
     swapSec:Slider({ Name = "Swap Cooldown", Min = 0.3, Max = 8, Default = 2.5, Decimals = 0.1, Suffix = "s", Callback = function(v) if TodoApi then TodoApi.setSwapCD(v) end end })
-    pcall(function() swapSec:Label("Swap When: all off = swaps on the cooldown like before. Trigger On = Me means YOUR Q and YOUR click do it; Them means it reacts to the target. Off turns all three triggers off. Down is always theirs.") end)
     swapSec:Dropdown({ Name = "Trigger On", Items = { "Off", "Them", "Me" }, Default = "Them", Callback = function(v) if TodoApi then TodoApi.setTrigWho(v) end end })
     swapSec:Toggle({ Name = "Swap On Dash (Q)", Default = false, Callback = function(b) if TodoApi then TodoApi.setTrigDash(b) end end })
     swapSec:Toggle({ Name = "Swap On M1", Default = false, Callback = function(b) if TodoApi then TodoApi.setTrigM1(b) end end })
@@ -14868,6 +14892,7 @@ do
 		FacingDot    = -0.15, -- how much they must be turned towards you (-0.15 = slightly generous)
 		Turn         = true,  -- rotate your BODY to face the threat (never the camera)
 		Scan         = 0.10,  -- seconds between enemy-list rebuilds
+		LockedOnly   = false, -- only defend against the target you clicked (see the note in the loop)
 	}
 
 	local on = false
@@ -15019,9 +15044,23 @@ do
 			return
 		end
 
+		-- LOCKED TARGET ONLY: with this on, the shield answers to exactly the person you clicked and nobody
+		-- else - useful in a crowd, where blocking whoever swings nearest means you are blocking the wrong
+		-- fight. Off = anyone who attacks you.
+		local lockOnly = CFG.LockedOnly
+		local locked = nil
+		if lockOnly then
+			local g = _G.VX_LOCK
+			locked = (g and g.get) and g.get() or nil
+			if not locked or not locked.Parent then
+				if blocking then blocking = false; threat = nil; blockOff() end
+				return
+			end
+		end
+
 		local found, foundPos, why = nil, nil, nil
 		for _, e in ipairs(enemies) do
-			if e.model.Parent and e.root.Parent then
+			if e.model.Parent and e.root.Parent and ((not lockOnly) or e.model == locked or e.model.Name == locked.Name) then
 				local reach, d = inReach(e, hrp)
 				if reach and facingMe(e, hrp) then
 					local atk, reason = startedAttacking(e)
@@ -15029,7 +15068,9 @@ do
 				end
 			end
 		end
-		if not found then
+		-- A projectile has no owner we can read, so "locked target only" cannot apply to it - in that mode we
+		-- simply do not block projectiles, which is what "only that target" means.
+		if not found and not lockOnly then
 			local p = incomingProjectile(hrp)
 			if p then foundPos, why = p.Position, "incoming projectile" end
 		end
@@ -15059,6 +15100,7 @@ do
 		setRange   = function(v) CFG.Range = math.clamp(tonumber(v) or CFG.Range, 8, 120) end,
 		setHold    = function(v) CFG.Hold  = math.clamp(tonumber(v) or CFG.Hold, 0.05, 2) end,
 		setTurn    = function(v) CFG.Turn  = v == true end,
+		setLocked  = function(v) CFG.LockedOnly = v == true; if _G.VX_LOCK and _G.VX_LOCK.want then _G.VX_LOCK.want("autoblock", CFG.LockedOnly) end end,
 		isBlocking = function() return blocking end,
 	}
 	_G.VX_AUTOBLOCK_SET = AutoBlockApi.set   -- shared handle, in case another feature ever needs to drop the shield
