@@ -2489,6 +2489,20 @@ local function safeTeleport(targetCFrame, holdTime)
 						-- ceiling is raised to match, so distance is covered by MORE steps rather than bigger
 						-- ones, which is the whole point.
 						local STEP  = tonumber(_G.VX_TP_STEP) or (populated and 14 or 45)
+						-- ═══ THE STEP SIZE WAS NEVER THE WHOLE STORY - THE PACE WAS ═══
+						-- "teleport works in a private server but not a public one. when you are close to a
+						-- location you can teleport, maybe 30 studs or below."
+						-- That is the anti-cheat measuring SPEED, not distance, and this loop was moving 14
+						-- studs per Heartbeat - one frame apart. That is ~840 studs/s. Shrinking the step made
+						-- each write small but left the implied speed absurd, so a public server rejected the
+						-- whole string while an empty private one never looked.
+						-- So each step is now PACED to a believable speed, and the velocity we write matches
+						-- the pace instead of a fixed 26. Position and momentum finally agree with each other
+						-- and with the clock: from the server's side you are moving fast, not teleporting.
+						-- 90 studs/s is about a dash; an empty server can afford 400 because nothing is
+						-- watching. _G.VX_TP_STEPSPEED overrides.
+						local PACE  = tonumber(_G.VX_TP_STEPSPEED) or (populated and 90 or 400)
+						local GAP   = STEP / math.max(1, PACE)
 						-- Within one step = ONE write. No walking, no glide feel - just there.
 						local hops  = (total <= STEP) and 1 or math.clamp(math.ceil(total / STEP), 1, 400)
 					for k = 1, hops do
@@ -2501,9 +2515,11 @@ local function safeTeleport(targetCFrame, holdTime)
 							cc:PivotTo(CFrame.new(p) * rot)   -- PivotTo: moves the whole model coherently, not just the root
 							-- MATCHING velocity: this is the whole point. Position moved, so momentum must
 							-- agree with it, otherwise the move is physically impossible and gets reverted.
-							hh.AssemblyLinearVelocity = dirU * 26   -- ~ the value observed on the teleports that stuck
+							hh.AssemblyLinearVelocity = dirU * PACE   -- momentum that MATCHES the pace we are actually moving at
 						end)
-						game:GetService("RunService").Heartbeat:Wait()   -- resolved here: RunService is not a file-level local
+						-- Wait the time this step would really take. One frame here is what made a short step
+						-- into an 840 studs/s jump.
+						if k < hops then task.wait(GAP) else game:GetService("RunService").Heartbeat:Wait() end
 					end
 					-- settle ON the target, still carrying a little motion rather than a dead stop
 					local cf = vxMyChar(); local hf = cf and cf:FindFirstChild("HumanoidRootPart")
@@ -2531,9 +2547,9 @@ local function safeTeleport(targetCFrame, holdTime)
 								if _G.VX_ACPASS then _G.VX_ACPASS() end
 								pcall(function()
 									cc2:PivotTo(CFrame.new(p2) * rot)
-									hh2.AssemblyLinearVelocity = dirU * 26
+									hh2.AssemblyLinearVelocity = dirU * PACE
 								end)
-								game:GetService("RunService").Heartbeat:Wait()
+								if k < hops2 then task.wait(GAP) else game:GetService("RunService").Heartbeat:Wait() end
 							end
 							task.wait(0.35)
 							local cw = vxMyChar(); local hw = cw and cw:FindFirstChild("HumanoidRootPart")
@@ -3958,8 +3974,18 @@ do
             local c = GetChar(); local h = c and c:FindFirstChildOfClass("Humanoid")
             if h then h:ChangeState(Enum.HumanoidStateType.Running) end
         end)
-        VKeyTap(Settings.DashKey, 0.04)   -- REAL dash key = the game's own dash anim + impulse
-        task.wait(0.06)                   -- let that impulse start before the arc takes over (else it looks cancelled)
+        -- ═══ TELEPORT IS THE ONLY MODE THAT FLASHES, AND THE ONLY ONE THAT NEVER PRESSES THIS ═══
+        -- Teleport reaches the target with a CFrame write and no dash key, and it lands its Black Flash every
+        -- time. Every other mode taps the real dash key first - which puts you in the game's DASH state, and
+        -- JJS refuses an M1 thrown during dash recovery. No swing, no windup, no flash: exactly the report,
+        -- and exactly the split between the mode that works and the ones that do not.
+        -- So a BF chain now travels on the arc ALONE (opts.noKey), which still crosses the ground and still
+        -- reads as movement, but leaves you in a state the game will accept an attack from. The Q assist keeps
+        -- the real key, because it wants the dash animation and never needs an M1 to be accepted.
+        if not opts.noKey then
+            VKeyTap(Settings.DashKey, 0.04)   -- REAL dash key = the game's own dash anim + impulse
+            task.wait(0.06)                   -- let that impulse start before the arc takes over (else it looks cancelled)
+        end
         local p = GetRoot(); if p then pcall(function() p.AssemblyLinearVelocity = Vector3.zero end) end   -- kill the dash burst so the arc can't fling
         if _G.VX_ORBIT then
             _G.VX_ORBIT(e, {
@@ -4065,8 +4091,17 @@ do
                 local side = Vector3.new(-fwd.Z, 0, fwd.X) * (bias * 3.0)
                 local dest = e.Position - fwd * 4.4 + side
                 pcall(function()
-                    p.CFrame = CFrame.lookAt(Vector3.new(dest.X, p.Position.Y, dest.Z), Vector3.new(e.Position.X, p.Position.Y, e.Position.Z))
-                    p.AssemblyLinearVelocity = Vector3.new(0, p.AssemblyLinearVelocity.Y, 0)
+                    -- ═══ FOLLOW, DO NOT SNAP ═══ Writing the exact spot every frame is a teleport sixty times
+                    -- a second, and that is what made the assist look weird. Move a FRACTION of the way there
+                    -- instead: you slide onto their back over a few frames the way a player would, and if they
+                    -- walk off you trail them rather than being welded to them.
+                    local here = p.Position
+                    local want = Vector3.new(dest.X, here.Y, dest.Z)
+                    local step = here:Lerp(want, 0.35)
+                    p.CFrame = CFrame.lookAt(step, Vector3.new(e.Position.X, here.Y, e.Position.Z))
+                    -- momentum that agrees with the direction we are drifting, never a dead zero
+                    local d = (want - here)
+                    p.AssemblyLinearVelocity = Vector3.new(d.X * 2, p.AssemblyLinearVelocity.Y, d.Z * 2)
                 end)
             end
             RunService.Heartbeat:Wait()
@@ -4160,7 +4195,8 @@ do
         task.wait(0.12)                                                  -- let the jump actually leave the ground
         -- "remove the m1 bf chain mode inside the jump": no orbit chain here either. Real jump, real dash key,
         -- then land on the spine - the same shape as Back Dash but airborne, so the two stay distinguishable.
-        VKeyTap(Settings.DashKey, 0.04)
+        -- No dash key here either: it puts you in dash recovery and the game then refuses the M1 this chain
+        -- exists to flash. The jump above already gives Jump mode its own distinct movement.
         task.wait(0.07)
         if not tpBehind(t) then R.bfActive = false; return end
         faceBackOf(t)
@@ -4196,7 +4232,7 @@ do
         -- ═══ THE SAME DASH THE ASSIST USES ═══ You said the assist's side dash looks right and the BF modes'
         -- do not, so they are the same movement now: same duration, same sweep, same radius, same corner
         -- bias. The only difference between the assist and this is that this one flashes at the end.
-        dashToBack(t, { duration = 0.22, extraSweep = math.pi * 0.22, endRadius = 4.6, endBias = 0.45, yArc = 0 })
+        dashToBack(t, { duration = 0.22, extraSweep = math.pi * 0.22, endRadius = 4.6, endBias = 0.45, yArc = 0, noKey = true })
         -- ═══ "THE SIDE DASHES ARE WEIRD" ═══ There used to be a tpBehind snap RIGHT HERE, on top of an arc
         -- that already ends behind the spine (dashToBack passes endBehind = true) - and then a second snap
         -- 0.12s later. Three movements for one dash: arc, blink, blink. That stutter is the weirdness. The arc
@@ -4254,8 +4290,9 @@ do
         -- orbit: it interpolates your CFrame across its whole window, and a wide 0.60pi sweep is a long visible
         -- slide that also often ended off the spine. This drops the orbit entirely - press the real dash key so
         -- the game plays its OWN dash animation, then land exactly behind them. Short, and always on the back.
-        VKeyTap(Settings.DashKey, 0.04)
-        task.wait(0.07)                      -- let the game's dash animation start before we place the landing
+        -- Same as the other modes: the dash key costs us the M1. Back Dash keeps its shape from the placement
+        -- below, not from the key.
+        task.wait(0.07)
         if not tpBehind(t) then R.bfActive = false; return end
         if _G.VX_BF_DEBUG then print("[DreamHub BF] back dash: target " .. (facingMe and "FACING you -> around to the back" or "turned away -> short side dash")) end
         faceBackOf(t)
@@ -4339,7 +4376,7 @@ do
         -- "it flings the person" - each extra landed M1 stacks the server's knockback on them.
         -- M1 Chain's own signature: a medium sweep ending DEAD behind the spine (endBias 0), distinct from
         -- Side Dash's off-spine clip and Back Dash's wide half-circle.
-        local dashed = dashToBack(t, { duration = 0.22, extraSweep = math.pi * 0.22, endRadius = 4.6, endBias = 0 })
+        local dashed = dashToBack(t, { duration = 0.22, extraSweep = math.pi * 0.22, endRadius = 4.6, endBias = 0, noKey = true })
         if dashed then faceBackOf(t) end
         if borrowed then
             task.delay(0.6, function()   -- hand the engine back exactly as we found it
@@ -7370,13 +7407,40 @@ do
 			VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
 		end)
 	end
+	-- ═══ HOLD THE BUTTON, DO NOT TAP IT ═══ Your own recorder capture settled this: ONE hold of 1.381s
+	-- produced FOUR swings about 0.35s apart. JJS advances the combo while the button is DOWN. Tapping three
+	-- times is three separate first-swings, and the game only accepted the first - which is exactly "twofold
+	-- kick assist only did 1 M1". So we hold for as long as the swings we want take, and let the game count.
+	local function holdM1(swings)
+		local n = math.max(1, tonumber(swings) or 3)
+		local dur = 0.12 + (n - 1) * 0.35        -- first swing lands quickly, the rest follow on the combo beat
+		_G.VX_SYNTH_CLICK = tick() + dur + 0.25  -- ours for the whole hold: the M1 detector must not re-enter
+		local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
+		local cx, cy = (vp and vp.X / 2) or 400, (vp and vp.Y / 2) or 300
+		local VIM = game:GetService("VirtualInputManager")
+		pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0) end)
+		local t0 = tick()
+		while tick() - t0 < dur do
+			_G.VX_SYNTH_CLICK = tick() + 0.25    -- keep it marked as ours for the whole hold
+			task.wait(0.05)
+		end
+		pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0) end)
+	end
 	local function faceAt(t)
 		local hrp = myHRP(); local r = t and t:FindFirstChild("HumanoidRootPart")
 		if hrp and r then pcall(function() hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(r.Position.X, hrp.Position.Y, r.Position.Z)) end) end
 	end
 	-- The uppercut, exactly as captured: FOUR calls, the fourth is the one that lands.
 	local function upNow()
-		local svc = vxMyCharSvc(); if not svc then return false end
+		local svc = vxMyCharSvc()
+		if not svc then
+			if tick() - (_G.VX_FA_WARN or 0) > 6 then
+				_G.VX_FA_WARN = tick()
+				print("[DreamHub Finisher] cannot resolve your character service - uppercut has nowhere to fire")
+				if VX_NOTIFY then VX_NOTIFY("Finisher Assist: no character service", false) end
+			end
+			return false
+		end
 		for i = 1, 4 do
 			fireKnit(svc, "Activated", "Up")
 			if i < 4 then task.wait(0.06) end
@@ -7392,19 +7456,24 @@ do
 		if tick() < busyUntil then return end
 		local t, d = downedTarget()
 		if not t then return end
-		busyUntil = tick() + 2.5
 		task.spawn(function()
-			if d and d > nearDist then
-				-- FAR: close the gap the way you described - side dash in, three M1s, then the finisher.
-				if _G.VXBF2 and _G.VXBF2.doSide then pcall(_G.VXBF2.doSide) end
-				task.wait(0.30)
-				for i = 1, 3 do
-					faceAt(t)
-					click()
-					if i < 3 then task.wait(0.35) end
-				end
-				task.wait(0.20)
+			if d and d <= nearDist then
+				-- ═══ IN REACH: FINISH IMMEDIATELY ═══ "when the target is down, it needs to QUICKLY do down
+				-- slam." A ragdoll is a short window, so there is nothing to line up here - face them and
+				-- send it on the same beat we noticed. A short lockout only, so the next knockdown is not
+				-- sitting behind a 2.5s timer.
+				busyUntil = tick() + 0.8
+				faceAt(t)
+				if which == "Up" then upNow() else slamNow() end
+				return
 			end
+			-- FAR: close the gap the way you described - side dash in, three M1s, then the finisher.
+			busyUntil = tick() + 2.5
+			if _G.VXBF2 and _G.VXBF2.doSide then pcall(_G.VXBF2.doSide) end
+			task.wait(0.22)
+			faceAt(t)
+			holdM1(3)          -- one held press = three swings; three taps only ever landed the first
+			task.wait(0.12)
 			faceAt(t)
 			if which == "Up" then upNow() else slamNow() end
 		end)
@@ -7412,8 +7481,10 @@ do
 	task.spawn(function()
 		while true do
 			if upOn or downOn then
+				-- 0.06 rather than 0.18: a ragdoll can be over in a couple of frames, and three frames of
+				-- latency was the difference between finishing them and swinging at someone standing up.
 				pcall(function() run(upOn and "Up" or "Down") end)
-				task.wait(0.18)
+				task.wait(0.06)
 			else
 				task.wait(0.4)
 			end
@@ -7458,6 +7529,25 @@ do
 			VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.03)
 			VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
 		end)
+	end
+	-- ═══ HOLD THE BUTTON, DO NOT TAP IT ═══ Your own recorder capture settled this: ONE hold of 1.381s
+	-- produced FOUR swings about 0.35s apart. JJS advances the combo while the button is DOWN. Tapping three
+	-- times is three separate first-swings, and the game only accepted the first - which is exactly "twofold
+	-- kick assist only did 1 M1". So we hold for as long as the swings we want take, and let the game count.
+	local function holdM1(swings)
+		local n = math.max(1, tonumber(swings) or 3)
+		local dur = 0.12 + (n - 1) * 0.35        -- first swing lands quickly, the rest follow on the combo beat
+		_G.VX_SYNTH_CLICK = tick() + dur + 0.25  -- ours for the whole hold: the M1 detector must not re-enter
+		local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
+		local cx, cy = (vp and vp.X / 2) or 400, (vp and vp.Y / 2) or 300
+		local VIM = game:GetService("VirtualInputManager")
+		pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0) end)
+		local t0 = tick()
+		while tick() - t0 < dur do
+			_G.VX_SYNTH_CLICK = tick() + 0.25    -- keep it marked as ours for the whole hold
+			task.wait(0.05)
+		end
+		pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0) end)
 	end
 	local function nearest()
 		local hrp = myHRP(); if not hrp then return nil end
@@ -7515,11 +7605,8 @@ do
 				VX_NOTIFY("Twofold Kick: 3 M1s then slam", true)
 			end
 			task.wait(0.25)
-			-- 2) three M1s, spaced the way a held combo actually swings (~0.35s apart, recorder-proven)
-			for _ = 1, 3 do
-				click()
-				task.wait(0.35)
-			end
+			-- 2) three M1s - as ONE HELD press, not three taps. See holdM1.
+			holdM1(3)
 			-- 3) the down slam, once they are actually on the floor. Wait for the ragdoll rather than
 			--    guessing a delay; give up after a second so a whiffed kick does not leave this hanging.
 			local deadline = tick() + 1.0
