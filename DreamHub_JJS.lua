@@ -976,12 +976,15 @@ do
 		-- mark this as our own injected press so other key-3 features (e.g. Auto Earthquake) don't treat the
 		-- Black Flash press as a real player tap and cross-trigger.
 		-- ═══ 0.2s WAS TOO SHORT ═══ The mark has to still be live when InputBegan DELIVERS the press to every
-		-- other handler, and the press itself is held for 0.09s below. VXBF2's own markThree already uses 0.4
-		-- for exactly this reason. At 0.2 the BF-key handler in VXBF2 could see this press as a real player tap
-		-- and launch a whole dash chain off it - see the guard added there.
+		-- other handler. VXBF2's own markThree already uses 0.4 for exactly this reason. At 0.2 the BF-key
+		-- handler in VXBF2 could see this press as a real player tap and launch a whole dash chain off it.
 		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[keyCode] = tick() + 0.5
 		VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
-		task.wait(0.09)   -- hold the key a touch (JJS eats instant taps for abilities); this is what makes 3 register
+		-- 0.025 is what the source AutoBlackFlash script holds it for, and that script demonstrably lands the
+		-- flash. The 0.09 this used to hold was reasoned from "JJS eats instant taps for ABILITIES" - true for
+		-- casting a move, but this is a timing input inside a swing, and a longer hold shifts when the game
+		-- reads it. Match the reference.
+		task.wait(0.025)
 		VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
 	end
 
@@ -1055,25 +1058,17 @@ do
 	-- So the ability key is now pressed only when your moveset actually has a Black Flash ability to spend -
 	-- otherwise the perfectly-timed re-click does the work on its own, with nothing to interrupt it.
 	-- _G.VX_BF_PRESSKEY overrides: "Always" / "Never" / nil = auto (the check below).
+	-- ═══ I GOT THIS BACKWARDS. KEY 3 *IS* THE BLACK FLASH INPUT. ═══
+	-- Last build I stopped pressing 3 on characters whose moveset has no "Black Flash" ability, reasoning
+	-- that 3 is just ability slot 3 (Trip, on Jawbreaker). That was wrong, and the source script this engine
+	-- was built from says so plainly: CFG.TriggerKey = Enum.KeyCode.Three, pressed 0.19s into the M1 windup,
+	-- with no other mechanism in the whole file - no re-click, nothing. Black Flash in this game is a TIMED
+	-- 3 during your swing, whatever slot 3 does outside of one. "I need all modes to black flash when I
+	-- click 3" is the same statement from the other direction.
+	-- So it presses 3 again, on every character, always. The dropdown keeps a Never option only for someone
+	-- who wants the re-click alone.
 	local function bfKeyIsFlash()
-		if _G.VX_BF_PRESSKEY == "Always" then return true end
-		if _G.VX_BF_PRESSKEY == "Never" then return false end
-		local ok, res = pcall(function()
-			local chs = workspace:FindFirstChild("Characters")
-			local rigs = { (chs and chs:FindFirstChild(player.Name)) or nil, player.Character }
-			for _, c in ipairs(rigs) do
-				local mv = c and c:FindFirstChild("Moveset")
-				if mv then
-					for _, m in ipairs(mv:GetChildren()) do
-						local n = string.lower(m.Name):gsub("[^%a]", "")
-						if n:find("blackflash", 1, true) then return true end
-					end
-					return false          -- we read the moveset and there is no Black Flash in it
-				end
-			end
-			return false
-		end)
-		return ok and res or false
+		return _G.VX_BF_PRESSKEY ~= "Never"
 	end
 	local function clickAuthorised()
 		if tick() - (tonumber(_G.VX_LAST_HUMAN_CLICK) or 0) < 0.5 then return true end
@@ -1168,14 +1163,12 @@ do
 			if _G.VX_BF_DEBUG then pcall(function() print(string.format("[BF] windup id=%s  ->  firing flash (M1 tap + key 3) in %.2fs", tostring(id), math.max(0, delayTime + offset))) end) end
 			task.delay(math.max(0, delayTime + offset), function()
 				if not enabled then return end
-				-- Black Flash lands on a PERFECTLY-TIMED input on the M1 windup. Cover both ways it can be bound so it
-				-- works no matter your character/keybind: a left-click re-tap at the flash frame -- the real timing
-				-- mechanic on most characters -- plus the ability key. A stray unbound key does nothing; the extra
-				-- click is harmless mid-M1. This is a synthetic input, NOT a raw remote packet, so it does not kick.
-				-- The re-click is the PRIMARY Black Flash trigger on most characters, but it lands an EXTRA in-game M1
-			-- per swing, and that extra hit is what stacks the server's knockback on the target ('it flings them').
-			-- Default ON so flash reliability is unchanged; the Combat toggle lets you trade it for less launch.
-			if _G.VX_BF_RECLICK ~= false then
+				-- Black Flash lands on a PERFECTLY-TIMED KEY 3 on the M1 windup. That is the whole mechanism in
+				-- the source AutoBlackFlash script and it is what happens below. The optional re-click is a
+				-- second, weaker theory that also lands an EXTRA in-game M1 per swing (the M1 M1 M1 spam and
+				-- the target flinging), so it is OFF by default now and only runs if you switch it on.
+				-- These are synthetic inputs, NOT raw remote packets, so they do not kick.
+			if _G.VX_BF_RECLICK == true then
 				-- MARK IT AS OURS. This re-click was the only injected click in the file that did not stamp
 				-- _G.VX_SYNTH_CLICK, so the shared poll handed it to every M1 subscriber and the Action-priority
 				-- animation it produced could be counted as a SECOND swing. Whether it was depended on where that
@@ -1193,13 +1186,8 @@ do
 						VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
 					end)
 			end
-				-- Only if slot 3 really IS Black Flash for this character. See bfKeyIsFlash above: on everyone
-				-- else this was casting whatever their third ability happens to be, every single swing.
-				if bfKeyIsFlash() then
-					pressKey(Enum.KeyCode.Three)
-				elseif _G.VX_BF_DEBUG then
-					print("[BF] your moveset has no Black Flash ability - re-click only, not pressing 3")
-				end
+				-- THE flash input. Not optional, not character-dependent - see bfKeyIsFlash above.
+				if bfKeyIsFlash() then pressKey(Enum.KeyCode.Three) end
 			end)
 		end
 	end
@@ -3630,23 +3618,14 @@ do
     -- have Black Flash as an ability. On everyone else this was casting their third move (Trip, on Jawbreaker)
     -- every time a chain wanted a flash. When the character has no such ability we throw the timed re-tap
     -- instead, which is the actual Black Flash mechanic and works on everyone.
-    local function bfCharHasFlashAbility()
-        if _G.VX_BF_PRESSKEY == "Always" then return true end
-        if _G.VX_BF_PRESSKEY == "Never" then return false end
-        local c = GetChar(); local mv = c and c:FindFirstChild("Moveset")
-        if not mv then return false end
-        for _, m in ipairs(mv:GetChildren()) do
-            if string.find((string.lower(m.Name):gsub("[^%a]", "")), "blackflash", 1, true) then return true end
-        end
-        return false
-    end
+    -- Key 3 IS the Black Flash input (see the note in the engine). Always press it; "Never" is the only
+    -- opt-out, for anyone who wants the re-click on its own.
     local function pressBF()
-        if bfCharHasFlashAbility() then
-            markThree(); VIM:SendKeyEvent(true, Settings.BFKey, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Settings.BFKey, false, game)
-        else
-            if _G.VX_BF_DEBUG then print("[DreamHub BF] no Black Flash ability on this character - timed re-tap instead of key 3") end
-            VMouseClick()
-        end
+        if _G.VX_BF_PRESSKEY == "Never" then VMouseClick() return end
+        markThree()
+        VIM:SendKeyEvent(true, Settings.BFKey, false, game)
+        task.wait(0.03)   -- the source script holds it 0.025; long enough to register, short enough not to charge anything
+        VIM:SendKeyEvent(false, Settings.BFKey, false, game)
     end
     -- ═══ WHY THE OTHER BF MODES NEVER FLASHED ═══ Black Flash only lands when it is timed onto a CONNECTING M1.
     -- "M1 Chain" works because it triggers off your click, so an M1 is already landing. Side Dash / Back Dash /
@@ -3705,13 +3684,12 @@ do
         -- stamped it; this function - which is the flash beat for Teleport, Jump, Side Dash AND Back Dash -
         -- did not. So every borrowed chain armed the engine, threw the click, and then had its own windup
         -- rejected by the guard: perfect dash, no flash. Stamp it on the same line we click.
-        -- ═══ DO NOT DISABLE THE RE-CLICK ═══ This used to set _G.VX_BF_RECLICK = false to stop the M1 spam,
-        -- but the engine's own note is explicit: the re-click IS the primary Black Flash trigger. Killing it
-        -- left the engine pressing key 3 alone, which by that same note often does nothing - so every mode
-        -- dashed correctly and then simply did not flash. Two clicks is what a real player throws: one to
-        -- start the swing, one re-tap on the windup frame to land the flash. The duplicate sources that
-        -- actually caused "M1 M1 M1" are the InputBegan path and the retry, and both are gated on
-        -- R.chainUntil below - so the spam stays fixed without switching the flash off.
+        -- THE CLICK BELOW IS THE SWING, NOT THE FLASH. A chain has to produce an M1 for the engine to time
+        -- against - that is all this click is for. The flash itself is the key-3 press the engine schedules
+        -- 0.19s into the windup that follows, which is exactly what the source AutoBlackFlash script does and
+        -- the only mechanism it has. (An earlier note here claimed the re-click was the primary trigger and
+        -- that removing it was what broke the modes; the source script has no re-click at all, so that was
+        -- never right - the modes were broken by the borrow guard and by key 3 being suppressed.)
         _G.VX_BF_CHAINCLICK = tick()
         -- The dash is finished by the time we swing - we are standing on their spine. Clear the dash blind so
         -- a swing that the game defers by a few frames cannot land inside a window meant for the dash clip.
@@ -13924,15 +13902,20 @@ do
         bfAutoOn = (b == true); bfSync()
         if _G.VXBF2 then _G.VXBF2.setAutoBF(false) end   -- avoid the weaker VXBF2 path double-pressing
     end })
-    bfSec:Toggle({ Name = "BF Uses Reclick (off = less fling)", Default = true, Callback = function(b) _G.VX_BF_RECLICK = (b == true); _G.VX_BF_RECLICK_USER = (b == true) end })   -- _USER is the real preference; chains suppress the live one transiently and restore from this
-    -- ═══ KEY 3 IS SLOT 3, NOT "BLACK FLASH" ═══ This engine came from a script written for a character whose
-    -- third ability WAS Black Flash. On Jawbreaker slot 3 is Trip; on most characters it is something else
-    -- entirely - so every flash was casting an unrelated move and interrupting your combo. Auto reads your
-    -- moveset and only presses the key when you actually have a Black Flash ability; otherwise the timed
-    -- re-tap does it, which is the real mechanic. Always/Never are here in case Auto reads it wrong.
-    bfSec:Dropdown({ Name = "Press Key 3 For BF", Items = { "Auto", "Always", "Never" }, Default = "Auto", Callback = function(v)
+    -- ═══ DEFAULT OFF, TO MATCH THE SCRIPT THAT ACTUALLY WORKS ═══ The source AutoBlackFlash has no re-click
+    -- at all: it watches the windup and presses 3, full stop. The re-click was added here on the theory that
+    -- it was "the primary trigger", and it is also what lands an EXTRA in-game M1 per swing - the M1 M1 M1
+    -- spam and the target flinging. With key 3 restored as the real input there is nothing for it to fix, so
+    -- it starts off. Turn it on if a character turns out to need it.
+    _G.VX_BF_RECLICK, _G.VX_BF_RECLICK_USER = false, false
+    bfSec:Toggle({ Name = "BF Uses Reclick (extra M1, more fling)", Default = false, Callback = function(b) _G.VX_BF_RECLICK = (b == true); _G.VX_BF_RECLICK_USER = (b == true) end })   -- _USER is the real preference; chains suppress the live one transiently and restore from this
+    -- Key 3 IS the Black Flash input - the source AutoBlackFlash script does nothing else, and "I need all
+    -- modes to black flash when I click 3" says the same. Always, on every character. Never is only here for
+    -- anyone who wants the re-click by itself.
+    _G.VX_BF_PRESSKEY = "Always"
+    bfSec:Dropdown({ Name = "Press Key 3 For BF", Items = { "Always", "Never" }, Default = "Always", Callback = function(v)
         v = (type(v) == "table") and v[1] or v
-        _G.VX_BF_PRESSKEY = (v == "Auto") and nil or v
+        _G.VX_BF_PRESSKEY = v
     end })
     -- "BF Debug (print)" and "Debug On Screen" toggles REMOVED from the menu (they were clutter). The globals
     -- still exist, so a debug run is `_G.VX_BF_DEBUG = true` / `_G.VX_DEBUG_HUD = true` before the loadstring.
