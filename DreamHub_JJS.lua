@@ -4165,7 +4165,15 @@ do
                     local cx, cy = (vp and vp.X / 2) or 400, (vp and vp.Y / 2) or 300
                     pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0) end)
                     local t0 = tick()
-                    while tick() - t0 < dur do _G.VX_SYNTH_CLICK = tick() + 0.25; task.wait(0.05) end
+                    while tick() - t0 < dur do
+                        -- SYNTH keeps the M1 subscribers from re-entering; HUMAN keeps the swings COUNTING.
+                        -- You pressed Q - these swings are yours, and Auto Down Slam / the flash engine must
+                        -- treat them that way. Without the human stamp, side dashing mid-combo silently
+                        -- disqualified every following swing and the slam never fired.
+                        _G.VX_SYNTH_CLICK = tick() + 0.25
+                        _G.VX_LAST_HUMAN_CLICK = tick()
+                        task.wait(0.05)
+                    end
                     pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0) end)
                 end
             else
@@ -5631,7 +5639,7 @@ do
 						if r then local v = r.AssemblyLinearVelocity; r.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 34), v.Z) end
 					end)
 					pcall(function() h.Jump = true end)
-					task.wait(0.12)
+					task.wait(0.08)           -- just enough to be airborne; every extra frame is slam latency
 				end
 				State.lastDown = 0            -- this is a deliberate, one-off slam: do not let the combo gate eat it
 				doSlam("requested by another feature")
@@ -7469,7 +7477,8 @@ do
 		pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0) end)
 		local t0 = tick()
 		while tick() - t0 < dur do
-			_G.VX_SYNTH_CLICK = tick() + 0.25    -- keep it marked as ours for the whole hold
+			_G.VX_SYNTH_CLICK = tick() + 0.25    -- ours: the per-click subscribers must not re-enter
+			_G.VX_LAST_HUMAN_CLICK = tick()      -- but the SWINGS count - you started this sequence
 			task.wait(0.05)
 		end
 		pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0) end)
@@ -7521,7 +7530,7 @@ do
 				-- slam." A ragdoll is a short window, so there is nothing to line up here - face them and
 				-- send it on the same beat we noticed. A short lockout only, so the next knockdown is not
 				-- sitting behind a 2.5s timer.
-				busyUntil = tick() + 0.8
+				busyUntil = tick() + 0.6   -- shorter lockout = the next knockdown is punished sooner
 				faceAt(t)
 				if which == "Up" then upNow() else slamNow() end
 				return
@@ -7543,7 +7552,7 @@ do
 				-- 0.06 rather than 0.18: a ragdoll can be over in a couple of frames, and three frames of
 				-- latency was the difference between finishing them and swinging at someone standing up.
 				pcall(function() run(upOn and "Up" or "Down") end)
-				task.wait(0.06)
+				task.wait(0.03)   -- a ragdoll can be over in a couple of frames; halve the notice latency
 			else
 				task.wait(0.4)
 			end
@@ -7603,7 +7612,8 @@ do
 		pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0) end)
 		local t0 = tick()
 		while tick() - t0 < dur do
-			_G.VX_SYNTH_CLICK = tick() + 0.25    -- keep it marked as ours for the whole hold
+			_G.VX_SYNTH_CLICK = tick() + 0.25    -- ours: the per-click subscribers must not re-enter
+			_G.VX_LAST_HUMAN_CLICK = tick()      -- but the SWINGS count - you started this sequence
 			task.wait(0.05)
 		end
 		pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0) end)
