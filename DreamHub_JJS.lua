@@ -1031,6 +1031,24 @@ do
 		end
 		return false
 	end
+	-- ═══ WHOSE CLICK PUT THIS SWING ON SCREEN ═══
+	-- HUMAN click, not any click: the engine's own re-click lands a real extra in-game M1, so the swing it
+	-- produces would otherwise look like a fresh player M1 and flash again, and re-click again - a loop that
+	-- only stops when nobody is in range. While you actually hold the button the poll re-stamps the human
+	-- clock every frame, so a real held combo is unaffected.
+	-- BUT A CHAIN'S SWING IS DIFFERENT. Side Dash / Back Dash / Jump / Teleport dash to the target FIRST and
+	-- then throw their own click - by the time that swing plays, your last real click is 0.4-0.9s old, so the
+	-- human clock says "not you" and the swing is refused. On a character whose M1 ids were captured that did
+	-- not matter, because the id alone identified it. On Jawbreaker, Todo, Hakari - anyone added since that
+	-- table was made - the loose fallback is the ONLY route, and this is what was closing it. Every mode
+	-- dashed perfectly and never flashed.
+	-- _G.VX_BF_CHAINCLICK is the chain saying "the next swing is mine", stamped the instant it clicks, and it
+	-- is only honoured while BORROWED - so it authorises exactly the chain's own beat and nothing else.
+	local function clickAuthorised()
+		if tick() - (tonumber(_G.VX_LAST_HUMAN_CLICK) or 0) < 0.5 then return true end
+		if _G.VX_BF_BORROWED and tick() - (tonumber(_G.VX_BF_CHAINCLICK) or 0) < 0.5 then return true end
+		return false
+	end
 	local function onAnim(track)
 		if not enabled then return end
 		-- ═══ "IT M1s AND BLACK FLASHES WITHOUT ME PRESSING 3" ═══ A chain borrows this engine, which arms it
@@ -1068,11 +1086,7 @@ do
 		-- that character's animation happens to be prioritised.
 		if not delayTime then
 			local nid = tostring(id):match("%d+")
-			-- HUMAN click, not any click: the engine's own re-click lands a real extra in-game M1, so the swing
-			-- it produces carries a genuine M1 id and would otherwise flash again - and re-click again. While
-			-- you actually hold the button the poll re-stamps the human clock every frame, so a real held combo
-			-- is unaffected; only a swing that nothing but our own injection is behind gets refused.
-			if nid and _G.VX_M1_IDS and _G.VX_M1_IDS[nid] and tick() - (_G.VX_LAST_HUMAN_CLICK or 0) < 0.5 then
+			if nid and _G.VX_M1_IDS and _G.VX_M1_IDS[nid] and clickAuthorised() then
 				delayTime = 0.19
 			end
 		end
@@ -1096,12 +1110,7 @@ do
 		if not delayTime and looseOK then
 			local pr = track.Priority
 			local isAction = pr == Enum.AnimationPriority.Action or pr == Enum.AnimationPriority.Action2 or pr == Enum.AnimationPriority.Action3 or pr == Enum.AnimationPriority.Action4
-			-- VX_LAST_HUMAN_CLICK, not VX_LAST_CLICK: the engine's own re-click refreshes VX_LAST_CLICK (the poll
-			-- cannot tell an injected press from a real one), so the swing that re-click produces looked like a
-			-- fresh player M1 and flashed again, which re-clicked again. That self-feeding loop is the other half
-			-- of "it M1s and black flashes on its own when I walk up to someone".
-			local clickedRecently = tick() - (_G.VX_LAST_HUMAN_CLICK or 0) < 0.5
-            if isAction and clickedRecently then delayTime = 0.19 end
+            if isAction and clickAuthorised() then delayTime = 0.19 end
 		end
 		if delayTime then
 			-- SAME SWING ON BOTH RIGS. hookAll connects to LP.Character AND workspace.Characters[you], so one
@@ -3766,13 +3775,18 @@ do
             local p0 = GetRoot()
             local side = (p0 and chooseSide(p0, e, nil)) or 1          -- -1 = left, 1 = right; honours A/D if you hold them
             local key = (side == -1) and Enum.KeyCode.A or Enum.KeyCode.D
+            -- FASTER. Every wait here is dead time before the game's dash starts, so they are as short as the
+            -- input pipeline allows: the direction key goes down one frame ahead (the dash reads your movement
+            -- direction at the moment it fires, so it only has to be down BEFORE it, not long before), the dash
+            -- key is tapped immediately, and the direction is released as soon as the dash owns the movement.
+            -- Total scripted time is ~0.09s against the old 0.24s, and none of it is a CFrame write.
             aimCameraAt(e.Position)
-            VKeyDown(key)                                              -- the dash inherits your movement direction
-            task.wait(0.03)
-            VKeyTap(Settings.DashKey, 0.05)
-            task.wait(0.16)
-            VKeyUp(key)
+            VKeyDown(key)
+            game:GetService("RunService").RenderStepped:Wait()
+            VKeyTap(Settings.DashKey, 0.03)
             faceBackOf(t)                                              -- rotation only, so it cannot shove anyone
+            task.wait(0.05)
+            VKeyUp(key)
         end)
         if Settings.SideM1 and not isBF then task.delay(0.20, function() aimCameraAt((t:FindFirstChild("HumanoidRootPart") or e).Position); VMouseClick() end) end
         task.delay(0.34, function() R.curving = false; if R.lockKind == "cam" then R.lockTarget = nil; R.lockKind = nil end end)
@@ -4733,6 +4747,23 @@ do
 		VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
 		pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.W, false, game) end)   -- release any W an older build left held
 	end
+	-- ═══ THE UPPERCUT KEY IS NOW YOURS TO PICK ═══ I have guessed at it four times and each guess costs a
+	-- test round. keyDown/keyUp hold whichever key the "Uppercut Key" dropdown selects, reusing spaceHeld as
+	-- the tracker so the existing stuck-key watchdog covers every option, not just Space.
+	local heldUpKey = nil
+	local function keyDown(kc)
+		if not kc or State.spaceHeld then return end
+		State.spaceHeld = true; heldUpKey = kc
+		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[kc] = tick() + 3   -- our own key: Auto Air / feints / the swap triggers must ignore it
+		pcall(function() VIM:SendKeyEvent(true, kc, false, game) end)
+	end
+	local function keyUp(kc)
+		kc = kc or heldUpKey
+		if not State.spaceHeld then return end
+		State.spaceHeld = false
+		pcall(function() if kc then VIM:SendKeyEvent(false, kc, false, game) end end)
+		heldUpKey = nil
+	end
 	-- DOWN SLAM / UPPERCUT are decided by your PHYSICAL STATE (airborne / holding space), not by a string
 	-- argument. The old path fired Activated("Down"), which JJS does not accept - so nothing happened. Both
 	-- modes now reproduce what a real player does with real inputs.
@@ -4848,7 +4879,9 @@ do
 		-- Down Slam lands on M1 #3, Uppercut on M1 #4. The direction is held and named on the swing BEFORE
 		-- the finisher, since once the game commits to an ordinary M1 the remote arrives too late to change it.
 		local needSlam = 2      -- act on swing 2 -> M1 #3 is the slam
-		local needUpper = 3     -- act on swing 3 -> M1 #4 is the uppercut
+		-- Act one swing BEFORE the one you want it to land on: the direction has to be named before the game
+		-- commits to an ordinary M1. Default 4 - 1 = 3, exactly what it was; the dropdown lets you move it.
+		local needUpper = math.max(1, (tonumber(_G.VX_UPPER_ON) or 4) - 1)
 		local need = (mode == "Uppercut") and needUpper or needSlam
 		if mode == "Down Slam" then
 			-- ALREADY IN THE AIR? Then this swing IS the slam, whatever the count says - an air M1 is a slam.
@@ -4929,11 +4962,17 @@ do
 				-- only thing left to fix was the key I took out. The remote ALONE is what has never worked; the
 				-- slam is not evidence against that, because the slam has the hop doing the same job Space does
 				-- here - putting you in the state the game accepts the move from.
-				-- Held ACROSS the swing, then released. The watchdog below releases it if this task is ever lost.
-				spaceDown()
+				-- ═══ AND IF SPACE IS STILL NOT IT, YOU CAN SAY SO WITHOUT WAITING FOR ME ═══ I have now
+				-- guessed at this key four times (Space, W, none, Space again) and each round costs you a
+				-- test and me a build. The key is a dropdown now: Space / W / S / None, on the Auto tab.
+				-- Whichever one makes the uppercut come out, tell me and it becomes the default.
+				local upKey = _G.VX_UPPER_KEY
+				if upKey ~= nil and upKey ~= false then
+					keyDown(upKey)
+					local upTok = State.lastUp
+					task.delay(0.22, function() if State.lastUp == upTok then keyUp(upKey) end end)
+				end
 				fireDir("Up")
-				local upTok = State.lastUp
-				task.delay(0.22, function() if State.lastUp == upTok then spaceUp() end end)
 				_G.VX_FINISHER_T = tick()   -- see doSlam: Auto Swap must not interrupt a finisher
 			end
 		end
@@ -5045,7 +5084,10 @@ do
 	task.spawn(function()
 		while true do
 			task.wait(0.25)
-			if State.spaceHeld and tick() - (State.lastUp or 0) > 1 then pcall(spaceUp) end
+			-- keyUp releases whichever key the Uppercut Key dropdown is holding; spaceUp covers the legacy
+			-- Space/W pair. Both are no-ops when nothing is held, so running both is free and neither option
+			-- can leave a key stuck down.
+			if State.spaceHeld and tick() - (State.lastUp or 0) > 1 then pcall(keyUp); pcall(spaceUp) end
 			if State.downHeld and tick() - (State.lastDown or 0) > 1 then pcall(downUp) end
 		end
 	end)
@@ -7005,13 +7047,20 @@ do
 		-- HORIZONTAL only: falling is not dashing, and a knockback launch would otherwise read as one.
 		return Vector3.new(v.X, 0, v.Z).Magnitude >= DASH_SPEED
 	end
+	-- ═══ "FIX SWAP M1 DONT WORK" ═══ This only accepted ids in _G.VX_M1_IDS. That table was CAPTURED, so it
+	-- covers the characters that existed when it was made and nobody since - Jawbreaker is not in it, and
+	-- neither are Todo or Hakari. On any of them this returned false forever and the M1 trigger was dead.
+	-- A known id is still the strong signal, but an Action-priority swing that has only just started is the
+	-- same universal test the flash engine falls back to, and it needs no per-character data at all.
 	local function isM1ing(t)
 		local tracks = trackOf(t); if not tracks then return false end
 		for _, tr in ipairs(tracks) do
 			local ok, id = pcall(function() return string.match(tostring(tr.Animation.AnimationId), "%d+") end)
-			-- _G.VX_M1_IDS is the captured M1 id table for all 20 characters - the same one the flash engine
-			-- trusts - so this works on whoever you happen to be fighting, with no per-character setup.
-			if ok and id and _G.VX_M1_IDS and _G.VX_M1_IDS[id] and tr.TimePosition < 0.45 then return true end
+			if ok and id and tr.TimePosition < 0.45 then
+				if _G.VX_M1_IDS and _G.VX_M1_IDS[id] then return true end
+				local okp, pr = pcall(function() return tostring(tr.Priority) end)
+				if okp and string.find(pr, "Action", 1, true) then return true end
+			end
 		end
 		return false
 	end
@@ -7300,7 +7349,11 @@ do
 	-- without listing them the sweep below happily offers "Block" and "Earthquake" as playable characters.
 	for _, w in ipairs({ "block", "earthquake", "cursedstrikes", "roughenergy", "redscale", "rabbitescape",
 		"reversalred", "reversalredmax", "lapseblue", "lapsebluemax", "crushingjaws", "nue", "twofoldkick",
-		"divergentfist", "blackflash", "piercingblood", "bloodedge", "hollowpurple", "divinedog", "toad" }) do
+		"divergentfist", "blackflash", "piercingblood", "bloodedge", "hollowpurple", "divinedog", "toad",
+		-- Jawbreaker's four, read straight off the skill bar in your screenshot. The live-Moveset scan below
+		-- catches these on its own whenever a Jawbreaker is in the server; listing them means the dropdown is
+		-- clean even in an empty one.
+		"ambush", "backstab", "trip", "cheapshot" }) do
 		NOT_A_CHARACTER[w] = true
 	end
 	for _, w in ipairs({ "swiftkick", "bruteforce", "pebblethrow", "elbowdrop", "join", "anticheat", "movement",
@@ -7330,29 +7383,41 @@ do
 			return known
 		end
 		if not f then for _, n in ipairs(KNOWN) do add(known, n) end return join() end
-		-- ═══ THE EXACT NAME, NOT MY SPELLING OF IT ═══ JoinService.Change takes a name string, and the server
-		-- compares it exactly - so "MeiMei" vs "Meimei" is the difference between switching and nothing
-		-- happening at all. The roster below is only used to RECOGNISE a service; the string we display and
-		-- send is always the real service's own name with "Service" removed. That is the game's spelling by
-		-- definition, so it cannot be wrong.
-		local have = {}
+		-- ═══ THE REAL SERVICE NAMES, FULL STOP ═══ A hardcoded roster can only ever list the characters that
+		-- existed when it was written - it had no Jawbreaker, so Jawbreaker was unpickable, and no list I type
+		-- out will survive the next update either. The services ARE the character list, and their names are
+		-- the exact strings JoinService.Change compares against, so they cannot be misspelled by definition.
+		--
+		-- The one real problem with sweeping them is that MOVES own services too (SwiftKickService,
+		-- AmbushService...), which is what padded the list with junk. Rather than guess from a fixed
+		-- blocklist, we ASK THE GAME: every character standing in the server publishes its moves in
+		-- <char>.Moveset, so anything named after a live move is a move service, not a character. That adapts
+		-- on its own - a Jawbreaker in the server removes Ambush / Backstab / Trip / Cheap Shot from the list
+		-- without anyone having to know they were moves.
+		local liveMove = {}
+		local function harvest(m)
+			local mv = m and m:FindFirstChild("Moveset")
+			if not mv then return end
+			for _, x in ipairs(mv:GetChildren()) do liveMove[norm(x.Name)] = true end
+		end
+		local chs = workspace:FindFirstChild("Characters")
+		if chs then for _, m in ipairs(chs:GetChildren()) do harvest(m) end end
+		for _, plr in ipairs(Players:GetPlayers()) do harvest(plr.Character) end
+		-- Movesets we have already seen this session stay excluded even after that player leaves.
+		_G.VX_TOTAL_SEENMOVES = _G.VX_TOTAL_SEENMOVES or {}
+		for k in pairs(liveMove) do _G.VX_TOTAL_SEENMOVES[k] = true end
+		for k in pairs(_G.VX_TOTAL_SEENMOVES) do liveMove[k] = true end
+
 		for _, s in ipairs(f:GetChildren()) do
 			local base = string.match(s.Name, "^(.-)Service$")
-			if base then have[norm(base)] = base end
-		end
-		for _, n in ipairs(KNOWN) do local real = have[norm(n)]; if real then add(known, real) end end
-		-- ═══ "THERE ARE SO MANY BUT IT IS WEIRD" ═══ The sweep cannot tell a character service from a move
-		-- service - both are <Name>Service with RE.Activated - so it padded the list with move names. The
-		-- dropdown is for PICKING A CHARACTER, so it now shows the recognised roster only. If a game update
-		-- adds a character the roster does not know, set _G.VX_TOTAL_ALLCHARS = true before loading to get the
-		-- full sweep back, and _G.VX_TOTAL_DEBUG = true prints every service name so it can be added properly.
-		if _G.VX_TOTAL_ALLCHARS then
-			for _, s in ipairs(f:GetChildren()) do
-				local base = string.match(s.Name, "^(.-)Service$")
-				local re = s:FindFirstChild("RE")
-				if base and #base >= 3 and re and re:FindFirstChild("Activated") and not NOT_A_CHARACTER[norm(base)] then
-					add(extra, base)
-				end
+			local re = s:FindFirstChild("RE")
+			if base and #base >= 3 and re and re:FindFirstChild("Activated")
+				and not NOT_A_CHARACTER[norm(base)] and not liveMove[norm(base)] then
+				-- Roster names go in the first group so the DEFAULT pick is always a character we are sure
+				-- about; everything else the game offers is listed right after, in the game's own spelling.
+				local isKnown = false
+				for _, n in ipairs(KNOWN) do if norm(n) == norm(base) then isKnown = true break end end
+				add(isKnown and known or extra, base)
 			end
 		end
 		if #known == 0 and #extra == 0 then for _, n in ipairs(KNOWN) do add(known, n) end end
@@ -7429,17 +7494,27 @@ do
 		local myGen = switchGen
 		if ResetApi and ResetApi.reset then pcall(ResetApi.reset) end
 		task.spawn(function()
-			local deadline = tick() + 6
+			-- ═══ THE GAME TOLD US THE RULE ═══ "You're switching. Wait 2 seconds before retrying." Retrying
+			-- every 0.35s was not persistence, it was the reason nothing happened: each attempt landed inside
+			-- the previous one's cooldown and got refused, forever. RETRY_GAP is 2.5s - comfortably past the
+			-- game's own 2s - and we check for arrival continuously in between, so a switch that takes is
+			-- noticed immediately instead of waiting out the gap.
+			local RETRY_GAP = 2.5
+			local deadline = tick() + 14
+			local nextSend = 0
 			while tick() < deadline do
 				if switchGen ~= myGen then return end     -- a newer switch owns this now
-				changeChar(name, "mid-battle", true)
-				task.wait(0.35)
+				if tick() >= nextSend then
+					changeChar(name, "mid-battle", true)
+					nextSend = tick() + RETRY_GAP
+				end
+				task.wait(0.2)
 				if amNow(name) then
 					if VX_NOTIFY then VX_NOTIFY("Now playing " .. name, true) end
 					return
 				end
 			end
-			note("switch to " .. name .. " never took after 6s - the name may not be what the server expects")
+			note("switch to " .. name .. " never took - the name may not be what the server expects")
 			if VX_NOTIFY then VX_NOTIFY("Switch to " .. name .. " did not take", false) end
 		end)
 	end
@@ -7459,12 +7534,23 @@ do
 		local myGen, name = deathGen, deathChar
 		task.spawn(function()
 			task.wait(0.5)
-			local deadline = tick() + 6
+			-- Same 2.5s spacing as the manual switch, for the same reason: the game answers a too-soon retry
+			-- with "Wait 2 seconds before retrying" and does nothing. Spamming it was why dying never put you
+			-- back on the character you picked.
+			local RETRY_GAP = 2.5
+			local deadline = tick() + 20     -- a death screen can sit for a while; keep offering the pick
+			local nextSend = 0
 			while tick() < deadline do
 				if deathGen ~= myGen or not deathOn then return end
-				changeChar(name, "death", true)
-				task.wait(0.35)
-				if amNow(name) then return end
+				if tick() >= nextSend then
+					changeChar(name, "death", true)
+					nextSend = tick() + RETRY_GAP
+				end
+				task.wait(0.2)
+				if amNow(name) then
+					if VX_NOTIFY then VX_NOTIFY("Respawned as " .. name, true) end
+					return
+				end
 			end
 			note("death switch to " .. name .. " never took")
 		end)
@@ -13596,6 +13682,21 @@ do
         end
     end
     acSec:Dropdown({ Name = "Auto Slam / Uppercut", Items = { "Off", "Down Slam", "Uppercut" }, Default = "Off", Callback = function(m) if M1ComboApi then M1ComboApi.setMode(m) end end })
+    -- The uppercut key has been guessed four times now (Space, W, none, Space). Rather than spend another
+    -- test round on my guess, pick it yourself - whichever one makes the move come out, tell me and it
+    -- becomes the default. Down Slam is not affected by this at all.
+    _G.VX_UPPER_KEY = Enum.KeyCode.Space
+    acSec:Dropdown({ Name = "Uppercut Key (try each)", Items = { "Space", "W", "S", "None" }, Default = "Space", Callback = function(v)
+        v = (type(v) == "table") and v[1] or v
+        local map = { Space = Enum.KeyCode.Space, W = Enum.KeyCode.W, S = Enum.KeyCode.S, None = false }
+        _G.VX_UPPER_KEY = map[v]
+        if VX_NOTIFY then VX_NOTIFY("Uppercut key: " .. tostring(v), true) end
+    end })
+    acSec:Dropdown({ Name = "Uppercut On M1 #", Items = { "2", "3", "4", "5" }, Default = "4", Callback = function(v)
+        v = (type(v) == "table") and v[1] or v
+        _G.VX_UPPER_ON = tonumber(v) or 4     -- the swing the launcher is announced on; we act one swing early
+        if VX_NOTIFY then VX_NOTIFY("Uppercut on M1 #" .. tostring(v), true) end
+    end })
     -- "Slam / Uppercut on M1 #" dropdown REMOVED - it is automatic now (see the note in onSwing).
     -- (Removed the "Launcher after N hits" slider — the mechanic is now the FIXED real game rule per the wiki:
     -- Uppercut = 4 M1s with Space held, Down Slam = 3 M1s then jump+M1. No slider needed or accurate anymore.)
