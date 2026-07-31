@@ -979,6 +979,12 @@ do
 		-- ═══ 0.2s WAS TOO SHORT ═══ The mark has to still be live when InputBegan DELIVERS the press to every
 		-- other handler. VXBF2's own markThree already uses 0.4 for exactly this reason. At 0.2 the BF-key
 		-- handler in VXBF2 could see this press as a real player tap and launch a whole dash chain off it.
+		-- BOTH markers. _G.VX_INJ_KEYS is the per-key one; _G.VX_INJECT_UNTIL is the older global window, and
+		-- this was the ONE key-3 injector in the file that never wrote it. Reversal Red's handler checks only
+		-- VX_INJECT_UNTIL, so it read our flash press as the user tapping 3 and sent an R 0.12s later - and R
+		-- is the feint/cancel, so the Black Flash was cancelled mid-cast. From the outside: the swing plays,
+		-- the flash never comes out.
+		_G.VX_INJECT_UNTIL = tick() + 0.5
 		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[keyCode] = tick() + 0.5
 		VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
 		-- 0.025 is what the source AutoBlackFlash script holds it for, and that script demonstrably lands the
@@ -1071,9 +1077,23 @@ do
 	local function bfKeyIsFlash()
 		return _G.VX_BF_PRESSKEY ~= "Never"
 	end
+	-- ═══════════ THE LINE THAT HAS BEEN EATING EVERY CHAIN'S FLASH ═══════════
+	-- The chain's own stamp used to be honoured ONLY while _G.VX_BF_BORROWED was true. But a chain only takes
+	-- the borrow when the engine is NOT already on (m1ThenBF: `if not _G.VX_BFAPI_ON`), and the GUI actively
+	-- tells you to switch "M1 Black Flash" on because the Mode dropdown is unreliable. Do that - which is the
+	-- normal way to use this - and the engine is already enabled, so no borrow is taken, so VX_BF_BORROWED
+	-- stays false, so this branch is skipped.
+	-- Then the first branch fails too: you pressed KEY 3, not the mouse, and the chain's own click deliberately
+	-- masks itself with VX_SYNTH_CLICK so it cannot re-enter the M1 subscribers - so the human clock is stale
+	-- by the length of the dash.
+	-- Both branches false -> no windup -> pressKey(Three) never scheduled. Perfect dash, no flash, every dash
+	-- mode, every time. On a character whose M1 id was captured the id alone carried it, which is why this
+	-- only ever showed up as "it works on some characters".
+	-- _G.VX_BF_CHAINCLICK is written in exactly two places, both on the same line as the chain's click, it is
+	-- seeded to 0 at load, and it expires in 0.5s. It is already self-limiting; it never needed a second flag.
 	local function clickAuthorised()
 		if tick() - (tonumber(_G.VX_LAST_HUMAN_CLICK) or 0) < 0.5 then return true end
-		if _G.VX_BF_BORROWED and tick() - (tonumber(_G.VX_BF_CHAINCLICK) or 0) < 0.5 then return true end
+		if tick() - (tonumber(_G.VX_BF_CHAINCLICK) or 0) < 0.5 then return true end
 		return false
 	end
 	local function onAnim(track)
@@ -1136,7 +1156,14 @@ do
 		end
 		if not delayTime and looseOK then
 			local pr = track.Priority
-			local isAction = pr == Enum.AnimationPriority.Action or pr == Enum.AnimationPriority.Action2 or pr == Enum.AnimationPriority.Action3 or pr == Enum.AnimationPriority.Action4
+			-- ═══ COMPARE BY NAME, NEVER INDEX THE ENUM ═══ Action2/3/4 only exist on newer engine builds, and
+			-- Lua short-circuits `or`, so those members were only ever indexed when pr ~= Action - i.e. exactly
+			-- the tracks they were added to catch. On a client without them that raises inside onAnim, the
+			-- AnimationPlayed handler dies before reaching the press, and the only sign is a developer-console
+			-- error nobody sees. For an uncaptured character this is the ONLY route to a windup, so it would
+			-- kill every flash on every mode while dashes kept working perfectly. The file already uses this
+			-- safe form in three other places.
+			local isAction = string.find(tostring(pr), "Action", 1, true) ~= nil
             if isAction and clickAuthorised() then delayTime = 0.19 end
 		end
 		if delayTime then
@@ -3614,7 +3641,7 @@ do
         VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.03); VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
     end
     local function ReleaseAll() for k in pairs(R.held) do pcall(function() VIM:SendKeyEvent(false, k, false, game) end) end table.clear(R.held) end
-    local function markThree() R.stamp[Enum.KeyCode.Three] = tick(); _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.4 end
+    local function markThree() R.stamp[Enum.KeyCode.Three] = tick(); _G.VX_INJECT_UNTIL = tick() + 0.4; _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.4 end   -- VX_INJECT_UNTIL too: Reversal Red checks only that one, and its R cancels the flash
     -- SAME RULE AS THE ENGINE: the BF key is slot 3, and slot 3 is only Black Flash on the characters that
     -- have Black Flash as an ability. On everyone else this was casting their third move (Trip, on Jawbreaker)
     -- every time a chain wanted a flash. When the character has no such ability we throw the timed re-tap
@@ -3665,12 +3692,19 @@ do
         -- Do NOT touch R.bfCD here: it is doBFM1Chain's own entry gate, and zeroing it made the BF Cooldown
         -- slider unreachable. BFApi keeps its own separate cooldown, so there is nothing to clear.
         if _G.VX_BF_RESETCOUNT then pcall(_G.VX_BF_RESETCOUNT) end   -- flash on THIS swing, not after N more
-        local borrowed = false
-        if not _G.VX_BFAPI_ON and _G.VX_BFAPI_SET then
-            borrowed = true
-            _G.VX_BF_BORROWED = true; _G.VX_BF_BORROW_USED = 0; _G.VX_BF_BORROW_T = tick()   -- single-shot: one flash, then the engine is deaf
-            pcall(function() _G.VX_BFAPI_SET(true) end)
-        end
+        -- ═══ CLAIM THE BORROW STATE EVERY TIME, NOT ONLY WHEN WE TURN THE ENGINE ON ═══
+        -- These two things were tangled together: "did I have to enable the engine" and "is a chain driving
+        -- it right now". When the engine was already on, the second was never recorded - so the guard, the
+        -- hand-back and the flash counter all disagreed with reality.
+        -- It also let two chains overlap: BF Cooldown (1.35s) is shorter than the old 1.5s hand-back, so a
+        -- natural double-press started chain 2 while chain 1's borrow was still live with its single shot
+        -- already spent - which made the engine reject every animation - and then chain 1's queued hand-back
+        -- disabled the engine outright in the middle of chain 2. A token fixes that properly: only the chain
+        -- that took the borrow may give it back.
+        local borrowed = not _G.VX_BFAPI_ON and _G.VX_BFAPI_SET ~= nil
+        _G.VX_BF_BORROWED = true; _G.VX_BF_BORROW_USED = 0; _G.VX_BF_BORROW_T = tick()   -- single-shot: one flash per chain
+        local myBorrow = tick(); _G.VX_BF_BORROW_ID = myBorrow
+        if borrowed then pcall(function() _G.VX_BFAPI_SET(true) end) end
         local firedBefore = _G.VX_BF_LAST_FIRE or 0
         -- ═══ THE "3 3 3 3 AND M1 M1 M1" SPAM ═══ FOUR different things were each throwing an input for one
         -- press. (1) this click, (2) the BF engine's own re-click on the windup, (3) the engine's key-3, and
@@ -3696,35 +3730,29 @@ do
         -- a swing that the game defers by a few frames cannot land inside a window meant for the dash clip.
         _G.VX_BF_DASHANIM = 0
         VMouseClick()
-        if not _G.VX_BFAPI_ON then      -- no engine at all -> best-effort blind press so something happens
-            task.wait(0.19); pressBF()
-        else
-            -- VERIFY, DON'T HOPE: if the engine never flashed (mid-dash the game can refuse the click, so no
-            -- animation plays and it never sees a windup), press the key ONCE. No second click - that was the
-            -- extra M1 you were seeing.
-            task.spawn(function()
-                task.wait(0.42)
-                if (R.gen or 0) ~= myGen then return end                     -- mode was turned off; stand down
-                if (_G.VX_BF_LAST_FIRE or 0) > firedBefore then return end   -- it flashed; nothing to do
-                if _G.VX_BF_DEBUG then print("[DreamHub BF] engine did not flash - one key press") end
-                pressBF()
-            end)
-        end
-        if borrowed then
-            -- ═══ LET YOUR OWN M1 SPEND THE FLASH IF OURS DOES NOT ═══ 0.55s was sized to cover exactly the
-            -- injected swing above and nothing else, on the reasoning that a longer window would flash your
-            -- next ordinary M1 by accident. But the injected swing is the unreliable half of this: the game
-            -- can refuse a synthetic click during dash recovery, and when it does there is no windup, no
-            -- flash, and the chain has nothing left to try - "it dashes perfectly and never flashes".
-            -- 1.5s keeps the engine armed long enough that if our click was eaten, the M1 YOU throw right
-            -- after the dash lands the flash instead. That is not an accident any more - you pressed 3 to get
-            -- a flash, so flashing your next swing is the whole point. It is still SINGLE-SHOT, so you get
-            -- one flash out of it either way, never a stream.
-            task.delay(1.5, function()
-                if _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(_G.VX_BFAPI_WANT == true) end) end
-                _G.VX_BF_BORROWED = false; _G.VX_BF_BORROW_USED = 0
-            end)
-        end
+        -- ═══ THE FALLBACK PRESS HAS TO LAND ON THE FLASH FRAME, NOT AFTER IT ═══
+        -- Both trigger tables and the reference script agree the flash input goes in 0.19-0.20s after the
+        -- windup starts. This branch waited 0.42s - more than double - because it was written as a
+        -- VERIFICATION ("did the engine flash? no? then press"), and a verification has to wait long enough
+        -- to be sure. But by 0.42s the swing has already resolved, so the press is no longer a flash input at
+        -- all: it just casts ability slot 3. That is exactly "it presses 3 and nothing happens".
+        -- So it now presses at 0.19s and simply skips if the engine got there first. One press either way.
+        task.spawn(function()
+            task.wait(0.19)
+            if (R.gen or 0) ~= myGen then return end                     -- mode was turned off; stand down
+            if (_G.VX_BF_LAST_FIRE or 0) > firedBefore then return end   -- the engine already flashed
+            if _G.VX_BF_DEBUG then print("[DreamHub BF] engine had no windup - pressing on the flash frame") end
+            pressBF()
+        end)
+        -- ═══ ONLY THE CHAIN THAT TOOK THE BORROW MAY GIVE IT BACK ═══ Without the token, chain 1's queued
+        -- hand-back fired in the middle of chain 2 and disabled the engine mid-swing. 0.9s is long enough
+        -- that if our injected click was eaten, the M1 YOU throw right after the dash still lands the flash,
+        -- and short enough to be clear of a normal re-press.
+        task.delay(0.9, function()
+            if _G.VX_BF_BORROW_ID ~= myBorrow then return end            -- a newer chain owns the engine now
+            if borrowed and _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(_G.VX_BFAPI_WANT == true) end) end
+            _G.VX_BF_BORROWED = false; _G.VX_BF_BORROW_USED = 0
+        end)
     end
     local function GetClosestTarget(maxD)
         local myRoot = GetRoot(); if not myRoot then return nil end
@@ -4107,8 +4135,21 @@ do
         if _G.VX_BF_RESETCOUNT then pcall(_G.VX_BF_RESETCOUNT) end   -- flash on THIS swing, not after N more
         -- M1 Chain rides YOUR swing instead of injecting one, so authorise the swing you just threw.
         _G.VX_BF_CHAINCLICK = tick()
-        -- No engine at all (very old build): press 3 ourselves on the same beat the engine would have. Still no
-        -- extra click - the swing being flashed is the one you already threw.
+        -- ═══ WE ARE TOO LATE FOR THE SWING WE WERE MEANT TO RIDE ═══ This chain is triggered FROM the swing's
+        -- own AnimationPlayed, so by the time we arm the engine here, that animation has already been
+        -- dispatched and the engine (which was disabled a moment ago) never saw it. There is no second windup
+        -- coming, because the design was deliberately not to inject a click - so the borrow expired unused and
+        -- M1 Chain dashed perfectly and never flashed, every time.
+        -- Give it a windup to work with. This is one injected M1, on the target's back, which is what the
+        -- chain is for; the "2 or 3 M1s" problem the old note describes was the engine's RE-CLICK, and that is
+        -- off by default now.
+        _G.VX_BF_DASHANIM = 0
+        local chainGen = R.gen or 0
+        task.delay(0.02, function()
+            if (R.gen or 0) ~= chainGen then return end     -- the mode was switched off in the meantime
+            VMouseClick()
+        end)
+        -- No engine at all (very old build): press 3 ourselves on the same beat the engine would have.
         if not _G.VX_BFAPI_ON then task.delay(0.19, function() pressBF() end) end
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.4   -- camera stays on them through the chain
         -- side dash AROUND to their back (real dash key + anti-fling arc). If the dash itself declines - the
@@ -5153,9 +5194,11 @@ do
 					local isKnown = COMBO_IDS[id] or (_G.VX_M1_IDS and _G.VX_M1_IDS[id])
 					local isSwing = isKnown
 					if not isSwing then
+						-- Name compare, not an enum index: Action2/3/4 do not exist on older clients, and an
+						-- index error here would kill this AnimationPlayed handler - taking Auto Down Slam and
+						-- Auto Upper Cut with it on exactly the characters that need this fallback.
 						local pr = track.Priority
-						local action = (pr == Enum.AnimationPriority.Action or pr == Enum.AnimationPriority.Action2
-							or pr == Enum.AnimationPriority.Action3 or pr == Enum.AnimationPriority.Action4)
+						local action = string.find(tostring(pr), "Action", 1, true) ~= nil
 						local clickedJustNow = (tick() - (tonumber(_G.VX_LAST_CLICK) or 0)) < 0.45
 						isSwing = action and clickedJustNow
 						if isSwing and _G.VX_M1_DEBUG then print("[M1COMBO] unlisted M1 anim " .. id .. " counted via click+Action") end
