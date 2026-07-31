@@ -942,7 +942,19 @@ end)
 --  image LOGO_ID = 82151574125055, is the single one now.)
 
 -- ===================== SHARED STATE (the GUI flips these; the modules read them) =====================
-local BlockFlags = { Dash = false, M1 = false, Abilities = false, CameraFollow = true }
+-- ═══ AUTO BLOCK IS ONE SWITCH NOW ═══ It used to be four: Dash Block, M1 Block, Abilities Block and Camera
+-- Follow. Splitting them only ever produced half-blocks - a shield that stopped M1s and then ate a dash - and
+-- nobody wants "block some attacks". One toggle arms every category.
+-- The engine reads Config.Blocks.Dash / .M1 / .Abilities in a dozen places, so rather than edit every one,
+-- those three answer with the master flag. CameraFollow answers false and can never be turned on: you asked
+-- for the CHARACTER to turn, not the camera, and the camera write is gone from FaceTarget entirely.
+local BlockFlags = setmetatable({ On = false }, {
+	__index = function(t, k)
+		if k == "Dash" or k == "M1" or k == "Abilities" then return rawget(t, "On") == true end
+		if k == "CameraFollow" then return false end
+		return nil
+	end,
+})
 local BFApi    -- forward-declared: Auto Black Flash control API (assigned in its module below)
 local ChainApi -- forward-declared: BF Chain control API (assigned in its module below)
 
@@ -8768,6 +8780,14 @@ do
 		end
 		if autoAirOn and airOK and not injBlocked then
 			local slot = UNIVERSAL_SLOT[input.KeyCode]
+			-- ═══ 3 BELONGS TO THE BLACK FLASH WHEN A FLASH MODE IS ARMED ═══ Key 3 is the flash input, and it
+			-- is also ability slot 3. With both features on, one press would try to be a flash AND an air cast
+			-- of slot 3 at the same time - the jump alone would ruin the flash timing. So while any flash mode
+			-- is live, the universal air branch leaves 3 alone and still handles 1, 2 and 4.
+			if slot == 3 and (_G.VX_BFAPI_ON or _G.VX_M1BF_ON or _G.VX_BF_BORROWED) then
+				dbgAir("key 3 is the Black Flash input right now - not air-casting slot 3")
+				slot = nil
+			end
 			if slot and _G.VX_AIR_UNIVERSAL ~= false then
 				local mv = moveInSlot(slot)
 				if mv then
@@ -9162,7 +9182,30 @@ do
 	if _G.VX_M1_SUB then _G.VX_M1_SUB("autoair_m1tgt", function() local m = landedM1Target(); if m then lastM1Tgt = m end end) end   -- real M1s only come from the poll
 	-- AUTO AIR anim triggers: Twofold Kick (Gojo) kicks them UP -> click R (RightActivated at the target).
 	-- Gambler: your landed M1 -> fire Rough Energy (the 'click 3 for you' launcher).
-	AutoAirApi_set = function(v) autoAirOn = v == true end
+	AutoAirApi_set = function(v)
+		autoAirOn = v == true
+		-- ═══ SAY WHAT IT IS ABOUT TO DO ═══ Auto Air has been reported broken more than anything else in this
+		-- file, and every time the answer was "it was never going to run for your character". Turning it on
+		-- now reads your own moveset out loud: if it lists your four moves, the universal path is live and a
+		-- key press will cast them airborne. If it says it found nothing, that is the bug, immediately, with
+		-- no F9 and no guessing.
+		if not autoAirOn then return end
+		task.spawn(function()
+			local chs = workspace:FindFirstChild("Characters")
+			local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+			local mv = c and c:FindFirstChild("Moveset")
+			local names = {}
+			if mv then for i, m in ipairs(mv:GetChildren()) do if i <= 4 then names[#names + 1] = i .. "=" .. m.Name end end end
+			if #names > 0 then
+				local msg = "Auto Air ready: " .. table.concat(names, ", ")
+				print("[DreamHub AutoAir] " .. msg)
+				if VX_NOTIFY then VX_NOTIFY(msg, true) end
+			else
+				print("[DreamHub AutoAir] no Moveset found on your character - the universal path has nothing to cast")
+				if VX_NOTIFY then VX_NOTIFY("Auto Air: no Moveset found on your character", false) end
+			end
+		end)
+	end
 	-- ═══ DIAGNOSTIC ═══ Force one Auto Air pass for a key with the enemy gate BYPASSED, and say what it saw.
 	-- Auto Air has been patched against three different guessed gates and still reports as dead, so this proves
 	-- which half is broken: if the branch fires here but not in a fight, the gate is the problem; if no branch
@@ -13941,10 +13984,8 @@ do
         bfSec:Slider({ Name = "Range", Min = 10, Max = 60, Default = 30, Decimals = 1, Callback = function(v) if ChainApi then ChainApi.setLockRange(v) end end })
     end
     local blockSec = bfSub:Section({ Name = "Auto Block", Side = 2 })
-    blockSec:Toggle({ Name = "Dash Block", Default = false, Callback = function(b) BlockFlags.Dash = b end })
-    blockSec:Toggle({ Name = "M1 Block", Default = false, Callback = function(b) BlockFlags.M1 = b end })
-    blockSec:Toggle({ Name = "Abilities Block", Default = false, Callback = function(b) BlockFlags.Abilities = b end })
-    blockSec:Toggle({ Name = "Camera Follow", Default = true, Callback = function(b) BlockFlags.CameraFollow = b end })
+    pcall(function() blockSec:Label("One switch. On = it blocks M1 strings, dashes and ability casts, and turns your CHARACTER to face the attacker. The camera is never touched.") end)
+    blockSec:Toggle({ Name = "Auto Block", Default = false, Callback = function(b) rawset(BlockFlags, "On", b == true) end })
 
     local skSub = CombatPage:SubPage({ Name = "Skills", Columns = 2 })
     local skSec = skSub:Section({ Name = "Skills & M1", Side = 1 })
@@ -14674,8 +14715,8 @@ pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 end
 
 -- ============================================================
--- MODULE: AUTO BLOCK ENGINE  (friend's engine, verbatim; its own GUI removed,
--- the 4 toggles are wired into the Vaultix GUI above via the shared BlockFlags table)
+-- MODULE: AUTO BLOCK ENGINE  (friend's engine; its own GUI removed. It is driven by ONE toggle now - the
+-- shared BlockFlags table answers Dash/M1/Abilities with a single master flag, and CameraFollow is gone.)
 -- ============================================================
 do
 -- ==========================================
@@ -15236,21 +15277,21 @@ local function CheckNanamiRatio()
     return false
 end
 
--- Instantly forces the local player to look directly at the target.
--- Also swings the camera if the 'CameraFollow' option is enabled in the UI.
+-- Turns the local player's BODY to face the attacker. Blocking in this game is directional, so the rotation
+-- is what makes the shield actually cover the hit.
+-- ═══ THE CAMERA IS NEVER TOUCHED ═══ There used to be a Camera.CFrame lerp here behind a "Camera Follow"
+-- toggle. Yanking someone's view mid-fight is disorienting and it fights your own aim, so it is gone - not
+-- defaulted off, removed. Your character turns; where you are looking stays yours.
 local function FaceTarget(targetPosition)
     local myChar = CharactersFolder:FindFirstChild(LocalPlayer.Name) or LocalPlayer.Character  -- same live-body resolution as detection: block is DIRECTIONAL, must rotate the REAL body
     local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
     if not myHRP then return end
-    
+
     local direction = targetPosition - myHRP.Position
-    if direction.Magnitude > 0.1 then 
-        -- Instant character rotation (bypasses any slow tweening)
+    if direction.Magnitude > 0.1 then
+        -- Rotation ONLY - same position, so this can never shove you or the target. Y is taken from your own
+        -- root so a tall or airborne attacker cannot tip you over.
         myHRP.CFrame = CFrame.lookAt(myHRP.Position, Vector3.new(targetPosition.X, myHRP.Position.Y, targetPosition.Z))
-        -- Smoothly tracks the camera behind the character if toggled on
-        if Config.Blocks.CameraFollow then
-            Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position, targetPosition), 0.4)
-        end
     end
 end
 
