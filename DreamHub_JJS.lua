@@ -972,6 +972,10 @@ do
 
 	local enabled = false   -- the GUI toggle turns it on
 	local offset = 0        -- BF Timing slider
+	-- The reference script's CFG.Cooldown. This engine never had one - SetCooldown was a stub - so the only
+	-- thing limiting repeat flashes was a 0.25s per-swing debounce, and the GUI's "Cooldown" slider moved
+	-- nothing at all.
+	local cooldown = 0.45
 
 	local function pressKey(keyCode)
 		-- mark this as our own injected press so other key-3 features (e.g. Auto Earthquake) don't treat the
@@ -1105,7 +1109,13 @@ do
 		-- window is yours, not the chain's, so it is ignored while borrowed.
 		if _G.VX_BF_BORROWED then
 			if (_G.VX_BF_BORROW_USED or 0) > 0 then return end
-			if tick() - (tonumber(_G.VX_BF_CHAINCLICK) or 0) > 0.45 then
+			-- ═══ THE 0.45s WINDOW ONLY APPLIES WHEN *WE* ARMED THE ENGINE ═══ It exists so a chain that
+			-- switched the engine on cannot leave it flashing your ordinary swings afterwards. But m1ThenBF now
+			-- claims the borrow state on every chain, including when YOU already had M1 Black Flash on - and in
+			-- that case this window would start rejecting your own M1s for the length of the chain, silently
+			-- taking away a feature you had switched on yourself. _G.VX_BF_BORROW_STRICT records which case we
+			-- are in, so the restriction lands only where it belongs.
+			if _G.VX_BF_BORROW_STRICT and tick() - (tonumber(_G.VX_BF_CHAINCLICK) or 0) > 0.45 then
 				if _G.VX_BF_DEBUG then print("[BF] borrowed, but this swing is not the chain's - ignoring") end
 				return
 			end
@@ -1174,6 +1184,11 @@ do
 			if lastAnimId == nid and tick() - lastAnimAt < 0.45 then return end
 			lastAnimId, lastAnimAt = nid, tick()
 			if tick() - lastFire < 0.25 then return end   -- one count per swing
+			-- The real between-flashes floor (GUI: Combat > "Cooldown"). Matches the reference's 0.45 default.
+			if tick() - (_G.VX_BF_LAST_FIRE or 0) < cooldown then
+				if _G.VX_BF_DEBUG then print("[BF] within the cooldown - not flashing") end
+				return
+			end
 			lastFire = tick()
 			if tick() - lastSwing > 1.2 then swingCount = 0 end   -- new combo. 1.2 not 2.5: JJS drops a combo at ~1.2s, so a 2.5s window kept counting into a combo the game had already reset and the press landed on the wrong swing index
 			lastSwing = tick()
@@ -1186,6 +1201,9 @@ do
 			if swingCount < need then return end   -- wait until your chosen number of M1s
 			swingCount = 0
 			_G.VX_BF_LAST_FIRE = tick(); _G.VX_BF_LASTMSG = "flash fired (M1 tap + key 3)"
+			-- CONSUME the chain's authorisation. Without this, a held combo landing a second swing inside the
+			-- same 0.5s window would be authorised again and press 3 twice off one chain.
+			_G.VX_BF_CHAINCLICK = 0
 			-- a borrowed arm is spent by this flash; nothing else may ride it
 			if _G.VX_BF_BORROWED then _G.VX_BF_BORROW_USED = (_G.VX_BF_BORROW_USED or 0) + 1 end
 			if _G.VX_BF_DEBUG then pcall(function() print(string.format("[BF] windup id=%s  ->  firing flash (M1 tap + key 3) in %.2fs", tostring(id), math.max(0, delayTime + offset))) end) end
@@ -1240,7 +1258,9 @@ do
 	BFApi = {
 		SetEnabled = function(v) enabled = v == true; _G.VX_BFAPI_ON = enabled end,   -- exposed so VXBF2 knows the real flash engine is live
 		IsEnabled = function() return enabled end,
-		SetCooldown = function() end,
+		-- Was `function() end` - the "Cooldown" slider in the GUI did literally nothing. It now sets the real
+		-- floor between flashes, which is the reference script's CFG.Cooldown.
+		SetCooldown = function(v) if type(v) == "number" then cooldown = math.max(0, v) end end,
 		SetTimingOffset = function(v) if type(v) == "number" then offset = v end end,
 		SetDebugUnknownAnimations = function() end,
 		AddTrigger = function(animationId, delayTime) if type(delayTime) ~= "number" then return false end AnimationTriggers[normalizeAnimationId(animationId)] = delayTime return true end,
@@ -3703,6 +3723,9 @@ do
         -- that took the borrow may give it back.
         local borrowed = not _G.VX_BFAPI_ON and _G.VX_BFAPI_SET ~= nil
         _G.VX_BF_BORROWED = true; _G.VX_BF_BORROW_USED = 0; _G.VX_BF_BORROW_T = tick()   -- single-shot: one flash per chain
+        -- STRICT only when WE turned the engine on. If you already had M1 Black Flash armed, your own swings
+        -- must keep working through the chain - see the guard in the engine.
+        _G.VX_BF_BORROW_STRICT = borrowed
         local myBorrow = tick(); _G.VX_BF_BORROW_ID = myBorrow
         if borrowed then pcall(function() _G.VX_BFAPI_SET(true) end) end
         local firedBefore = _G.VX_BF_LAST_FIRE or 0
@@ -4126,12 +4149,12 @@ do
         -- was unavailable and it blind-pressed 3). That is the "2 or 3 M1s" problem. We now borrow the flash
         -- engine WITHOUT clicking: it hooks your real swing animation and presses 3 at the right frame, so the
         -- flash lands on the M1 you already threw.
-        local borrowed = false
-        if not _G.VX_BFAPI_ON and _G.VX_BFAPI_SET then
-            borrowed = true
-            _G.VX_BF_BORROWED = true; _G.VX_BF_BORROW_USED = 0; _G.VX_BF_BORROW_T = tick()   -- single-shot (see the note in the BF engine)
-            pcall(function() _G.VX_BFAPI_SET(true) end)
-        end
+        -- Same shape as m1ThenBF: claim the borrow bookkeeping every time, and use `borrowed` only to decide
+        -- whether we have to switch the engine off again afterwards.
+        local borrowed = not _G.VX_BFAPI_ON and _G.VX_BFAPI_SET ~= nil
+        _G.VX_BF_BORROWED = true; _G.VX_BF_BORROW_USED = 0; _G.VX_BF_BORROW_T = tick()   -- single-shot (see the note in the BF engine)
+        _G.VX_BF_BORROW_STRICT = borrowed
+        if borrowed then pcall(function() _G.VX_BFAPI_SET(true) end) end
         if _G.VX_BF_RESETCOUNT then pcall(_G.VX_BF_RESETCOUNT) end   -- flash on THIS swing, not after N more
         -- M1 Chain rides YOUR swing instead of injecting one, so authorise the swing you just threw.
         _G.VX_BF_CHAINCLICK = tick()
