@@ -959,11 +959,15 @@ do
 	local player = Players.LocalPlayer
 
 	local AnimationTriggers = {
-		-- 100962226150441 (Divergent Fist) DELIBERATELY NOT LISTED. It is Itadori's AUTOMATIC 4th M1, not a
-		-- Black Flash windup. Having it here made the engine schedule a key-3 press 0.19s into an animation
-		-- already committed to Divergent Fist, so the flash could never come out - that is exactly "3 M1s
-		-- and then it just does Divergent Fist". It also BURNED a swing count, pushing every later count
-		-- out of phase with the real combo, which is why the failure looked random.
+		-- ═══ 100962226150441 IS BACK, AND HERE IS WHY IT MATTERS ═══
+		-- I removed this id on the reading that it is "Divergent Fist, an ability, not a windup". That reading
+		-- was right about WHAT it is and wrong about what that means. You play Itadori, and Divergent Fist is
+		-- his THIRD MOVE - the very key this engine presses. In this game a Black Flash IS Divergent Fist
+		-- landed on the correct frame of an M1; thrown at any other moment it is just Divergent Fist, which is
+		-- exactly the "3 M1s and then it just does Divergent Fist" you reported.
+		-- So this id is not noise, it is the single most important entry in the table for your character, and
+		-- the reference AutoBlackFlash script you sent lists it first. Matching the reference exactly.
+		["rbxassetid://100962226150441"] = 0.19,
 		["rbxassetid://95852624447551"]  = 0.19,
 		["rbxassetid://74145636023952"]  = 0.19,
 		["rbxassetid://72475960800126"]  = 0.20,
@@ -1326,7 +1330,8 @@ do
 		Mode            = "Teleport",  -- how to approach before the flash: Teleport / Jump / Side Dash / Back Dash
 	}
 	local AnimationTriggers = {
-		-- Divergent Fist (100962226150441) removed here too - see the note in the main engine table above.
+		-- Restored, same as the main table: Divergent Fist IS the Black Flash input on Itadori.
+		["rbxassetid://100962226150441"] = 0.19,
 		["rbxassetid://95852624447551"]  = 0.19,
 		["rbxassetid://74145636023952"]  = 0.19,
 		["rbxassetid://72475960800126"]  = 0.20,
@@ -2473,9 +2478,19 @@ local function safeTeleport(targetCFrame, holdTime)
 						-- profile from the actual player count so you never have to think about it; set
 						-- _G.VX_TP_STEP to override.
 						local populated = #game:GetService("Players"):GetPlayers() > 1
-						local STEP  = tonumber(_G.VX_TP_STEP) or (populated and 28 or 90)
+						-- ═══ "MAKE A SYSTEM WHERE IT TRICKS THE SYSTEM INTO THINKING YOU ARE CLOSE" ═══
+						-- That is exactly what this walker is for, and you found its limit: it works when you
+						-- are already near, and gets reverted when you are far. The reason is the step size -
+						-- at 28-90 studs each individual write is still a large jump, so a long trip is a
+						-- string of large jumps and the server rejects them one after another.
+						-- The fix is to make EVERY hop a short one, so from the server's point of view you are
+						-- never teleporting at all - you are always "close", repeatedly, at a believable speed.
+						-- 14 studs is about one dash, the largest single move the game itself produces. The hop
+						-- ceiling is raised to match, so distance is covered by MORE steps rather than bigger
+						-- ones, which is the whole point.
+						local STEP  = tonumber(_G.VX_TP_STEP) or (populated and 14 or 45)
 						-- Within one step = ONE write. No walking, no glide feel - just there.
-						local hops  = (total <= STEP) and 1 or math.clamp(math.ceil(total / STEP), 1, 80)
+						local hops  = (total <= STEP) and 1 or math.clamp(math.ceil(total / STEP), 1, 400)
 					for k = 1, hops do
 						if myGen ~= vxTeleGen then break end
 						local cc = vxMyChar(); local hh = cc and cc:FindFirstChild("HumanoidRootPart")
@@ -2507,7 +2522,7 @@ local function safeTeleport(targetCFrame, holdTime)
 						if off > 25 then
 							if _G.VX_TP_DEBUG then print(string.format("[DreamHub TP] reverted (%.0f studs off) - retrying once", off)) end
 							local start2 = hv and hv.Position or start
-							local hops2 = math.clamp(math.ceil((targetCFrame.Position - start2).Magnitude / STEP), 1, 80)
+							local hops2 = math.clamp(math.ceil((targetCFrame.Position - start2).Magnitude / STEP), 1, 400)
 							for k = 1, hops2 do
 								if myGen ~= vxTeleGen then break end
 								local cc2 = vxMyChar(); local hh2 = cc2 and cc2:FindFirstChild("HumanoidRootPart")
@@ -3727,7 +3742,8 @@ do
         SideAssist = false, BackAssist = false,
     }
     local AnimationTriggers = {
-        -- Divergent Fist (100962226150441) removed: automatic 4th M1, not a BF windup.
+        -- Restored: Divergent Fist IS the Black Flash input on Itadori (see the engine table).
+        ["rbxassetid://100962226150441"] = 0.19,
         ["rbxassetid://95852624447551"] = 0.19,
         ["rbxassetid://74145636023952"] = 0.19, ["rbxassetid://72475960800126"] = 0.20,
         ["rbxassetid://123171106092050"] = 0.19,
@@ -5470,6 +5486,25 @@ do
 		testUp = function()
 			print("[M1COMBO TEST] Uppercut: svc=" .. tostring(vxMyCharSvc()) .. "  v5remote=" .. tostring(State.remote and State.remote:GetFullName() or "nil"))
 			spaceDown(); fireDir("Up"); task.delay(0.40, function() spaceUp() end)
+		end,
+		-- ═══ THE REAL SLAM, REUSABLE ═══ Auto Down Slam works; anything else that wants a slam should use
+		-- THIS rather than re-deriving the service and firing "Down" on its own, which is what the Twofold
+		-- sequence was doing. Hops you first (the slam is the airborne variant) and fires from the air.
+		slamNow = function()
+			task.spawn(function()
+				local c = myModel(); local h = c and c:FindFirstChildOfClass("Humanoid")
+				if h and h.FloorMaterial ~= Enum.Material.Air then
+					_G.VX_LAUNCHING = tick()
+					pcall(function()
+						local r = c and c:FindFirstChild("HumanoidRootPart")
+						if r then local v = r.AssemblyLinearVelocity; r.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 34), v.Z) end
+					end)
+					pcall(function() h.Jump = true end)
+					task.wait(0.12)
+				end
+				State.lastDown = 0            -- this is a deliberate, one-off slam: do not let the combo gate eat it
+				doSlam("requested by another feature")
+			end)
 		end,
 		testDown = function()
 			print("[M1COMBO TEST] Down Slam: svc=" .. tostring(vxMyCharSvc()) .. "  v5remote=" .. tostring(State.remote and State.remote:GetFullName() or "nil"))
@@ -7294,20 +7329,13 @@ do
 		local rag = info and (info:FindFirstChild("Ragdoll") or info:FindFirstChild("Ragdolled"))
 		return (rag and rag:IsA("ValueBase") and rag.Value == true) or false
 	end
+	-- ═══ "JUST AUTO DOWN SLAM" ═══ Use the slam that already works instead of re-deriving the service and
+	-- firing "Down" by hand, which is what this did and why the tail of the sequence went nowhere. Auto Down
+	-- Slam hops you first and fires from the air, and it is the one part of the combo module you confirmed
+	-- works - so the Twofold sequence now calls exactly that, with a raw fire only as a last resort if the
+	-- combo module somehow is not loaded.
 	local function slam()
-		-- A slam is a DIVE, so give the server downward momentum to agree with the request. This is only in
-		-- the Twofold sequence - the standalone Auto Down Slam already works and is deliberately untouched.
-		-- Applied only when we are actually airborne: forcing -120 while standing on the floor would just
-		-- press you into the ground for no reason.
-		pcall(function()
-			local c = myModel()
-			local r = c and c:FindFirstChild("HumanoidRootPart")
-			local h = c and c:FindFirstChildOfClass("Humanoid")
-			if r and h and h.FloorMaterial == Enum.Material.Air then
-				local v = r.AssemblyLinearVelocity
-				r.AssemblyLinearVelocity = Vector3.new(v.X, -120, v.Z)
-			end
-		end)
+		if M1ComboApi and M1ComboApi.slamNow then M1ComboApi.slamNow() return end
 		local svc = vxMyCharSvc()
 		if svc then fireKnit(svc, "Activated", "Down") end
 	end
@@ -7927,8 +7955,18 @@ do
 	-- RE.Activated - but so do a few MOVE services (SwiftKickService, BruteForceService...), and the system
 	-- services obviously are not characters. So: start from the known roster, keep the ones whose service is
 	-- really there, then add any other <Name>Service that has RE.Activated and is not an obvious non-character.
-	local KNOWN = { "Itadori", "Gojo", "Hakari", "Megumi", "Mahito", "Choso", "Todo", "Hiromi", "Yuta", "Mechamaru",
-		"Naoya", "Nanami", "Hanami", "Ryu", "Locust", "Yuki", "Charles", "Haruta", "MeiMei", "Kurourushi", "Sukuna", "Toji" }
+	-- ═══ THESE ARE YOUR CAPTURES, VERBATIM ═══ Every name below came from a real
+	-- JoinService.RE.Change:FireServer("<name>") you recorded, so each one is exactly the string the server
+	-- compares against - no guessing, no spelling drift, nothing invented. That is why this list, and not a
+	-- sweep of the services folder, is now the source for the dropdown: the services folder is mostly MOVE
+	-- services (CursedBash, DecisiveStrike, ElbowRush...), which is what filled it with junk.
+	-- Hanami / Ryu / Sukuna / Toji are gone: they were mine, not yours, and never appeared in a capture.
+	local KNOWN = {
+		"Gojo", "Itadori", "Hakari", "Megumi", "Mahito", "Choso", "Todo", "Hiromi", "Yuta",
+		"Mechamaru", "Naoya", "Nanami",
+		-- early access, from the same captures
+		"Kurourushi", "MeiMei", "Haruta", "Charles", "Yuki", "Locust",
+	}
 	local NOT_A_CHARACTER = {}
 	-- Move services this file already resolves by name elsewhere - every one of them owns RE.Activated, so
 	-- without listing them the sweep below happily offers "Block" and "Earthquake" as playable characters.
@@ -7967,7 +8005,11 @@ do
 			for _, n in ipairs(extra) do known[#known + 1] = n end
 			return known
 		end
-		if not f then for _, n in ipairs(KNOWN) do add(known, n) end return join() end
+		-- The captured roster ALWAYS populates the list. It is ground truth - every name in it came from a
+		-- real Change:FireServer you recorded - so it does not depend on the services folder being readable
+		-- or on any heuristic being right.
+		for _, n in ipairs(KNOWN) do add(known, n) end
+		if not f then return join() end
 		-- ═══ THE REAL SERVICE NAMES, FULL STOP ═══ A hardcoded roster can only ever list the characters that
 		-- existed when it was written - it had no Jawbreaker, so Jawbreaker was unpickable, and no list I type
 		-- out will survive the next update either. The services ARE the character list, and their names are
@@ -8005,23 +8047,29 @@ do
 		-- with BOTH Activated and RightActivated, and that single test removes every move in one go without
 		-- needing to know a single move name. If the game ever breaks that pattern the roster fallback below
 		-- still fills the list, so this cannot end up empty.
-		local strict = false
-		for _, s in ipairs(f:GetChildren()) do
-			local re = s:FindFirstChild("RE")
-			if re and re:FindFirstChild("RightActivated") and re:FindFirstChild("Activated") then strict = true break end
-		end
-		for _, s in ipairs(f:GetChildren()) do
-			local base = string.match(s.Name, "^(.-)Service$")
-			local re = s:FindFirstChild("RE")
-			local looksCharacter = re and re:FindFirstChild("Activated")
-				and ((not strict) or re:FindFirstChild("RightActivated"))
-			if base and #base >= 3 and looksCharacter
-				and not NOT_A_CHARACTER[norm(base)] and not liveMove[norm(base)] then
-				-- Roster names go in the first group so the DEFAULT pick is always a character we are sure
-				-- about; everything else the game offers is listed right after, in the game's own spelling.
-				local isKnown = false
-				for _, n in ipairs(KNOWN) do if norm(n) == norm(base) then isKnown = true break end end
-				add(isKnown and known or extra, base)
+		-- The sweep is opt-in now. The roster above is captured ground truth and covers every character the
+		-- game actually offers; the services folder is dominated by one service per MOVE, which is what put
+		-- CursedBash and DecisiveStrike in your dropdown. Set _G.VX_TOTAL_ALLCHARS = true before loading if a
+		-- game update adds someone the roster does not know yet.
+		if _G.VX_TOTAL_ALLCHARS then
+			local strict = false
+			for _, s in ipairs(f:GetChildren()) do
+				local re = s:FindFirstChild("RE")
+				if re and re:FindFirstChild("RightActivated") and re:FindFirstChild("Activated") then strict = true break end
+			end
+			for _, s in ipairs(f:GetChildren()) do
+				local base = string.match(s.Name, "^(.-)Service$")
+				local re = s:FindFirstChild("RE")
+				local looksCharacter = re and re:FindFirstChild("Activated")
+					and ((not strict) or re:FindFirstChild("RightActivated"))
+				if base and #base >= 3 and looksCharacter
+					and not NOT_A_CHARACTER[norm(base)] and not liveMove[norm(base)] then
+					-- Roster names go in the first group so the DEFAULT pick is always a character we are sure
+					-- about; everything else the game offers is listed right after, in the game's own spelling.
+					local isKnown = false
+					for _, n in ipairs(KNOWN) do if norm(n) == norm(base) then isKnown = true break end end
+					add(isKnown and known or extra, base)
+				end
 			end
 		end
 		if #known == 0 and #extra == 0 then for _, n in ipairs(KNOWN) do add(known, n) end end
