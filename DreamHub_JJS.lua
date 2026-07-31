@@ -2926,6 +2926,111 @@ local function vxCastMove(moveName, ...)
 	return ok
 end
 _G.VX_CAST_MOVE = vxCastMove    -- shared: Auto Air, Auto Hakari and anything else that casts by name
+
+-- ═══════════════════════ ONE BUTTON THAT ANSWERS "WHY DOESN'T ANYTHING WORK" ═══════════════════════
+-- Every round of this has been me reasoning about the code and you testing blind, and that loop is not
+-- converging. This runs the ACTUAL resolution step of each broken feature - the same lookups the features
+-- themselves do - and reports what it found. It fires no remotes and presses no keys, so it is safe to run
+-- standing still in a lobby.
+-- The report is printed to F9, shown on screen, AND copied to your clipboard, so it is one button and one
+-- paste rather than a screenshot of a console.
+_G.VX_DIAG = function()
+	local L = {}
+	local function add(s) L[#L + 1] = tostring(s) end
+	local function yn(v) return v and "YES" or "NO" end
+
+	add("===== DREAM HUB DIAGNOSTIC =====")
+
+	-- 1) can we see the game's remotes at all? everything except teleport depends on this
+	local svcs = vxServicesFolder()
+	add("Knit Services folder: " .. yn(svcs ~= nil))
+	if svcs then
+		local n = 0
+		for _ in ipairs(svcs:GetChildren()) do n = n + 1 end
+		add("  services visible: " .. n)
+	else
+		add("  ^ THIS ALONE BREAKS: uppercut, auto air, twofold, hakari, swap, block")
+	end
+
+	-- 2) which rig are we on, and can we read the moveset the move remotes need
+	local chs = workspace:FindFirstChild("Characters")
+	local wRig = chs and chs:FindFirstChild(game:GetService("Players").LocalPlayer.Name)
+	local pRig = game:GetService("Players").LocalPlayer.Character
+	add("rig in workspace.Characters: " .. yn(wRig ~= nil) .. " | LocalPlayer.Character: " .. yn(pRig ~= nil))
+	local mvRig, mv
+	for _, r in ipairs({ wRig, pRig }) do
+		local m = r and r:FindFirstChild("Moveset")
+		if m then mvRig, mv = r, m break end
+	end
+	add("Moveset found: " .. yn(mv ~= nil) .. (mvRig and ("  (on " .. (mvRig == wRig and "workspace rig" or "LocalPlayer.Character") .. ")") or ""))
+	local moveNames = {}
+	if mv then for _, m in ipairs(mv:GetChildren()) do moveNames[#moveNames + 1] = m.Name end end
+	add("  moves: " .. (#moveNames > 0 and table.concat(moveNames, ", ") or "NONE"))
+
+	-- 3) every move resolved to the service the cast actually needs. This is the exact lookup Auto Air and
+	--    Twofold do, so a NO here is precisely why they do nothing.
+	if #moveNames > 0 then
+		add("move -> service:")
+		for _, nm in ipairs(moveNames) do
+			local sv = vxMoveService(nm)
+			add("  " .. nm .. "  ->  " .. (sv or ("MISSING (looked for " .. (nm:gsub("%s+", "")) .. "Service)")))
+		end
+	end
+
+	-- 4) the character service - this is what the uppercut and down slam fire
+	local okSvc, mySvc = pcall(vxMyCharSvc)
+	add("my character service: " .. tostring(okSvc and mySvc or "ERROR"))
+	if svcs and okSvc and mySvc then
+		local s = svcs:FindFirstChild(mySvc); local re = s and s:FindFirstChild("RE")
+		add("  RE.Activated: " .. yn(re and re:FindFirstChild("Activated") ~= nil))
+	end
+
+	-- 5) the other named remotes features depend on
+	local function has(svc, re)
+		if not svcs then return "no services folder" end
+		local s = svcs:FindFirstChild(svc); local r = s and s:FindFirstChild("RE")
+		if not s then return "no " .. svc end
+		if not r then return svc .. " has no RE" end
+		return yn(r:FindFirstChild(re) ~= nil)
+	end
+	add("BlockService.Activated: " .. has("BlockService", "Activated"))
+	add("TodoService.RightActivated: " .. has("TodoService", "RightActivated"))
+	add("JoinService.Change: " .. has("JoinService", "Change"))
+	add("MovementService.Dash: " .. has("MovementService", "Dash"))
+
+	-- 6) the flash engine's live state - the four things that decide whether a swing becomes a flash
+	add("BF engine armed: " .. yn(_G.VX_BFAPI_ON == true)
+		.. " | borrowed: " .. yn(_G.VX_BF_BORROWED == true)
+		.. " | after N M1s: " .. tostring(_G.VX_BF_AFTER or 1))
+	add("BF last flash: " .. (_G.VX_BF_LAST_FIRE and string.format("%.1fs ago", tick() - _G.VX_BF_LAST_FIRE) or "never this session"))
+	add("captured M1 ids include mine: " .. yn((function()
+		if not mvRig then return false end
+		local h = mvRig:FindFirstChildOfClass("Humanoid")
+		local a = h and h:FindFirstChildOfClass("Animator")
+		if not a then return false end
+		local ok, tracks = pcall(function() return a:GetPlayingAnimationTracks() end)
+		if not ok then return false end
+		for _, tr in ipairs(tracks) do
+			local oid, id = pcall(function() return string.match(tostring(tr.Animation.AnimationId), "%d+") end)
+			if oid and id and _G.VX_M1_IDS and _G.VX_M1_IDS[id] then return true end
+		end
+		return false
+	end)()) .. "  (NO is expected on newer characters - the universal fallback covers it)")
+
+	-- 7) teleport
+	add("teleport method: " .. tostring(_G.VX_TP_METHOD or "Glide") .. " | speed: " .. tostring(_G.VX_TP_VEL or 90))
+	local myR = wRig and wRig:FindFirstChild("HumanoidRootPart") or (pRig and pRig:FindFirstChild("HumanoidRootPart"))
+	add("my HumanoidRootPart: " .. yn(myR ~= nil) .. (myR and ("  at " .. string.format("%.0f, %.0f, %.0f", myR.Position.X, myR.Position.Y, myR.Position.Z)) or ""))
+
+	add("tier: " .. tostring(_G.__DreamTier or "?") .. " | executor clipboard: " .. yn(typeof(setclipboard) == "function"))
+	add("===== END =====")
+
+	local report = table.concat(L, "\n")
+	pcall(function() print("\n" .. report) end)
+	pcall(function() if setclipboard then setclipboard(report) end end)
+	if VX_NOTIFY then VX_NOTIFY("Diagnostic copied to clipboard - paste it to me", true) end
+	return report
+end
 local function vxClientDash(dir, speed, dur)  -- a REAL velocity dash relative to facing; guarantees visible motion even if the Dash remote is validation-only
 	local char = vxMyChar(); local hrp = char and char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
 	local cf = hrp.CFrame
@@ -3940,7 +4045,12 @@ do
             -- "it should side dash around the CORNER of their back and m1": endBias offsets the landing off
             -- the spine, so you finish on the corner rather than dead centre - which is also where an M1
             -- lands as a hit instead of the knockdown that ends the fight early. The M1 follows below.
-            dashToBack(t, { duration = 0.22, extraSweep = math.pi * 0.22, endRadius = 4.6, endBias = 0.45 })
+            -- WHERE THE DASH ENDS is yours to pick: "Corner" finishes off the spine (an M1 there lands as a
+            -- hit rather than the knockdown that ends the fight early), "Back" finishes dead centre behind
+            -- them. Either way this is the ORBIT, which travels - it is not a teleport, and the assist never
+            -- calls tpBehind, so nothing here writes you onto a position.
+            local bias = (_G.VX_SIDE_END == "Back") and 0 or 0.45
+            dashToBack(t, { duration = 0.22, extraSweep = math.pi * 0.22, endRadius = 4.6, endBias = bias })
             faceBackOf(t)
         end)
         if Settings.SideM1 and not isBF then task.delay(0.20, function() aimCameraAt((t:FindFirstChild("HumanoidRootPart") or e).Position); VMouseClick() end) end
@@ -4673,7 +4783,25 @@ do
 		save = function(n) local r = hrp(); if r then slots[n] = r.Position end end,
 		goto_ = function(n) if slots[n] then vxTeleportHard(slots[n], 1.25) end end,
 		spotNames = function() local t = {}; for _, s in ipairs(SPOTS) do t[#t + 1] = s[1] end return t end,
-		spot = function(name) for _, s in ipairs(SPOTS) do if s[1] == name then vxTeleportHard(s[2] + Vector3.new(0, 4, 0), 2); return true end end return false end,  -- stepped teleport + 2s hold (4s of being pinned after arriving felt broken)
+		-- ═══ MAP TELEPORTS ARE NOT COMBAT TELEPORTS ═══ These buttons cross hundreds of studs, and the
+		-- default method ("Glide") flies you there physically at ~90 studs/s - so a trip to the Mall is
+		-- several seconds of hanging in the air, and anything that interrupts it leaves you halfway. The
+		-- stepped writer is the one tuned on the recorder capture: believable hops, matching velocity, and it
+		-- verifies it arrived and retries once. Force it for the duration of the hop, then hand your own
+		-- setting straight back so combat teleports are unaffected.
+		spot = function(name)
+			for _, s in ipairs(SPOTS) do
+				if s[1] == name then
+					local prev = _G.VX_TP_METHOD
+					_G.VX_TP_METHOD = "Instant"
+					vxTeleportHard(s[2] + Vector3.new(0, 4, 0), 2)
+					task.delay(0.1, function() _G.VX_TP_METHOD = prev end)
+					return true
+				end
+			end
+			if VX_NOTIFY then VX_NOTIFY("Teleport: no saved spot called '" .. tostring(name) .. "'", false) end
+			return false
+		end,
 		playerNames = function() local t = {}; for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP then t[#t + 1] = plr.Name end end return t end,   -- list other players
 		tpPlayer = function(name)  -- teleport just BEHIND a chosen player (setback-resistant)
 			local hrpTarget
@@ -14211,6 +14339,7 @@ do
         bfSec:Slider({ Name = "Back Dist", Min = 1, Max = 6, Default = 2, Decimals = 0.1, Callback = function(v) if ChainApi then ChainApi.setBackDistance(v) end end })
         bfSec:Slider({ Name = "Range", Min = 10, Max = 60, Default = 30, Decimals = 1, Callback = function(v) if ChainApi then ChainApi.setLockRange(v) end end })
     end
+    bfSec:Button({ Name = "Run Diagnostic (copies to clipboard)", Callback = function() if _G.VX_DIAG then _G.VX_DIAG() end end })
     local blockSec = bfSub:Section({ Name = "Auto Block", Side = 2 })
     blockSec:Toggle({ Name = "Auto Block", Default = false, Callback = function(b) if AutoBlockApi then AutoBlockApi.set(b) end end })
     -- LOCKED TARGET ONLY, in the tab where it is used. Turn on Lock Target (Combat > Lock Target), click the
@@ -14264,6 +14393,14 @@ do
     -- Side/Back Dash Assist now use the reworked VXBF2 engine (Q = side curve, E = back-through). Free gets both.
     if tier("premium") then   -- FREE: no Side/Back Dash Assist (premium only)
         counterSec:Toggle({ Name = "Side Dash Assist (Q)", Callback = function(b) if _G.VXBF2 then _G.VXBF2.setSideAssist(b) end end })
+        -- Where the dash finishes. Corner = off the spine, so the follow-up M1 lands as a hit rather than the
+        -- knockdown; Back = dead centre behind them. Neither teleports - the assist rides the travelling orbit
+        -- and never writes your position.
+        _G.VX_SIDE_END = "Corner"
+        counterSec:Dropdown({ Name = "Side Dash Ends At", Items = { "Corner", "Back" }, Default = "Corner", Callback = function(v)
+            v = (type(v) == "table") and v[1] or v
+            if v == "Corner" or v == "Back" then _G.VX_SIDE_END = v end
+        end })
         counterSec:Toggle({ Name = "Back Dash Assist (E)", Callback = function(b) if _G.VXBF2 then _G.VXBF2.setBackAssist(b) end end })
     end
     counterSec:Toggle({ Name = "Anti Counter", Callback = function(b) if AntiCounterApi then AntiCounterApi.set(b) end end })
@@ -14710,6 +14847,9 @@ do
         thSec:Label("Changes the red accent across the whole menu.")
     end
     local miscSec = setSub:Section({ Name = "Misc", Side = 1 })
+    -- The single most useful button in here right now: it runs the ACTUAL lookup each broken feature does
+    -- and copies the answers to your clipboard. One button, one paste, instead of a screenshot of F9.
+    miscSec:Button({ Name = "Run Diagnostic (copies to clipboard)", Callback = function() if _G.VX_DIAG then _G.VX_DIAG() end end })
     miscSec:Toggle({ Name = "Show Notifications", Default = false, Callback = function(b) _G.VX_SILENT = (b ~= true) end })
     miscSec:Button({ Name = "Rejoin Server", Callback = function() pcall(function() game:GetService("TeleportService"):Teleport(game.PlaceId, LP) end) end })
     miscSec:Button({ Name = "Copy Discord", Callback = function() if setclipboard then pcall(setclipboard, "https://discord.gg/fRcGd9bW") end; if VX_NOTIFY then VX_NOTIFY("Discord copied") end end })
