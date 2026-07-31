@@ -5153,6 +5153,21 @@ do
 					State.upTry = (State.upTry or 0) % #CAND + 1
 					upKey = CAND[State.upTry]
 				end
+				-- ═══ SETTLE THE BODY BEFORE ASKING FOR A GROUND MOVE ═══ A launcher is a GROUND move, and this
+				-- fires mid-combo while you are still carrying the momentum of the previous swing. If the server
+				-- checks your physical state, drifting sideways at speed is the wrong one to be in.
+				-- Only the HORIZONTAL component is zeroed: killing Y as well would cancel the Space hold that one
+				-- of the candidate keys is deliberately using. When we fire with no key at all we also assert a
+				-- grounded state - the same trick dashToBack already uses to stop the humanoid fighting a write.
+				pcall(function()
+					local c = myModel()
+					local r = c and c:FindFirstChild("HumanoidRootPart")
+					local h = c and c:FindFirstChildOfClass("Humanoid")
+					if r then local v = r.AssemblyLinearVelocity; r.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0) end
+					if upKey == false and h and h.FloorMaterial ~= Enum.Material.Air then
+						h:ChangeState(Enum.HumanoidStateType.Landed)
+					end
+				end)
 				if upKey ~= false then
 					keyDown(upKey)
 					local upTok = State.lastUp
@@ -7152,6 +7167,19 @@ do
 		return (rag and rag:IsA("ValueBase") and rag.Value == true) or false
 	end
 	local function slam()
+		-- A slam is a DIVE, so give the server downward momentum to agree with the request. This is only in
+		-- the Twofold sequence - the standalone Auto Down Slam already works and is deliberately untouched.
+		-- Applied only when we are actually airborne: forcing -120 while standing on the floor would just
+		-- press you into the ground for no reason.
+		pcall(function()
+			local c = myModel()
+			local r = c and c:FindFirstChild("HumanoidRootPart")
+			local h = c and c:FindFirstChildOfClass("Humanoid")
+			if r and h and h.FloorMaterial == Enum.Material.Air then
+				local v = r.AssemblyLinearVelocity
+				r.AssemblyLinearVelocity = Vector3.new(v.X, -120, v.Z)
+			end
+		end)
 		local svc = vxMyCharSvc()
 		if svc then fireKnit(svc, "Activated", "Down") end
 	end
