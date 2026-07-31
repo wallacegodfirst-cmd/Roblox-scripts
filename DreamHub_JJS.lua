@@ -1044,6 +1044,37 @@ do
 	-- dashed perfectly and never flashed.
 	-- _G.VX_BF_CHAINCLICK is the chain saying "the next swing is mine", stamped the instant it clicks, and it
 	-- is only honoured while BORROWED - so it authorises exactly the chain's own beat and nothing else.
+	-- ═══════════════ KEY 3 IS NOT "BLACK FLASH". IT IS SLOT 3. ═══════════════
+	-- This engine came from an AutoBlackFlash script written for a character whose THIRD ABILITY was Black
+	-- Flash, and it has been pressing 3 on every character ever since. Your Jawbreaker skill bar reads
+	-- 1 Ambush / 2 Backstab / 3 Trip / 4 Cheap Shot - so every "flash" this engine fired actually cast TRIP,
+	-- which is why nothing black flashed AND why the animations looked wrong: it was interrupting your combo
+	-- with an unrelated ability, once per swing.
+	-- The engine's own note has said the real mechanism all along: "The re-click is the PRIMARY Black Flash
+	-- trigger on most characters." Black Flash in this game is a TIMED M1 re-tap on the windup, not a slot.
+	-- So the ability key is now pressed only when your moveset actually has a Black Flash ability to spend -
+	-- otherwise the perfectly-timed re-click does the work on its own, with nothing to interrupt it.
+	-- _G.VX_BF_PRESSKEY overrides: "Always" / "Never" / nil = auto (the check below).
+	local function bfKeyIsFlash()
+		if _G.VX_BF_PRESSKEY == "Always" then return true end
+		if _G.VX_BF_PRESSKEY == "Never" then return false end
+		local ok, res = pcall(function()
+			local chs = workspace:FindFirstChild("Characters")
+			local rigs = { (chs and chs:FindFirstChild(player.Name)) or nil, player.Character }
+			for _, c in ipairs(rigs) do
+				local mv = c and c:FindFirstChild("Moveset")
+				if mv then
+					for _, m in ipairs(mv:GetChildren()) do
+						local n = string.lower(m.Name):gsub("[^%a]", "")
+						if n:find("blackflash", 1, true) then return true end
+					end
+					return false          -- we read the moveset and there is no Black Flash in it
+				end
+			end
+			return false
+		end)
+		return ok and res or false
+	end
 	local function clickAuthorised()
 		if tick() - (tonumber(_G.VX_LAST_HUMAN_CLICK) or 0) < 0.5 then return true end
 		if _G.VX_BF_BORROWED and tick() - (tonumber(_G.VX_BF_CHAINCLICK) or 0) < 0.5 then return true end
@@ -1162,7 +1193,13 @@ do
 						VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
 					end)
 			end
-				pressKey(Enum.KeyCode.Three)
+				-- Only if slot 3 really IS Black Flash for this character. See bfKeyIsFlash above: on everyone
+				-- else this was casting whatever their third ability happens to be, every single swing.
+				if bfKeyIsFlash() then
+					pressKey(Enum.KeyCode.Three)
+				elseif _G.VX_BF_DEBUG then
+					print("[BF] your moveset has no Black Flash ability - re-click only, not pressing 3")
+				end
 			end)
 		end
 	end
@@ -2779,6 +2816,80 @@ local function vxMyCharSvc()  -- which <Char>Service to fire for M1 / Down / Up
 	if _G.VX_M1_DEBUG then print("[M1COMBO] NO service resolved for your character") end
 	return nil
 end
+
+-- ═══════════════════ A MOVE'S SERVICE IS DERIVABLE FROM ITS NAME ═══════════════════
+-- Every capture the user has ever sent follows one rule, and nothing in this file was using it:
+--     Moveset["Swift Kick"]    -> SwiftKickService.RE.Activated(move)
+--     Moveset["Brute Force"]   -> BruteForceService.RE.Activated(move)
+--     Moveset["Reserve Balls"] -> ReserveBallService.RE.Activated(move)          <- note the plural drops
+--     Moveset["Shutter Doors"] -> ShutterDoorService.RE.Activated(move, target)  <- and again
+-- i.e. take the move's own name, remove the spaces, add "Service". That is why the character-select dropdown
+-- filled up with CursedBash / DecisiveStrike / ElbowRush: those are not characters, they are one service per
+-- MOVE, and there are hundreds of them.
+-- Deriving the name means Auto Air and anything else that casts a move never has to GUESS a service again -
+-- which is what "auto air dont work" has been every single time: a hardcoded guess like RoughEnergyService or
+-- CrushJawService that simply does not exist, failing silently.
+local function vxSingular(s)          -- "Reserve Balls" -> "ReserveBall"; the game names services in singular
+	s = tostring(s):gsub("%s+", "")
+	return (s:gsub("s$", ""))
+end
+local function vxMoveService(moveName)
+	if not moveName or moveName == "" then return nil end
+	local svcs = vxServicesFolder(); if not svcs then return nil end
+	local plain = tostring(moveName):gsub("%s+", "")
+	-- 1) the exact name, 2) the singular, 3) a normalised sweep for anything else (casing, punctuation)
+	for _, cand in ipairs({ plain .. "Service", vxSingular(moveName) .. "Service" }) do
+		local s = svcs:FindFirstChild(cand)
+		if s and s:FindFirstChild("RE") then return cand end
+	end
+	local wantA, wantB = vxNorm(plain), vxNorm(vxSingular(moveName))
+	for _, sv in ipairs(svcs:GetChildren()) do
+		local base = sv.Name:match("^(.-)Service$")
+		if base then
+			local nb = vxNorm(base)
+			if (nb == wantA or nb == wantB) and sv:FindFirstChild("RE") then return sv.Name end
+		end
+	end
+	return nil
+end
+-- Cast one of YOUR moves the way the captures do: the move's own service, with the Moveset entry as the
+-- first argument, plus anything else the capture passed (Shutter Doors also takes the target character).
+-- Returns true only if a remote was actually found and fired.
+local function vxCastMove(moveName, ...)
+	local c = vxMyChar()
+	local rigs = { c }
+	local lp = game:GetService("Players").LocalPlayer
+	if lp.Character and lp.Character ~= c then rigs[#rigs + 1] = lp.Character end
+	local obj
+	for _, rig in ipairs(rigs) do
+		local mv = rig and rig:FindFirstChild("Moveset")
+		if mv then
+			obj = mv:FindFirstChild(moveName)
+			if not obj then
+				for _, m in ipairs(mv:GetChildren()) do if vxNorm(m.Name) == vxNorm(moveName) then obj = m break end end
+			end
+			if obj then break end
+		end
+	end
+	if not obj then
+		if _G.VX_MOVE_DEBUG then print("[DreamHub Move] you do not own '" .. tostring(moveName) .. "'") end
+		return false
+	end
+	local svcName = vxMoveService(obj.Name) or vxMoveService(moveName)
+	if not svcName then
+		if _G.VX_MOVE_DEBUG then print("[DreamHub Move] no service for '" .. tostring(obj.Name) .. "' (tried " .. tostring(obj.Name):gsub("%s+", "") .. "Service)") end
+		return false
+	end
+	local svcs = vxServicesFolder()
+	local re = svcs and svcs:FindFirstChild(svcName)
+	re = re and re:FindFirstChild("RE"); re = re and re:FindFirstChild("Activated")
+	if not re then return false end
+	local extra = table.pack(...)
+	local ok = pcall(function() re:FireServer(obj, table.unpack(extra, 1, extra.n)) end)
+	if _G.VX_MOVE_DEBUG then print("[DreamHub Move] " .. (ok and "fired " or "FAILED ") .. svcName .. ".RE.Activated(" .. obj.Name .. ")") end
+	return ok
+end
+_G.VX_CAST_MOVE = vxCastMove    -- shared: Auto Air, Auto Hakari and anything else that casts by name
 local function vxClientDash(dir, speed, dur)  -- a REAL velocity dash relative to facing; guarantees visible motion even if the Dash remote is validation-only
 	local char = vxMyChar(); local hrp = char and char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
 	local cf = hrp.CFrame
@@ -3515,7 +3626,28 @@ do
     end
     local function ReleaseAll() for k in pairs(R.held) do pcall(function() VIM:SendKeyEvent(false, k, false, game) end) end table.clear(R.held) end
     local function markThree() R.stamp[Enum.KeyCode.Three] = tick(); _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.4 end
-    local function pressBF() markThree(); VIM:SendKeyEvent(true, Settings.BFKey, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Settings.BFKey, false, game) end
+    -- SAME RULE AS THE ENGINE: the BF key is slot 3, and slot 3 is only Black Flash on the characters that
+    -- have Black Flash as an ability. On everyone else this was casting their third move (Trip, on Jawbreaker)
+    -- every time a chain wanted a flash. When the character has no such ability we throw the timed re-tap
+    -- instead, which is the actual Black Flash mechanic and works on everyone.
+    local function bfCharHasFlashAbility()
+        if _G.VX_BF_PRESSKEY == "Always" then return true end
+        if _G.VX_BF_PRESSKEY == "Never" then return false end
+        local c = GetChar(); local mv = c and c:FindFirstChild("Moveset")
+        if not mv then return false end
+        for _, m in ipairs(mv:GetChildren()) do
+            if string.find((string.lower(m.Name):gsub("[^%a]", "")), "blackflash", 1, true) then return true end
+        end
+        return false
+    end
+    local function pressBF()
+        if bfCharHasFlashAbility() then
+            markThree(); VIM:SendKeyEvent(true, Settings.BFKey, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Settings.BFKey, false, game)
+        else
+            if _G.VX_BF_DEBUG then print("[DreamHub BF] no Black Flash ability on this character - timed re-tap instead of key 3") end
+            VMouseClick()
+        end
+    end
     -- ═══ WHY THE OTHER BF MODES NEVER FLASHED ═══ Black Flash only lands when it is timed onto a CONNECTING M1.
     -- "M1 Chain" works because it triggers off your click, so an M1 is already landing. Side Dash / Back Dash /
     -- Jump / Teleport trigger off key 3, so they pressed 3 with nothing connecting and it just did nothing.
@@ -4526,6 +4658,13 @@ do
 	local VIM = game:GetService("VirtualInputManager")
 	local LP = Players.LocalPlayer
 	local mode, lastSwing, count, busy = "Off", 0, 0, false
+	-- ═══ "IT SHOULD BE AUTO UPPER CUT AND DOWN SLAM" ═══ These were one dropdown, so you could only ever have
+	-- one of them armed. They are independent toggles now and both can run in the same combo: the slam takes
+	-- swing 2 (landing on M1 #3) and the uppercut takes its own count, so they do not fight for the same beat.
+	-- `mode` is kept only so the old setMode entry point and the test buttons still work.
+	local slamFlag, upperFlag = false, false
+	local function slamOn()  return slamFlag  or mode == "Down Slam" end
+	local function upperOn() return upperFlag or mode == "Uppercut" end
 	local needHits = 3   -- chain hits before the launcher fires (slider-adjustable: characters have different chain lengths)
 	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
 	local function act(arg)
@@ -4840,7 +4979,7 @@ do
 	-- (or no) track than the ground combo - so after the hop your slam click produced no counted swing and the
 	-- slam never fired. That was the whole "down slam is bad" bug. This runs off the actual click instead.
 	local function slamOnClick()
-		if mode ~= "Down Slam" then return end
+		if not slamOn() then return end
 		if tick() >= slamArmed then return end
 		-- The airborne test is BACK, now that the slam only ever fires off the ground. Without it this path
 		-- stayed armed for 1.6s after a slam, so the first click of your NEXT combo - long after you had
@@ -4851,7 +4990,7 @@ do
 		doSlam("armed click")
 	end
 	local function onSwing()
-		if mode == "Off" then return end
+		if not (slamOn() or upperOn()) then return end
 		-- HARD GATE: no real click in the last 0.4s means this was not your M1, so we do nothing at all. This is
 		-- the fix for "don't make me jump when I don't M1" - not deleting the Space press, which is what the
 		-- uppercut actually needs.
@@ -4882,8 +5021,8 @@ do
 		-- Act one swing BEFORE the one you want it to land on: the direction has to be named before the game
 		-- commits to an ordinary M1. Default 4 - 1 = 3, exactly what it was; the dropdown lets you move it.
 		local needUpper = math.max(1, (tonumber(_G.VX_UPPER_ON) or 4) - 1)
-		local need = (mode == "Uppercut") and needUpper or needSlam
-		if mode == "Down Slam" then
+		local need = needSlam
+		if slamOn() then
 			-- ALREADY IN THE AIR? Then this swing IS the slam, whatever the count says - an air M1 is a slam.
 			if airborneNow() then
 				doSlam("airborne swing")
@@ -4924,14 +5063,16 @@ do
 					-- the ground by then, send it anyway. One grounded Down as a last resort is much better
 					-- than no slam - and it is one, not the three the old path sent every combo.
 					task.delay(0.45, function()
-						if mode ~= "Down Slam" then return end
+						if not slamOn() then return end
 						if airborneNow() then return end                       -- the hop worked; the airborne branch owns it
 						if tick() - (State.lastDown or 0) < 1.00 then return end  -- already slammed this combo
 						doSlam("hop never left the ground")
 					end)
 				end)
 			end
-		elseif mode == "Uppercut" then
+		end
+		if upperOn() then
+			need = needUpper
 			-- One finisher per combo: a 0.9s cooldown, matching how the slam behaves in practice. The old 0.18s
 			-- let it re-fire on every remaining swing of the same combo, which spends the move repeatedly.
 
@@ -4998,7 +5139,7 @@ do
 				comboHooked[a] = true
 				comboAnimLive = true
 				a.AnimationPlayed:Connect(function(track)
-					if mode == "Off" then return end
+					if not (slamOn() or upperOn()) then return end
 					local ok, id = pcall(function() return tostring(track.Animation.AnimationId):match("%d+") end)
 					if not ok or not id then return end
 					-- CHARACTER-AGNOSTIC SWING DETECTION. Relying on an id database means any character whose
@@ -5018,7 +5159,7 @@ do
 					end
 					-- An AIRBORNE attack animation is a down slam by definition - announce it directly rather than
 					-- routing it through the ground-combo counter, which has no concept of an air swing.
-					if AIR_ATTACK_IDS[id] and mode == "Down Slam" then
+					if AIR_ATTACK_IDS[id] and slamOn() then
 						if realM1Now() then doSlam("air attack anim " .. id) end
 						return
 					end
@@ -5037,7 +5178,7 @@ do
 	-- Kept for compatibility: the click paths no longer count. If the animation DB somehow misses this
 	-- character entirely, this is the safety net that still advances the combo.
 	local function onM1()
-		if mode == "Off" then return end
+		if not (slamOn() or upperOn()) then return end
 		if comboAnimLive and tick() - State.lastM1 < 1.5 then return end   -- the animation path is counting; do not double-count this click
 		onSwing()
 	end
@@ -5101,6 +5242,12 @@ do
 			-- module and what string it set, which separates "mode never set" from "swings never counted".
 			if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] mode set to: " .. tostring(mode)) end
 		end,   -- unwrap Fluriore's {"Down Slam"} table (else the mode check never matched = "doesn't work")
+		-- The two independent toggles. Each one refreshes detection on the way in, so arming either from a
+		-- cold start hooks the animators immediately instead of on the next sweep.
+		setSlam  = function(v) slamFlag  = v == true; State.m1Count = 0; if slamFlag then refreshDetection() end
+			if _G.VX_M1_DEBUG then print("[M1COMBO] Auto Down Slam = " .. tostring(slamFlag)) end end,
+		setUpper = function(v) upperFlag = v == true; State.m1Count = 0; if upperFlag then refreshDetection() end
+			if _G.VX_M1_DEBUG then print("[M1COMBO] Auto Uppercut = " .. tostring(upperFlag)) end end,
 		setDelay = function() end,
 		setCount = function() end,
 		-- ═══ DIAGNOSTIC: RUN THE ACTION WITH NO DETECTION IN THE WAY ═══ Uppercut / Down Slam have two halves,
@@ -6874,6 +7021,85 @@ do
 end
 
 -- ============================================================
+-- MODULE: AUTO HAKARI  (Reserve Balls + Shutter Doors together - "it uses 1 and 2 at the same time")
+-- Both remotes verbatim from the user's captures:
+--   ReserveBallService.RE.Activated(Moveset["Reserve Balls"])
+--   ShutterDoorService.RE.Activated(Moveset["Shutter Doors"], workspace.Characters.<target>)
+-- Neither service name is guessed: _G.VX_CAST_MOVE derives it from the move's own name, which is the rule
+-- every capture in this project follows.
+-- ============================================================
+do
+	local Players = game:GetService("Players")
+	local LP = Players.LocalPlayer
+	local on, rate = false, 3.0
+	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
+	local function myHRP() local m = myModel(); return m and m:FindFirstChild("HumanoidRootPart") end
+	local function hasMove(name)
+		local n = string.lower(name):gsub("[^%a]", "")
+		for _, c in ipairs({ myModel(), LP.Character }) do
+			local mv = c and c:FindFirstChild("Moveset")
+			if mv then for _, m in ipairs(mv:GetChildren()) do
+				if string.lower(m.Name):gsub("[^%a]", "") == n then return true end
+			end end
+		end
+		return false
+	end
+	-- Shutter Doors takes a TARGET as its second argument - the workspace.Characters model, exactly as the
+	-- capture shows (it passed workspace.Characters.Dummy). Prefer the locked target, else the nearest body.
+	local function target()
+		local g = _G.VX_LOCK; local lt = (g and g.get) and g.get() or nil
+		if lt and lt.Parent then return lt end
+		local hrp = myHRP(); if not hrp then return nil end
+		local best, bd
+		local chs = workspace:FindFirstChild("Characters")
+		if chs then
+			for _, m in ipairs(chs:GetChildren()) do
+				if m.Name ~= LP.Name and m ~= myModel() then
+					local r = m:FindFirstChild("HumanoidRootPart")
+					local h = m:FindFirstChildOfClass("Humanoid")
+					if r and (not h or h.Health > 0) then
+						local d = (r.Position - hrp.Position).Magnitude
+						if not bd or d < bd then best, bd = m, d end
+					end
+				end
+			end
+		end
+		return best
+	end
+	local function cast()
+		if not _G.VX_CAST_MOVE then return end
+		-- "it use 1 and 2 at the same time" - both go out on the same beat, not one after the other, so the
+		-- doors close around them while the balls are already in the air.
+		task.spawn(function() _G.VX_CAST_MOVE("Reserve Balls") end)
+		task.spawn(function() _G.VX_CAST_MOVE("Shutter Doors", target()) end)
+	end
+	task.spawn(function()
+		while true do
+			if on then
+				-- Only when you actually own them: firing another character's move remote is the 267 risk.
+				if hasMove("Reserve Balls") or hasMove("Shutter Doors") then
+					pcall(cast)
+					task.wait(rate)
+				else
+					if VX_NOTIFY and tick() - (_G.VX_HAK_WARN or 0) > 8 then
+						_G.VX_HAK_WARN = tick()
+						VX_NOTIFY("Auto Hakari: you are not playing Hakari", false)
+					end
+					task.wait(2)
+				end
+			else
+				task.wait(0.4)
+			end
+		end
+	end)
+	HakariApi = {
+		set = function(v) on = v == true end,
+		setRate = function(v) rate = math.clamp(tonumber(v) or rate, 0.5, 10) end,
+		now = cast,
+	}
+end
+
+-- ============================================================
 -- MODULE: TOTAL  (Todo's swap + the character changer)
 --   Auto Swap          - fire TodoService.RE.RightActivated at a target (Closest / Random / Lock Target)
 --   Auto Perfect Swap  - you cast a Todo move (1/2/3/4), we swap the instant it commits
@@ -7325,14 +7551,32 @@ do
 			-- turn one chain into a swap loop.
 			if kc == Enum.KeyCode.Q and trigWho == "Me" and trigDash then
 				local injK = _G.VX_INJ_KEYS
-				if not (injK and injK[kc] and tick() < injK[kc]) then myDashT = tick() end
+				if not (injK and injK[kc] and tick() < injK[kc]) then
+					myDashT = tick()
+					-- Same as the click: swap on the beat you pressed Q, not whenever the poll next looks.
+					if tick() - (tonumber(_G.VX_FINISHER_T) or 0) >= 2.0 then
+						local t = pickTarget()
+						if t then task.spawn(function() pcall(doSwap, "I pressed Q", 0.30, t) end) end
+					end
+				end
 			end
 			onMoveKey(kc)
 		end or nil)
-		-- YOUR click, for "Trigger On: Me". The shared M1 poll only calls subscribers on the rising edge and
-		-- never for a click we injected, so this is your real M1 and nothing else.
+		-- ═══ "WHEN I CLICK, IT NEED TO SWAP" ═══ This used to only set a stamp for the 0.06s poll loop to
+		-- notice, and the poll then had to resolve a target, run the edge detector and clear the busy gate -
+		-- three ways for your click to get lost between pressing it and anything happening. Your click now
+		-- swaps DIRECTLY, right here, on the same beat. The stamp is still set so the poll stays consistent,
+		-- but nothing depends on it any more.
+		-- Also no longer requires Trigger On = Me: if you turned "Swap On M1" on, clicking should swap. Them
+		-- keeps its own reactive path in the loop for reacting to THEIR M1.
 		if _G.VX_M1_SUB then
-			_G.VX_M1_SUB("totalswap", (swapOn and trigWho == "Me" and trigM1) and function() myM1T = tick() end or nil)
+			_G.VX_M1_SUB("totalswap", (swapOn and trigM1 and trigWho ~= "Off") and function()
+				myM1T = tick()
+				if trigWho ~= "Me" then return end                 -- Them = react to theirs, handled by the loop
+				if tick() - (tonumber(_G.VX_FINISHER_T) or 0) < 2.0 then return end   -- never interrupt a finisher
+				local t = pickTarget()
+				if t then pcall(doSwap, "I clicked", 0.30, t) end
+			end or nil)
 		end
 	end
 
@@ -7408,10 +7652,29 @@ do
 		for k in pairs(liveMove) do _G.VX_TOTAL_SEENMOVES[k] = true end
 		for k in pairs(_G.VX_TOTAL_SEENMOVES) do liveMove[k] = true end
 
+		-- ═══ THE DISCRIMINATOR, FROM YOUR OWN CAPTURES ═══ Your dropdown filled with CursedBash,
+		-- DecisiveStrike, ElbowRush, DivinePummel... because this game has ONE SERVICE PER MOVE, hundreds of
+		-- them, and they are indistinguishable from character services by name alone. But the captures show a
+		-- difference in what they CONTAIN:
+		--     TodoService.RE.RightActivated      <- character (the R ability)
+		--     GojoService.RE.RightActivated      <- character
+		--     SwiftKickService.RE.Activated      <- move: Activated and nothing else
+		--     ReserveBallService.RE.Activated    <- move
+		-- Every playable character has an R; a move service has no use for one. So a character service is one
+		-- with BOTH Activated and RightActivated, and that single test removes every move in one go without
+		-- needing to know a single move name. If the game ever breaks that pattern the roster fallback below
+		-- still fills the list, so this cannot end up empty.
+		local strict = false
+		for _, s in ipairs(f:GetChildren()) do
+			local re = s:FindFirstChild("RE")
+			if re and re:FindFirstChild("RightActivated") and re:FindFirstChild("Activated") then strict = true break end
+		end
 		for _, s in ipairs(f:GetChildren()) do
 			local base = string.match(s.Name, "^(.-)Service$")
 			local re = s:FindFirstChild("RE")
-			if base and #base >= 3 and re and re:FindFirstChild("Activated")
+			local looksCharacter = re and re:FindFirstChild("Activated")
+				and ((not strict) or re:FindFirstChild("RightActivated"))
+			if base and #base >= 3 and looksCharacter
 				and not NOT_A_CHARACTER[norm(base)] and not liveMove[norm(base)] then
 				-- Roster names go in the first group so the DEFAULT pick is always a character we are sure
 				-- about; everything else the game offers is listed right after, in the game's own spelling.
@@ -8674,7 +8937,30 @@ do
 		-- does not exist means the call silently does nothing, which is exactly "auto air doesn't work".
 		-- So: resolve YOUR character's service from your moveset and fire that; only fall back to the
 		-- move-named guess if the character service has no such remote; only then press the key.
+		-- ═══ AUTO AIR STOPS GUESSING SERVICE NAMES ═══ Every failure this module has ever had was the same
+		-- one: a hardcoded guess at a service name (RoughEnergyService, CrushJawService, RedScaleService...)
+		-- that does not exist, failing silently. The captures show the name is DERIVABLE - a move's service is
+		-- its own name with the spaces removed and "Service" on the end - so the first thing we try now is
+		-- the move you actually own, resolved by name at the moment we fire it. That works on every character
+		-- including ones nobody has ever captured, which is the whole problem.
+		-- The old paths stay as fallbacks, in that order, so nothing that used to work can stop working.
 		local function fireMove(moveSvc, re, key, ...)
+			-- 1) THE DERIVED MOVE SERVICE. Only for Activated (the cast remote); a directional/right-click
+			--    remote still belongs to the character service below.
+			if re == "Activated" then
+				local a = table.pack(...)
+				local moveObj = a.n >= 1 and a[1] or nil
+				local nm = (typeof(moveObj) == "Instance") and moveObj.Name or (type(moveObj) == "string" and moveObj) or nil
+				if nm and _G.VX_CAST_MOVE then
+					local extra = {}
+					for i = 2, a.n do extra[#extra + 1] = a[i] end
+					if _G.VX_CAST_MOVE(nm, table.unpack(extra, 1, math.max(0, a.n - 1))) then
+						dbgAir("fired the derived move service for " .. nm)
+						return true
+					end
+				end
+			end
+			-- 2) the character service (proven for Down/Up and the RightActivated family)
 			local charSvc = vxMyCharSvc()
 			if charSvc and svcRE(charSvc, re) then
 				local a = table.pack(...)
@@ -8682,11 +8968,13 @@ do
 				dbgAir((ok and "fired " or "FAILED ") .. charSvc .. "." .. re .. "  (character service)")
 				if ok then return true end
 			end
+			-- 3) the hardcoded guess this module shipped with
 			if moveSvc and svcRE(moveSvc, re) then return fireSvc(moveSvc, re, ...) end
 			if tick() - (_G.VX_AIRMISS_T or 0) > 2 then
 				_G.VX_AIRMISS_T = tick()
-				print("[DreamHub AutoAir] no remote for " .. re .. ": tried " .. tostring(charSvc)
-					.. " and " .. tostring(moveSvc) .. (key and " - pressing the key instead" or ""))
+				print("[DreamHub AutoAir] no remote for " .. re .. ": tried the derived move service, "
+					.. tostring(charSvc) .. " and " .. tostring(moveSvc) .. (key and " - pressing the key instead" or ""))
+				if VX_NOTIFY then VX_NOTIFY("Auto Air: no remote for that move - check F9", false) end
 			end
 			if key then tapKey(key) end
 			return false
@@ -13559,6 +13847,15 @@ do
         if _G.VXBF2 then _G.VXBF2.setAutoBF(false) end   -- avoid the weaker VXBF2 path double-pressing
     end })
     bfSec:Toggle({ Name = "BF Uses Reclick (off = less fling)", Default = true, Callback = function(b) _G.VX_BF_RECLICK = (b == true); _G.VX_BF_RECLICK_USER = (b == true) end })   -- _USER is the real preference; chains suppress the live one transiently and restore from this
+    -- ═══ KEY 3 IS SLOT 3, NOT "BLACK FLASH" ═══ This engine came from a script written for a character whose
+    -- third ability WAS Black Flash. On Jawbreaker slot 3 is Trip; on most characters it is something else
+    -- entirely - so every flash was casting an unrelated move and interrupting your combo. Auto reads your
+    -- moveset and only presses the key when you actually have a Black Flash ability; otherwise the timed
+    -- re-tap does it, which is the real mechanic. Always/Never are here in case Auto reads it wrong.
+    bfSec:Dropdown({ Name = "Press Key 3 For BF", Items = { "Auto", "Always", "Never" }, Default = "Auto", Callback = function(v)
+        v = (type(v) == "table") and v[1] or v
+        _G.VX_BF_PRESSKEY = (v == "Auto") and nil or v
+    end })
     -- "BF Debug (print)" and "Debug On Screen" toggles REMOVED from the menu (they were clutter). The globals
     -- still exist, so a debug run is `_G.VX_BF_DEBUG = true` / `_G.VX_DEBUG_HUD = true` before the loadstring.
     bfSec:Slider({ Name = "BF Cooldown", Min = 0.1, Max = 2, Default = 0.5, Decimals = 0.05, Suffix = "s", Callback = function(v) if _G.VXBF2 then _G.VXBF2.setCooldown(v) end end })
@@ -13681,7 +13978,16 @@ do
             acSec:Toggle({ Name = o[2], Default = true, Callback = function(b) if AutoAirOptSet then AutoAirOptSet(o[1], b) end end })
         end
     end
-    acSec:Dropdown({ Name = "Auto Slam / Uppercut", Items = { "Off", "Down Slam", "Uppercut" }, Default = "Off", Callback = function(m) if M1ComboApi then M1ComboApi.setMode(m) end end })
+    -- Two independent toggles, not one dropdown: you asked for "auto upper cut AND down slam", and the
+    -- dropdown could only ever arm one of them. Both can run in the same combo now.
+    acSec:Toggle({ Name = "Auto Down Slam", Default = false, Callback = function(b) if M1ComboApi and M1ComboApi.setSlam then M1ComboApi.setSlam(b) end end })
+    acSec:Toggle({ Name = "Auto Upper Cut", Default = false, Callback = function(b) if M1ComboApi and M1ComboApi.setUpper then M1ComboApi.setUpper(b) end end })
+    -- AUTO HAKARI: Reserve Balls + Shutter Doors on the same beat ("it use 1 and 2 at the same time").
+    -- Both remotes are your captures verbatim; neither service name is guessed - they are derived from the
+    -- move names, which is the rule every capture in this project follows.
+    acSec:Toggle({ Name = "Auto Hakari (1 + 2 together)", Default = false, Callback = function(b) if HakariApi then HakariApi.set(b) end end })
+    acSec:Slider({ Name = "Hakari Rate", Min = 0.5, Max = 10, Default = 3, Decimals = 0.1, Suffix = "s", Callback = function(v) if HakariApi then HakariApi.setRate(v) end end })
+    acSec:Button({ Name = "Hakari Cast Now", Callback = function() if HakariApi then HakariApi.now() end end })
     -- The uppercut key has been guessed four times now (Space, W, none, Space). Rather than spend another
     -- test round on my guess, pick it yourself - whichever one makes the move come out, tell me and it
     -- becomes the default. Down Slam is not affected by this at all.
@@ -13732,6 +14038,46 @@ do
     askSec:Toggle({ Name = "Skill 4", Callback = function(b) if SkillsApi then SkillsApi.setKey(4, b) end end })
     askSec:Toggle({ Name = "Special R", Callback = function(b) if SkillsApi then SkillsApi.setKey(5, b) end end })
     askSec:Toggle({ Name = "Awakening G", Callback = function(b) if SkillsApi then SkillsApi.setKey(6, b) end end })
+    local charSec = autoSub:Section({ Name = "Character", Side = 2 })
+    pcall(function() charSec:Label("Names are read from the game's own service list. 'Switch Now' force resets you and picks the character.") end)
+    do
+        -- ═══ THIS FLAG MUST BE LEXICAL, NOT GLOBAL ═══ It guards a one-click switch that KILLS you, and this
+        -- UI library fires a dropdown's callback once while constructing it. As a bare global it would survive
+        -- into the next execution of the hub, so re-injecting mid-fight would find a minutes-old timestamp,
+        -- decide the guard had expired, and force reset you while the menu was still building. A local is nil
+        -- on every fresh run, which is exactly the behaviour the guard is for.
+        local uiReady = nil
+        local names = { "Gojo" }
+        pcall(function() if CharSwapApi then names = CharSwapApi.names() end end)
+        if #names == 0 then names = { "Gojo" } end
+        charSec:Toggle({ Name = "Auto Character On Death", Default = false, Callback = function(b) if CharSwapApi then CharSwapApi.setDeath(b) end end })
+        local deathDD = charSec:Dropdown({ Name = "Character On Death", Items = names, Default = names[1], Callback = function(v) if CharSwapApi then CharSwapApi.setDeathChar(v) end end })
+        pcall(function() if CharSwapApi then CharSwapApi.setDeathChar(names[1]) end end)   -- the UI lib does not always fire the build-time callback
+        local pick = names[1]
+        local switchDD = charSec:Dropdown({ Name = "Switch To", Items = names, Default = names[1], Callback = function(v)
+            v = (type(v) == "table") and v[1] or v
+            if type(v) ~= "string" then return end
+            pick = v
+            -- One-click switch, as asked - but NEVER during the first few seconds. Several UI libs fire a
+            -- dropdown's callback once while building it, and without this guard simply opening the hub would
+            -- force reset you on the spot.
+            if uiReady and tick() - uiReady > 3 and CharSwapApi then CharSwapApi.switchNow(v) end
+        end })
+        charSec:Button({ Name = "Switch Now (force reset)", Callback = function() if CharSwapApi then CharSwapApi.switchNow(pick) end end })
+        charSec:Button({ Name = "Refresh Character List", Callback = function()
+            local fresh = (CharSwapApi and CharSwapApi.names()) or names
+            if #fresh == 0 then return end
+            names = fresh
+            -- Refresh re-applies the default on some UI backends, which would re-enter the switch callback.
+            -- Close the window for a beat so a list refresh can never reset you.
+            uiReady = tick()
+            pcall(function() if deathDD and deathDD.Refresh then deathDD:Refresh(fresh) end end)
+            pcall(function() if switchDD and switchDD.Refresh then switchDD:Refresh(fresh) end end)
+            if VX_NOTIFY then VX_NOTIFY("Characters: " .. #fresh .. " found", true) end
+        end })
+        uiReady = tick()   -- everything above is built; the one-click switch is armed 3s from now
+    end
+
     local auSec = autoSub:Section({ Name = "Auto Utility", Side = 2 })
     auSec:Toggle({ Name = "Auto Parkour", Callback = function(b) if ParkourApi then ParkourApi.set(b) end end })
     auSec:Toggle({ Name = "Auto QTE Click (Higuruma Final Judgment)", Callback = function(b) if AutoQTEApi then AutoQTEApi.set(b) end end })
@@ -13772,45 +14118,6 @@ do
     swapSec:Slider({ Name = "Perfect Swap Delay", Min = 0, Max = 0.6, Default = 0.12, Decimals = 0.01, Suffix = "s", Callback = function(v) if TodoApi then TodoApi.setPerfectDelay(v) end end })
     swapSec:Button({ Name = "Swap Now", Callback = function() if TodoApi then TodoApi.swapNow() end end })
 
-    local charSec = totalSub:Section({ Name = "Character", Side = 2 })
-    pcall(function() charSec:Label("Names are read from the game's own service list. 'Switch Now' force resets you and picks the character.") end)
-    do
-        -- ═══ THIS FLAG MUST BE LEXICAL, NOT GLOBAL ═══ It guards a one-click switch that KILLS you, and this
-        -- UI library fires a dropdown's callback once while constructing it. As a bare global it would survive
-        -- into the next execution of the hub, so re-injecting mid-fight would find a minutes-old timestamp,
-        -- decide the guard had expired, and force reset you while the menu was still building. A local is nil
-        -- on every fresh run, which is exactly the behaviour the guard is for.
-        local uiReady = nil
-        local names = { "Gojo" }
-        pcall(function() if CharSwapApi then names = CharSwapApi.names() end end)
-        if #names == 0 then names = { "Gojo" } end
-        charSec:Toggle({ Name = "Auto Character On Death", Default = false, Callback = function(b) if CharSwapApi then CharSwapApi.setDeath(b) end end })
-        local deathDD = charSec:Dropdown({ Name = "Character On Death", Items = names, Default = names[1], Callback = function(v) if CharSwapApi then CharSwapApi.setDeathChar(v) end end })
-        pcall(function() if CharSwapApi then CharSwapApi.setDeathChar(names[1]) end end)   -- the UI lib does not always fire the build-time callback
-        local pick = names[1]
-        local switchDD = charSec:Dropdown({ Name = "Switch To", Items = names, Default = names[1], Callback = function(v)
-            v = (type(v) == "table") and v[1] or v
-            if type(v) ~= "string" then return end
-            pick = v
-            -- One-click switch, as asked - but NEVER during the first few seconds. Several UI libs fire a
-            -- dropdown's callback once while building it, and without this guard simply opening the hub would
-            -- force reset you on the spot.
-            if uiReady and tick() - uiReady > 3 and CharSwapApi then CharSwapApi.switchNow(v) end
-        end })
-        charSec:Button({ Name = "Switch Now (force reset)", Callback = function() if CharSwapApi then CharSwapApi.switchNow(pick) end end })
-        charSec:Button({ Name = "Refresh Character List", Callback = function()
-            local fresh = (CharSwapApi and CharSwapApi.names()) or names
-            if #fresh == 0 then return end
-            names = fresh
-            -- Refresh re-applies the default on some UI backends, which would re-enter the switch callback.
-            -- Close the window for a beat so a list refresh can never reset you.
-            uiReady = tick()
-            pcall(function() if deathDD and deathDD.Refresh then deathDD:Refresh(fresh) end end)
-            pcall(function() if switchDD and switchDD.Refresh then switchDD:Refresh(fresh) end end)
-            if VX_NOTIFY then VX_NOTIFY("Characters: " .. #fresh .. " found", true) end
-        end })
-        uiReady = tick()   -- everything above is built; the one-click switch is armed 3s from now
-    end
 
     -- ===================== TARGET (type a username -> act on that player) =====================
     local TargetPage = Window:Page({ Name = "Target", Icon = "crosshair" })
