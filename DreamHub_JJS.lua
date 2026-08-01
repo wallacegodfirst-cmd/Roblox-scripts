@@ -4331,23 +4331,17 @@ do
         task.wait(0.07)
         if not tpBehind(t) then R.bfActive = false; return end
         faceBackOf(t)
-        R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
-        task.wait(0.12)                                   -- let the dash settle before we test the distance
-        -- ═══ THE SAME RECIPE TELEPORT USES ═══ Teleport is the one mode that reliably flashes, and the only
-        -- thing it does differently is re-place you on the spine on the beat BEFORE the swing. The dash modes
-        -- placed you once and then waited 0.12s+, and in that window the target turns, walks off, or the
-        -- server nudges you - so the swing left from beside them and never became a flash.
-        -- arrivedAt is now only a settle-wait (it returns the instant you are inside M1 reach). tpBehind is
-        -- the real guarantee: it puts you on the spine AND refuses on its own when the target is genuinely
-        -- out of DashRange, so we still never blink across the map - but a mode can no longer dash correctly
-        -- and then silently decline to flash, which is exactly what you were seeing.
-        arrivedAt(t, 0.5)
-        if not tpBehind(t) then
-            if _G.VX_BF_DEBUG then print("[DreamHub BF] target out of range at the swing - not flashing") end
-            R.bfActive = false
-            return
-        end
+        -- ═══ THE TELEPORT TAIL, VERBATIM ═══ Teleport is the one arc-free mode and the one that flashes,
+        -- so every mode now ends with ITS exact ending: place on the spine, one beat, re-place, swing. The
+        -- old arrivedAt wait (up to 0.5s) and the 0.12 settle are gone - that window is where targets walked
+        -- out of the flash - and collisions are force-restored first, because the orbit turns them off and
+        -- Teleport never has them off when it swings.
+        pcall(lockClipOn)                                 -- the arc drops collisions; Teleport never has them off
+        if not tpBehind(t) then R.bfActive = false; return end
         faceBackOf(t)
+        R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
+        task.wait(0.06)
+        tpBehind(t); faceBackOf(t)
         m1ThenBF()
         task.delay(0.3, function() R.bfActive = false end); status("BF Jump Chain")
     end
@@ -4369,23 +4363,17 @@ do
         -- 0.12s later. Three movements for one dash: arc, blink, blink. That stutter is the weirdness. The arc
         -- lands you behind them on its own; the single placement on the beat before the swing (below) is all
         -- the correction it needs, and it happens close enough to the swing that they cannot turn out of it.
-        R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
-        task.wait(0.12)                                   -- let the dash settle before we test the distance
-        -- ═══ THE SAME RECIPE TELEPORT USES ═══ Teleport is the one mode that reliably flashes, and the only
-        -- thing it does differently is re-place you on the spine on the beat BEFORE the swing. The dash modes
-        -- placed you once and then waited 0.12s+, and in that window the target turns, walks off, or the
-        -- server nudges you - so the swing left from beside them and never became a flash.
-        -- arrivedAt is now only a settle-wait (it returns the instant you are inside M1 reach). tpBehind is
-        -- the real guarantee: it puts you on the spine AND refuses on its own when the target is genuinely
-        -- out of DashRange, so we still never blink across the map - but a mode can no longer dash correctly
-        -- and then silently decline to flash, which is exactly what you were seeing.
-        arrivedAt(t, 0.5)
-        if not tpBehind(t) then
-            if _G.VX_BF_DEBUG then print("[DreamHub BF] target out of range at the swing - not flashing") end
-            R.bfActive = false
-            return
-        end
+        -- ═══ THE TELEPORT TAIL, VERBATIM ═══ Teleport is the one arc-free mode and the one that flashes,
+        -- so every mode now ends with ITS exact ending: place on the spine, one beat, re-place, swing. The
+        -- old arrivedAt wait (up to 0.5s) and the 0.12 settle are gone - that window is where targets walked
+        -- out of the flash - and collisions are force-restored first, because the orbit turns them off and
+        -- Teleport never has them off when it swings.
+        pcall(lockClipOn)                                 -- the arc drops collisions; Teleport never has them off
+        if not tpBehind(t) then R.bfActive = false; return end
         faceBackOf(t)
+        R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
+        task.wait(0.06)
+        tpBehind(t); faceBackOf(t)
         m1ThenBF()
         task.delay(0.3, function() R.bfActive = false end); status("BF Side Chain")
     end
@@ -4424,26 +4412,15 @@ do
         -- no dash-recovery state, so the M1 that follows is accepted.
         local sweep = facingMe and (math.pi * 0.9) or (math.pi * 0.3)
         dashToBack(t, { duration = 0.30, extraSweep = sweep, endRadius = 4.6, endBias = 0, noKey = true })
+        pcall(lockClipOn)                                 -- the arc drops collisions; Teleport never has them off
+        if not tpBehind(t) then R.bfActive = false; return end
         faceBackOf(t)
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.0
-        -- ═══ THE SAME RECIPE TELEPORT USES ═══ Teleport is the one mode that reliably flashes, and the only
-        -- thing it does differently is re-place you on the spine on the beat BEFORE the swing. The dash modes
-        -- placed you once and then waited 0.12s+, and in that window the target turns, walks off, or the
-        -- server nudges you - so the swing left from beside them and never became a flash.
-        -- arrivedAt is now only a settle-wait (it returns the instant you are inside M1 reach). tpBehind is
-        -- the real guarantee: it puts you on the spine AND refuses on its own when the target is genuinely
-        -- out of DashRange, so we still never blink across the map - but a mode can no longer dash correctly
-        -- and then silently decline to flash, which is exactly what you were seeing.
-        arrivedAt(t, 0.5)
-        if not tpBehind(t) then
-            if _G.VX_BF_DEBUG then print("[DreamHub BF] target out of range at the swing - not flashing") end
-            R.bfActive = false
-            return
-        end
-        faceBackOf(t)
+        task.wait(0.06)
+        tpBehind(t); faceBackOf(t)
         m1ThenBF()
         task.delay(0.3, function() R.bfActive = false end)
-        status("BF Back Chain")   -- the dash shape now comes from the facing check, not from alternation
+        status("BF Back Chain")
     end
     -- ═══ ENGAGEMENT RANGE ═══ The chain may only ever act on someone you are ALREADY fighting. DashRange (80)
     -- is the ranged-search radius for the assist keys; using it here is what made one M1 glide you across the
@@ -5785,6 +5762,19 @@ do
 				end
 				State.lastDown = 0            -- this is a deliberate, one-off slam: do not let the combo gate eat it
 				State.slamDone = false        -- and it is not the auto-combo's slam, so it does not consume that latch
+				-- ═══ A DOWN SLAM IS AN AIR M1 ═══ In the auto-combo path the M1 already exists - YOU are
+				-- swinging - and the remote names the direction for it. The assists had no M1 at all, which is
+				-- "it need to hit them": the remote went out with no strike to ride on. Throw the air M1 here,
+				-- on the same beat as the remote, marked as ours.
+				pcall(function()
+					_G.VX_SYNTH_CLICK = tick() + 0.25
+					_G.VX_LAST_HUMAN_CLICK = tick()   -- it must COUNT as a swing (the engine and combo read this)
+					local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
+					local cx, cy = (vp and vp.X / 2) or 400, (vp and vp.Y / 2) or 300
+					VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+					task.wait(0.03)
+					VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+				end)
 				doSlam("requested by another feature")
 			end)
 		end,
@@ -7731,7 +7721,18 @@ do
 	end)
 	FlightGameApi = {
 		set     = function(v) on = v == true
-			if on and VX_NOTIFY then VX_NOTIFY("Flight game: watching the screen - press E at the arcade", true) end end,
+			if on then
+				-- Report what the eyes actually found, immediately - "auto play dont work" with nothing on
+				-- screen has cost three rounds already.
+				task.spawn(function()
+					task.wait(0.5)
+					local scr = deviceGui()
+					local re = deviceRemote()
+					local msg = "Flight: screen=" .. (scr and scr.Name or "NOT FOUND") .. " remote=" .. (re and "ok" or "MISSING")
+					print("[DreamHub Flight] " .. msg .. (scr and ("  (" .. scr:GetFullName() .. ")") or ""))
+					if VX_NOTIFY then VX_NOTIFY(msg, re ~= nil) end
+				end)
+			end end,
 		setRate = function(v) minGap = math.clamp(tonumber(v) or minGap, 0.05, 1.2) end,   -- now the MINIMUM gap between flaps
 		flap    = flap,
 		count   = function() return fired end,
@@ -7816,6 +7817,108 @@ do
 		grabNow  = function() local o = nearestThrowable(); if o then return grab(o) end
 			if VX_NOTIFY then VX_NOTIFY("Nothing throwable within " .. range .. " studs", false) end return false end,
 	}
+end
+
+-- ============================================================
+-- MODULE: SOUL COMBO ASSIST  ("Mahito assist" - Essence of the Soul)
+-- "when they press 1 (Stockpile), it will aim the camera up, press 3 (Focus Strike), then dash to the
+--  target, extend the combo." Both remotes are the captures verbatim, resolved through _G.VX_CAST_MOVE
+-- (Stockpile -> StockpileService, Focus Strike -> FocusStrikeService), so nothing is guessed. Focus Strike
+-- fires where the camera points - aiming up first is what launches them for the extension.
+-- ============================================================
+do
+	local Players = game:GetService("Players")
+	local VIM = game:GetService("VirtualInputManager")
+	local LP = Players.LocalPlayer
+	local on, running = false, false
+	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
+	local function myHRP() local m = myModel(); return m and m:FindFirstChild("HumanoidRootPart") end
+	local function norm(x) return (string.gsub(string.lower(tostring(x or "")), "[^%a%d]", "")) end
+	local function haveMoves()
+		for _, c in ipairs({ myModel(), LP.Character }) do
+			local mv = c and c:FindFirstChild("Moveset")
+			if mv then
+				local st, fs = false, false
+				for _, m in ipairs(mv:GetChildren()) do
+					local n = norm(m.Name)
+					if n == "stockpile" then st = true elseif n == "focusstrike" then fs = true end
+				end
+				if st and fs then return true end
+			end
+		end
+		return false
+	end
+	local function nearest()
+		local hrp = myHRP(); if not hrp then return nil end
+		local g = _G.VX_LOCK; local lt = (g and g.get) and g.get() or nil
+		if lt and lt.Parent then return lt end
+		local best, bd
+		local chs = workspace:FindFirstChild("Characters")
+		if chs then for _, m in ipairs(chs:GetChildren()) do
+			if m.Name ~= LP.Name and m ~= myModel() then
+				local r = m:FindFirstChild("HumanoidRootPart"); local h = m:FindFirstChildOfClass("Humanoid")
+				if r and (not h or h.Health > 0) then
+					local d = (r.Position - hrp.Position).Magnitude
+					if not bd or d < bd then best, bd = m, d end
+				end
+			end
+		end end
+		return best
+	end
+	local function aimUp()
+		pcall(function()
+			local cam = workspace.CurrentCamera; if not cam then return end
+			local pos = cam.CFrame.Position
+			local flat = cam.CFrame.LookVector
+			flat = Vector3.new(flat.X, 0, flat.Z)
+			if flat.Magnitude < 0.05 then flat = Vector3.new(0, 0, -1) end
+			-- steeply up, keeping your horizontal facing: Focus Strike goes where the camera looks
+			cam.CFrame = CFrame.lookAt(pos, pos + (flat.Unit + Vector3.new(0, 1.6, 0)))
+		end)
+	end
+	local function sequence()
+		if running then return end
+		running = true
+		task.delay(3, function() running = false end)
+		task.spawn(function()
+			local t = nearest()
+			-- 1) your Stockpile is already casting (you pressed the real 1). Give it a beat to commit.
+			task.wait(0.20)
+			-- 2) camera UP, then Focus Strike - it follows the camera, which is the whole trick
+			aimUp()
+			task.wait(0.06)
+			local ok = _G.VX_CAST_MOVE and _G.VX_CAST_MOVE("Focus Strike") or false
+			if not ok then print("[DreamHub Soul] Focus Strike remote not found (send me this)") end
+			-- 3) dash to the target and extend: one held press = a real combo string, not tap-spam
+			task.wait(0.30)
+			if t and t.Parent and _G.VXBF2 and _G.VXBF2.doSide then pcall(_G.VXBF2.doSide) end
+			task.wait(0.26)
+			pcall(function()
+				local r = t and t:FindFirstChild("HumanoidRootPart"); local hrp = myHRP()
+				if r and hrp then hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(r.Position.X, hrp.Position.Y, r.Position.Z)) end
+			end)
+			local dur = 0.12 + 2 * 0.35            -- three swings
+			_G.VX_SYNTH_CLICK = tick() + dur + 0.25
+			local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
+			local cx, cy = (vp and vp.X / 2) or 400, (vp and vp.Y / 2) or 300
+			pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0) end)
+			local t0 = tick()
+			while tick() - t0 < dur do _G.VX_SYNTH_CLICK = tick() + 0.25; _G.VX_LAST_HUMAN_CLICK = tick(); task.wait(0.05) end
+			pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0) end)
+			running = false
+		end)
+	end
+	if _G.VX_ON_KEY then
+		_G.VX_ON_KEY("soulcombo", function(kc)
+			if not on or kc ~= Enum.KeyCode.One then return end
+			local injK = _G.VX_INJ_KEYS
+			if injK and injK[kc] and tick() < injK[kc] then return end
+			if not haveMoves() then return end
+			print("[DreamHub Soul] Stockpile seen - aiming up, Focus Strike, dash, extend")
+			sequence()
+		end)
+	end
+	SoulComboApi = { set = function(v) on = v == true end, now = sequence }
 end
 
 -- ============================================================
@@ -7955,13 +8058,15 @@ do
 				if which == "Up" then upNow() else slamNow() end
 				return
 			end
-			-- FAR: close the gap the way you described - side dash in, three M1s, then the finisher.
-			busyUntil = tick() + 2.5
+			-- ═══ FAR: HIT THEM WHILE THEY SLIDE ═══ "if they are far away, it must hit them while they
+			-- dashing, like legit." A ragdolled body slides; waiting through three M1s let them stop and
+			-- stand. So: dash in immediately, one swing to connect, and the finisher goes out WHILE they are
+			-- still moving - which is when it reads as a real chase-down.
+			busyUntil = tick() + 2.0
 			if _G.VXBF2 and _G.VXBF2.doSide then pcall(_G.VXBF2.doSide) end
-			task.wait(0.22)
+			task.wait(0.28)
 			faceAt(t)
-			holdM1(3)          -- one held press = three swings; three taps only ever landed the first
-			task.wait(0.12)
+			holdM1(1)          -- one connecting swing, held just long enough to register
 			faceAt(t)
 			if which == "Up" then upNow() else slamNow() end
 		end)
@@ -15338,6 +15443,8 @@ do
     -- GOJO TWOFOLD KICK: press 2 -> kick -> 3 M1s -> down slam once they hit the floor. Free / VIP / PLUS.
     acSec:Toggle({ Name = "Twofold Kick Assist (press 4 -> quick slam)", Default = false, Callback = function(b) if TwofoldApi then TwofoldApi.set(b) end end })
     acSec:Button({ Name = "Twofold Now", Callback = function() if TwofoldApi then TwofoldApi.now() end end })
+    -- SOUL COMBO ("Mahito assist"): press 1 (Stockpile) -> camera up + Focus Strike -> dash in -> extend.
+    acSec:Toggle({ Name = "Soul Combo (1 -> aim up + 3 -> dash)", Default = false, Callback = function(b) if SoulComboApi then SoulComboApi.set(b) end end })
     -- AUTO HAKARI: Reserve Balls + Shutter Doors on the same beat. Both remotes verbatim from the captures;
     -- neither service name is guessed - they are derived from the move names.
     acSec:Toggle({ Name = "Auto Hakari (1 + 2 together)", Default = false, Callback = function(b) if HakariApi then HakariApi.set(b) end end })
