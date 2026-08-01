@@ -29,6 +29,10 @@
 -- Tier: FREE unless you already set one above. Same trimmed feature set as the public free build,
 -- so what you test here is what your users will get when you release.
 if not (_G.JJS_PLUS or _G.JJS_PLUSS or _G.JJS_PREMIUM or _G.JJS_PREM) then _G.JJS_FREE = true end
+-- ═══ UPDATE-CHANNEL MARKER ═══ The dev build hides everything still in testing unless this is set.
+-- Only the three UPDATE loaders set it - so anyone who saved the OLD one-liner that pointed straight
+-- at DreamHub_JJS.lua gets the dev file WITHOUT the unreleased features, instead of a free preview.
+_G.__DreamUpdateChannel = true
 _G.__DreamReportWebhook = _G.__DreamReportWebhook or ("https://discord.com/api/webhooks/1527849806108692500/".."Ryczyznv3EQVLJF_Y-AYsMqhK".."_fvBC5T3wu2d1uO5BBmSgMARN0_hST5vRRlzQZHkLyg")   -- bug reports land in your Discord
 
 -- ═══════════════════════════════════════════════════════════

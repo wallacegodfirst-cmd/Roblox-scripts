@@ -28,6 +28,10 @@
 -- previous FREE or PLUS run cannot bleed into this one.
 _G.JJS_FREE, _G.JJS_PLUS, _G.JJS_PLUSS, _G.JJS_PREMIUM, _G.JJS_PREM = nil, nil, nil, nil, nil
 _G.JJS_PREMIUM = true
+-- ═══ UPDATE-CHANNEL MARKER ═══ The dev build hides everything still in testing unless this is set.
+-- Only the three UPDATE loaders set it - so anyone who saved the OLD one-liner that pointed straight
+-- at DreamHub_JJS.lua gets the dev file WITHOUT the unreleased features, instead of a free preview.
+_G.__DreamUpdateChannel = true
 _G.__DreamReportWebhook = _G.__DreamReportWebhook or ("https://discord.com/api/webhooks/1527849806108692500/".."Ryczyznv3EQVLJF_Y-AYsMqhK".."_fvBC5T3wu2d1uO5BBmSgMARN0_hST5vRRlzQZHkLyg")   -- bug reports land in your Discord
 
 -- ═══════════════════════════════════════════════════════════

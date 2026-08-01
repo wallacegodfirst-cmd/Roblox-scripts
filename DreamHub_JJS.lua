@@ -104,6 +104,12 @@ do
 	-- CONSUME them: _G survives between executions, so a flag from an earlier run would otherwise keep
 	-- overriding the one you set for THIS run (running FREE after PLUS gave you PLUS, and vice versa).
 	_G.JJS_PLUS, _G.JJS_PLUSS, _G.JJS_PREMIUM, _G.JJS_PREM, _G.JJS_FREE = nil, nil, nil, nil, nil
+	-- UPDATE CHANNEL: set only by the DreamHub_JJS_Update*.lua loaders, consumed here like the tier flags.
+	-- "I think people can see it" - they could: the ORIGINAL free one-liner pointed straight at this dev
+	-- file, so anyone who kept it was loading every half-finished feature. Everything still in testing is
+	-- now built only when this marker (or a paid tier) is present; an old direct link gets the stable set.
+	_G.__DreamUpdateCh = _G.__DreamUpdateChannel == true
+	_G.__DreamUpdateChannel = nil
 	_G.__DreamTierKey = (_plus and "plus") or (_prem and "premium") or (_free and "free") or "full"
 	_G.__DreamTier = (_plus and "PLUS") or (_prem and "PREMIUM") or (_free and "FREE") or "FULL"
 end
@@ -14665,6 +14671,13 @@ do
     local Players = game:GetService("Players")
     local LocalPlayer = Players.LocalPlayer
     local function tier(min) local r = { free = 1, premium = 2, plus = 3 } return (r[VX_TIER] or 3) >= (r[min] or 99) end
+    -- ═══ UNRELEASED = UPDATE CHANNEL (or a paid tier) ONLY ═══ "remove the new updates from the free - I
+    -- think people can see it." They could: the ORIGINAL free one-liner pointed straight at this dev file, so
+    -- everyone who kept it was previewing every unreleased feature. The update loaders set a marker before
+    -- loading; a direct hit on this file has no marker, so a FREE direct load builds only the stable set.
+    -- Paying tiers keep everything either way.
+    local updateCh = _G.__DreamUpdateCh == true
+    local function unreleased() return updateCh or tier("premium") end
     local function playerList()
         local t = { "Nearest" }
         for _, pl in ipairs(Players:GetPlayers()) do if pl ~= LocalPlayer then t[#t + 1] = pl.Name end end
@@ -15162,6 +15175,7 @@ do
         acSec:Slider({ Name = "Assist Reach", Min = 4, Max = 40, Default = 12, Decimals = 1, Callback = function(v) if FinisherAssistApi then FinisherAssistApi.setNear(v) end end })   -- closer than this = finish now; further = dash in first
         acSec:Slider({ Name = "Assist Max Range", Min = 20, Max = 250, Default = 90, Decimals = 1, Callback = function(v) if FinisherAssistApi then FinisherAssistApi.setFar(v) end end })
     end
+    if unreleased() then   -- ═══ EVERYTHING BELOW THIS LINE (to the matching end) IS STILL IN TESTING ═══
     -- GOJO TWOFOLD KICK: press 2 -> kick -> 3 M1s -> down slam once they hit the floor. Free / VIP / PLUS.
     acSec:Toggle({ Name = "Twofold Kick Assist (2 -> 3 M1s -> slam)", Default = false, Callback = function(b) if TwofoldApi then TwofoldApi.set(b) end end })
     acSec:Button({ Name = "Twofold Now", Callback = function() if TwofoldApi then TwofoldApi.now() end end })
@@ -15206,6 +15220,7 @@ do
         _G.VX_AIR_POWER = 100
         acSec:Slider({ Name = "Air Cast Power %", Min = 50, Max = 300, Default = 100, Decimals = 1, Suffix = "%", Callback = function(v) _G.VX_AIR_POWER = math.clamp(tonumber(v) or 100, 25, 400) end })
     end
+    end   -- ═══ end of the unreleased() block ═══
     -- (The "Uppercut Key" / "Uppercut On M1 #" dropdowns are gone - you asked for it to just work. The module
     --  cycles the key itself now; the globals still exist if a build ever needs pinning by hand.)
     _G.VX_UPPER_KEY = Enum.KeyCode.Space
@@ -15244,6 +15259,7 @@ do
     askSec:Toggle({ Name = "Skill 4", Callback = function(b) if SkillsApi then SkillsApi.setKey(4, b) end end })
     askSec:Toggle({ Name = "Special R", Callback = function(b) if SkillsApi then SkillsApi.setKey(5, b) end end })
     askSec:Toggle({ Name = "Awakening G", Callback = function(b) if SkillsApi then SkillsApi.setKey(6, b) end end })
+    if unreleased() then
     local charSec = autoSub:Section({ Name = "Character", Side = 2 })
     do
         -- ═══ THIS FLAG MUST BE LEXICAL, NOT GLOBAL ═══ It guards a one-click switch that KILLS you, and this
@@ -15282,6 +15298,7 @@ do
         end })
         uiReady = tick()   -- everything above is built; the one-click switch is armed 3s from now
     end
+    end   -- end unreleased() (Character section)
 
     local auSec = autoSub:Section({ Name = "Auto Utility", Side = 2 })
     auSec:Toggle({ Name = "Auto Parkour", Callback = function(b) if ParkourApi then ParkourApi.set(b) end end })
@@ -15303,9 +15320,8 @@ do
     auSec:Toggle({ Name = "Auto Train", Callback = function(b) if TrainApi then TrainApi.setAuto(b) end end })
 
     -- ===================== TOTAL (Todo's swap) - now a sub-page of the AUTO tab =====================
-    -- Moved off its own top-level page: "put todo + this and everything new inside the auto tab".
-    -- Ungated on purpose: free, VIP and plus all get this. It lives in the UPDATE build for now, so it only
-    -- reaches your users on the next release.
+    -- Update-channel / paid only while it is in testing: the old direct free link must not see it.
+    if unreleased() then
     local totalSub = AutoPage:SubPage({ Name = "Total", Columns = 2 })
     local swapSec = totalSub:Section({ Name = "Total", Side = 1 })
     swapSec:Toggle({ Name = "Auto Swap", Default = false, Callback = function(b) if TodoApi then TodoApi.setSwap(b) end end })
@@ -15322,6 +15338,8 @@ do
     swapSec:Toggle({ Name = "Auto Perfect Swap", Default = false, Callback = function(b) if TodoApi then TodoApi.setPerfect(b) end end })
     swapSec:Slider({ Name = "Perfect Swap Delay", Min = 0, Max = 0.6, Default = 0.12, Decimals = 0.01, Suffix = "s", Callback = function(v) if TodoApi then TodoApi.setPerfectDelay(v) end end })
     swapSec:Button({ Name = "Swap Now", Callback = function() if TodoApi then TodoApi.swapNow() end end })
+
+    end   -- end unreleased() (Total sub-page)
 
     -- ===================== TARGET (type a username -> act on that player) =====================
     local TargetPage = Window:Page({ Name = "Target", Icon = "crosshair" })
