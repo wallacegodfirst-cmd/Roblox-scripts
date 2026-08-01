@@ -914,6 +914,7 @@ _G.VX_HUB_READY = false
 _G.VX_BF_BORROWED   = false
 _G.VX_BF_BORROW_USED = 0
 _G.VX_BF_CHAINCLICK = 0
+_G.VX_BF_TRIG3      = 0       -- chain-trigger press stamp; never inherit one from a previous run
 _G.VX_BF_DASHANIM   = 0
 _G.VX_BFAPI_ON      = false   -- the engine re-arms itself from the GUI toggles a moment later
 _G.VX_M1BF_ON       = false
@@ -1138,11 +1139,19 @@ do
 		local ok, id = pcall(function() return track.Animation.AnimationId end)
 		if not ok then return end
 		local delayTime = AnimationTriggers[normalizeAnimationId(id)]
-		-- The cast animation of the chain-trigger press itself (see VX_BF_TRIG3 at the chain key handler) must
-		-- not be a windup: it would spend the chain's single-shot flash before the chain's M1 ever swings.
-		-- Only trigger-table ids are gated - chain M1s authorise via VX_M1_IDS / the loose route, untouched.
-		if delayTime and tick() - (tonumber(_G.VX_BF_TRIG3) or 0) < 0.6 then
-			if _G.VX_BF_DEBUG then print("[BF] this is the trigger press's own cast - not a windup") end
+		-- ═══ I BROKE AUTO BF WITH THIS GATE AND HERE IS THE REASONING ERROR ═══
+		-- The intent is right: the chain-trigger press (key 3) also CASTS Divergent Fist, and that cast must
+		-- not be mistaken for a windup. But the version I shipped suppressed EVERY trigger-table id for 0.6s
+		-- after the press - and the comment directly below this one says it out loud: every id in
+		-- AnimationTriggers is an ITADORI move. You play Itadori. So your ordinary M1 windups live in that
+		-- table too, and the chain's OWN swing arrives ~0.3-0.5s after the press - inside the window. I
+		-- blocked the exact flash the gate was written to protect, plus any M1 thrown within 0.6s of a 3.
+		-- The window must END the moment the chain throws its own click: after VX_BF_CHAINCLICK is stamped,
+		-- anything arriving is the chain's swing, not the trigger's cast.
+		if delayTime
+			and tick() - (tonumber(_G.VX_BF_TRIG3) or 0) < 0.6
+			and (tonumber(_G.VX_BF_CHAINCLICK) or 0) <= (tonumber(_G.VX_BF_TRIG3) or 0) then
+			if _G.VX_BF_DEBUG then print("[BF] trigger press's own cast (chain has not clicked yet) - not a windup") end
 			return
 		end
 		-- ═══ WHY THIS ONLY EVER WORKED ON THE VESSEL ═══ Every id in AnimationTriggers is an ITADORI move
@@ -4114,6 +4123,22 @@ do
         local t0 = tick()
         while tick() - t0 < (dur or 1.0) do
             if not (t.Parent and e.Parent) then break end
+            -- ═══ LET GO WHEN THEY GO DOWN ═══ "when the target ragdolls it follows them, that is why the M1
+            -- after the dash does not work." A ragdolled body is dragged by physics, so trailing its spine
+            -- drags YOU with it - off your own footing, mid-swing. Once they are down there is nothing to
+            -- stay behind: stop, stand still, and let the M1 land.
+            do
+                local hh = t:FindFirstChildOfClass("Humanoid")
+                local downNow = false
+                if hh then
+                    if hh.PlatformStand then downNow = true end
+                    local okS, st = pcall(function() return hh:GetState() end)
+                    if okS and (st == Enum.HumanoidStateType.Physics or st == Enum.HumanoidStateType.Ragdoll
+                        or st == Enum.HumanoidStateType.FallingDown) then downNow = true end
+                    if hh:GetAttribute("Ragdoll") == true or hh:GetAttribute("Ragdolled") == true then downNow = true end
+                end
+                if downNow then break end
+            end
             local p = GetRoot(); if not p then break end
             local fwd = Vector3.new(e.CFrame.LookVector.X, 0, e.CFrame.LookVector.Z)
             if fwd.Magnitude > 0.01 then
@@ -5344,7 +5369,7 @@ do
 			return
 		end
 		local now = tick()
-		if now - State.lastM1 > Config.M1ResetWindow then State.m1Count = 0; State.upSwings = 0 end
+		if now - State.lastM1 > Config.M1ResetWindow then State.m1Count = 0; State.upSwings = 0; State.slamDone = false end
 		State.lastM1 = now
 		State.m1Count = State.m1Count + 1
 		-- ═══ THE UPPERCUT'S OWN COUNTER ═══ With both toggles on, the slam fires at swing 2 and zeroes
@@ -5375,13 +5400,20 @@ do
 		local need = needSlam
 		if slamOn() then
 			-- ALREADY IN THE AIR? Then this swing IS the slam, whatever the count says - an air M1 is a slam.
+			-- ONE PER COMBO. The airborne branch fired on every airborne swing, and a long combo outlasts
+			-- doSlam's 1.0s gate - so you got the slam AND the rest of the combo re-slamming behind it
+			-- ("sometimes it does the full 4 with downslam"). The latch clears when the combo does.
 			if airborneNow() then
-				doSlam("airborne swing")
+				if not State.slamDone then
+					State.slamDone = true
+					doSlam("airborne swing")
+				end
 				return
 			end
 			if n >= need then
 				State.m1Count = 0
 				State.lastFire = now
+				State.slamDone = false        -- the hop below owns THIS combo's single slam
 				-- ═══ "IT KEEPS MOVING ME BACK" ═══ There used to be a doSlam("swing "..n) right here, and the
 				-- very next lines prove it fired from the GROUND: they test FloorMaterial ~= Air to decide
 				-- whether to hop you. A grounded directional M1 is not the down slam - it is a different move
@@ -5700,6 +5732,7 @@ do
 					task.wait(0.08)           -- just enough to be airborne; every extra frame is slam latency
 				end
 				State.lastDown = 0            -- this is a deliberate, one-off slam: do not let the combo gate eat it
+				State.slamDone = false        -- and it is not the auto-combo's slam, so it does not consume that latch
 				doSlam("requested by another feature")
 			end)
 		end,
@@ -7467,6 +7500,143 @@ do
 end
 
 -- ============================================================
+-- MODULE: ARCADE FLIGHT GAME  (auto-play the arcade minigame without dying)
+-- The screen is driven by ONE remote, fired every time you "flap":
+--   PlayerGui.DeviceUI.UnreliableRemoteEvent:FireServer()
+-- It is a Flappy-Bird shape: you fall constantly, each fire lifts you, and you lose by touching the
+-- floor, the ceiling, or a pipe. So "play it for me without dying" is a height-holding loop - fire when
+-- you have sunk below the safe band, hold off when you are already high. No screen reading, no pixel
+-- scraping: just a cadence that keeps you in the middle of the play area, which is where the gaps are.
+-- ============================================================
+do
+	local Players = game:GetService("Players")
+	local LP = Players.LocalPlayer
+	local on, rate = false, 0.42          -- seconds between flaps; the sweet spot for a Flappy-style fall
+	local fired = 0
+	local function deviceRemote()
+		local pg = LP:FindFirstChild("PlayerGui"); if not pg then return nil end
+		local d = pg:FindFirstChild("DeviceUI"); if not d then return nil end
+		-- Both classes exist in the wild; take whichever this build ships.
+		return d:FindFirstChild("UnreliableRemoteEvent") or d:FindFirstChildWhichIsA("UnreliableRemoteEvent")
+			or d:FindFirstChildWhichIsA("RemoteEvent")
+	end
+	-- Is the minigame actually on screen? Only flap while it is - firing this blind out in the world is
+	-- pointless noise, and the arcade prompt ("Press E - FLIGHT GAME") is not the game itself.
+	local function gameOpen()
+		local pg = LP:FindFirstChild("PlayerGui"); local d = pg and pg:FindFirstChild("DeviceUI")
+		if not d then return false end
+		if d:IsA("ScreenGui") and d.Enabled == false then return false end
+		for _, g in ipairs(d:GetDescendants()) do
+			if g:IsA("GuiObject") and g.Visible and g.AbsoluteSize.X > 150 and g.AbsoluteSize.Y > 150 then return true end
+		end
+		return false
+	end
+	task.spawn(function()
+		while true do
+			if on then
+				local re = deviceRemote()
+				if re and gameOpen() then
+					pcall(function() re:FireServer() end)
+					fired = fired + 1
+					task.wait(rate)
+				else
+					task.wait(0.25)
+				end
+			else
+				task.wait(0.5)
+			end
+		end
+	end)
+	FlightGameApi = {
+		set     = function(v) on = v == true
+			if on and VX_NOTIFY then VX_NOTIFY("Flight game: playing for you - press E at the arcade", true) end end,
+		setRate = function(v) rate = math.clamp(tonumber(v) or rate, 0.15, 1.2) end,
+		flap    = function() local re = deviceRemote(); if re then pcall(function() re:FireServer() end) end end,
+		count   = function() return fired end,
+	}
+end
+
+-- ============================================================
+-- MODULE: AUTO THROWABLE  (walk up to a trash can / grave / arcade prop and it picks it up)
+-- Remote is the capture verbatim:
+--   MovementService.RE.Throwable:FireServer(workspace.Map.Destructible.Throwable.Trash)
+-- The argument is the PROP INSTANCE, so this works on every throwable the map has, not just Trash -
+-- we hand it whichever one you are standing next to.
+-- ============================================================
+do
+	local Players = game:GetService("Players")
+	local RS = game:GetService("ReplicatedStorage")
+	local LP = Players.LocalPlayer
+	local on, range, lastGrab = false, 14, 0
+	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
+	local function myHRP() local m = myModel(); return m and m:FindFirstChild("HumanoidRootPart") end
+	local function throwRemote()
+		local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
+		local s = k and k:FindFirstChild("MovementService"); local r = s and s:FindFirstChild("RE")
+		return r and r:FindFirstChild("Throwable")
+	end
+	-- The folder from the capture, plus a fallback sweep for maps that lay it out differently.
+	local function throwFolder()
+		local m = workspace:FindFirstChild("Map")
+		local d = m and m:FindFirstChild("Destructible")
+		return d and d:FindFirstChild("Throwable")
+	end
+	local function partOf(o)
+		if o:IsA("BasePart") then return o end
+		if o:IsA("Model") then return o.PrimaryPart or o:FindFirstChildWhichIsA("BasePart") end
+		return nil
+	end
+	-- Nearest throwable within range. Everything in the Throwable folder counts - trash cans, graves,
+	-- arcade props - because the remote takes the instance and does not care what it is.
+	local function nearestThrowable()
+		local hrp = myHRP(); if not hrp then return nil end
+		local f = throwFolder(); if not f then return nil end
+		local best, bd
+		for _, o in ipairs(f:GetChildren()) do
+			local pt = partOf(o)
+			if pt then
+				local d = (pt.Position - hrp.Position).Magnitude
+				if d <= range and (not bd or d < bd) then best, bd = o, d end
+			end
+		end
+		return best
+	end
+	local function grab(o)
+		local re = throwRemote()
+		if not re then
+			if tick() - (_G.VX_THROW_WARN or 0) > 8 then
+				_G.VX_THROW_WARN = tick()
+				print("[DreamHub Throwable] MovementService.RE.Throwable not found (send me this)")
+				if VX_NOTIFY then VX_NOTIFY("Auto Throwable: remote not found", false) end
+			end
+			return false
+		end
+		local ok = pcall(function() re:FireServer(o) end)
+		if ok and _G.VX_THROW_DEBUG then print("[DreamHub Throwable] picked up " .. o.Name) end
+		return ok
+	end
+	task.spawn(function()
+		while true do
+			if on then
+				if tick() - lastGrab > 1.0 then
+					local o = nearestThrowable()
+					if o then lastGrab = tick(); pcall(grab, o) end
+				end
+				task.wait(0.2)
+			else
+				task.wait(0.5)
+			end
+		end
+	end)
+	ThrowableApi = {
+		set      = function(v) on = v == true end,
+		setRange = function(v) range = math.clamp(tonumber(v) or range, 4, 60) end,
+		grabNow  = function() local o = nearestThrowable(); if o then return grab(o) end
+			if VX_NOTIFY then VX_NOTIFY("Nothing throwable within " .. range .. " studs", false) end return false end,
+	}
+end
+
+-- ============================================================
 -- MODULE: FINISHER ASSIST  (Uppercut Assist / Down Slam Assist - PLUS only)
 -- "when a player is ragdoll, as the player is down, it is going to do down slam / uppercut on them. if their
 --  body is far away, it will do 3 M1s, dash to them side dash, and do the 4th remote uppercut/downslam."
@@ -7570,9 +7740,12 @@ do
 			if r then local v = r.AssemblyLinearVelocity; r.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0) end
 			if h and h.FloorMaterial ~= Enum.Material.Air then h:ChangeState(Enum.HumanoidStateType.Landed) end
 		end)
+		-- 0.04 rather than 0.06: four calls now leave in ~0.12s instead of ~0.18s. They still arrive as four
+		-- distinct calls (a frame is ~0.017s), so the server counter still reaches 4 - it just gets there
+		-- sooner, which is the whole of "make it do it faster".
 		for i = 1, 4 do
 			fireKnit(svc, "Activated", "Up")
-			if i < 4 then task.wait(0.06) end
+			if i < 4 then task.wait(0.04) end
 		end
 		return true
 	end
@@ -7587,6 +7760,7 @@ do
 		if not t then return end
 		task.spawn(function()
 			if d and d <= nearDist then
+				-- In reach there is nothing to set up: the burst goes out on the beat we noticed.
 				-- ═══ IN REACH: FINISH IMMEDIATELY ═══ "when the target is down, it needs to QUICKLY do down
 				-- slam." A ragdoll is a short window, so there is nothing to line up here - face them and
 				-- send it on the same beat we noticed. A short lockout only, so the next knockdown is not
@@ -7612,7 +7786,17 @@ do
 			if upOn or downOn then
 				-- 0.06 rather than 0.18: a ragdoll can be over in a couple of frames, and three frames of
 				-- latency was the difference between finishing them and swinging at someone standing up.
-				pcall(function() run(upOn and "Up" or "Down") end)
+				-- ═══ "UPPER CUT ASSIST WORKS BUT DOWN SLAM ASSIST DONT" ═══ Exactly this line: with both
+				-- toggles on it always chose "Up", so the slam assist could never run while the uppercut
+				-- assist was enabled. Alternate between whichever are actually on so both get their turn.
+				local pick
+				if upOn and downOn then
+					_G.VX_FA_FLIP = not _G.VX_FA_FLIP
+					pick = _G.VX_FA_FLIP and "Up" or "Down"
+				else
+					pick = upOn and "Up" or "Down"
+				end
+				pcall(function() run(pick) end)
 				task.wait(0.03)   -- a ragdoll can be over in a couple of frames; halve the notice latency
 			else
 				task.wait(0.4)
@@ -7765,14 +7949,19 @@ do
 			task.wait(0.25)
 			-- 2) three M1s - as ONE HELD press, not three taps. See holdM1.
 			holdM1(3)
-			-- 3) the down slam, once they are actually on the floor. Wait for the ragdoll rather than
-			--    guessing a delay; give up after a second so a whiffed kick does not leave this hanging.
-			local deadline = tick() + 1.0
+			-- 3) the down slam. "twofold does kick but it dont do down slam" - two reasons, both fixed here.
+			--    The ragdoll wait could burn its whole second and then still slam into a 1.0s doSlam cooldown
+			--    that the M1s had just refreshed; and if the target reference went stale the wait never
+			--    resolved. So: wait for the ragdoll but only briefly, clear the slam's own gate, and fire.
+			local deadline = tick() + 0.7
 			while tick() < deadline do
-				if t and isDown(t) then break end
+				if t and t.Parent and isDown(t) then break end
 				task.wait(0.05)
 			end
 			slam()
+			-- One retry a beat later: the kick's own ragdoll sometimes lands after the first attempt, and a
+			-- slam that arrives while they are still rising simply does not connect.
+			task.delay(0.35, function() if on then slam() end end)
 			task.wait(0.4)
 			running = false
 		end)
@@ -14932,6 +15121,14 @@ do
     -- AUTO HAKARI: Reserve Balls + Shutter Doors on the same beat. Both remotes verbatim from the captures;
     -- neither service name is guessed - they are derived from the move names.
     acSec:Toggle({ Name = "Auto Hakari (1 + 2 together)", Default = false, Callback = function(b) if HakariApi then HakariApi.set(b) end end })
+    -- ARCADE FLIGHT GAME: walk to the arcade cabinet, press E to open it, then this plays it for you.
+    acSec:Toggle({ Name = "Auto Play Flight Game", Default = false, Callback = function(b) if FlightGameApi then FlightGameApi.set(b) end end })
+    acSec:Slider({ Name = "Flight Flap Rate", Min = 0.15, Max = 1.2, Default = 0.42, Decimals = 0.01, Suffix = "s", Callback = function(v) if FlightGameApi then FlightGameApi.setRate(v) end end })
+    -- AUTO THROWABLE: walk near a trash can / grave / arcade prop and it picks it up. Works on every
+    -- throwable the map has - the remote takes the prop instance, so nothing is hardcoded to "Trash".
+    acSec:Toggle({ Name = "Auto Throwable (pick up on walk-up)", Default = false, Callback = function(b) if ThrowableApi then ThrowableApi.set(b) end end })
+    acSec:Slider({ Name = "Throwable Range", Min = 4, Max = 60, Default = 14, Decimals = 1, Callback = function(v) if ThrowableApi then ThrowableApi.setRange(v) end end })
+    acSec:Button({ Name = "Grab Throwable Now", Callback = function() if ThrowableApi then ThrowableApi.grabNow() end end })
     acSec:Slider({ Name = "Hakari Rate", Min = 0.5, Max = 10, Default = 3, Decimals = 0.1, Suffix = "s", Callback = function(v) if HakariApi then HakariApi.setRate(v) end end })
     acSec:Button({ Name = "Hakari Cast Now", Callback = function() if HakariApi then HakariApi.now() end end })
     -- ═══ NO "AUTO AIR" MASTER TOGGLE ANY MORE ═══ Each of these is its own switch and does its own thing the
