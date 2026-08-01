@@ -2551,7 +2551,9 @@ local function safeTeleport(targetCFrame, holdTime)
 							cc:PivotTo(CFrame.new(p) * rot)   -- PivotTo: moves the whole model coherently, not just the root
 							-- MATCHING velocity: this is the whole point. Position moved, so momentum must
 							-- agree with it, otherwise the move is physically impossible and gets reverted.
-							hh.AssemblyLinearVelocity = dirU * PACE   -- momentum that MATCHES the pace we are actually moving at
+							-- Momentum that matches the TRUE rate: STEP studs every GAP seconds. Writing 90 while
+							-- actually covering 280/s was itself a mismatch for the checker to notice.
+							hh.AssemblyLinearVelocity = dirU * math.min(STEP / math.max(GAP, 0.05), 300)
 						end)
 						-- Wait the time this step would really take. One frame here is what made a short step
 						-- into an 840 studs/s jump.
@@ -2583,7 +2585,7 @@ local function safeTeleport(targetCFrame, holdTime)
 								if _G.VX_ACPASS then _G.VX_ACPASS() end
 								pcall(function()
 									cc2:PivotTo(CFrame.new(p2) * rot)
-									hh2.AssemblyLinearVelocity = dirU * PACE
+									hh2.AssemblyLinearVelocity = dirU * math.min(STEP / math.max(GAP, 0.05), 300)
 								end)
 								if k < hops2 then task.wait(GAP) else game:GetService("RunService").Heartbeat:Wait() end
 							end
@@ -3933,11 +3935,19 @@ do
         -- to be sure. But by 0.42s the swing has already resolved, so the press is no longer a flash input at
         -- all: it just casts ability slot 3. That is exactly "it presses 3 and nothing happens".
         -- So it now presses at 0.19s and simply skips if the engine got there first. One press either way.
+        -- ═══ AND WHY TELEPORT IS THE ONLY MODE STILL FLASHING ═══ This press is CLICK-timed, which is the
+        -- timing that lands. It used to stand down whenever the engine had "already flashed" since our click.
+        -- Teleport performs no dash, so the engine sees nothing, the stand-down never triggers, and this
+        -- press goes out: it flashes. Every DASH mode produces an arc/animation that the engine counts as a
+        -- windup and books as a flash - so this press stood down, while the engine's own animation-timed
+        -- press did not land. Result: Teleport flashes, every dash mode does not. Exactly your report.
+        -- The stand-down is gone. If the engine's press landed, a second 3 during the same swing is harmless
+        -- (it is on cooldown); if it did not, this is the press that saves the chain. pressBF marks the key,
+        -- so nothing else in the file re-enters off it.
         task.spawn(function()
             task.wait(0.19)
             if (R.gen or 0) ~= myGen then return end                     -- mode was turned off; stand down
-            if (_G.VX_BF_LAST_FIRE or 0) > firedBefore then return end   -- the engine already flashed
-            if _G.VX_BF_DEBUG then print("[DreamHub BF] engine had no windup - pressing on the flash frame") end
+            if _G.VX_BF_DEBUG then print("[DreamHub BF] click-timed flash press") end
             pressBF()
         end)
         -- ═══ ONLY THE CHAIN THAT TOOK THE BORROW MAY GIVE IT BACK ═══ Without the token, chain 1's queued
@@ -4186,7 +4196,9 @@ do
                 -- get behind them and swing. When the caller is programmatic (doSide, no real Q), we DO need
                 -- to produce the dash - detect that by whether a dash key is actually down.
                 local realQ = UserInputService:IsKeyDown(Settings.DashKey) or UserInputService:IsKeyDown(Enum.KeyCode.Q)
-                _G.VX_BF_DASHANIM = tick() + 0.30
+                -- 0.22, not 0.30: the game's dash is over sooner than that, and every extra hundredth here is
+                -- "it needs to dash immediately" latency before the get-behind starts.
+                _G.VX_BF_DASHANIM = tick() + 0.22
                 aimCameraAt(e.Position)
                 if not realQ then
                     -- programmatic call: produce a real dash toward their side, once
@@ -4207,7 +4219,6 @@ do
                 faceBackOf(t)                              -- rotation only - never a position write
                 local hold = tonumber(_G.VX_SIDE_HOLD) or 0.8
                 task.spawn(function() holdBack(t, hold) end)
-                task.wait(0.06)                            -- let holdBack settle you on the spine first
                 local n = math.clamp(tonumber(_G.VX_SIDE_M1S) or 1, 0, 4)
                 if n > 0 then
                     aimCameraAt((t:FindFirstChild("HumanoidRootPart") or e).Position)
@@ -4512,7 +4523,7 @@ do
         animator:SetAttribute("VXBFM1Hooked", true)
         animator.AnimationPlayed:Connect(function(track)
             if not (Settings.BFM1 or Settings.AutoBF) then return end
-            if _G.VX_BFAPI_ON then return end   -- the real engine is armed: it presses, this twin stands down
+            -- (the standdown that broke Auto BF is removed - see the note on the click path below)
             local id = track.Animation and track.Animation.AnimationId
             local dly = id and AnimationTriggers[id]
             -- Otherwise ANY real M1 swing of THIS character rides the standard window. VX_IS_M1 requires a real
@@ -4570,7 +4581,18 @@ do
             doBlackFlash(); return
         end
         -- CLICK path for BF: covers characters whose M1 anim isn't in the database (the anim path can't catch
-        if input.UserInputType == Enum.UserInputType.MouseButton1 and (Settings.AutoBF or Settings.BFM1) and not _G.VX_BFAPI_ON then
+    -- ═══ THE EVIDENCE SAYS THE "DUPLICATE" PRESS WAS THE ONE LANDING ═══
+    -- Last build an agent argued this path was a harmful duplicate: it presses 3 at CLICK+0.14s, before the
+    -- engine's animation-timed press, so it "burns Divergent Fist early". I disabled it - and Auto BF, which
+    -- you had just confirmed WORKING, went dark. That is a direct causal link, and it fits every other data
+    -- point you have given me:
+    --     Teleport mode STILL flashes  -> its press comes from m1ThenBF's fallback at CLICK+0.19s
+    --     Auto BF worked               -> this path, at CLICK+0.14s
+    --     everything animation-timed   -> silent
+    -- i.e. presses measured from YOUR CLICK land; presses measured from the windup ANIMATION do not. That
+    -- makes sense if the animation event arrives late or a frame or two after the real flash window opens.
+    -- So this is not a duplicate to be removed, it is the mechanism. Restored, on the evidence.
+        if input.UserInputType == Enum.UserInputType.MouseButton1 and (Settings.AutoBF or Settings.BFM1) then
             -- A chain is running and it owns the flash. This path pressing 3 as well is one of the duplicate
             -- key-3s ("it keeps pressing 3 when I only did once").
             if tick() < (R.chainUntil or 0) then return end
@@ -5408,8 +5430,11 @@ do
 					State.slamDone = true
 					doSlam("airborne swing")
 				end
-				return
-			end
+				-- NO return here. This used to return, and that starved the uppercut AGAIN: with both
+				-- toggles on, the slam's own hop makes every following swing airborne, so swings 3-4 hit
+				-- this branch and bailed before the uppercut's counter ever saw them. An airborne swing
+				-- cannot slam twice (the latch above) but it still counts toward the uppercut's tally.
+			else
 			if n >= need then
 				State.m1Count = 0
 				State.lastFire = now
@@ -5452,6 +5477,7 @@ do
 						doSlam("hop never left the ground")
 					end)
 				end)
+			end
 			end
 		end
 		if upperOn() then
@@ -7520,12 +7546,17 @@ do
 		return d:FindFirstChild("UnreliableRemoteEvent") or d:FindFirstChildWhichIsA("UnreliableRemoteEvent")
 			or d:FindFirstChildWhichIsA("RemoteEvent")
 	end
-	-- Is the minigame actually on screen? Only flap while it is - firing this blind out in the world is
-	-- pointless noise, and the arcade prompt ("Press E - FLIGHT GAME") is not the game itself.
+	-- ═══ THE ON-SCREEN CHECK WAS GATING OUT EVERY FLAP ═══ It demanded a visible GuiObject over 150x150
+	-- inside DeviceUI. If the minigame renders on a SurfaceGui on the cabinet (which the screenshot suggests -
+	-- the green screen is in the world, not overlaid on your HUD), that test is false forever and the loop
+	-- never fired once. The toggle is the intent: when you switch it on, you are at the machine. So the gate
+	-- is now permissive - it flaps whenever the remote exists, and only skips if DeviceUI is explicitly
+	-- disabled. Set _G.VX_FLIGHT_STRICT = true to get the old visibility requirement back.
 	local function gameOpen()
 		local pg = LP:FindFirstChild("PlayerGui"); local d = pg and pg:FindFirstChild("DeviceUI")
 		if not d then return false end
 		if d:IsA("ScreenGui") and d.Enabled == false then return false end
+		if not _G.VX_FLIGHT_STRICT then return true end
 		for _, g in ipairs(d:GetDescendants()) do
 			if g:IsA("GuiObject") and g.Visible and g.AbsoluteSize.X > 150 and g.AbsoluteSize.Y > 150 then return true end
 		end
@@ -7535,9 +7566,18 @@ do
 		while true do
 			if on then
 				local re = deviceRemote()
-				if re and gameOpen() then
+				if not re then
+					-- Say so. A silent loop is why "the auto play game thing dont work" had nothing to go on.
+					if tick() - (_G.VX_FLIGHT_WARN or 0) > 6 then
+						_G.VX_FLIGHT_WARN = tick()
+						print("[DreamHub Flight] PlayerGui.DeviceUI.UnreliableRemoteEvent not found - open the game first (press E at the cabinet)")
+						if VX_NOTIFY then VX_NOTIFY("Flight game: open the machine first (press E)", false) end
+					end
+					task.wait(0.5)
+				elseif gameOpen() then
 					pcall(function() re:FireServer() end)
 					fired = fired + 1
+					if fired == 1 and VX_NOTIFY then VX_NOTIFY("Flight game: playing", true) end
 					task.wait(rate)
 				else
 					task.wait(0.25)
@@ -7920,7 +7960,7 @@ do
 		return Enum.KeyCode.Four   -- what you told us; used when the moveset cannot be read
 	end
 	local function sequence()
-		if running then return end
+		if running then print("[DreamHub Twofold] already running - ignored") return end
 		running = true
 		-- WATCHDOG: whatever happens inside, the latch opens again. One uncaught error here used to brick
 		-- Twofold for the entire session with no message (the nil-global twofoldKey call did exactly that).
@@ -7958,6 +7998,7 @@ do
 				if t and t.Parent and isDown(t) then break end
 				task.wait(0.05)
 			end
+			print("[DreamHub Twofold] M1s done - slamming")
 			slam()
 			-- One retry a beat later: the kick's own ragdoll sometimes lands after the first attempt, and a
 			-- slam that arrives while they are still rising simply does not connect.
@@ -7970,7 +8011,9 @@ do
 	-- chain off its own automation.
 	if _G.VX_ON_KEY then
 		_G.VX_ON_KEY("twofold", function(kc)
-			if not on or kc ~= twofoldKey() then return end
+			if not on then return end
+			if kc ~= twofoldKey() then return end
+			print("[DreamHub Twofold] key " .. tostring(kc.Name) .. " seen - starting the sequence")
 			local injK = _G.VX_INJ_KEYS
 			if injK and injK[kc] and tick() < injK[kc] then return end
 			if not hasTwofold() then
@@ -14956,14 +14999,18 @@ do
     -- setBFM1(false) - the toggle now matches it. One engine, one press.
     bfSec:Toggle({ Name = "M1 Black Flash", Default = false, Callback = function(b)
         bfM1On = (b == true); bfSync()
-        if _G.VXBF2 then _G.VXBF2.setBFM1(false) end
+        -- Back to arming VXBF2's click-timed press as well. See the note at that path: it is what was
+        -- actually landing the flash, and switching it off is what killed Auto BF.
+        if _G.VXBF2 then _G.VXBF2.setBFM1(bfM1On) end
     end })
     _G.VX_BF_AFTER = 1
     -- Governs BOTH M1 Black Flash and the M1 Chain: pick which swing of your combo the flash lands on.
     bfSec:Dropdown({ Name = "BF After (M1s)", Items = { "1", "2", "3" }, Default = "1", Callback = function(v) v = (type(v) == "table") and v[1] or v; bfCount = tonumber(v) or 1; _G.VX_BF_AFTER = bfCount end })
     bfSec:Toggle({ Name = "Auto Black Flash", Default = false, Callback = function(b)
         bfAutoOn = (b == true); bfSync()
-        if _G.VXBF2 then _G.VXBF2.setAutoBF(false) end   -- avoid the weaker VXBF2 path double-pressing
+        -- Was setAutoBF(false) "to avoid the weaker VXBF2 path double-pressing". That path is not weaker -
+        -- it is CLICK-timed, and the click-timed presses are the ones that land (see the note at it). Arm it.
+        if _G.VXBF2 then _G.VXBF2.setAutoBF(bfAutoOn) end
     end })
     -- ═══ DEFAULT OFF, TO MATCH THE SCRIPT THAT ACTUALLY WORKS ═══ The source AutoBlackFlash has no re-click
     -- at all: it watches the windup and presses 3, full stop. The re-click was added here on the theory that
