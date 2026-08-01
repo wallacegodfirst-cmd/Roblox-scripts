@@ -7532,72 +7532,155 @@ do
 end
 
 -- ============================================================
--- MODULE: ARCADE FLIGHT GAME  (auto-play the arcade minigame without dying)
--- The screen is driven by ONE remote, fired every time you "flap":
---   PlayerGui.DeviceUI.UnreliableRemoteEvent:FireServer()
--- It is a Flappy-Bird shape: you fall constantly, each fire lifts you, and you lose by touching the
--- floor, the ceiling, or a pipe. So "play it for me without dying" is a height-holding loop - fire when
--- you have sunk below the safe band, hold off when you are already high. No screen reading, no pixel
--- scraping: just a cadence that keeps you in the middle of the play area, which is where the gaps are.
+-- MODULE: ARCADE FLIGHT GAME  (the AI actually WATCHES the screen and flaps for you)
+-- "it must be the AI seeing it and playing for you" - so this reads the game's own GUI instead of flapping
+-- on a blind timer. The minigame draws real GuiObjects (a bird, pipe bars); every frame we classify them by
+-- how they MOVE, because names can be anything:
+--     an object whose X stays put while its Y changes  ->  the BIRD (it only ever falls and hops)
+--     a tall object whose X is sliding left            ->  a PIPE
+-- Then it is Flappy logic: find the nearest pipe column ahead of the bird, aim for the centre of its gap
+-- (no pipes visible -> hold mid-screen), and fire the captured flap remote whenever the bird sits below the
+-- aim point. One remote, rate-limited, only while the screen exists:
+--     PlayerGui.DeviceUI.UnreliableRemoteEvent:FireServer()
 -- ============================================================
 do
 	local Players = game:GetService("Players")
+	local RunService = game:GetService("RunService")
 	local LP = Players.LocalPlayer
-	local on, rate = false, 0.42          -- seconds between flaps; the sweet spot for a Flappy-style fall
-	local fired = 0
-	local function deviceRemote()
+	local on, fired = false, 0
+	local minGap = 0.12          -- s between flaps: faster is spam the server ignores, slower falls too far
+	local lastFlap = 0
+	local track = {}             -- GuiObject -> {x=, y=, t=} from the previous sample (motion classification)
+	local dumped = false
+
+	local function deviceGui()
 		local pg = LP:FindFirstChild("PlayerGui"); if not pg then return nil end
-		local d = pg:FindFirstChild("DeviceUI"); if not d then return nil end
-		-- Both classes exist in the wild; take whichever this build ships.
+		return pg:FindFirstChild("DeviceUI")
+	end
+	local function deviceRemote()
+		local d = deviceGui(); if not d then return nil end
 		return d:FindFirstChild("UnreliableRemoteEvent") or d:FindFirstChildWhichIsA("UnreliableRemoteEvent")
 			or d:FindFirstChildWhichIsA("RemoteEvent")
 	end
-	-- ═══ THE ON-SCREEN CHECK WAS GATING OUT EVERY FLAP ═══ It demanded a visible GuiObject over 150x150
-	-- inside DeviceUI. If the minigame renders on a SurfaceGui on the cabinet (which the screenshot suggests -
-	-- the green screen is in the world, not overlaid on your HUD), that test is false forever and the loop
-	-- never fired once. The toggle is the intent: when you switch it on, you are at the machine. So the gate
-	-- is now permissive - it flaps whenever the remote exists, and only skips if DeviceUI is explicitly
-	-- disabled. Set _G.VX_FLIGHT_STRICT = true to get the old visibility requirement back.
-	local function gameOpen()
-		local pg = LP:FindFirstChild("PlayerGui"); local d = pg and pg:FindFirstChild("DeviceUI")
-		if not d then return false end
-		if d:IsA("ScreenGui") and d.Enabled == false then return false end
-		if not _G.VX_FLIGHT_STRICT then return true end
-		for _, g in ipairs(d:GetDescendants()) do
-			if g:IsA("GuiObject") and g.Visible and g.AbsoluteSize.X > 150 and g.AbsoluteSize.Y > 150 then return true end
-		end
-		return false
+	local function flap()
+		if tick() - lastFlap < minGap then return end
+		local re = deviceRemote(); if not re then return end
+		lastFlap = tick()
+		fired = fired + 1
+		pcall(function() re:FireServer() end)
 	end
+
+	-- One frame of WATCHING: sample every visible GuiObject in DeviceUI, compare against the last sample,
+	-- and sort movers into the bird and the pipes. Returns birdY, aimY and the container height.
+	local function readScreen()
+		local d = deviceGui(); if not d then return nil end
+		local bird, birdY, birdX
+		local pipes = {}          -- { x=, topFree=, bottomFree= } per column is overkill; store objects
+		local H, W
+		for _, g in ipairs(d:GetDescendants()) do
+			if g:IsA("GuiObject") and g.Visible and g.AbsoluteSize.X > 1 and g.AbsoluteSize.Y > 1 then
+				local pos = g.AbsolutePosition
+				local prev = track[g]
+				track[g] = { x = pos.X, y = pos.Y, t = tick() }
+				-- the play AREA is the biggest thing on the device
+				if not H or (g.AbsoluteSize.X * g.AbsoluteSize.Y) > (H * W) then
+					-- (only used for proportions; exact parent does not matter)
+					W, H = g.AbsoluteSize.X, g.AbsoluteSize.Y
+				end
+				if prev and tick() - prev.t < 0.4 then
+					local dx, dy = pos.X - prev.x, pos.Y - prev.y
+					if math.abs(dx) < 2 and math.abs(dy) >= 1 and g.AbsoluteSize.Y < 80 and g.AbsoluteSize.X < 80 then
+						-- X pinned, Y moving, small: the bird
+						if not bird or g.AbsoluteSize.X * g.AbsoluteSize.Y < bird.AbsoluteSize.X * bird.AbsoluteSize.Y then
+							bird = g; birdY = pos.Y + g.AbsoluteSize.Y / 2; birdX = pos.X
+						end
+					elseif dx < -1 and g.AbsoluteSize.Y > 30 then
+						-- sliding left and tall: a pipe bar
+						pipes[#pipes + 1] = g
+					end
+				end
+			end
+		end
+		if not bird then return nil end
+		-- Aim: the gap of the nearest pipe column that is still AHEAD of the bird. A column is one or two
+		-- bars sharing an X; the gap is the vertical space they leave open.
+		local aimY
+		local bestX
+		local colTop, colBot   -- free-space bounds of the chosen column
+		for _, pgui in ipairs(pipes) do
+			local px = pgui.AbsolutePosition.X
+			if px + pgui.AbsoluteSize.X >= birdX then                    -- not already behind us
+				if not bestX or px < bestX - 6 then
+					bestX = px
+					colTop, colBot = nil, nil
+				end
+				if math.abs(px - (bestX or px)) <= 6 then
+					local topEdge = pgui.AbsolutePosition.Y
+					local botEdge = topEdge + pgui.AbsoluteSize.Y
+					-- a bar hanging from the top ends where the gap starts; a bar rising from the bottom
+					-- starts where the gap ends
+					if topEdge <= (bird.Parent and bird.Parent.AbsolutePosition.Y or topEdge) + 4 then
+						colTop = math.max(colTop or 0, botEdge)          -- gap begins under this bar
+					else
+						colBot = math.min(colBot or math.huge, topEdge)  -- gap ends above this bar
+					end
+				end
+			end
+		end
+		if bestX then
+			local ph = H or 300
+			local top = colTop or ((bird.Parent and bird.Parent.AbsolutePosition.Y) or 0)
+			local bot = colBot or (top + ph)
+			aimY = (top + bot) / 2
+		end
+		if not aimY then
+			-- no pipes readable yet: hold just above the middle, where the gaps always are
+			local base = (bird.Parent and bird.Parent.AbsolutePosition.Y) or 0
+			aimY = base + (H or 300) * 0.45
+		end
+		if _G.VX_FLIGHT_DEBUG and not dumped then
+			dumped = true
+			print("[DreamHub Flight] bird=" .. bird:GetFullName() .. "  pipes seen=" .. #pipes)
+		end
+		return birdY, aimY
+	end
+
 	task.spawn(function()
 		while true do
 			if on then
 				local re = deviceRemote()
 				if not re then
-					-- Say so. A silent loop is why "the auto play game thing dont work" had nothing to go on.
 					if tick() - (_G.VX_FLIGHT_WARN or 0) > 6 then
 						_G.VX_FLIGHT_WARN = tick()
-						print("[DreamHub Flight] PlayerGui.DeviceUI.UnreliableRemoteEvent not found - open the game first (press E at the cabinet)")
+						print("[DreamHub Flight] DeviceUI.UnreliableRemoteEvent not found - open the game first (press E at the cabinet)")
 						if VX_NOTIFY then VX_NOTIFY("Flight game: open the machine first (press E)", false) end
 					end
 					task.wait(0.5)
-				elseif gameOpen() then
-					pcall(function() re:FireServer() end)
-					fired = fired + 1
-					if fired == 1 and VX_NOTIFY then VX_NOTIFY("Flight game: playing", true) end
-					task.wait(rate)
 				else
-					task.wait(0.25)
+					local birdY, aimY = readScreen()
+					if birdY and aimY then
+						-- BELOW the aim point (screen Y grows downward) -> flap. A little hysteresis so it
+						-- does not machine-gun at the boundary; gravity handles being too high on its own.
+						if birdY > aimY + 4 then flap() end
+						if fired == 1 and VX_NOTIFY then VX_NOTIFY("Flight game: I can see it - playing", true) end
+					else
+						-- Screen exists but nothing readable is MOVING yet = the run has not started. The
+						-- first flap is also what starts a Flappy game, so give one nudge a second.
+						if tick() - lastFlap > 1.0 then flap() end
+					end
+					task.wait(0.03)     -- ~33 samples/s: enough to track the bird between frames
 				end
 			else
+				table.clear(track)
 				task.wait(0.5)
 			end
 		end
 	end)
 	FlightGameApi = {
 		set     = function(v) on = v == true
-			if on and VX_NOTIFY then VX_NOTIFY("Flight game: playing for you - press E at the arcade", true) end end,
-		setRate = function(v) rate = math.clamp(tonumber(v) or rate, 0.15, 1.2) end,
-		flap    = function() local re = deviceRemote(); if re then pcall(function() re:FireServer() end) end end,
+			if on and VX_NOTIFY then VX_NOTIFY("Flight game: watching the screen - press E at the arcade", true) end end,
+		setRate = function(v) minGap = math.clamp(tonumber(v) or minGap, 0.05, 1.2) end,   -- now the MINIMUM gap between flaps
+		flap    = flap,
 		count   = function() return fired end,
 	}
 end
@@ -7968,48 +8051,23 @@ do
 	local function sequence()
 		if running then print("[DreamHub Twofold] already running - ignored") return end
 		running = true
-		-- WATCHDOG: whatever happens inside, the latch opens again. One uncaught error here used to brick
-		-- Twofold for the entire session with no message (the nil-global twofoldKey call did exactly that).
-		task.delay(3, function() running = false end)
+		task.delay(2, function() running = false end)   -- watchdog: nothing here may brick the latch
 		task.spawn(function()
+			-- ═══ "WHEN I PRESS 4, IT NEEDS TO DOWN SLAM QUICK. IS THAT SIMPLE." ═══ It is now. Your own key 4
+			-- already casts Twofold Kick - it IS the 4th move, the game handles it - so re-casting it here and
+			-- stuffing three M1s in the middle was me adding steps you never asked for, and every step was
+			-- another place to die. The whole sequence is: your kick goes out, we watch for the ragdoll for a
+			-- beat, and slam. Nothing else.
 			local t = nearest()
-			-- 1) the kick itself. Say out loud whether the remote was found - "twofold kick dont work" with
-			--    nothing on screen is a dead end, and the cast is the one step that can fail silently.
-			local cast = _G.VX_CAST_MOVE and _G.VX_CAST_MOVE("Twofold Kick") or false
-			if not cast then
-				print("[DreamHub Twofold] could not cast Twofold Kick - no TwofoldKickService, or it is not in your Moveset")
-				if VX_NOTIFY then VX_NOTIFY("Twofold Kick: remote missing - pressing the key instead", false) end
-				-- ═══ DEGRADE, DO NOT DIE ═══ A missing remote used to end the sequence right here, so one bad
-				-- lookup meant no kick, no M1s, no slam - "twofold kick dont work". The key the game itself
-				-- binds to the move still exists, so press it and carry on with the rest of the sequence.
-				local kk = twofoldKey()
-				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[kk] = tick() + 0.5
-				pcall(function()
-					local V = game:GetService("VirtualInputManager")
-					V:SendKeyEvent(true, kk, false, game); task.wait(0.05); V:SendKeyEvent(false, kk, false, game)
-				end)
-			elseif VX_NOTIFY and not _G.VX_TF_OK then
-				_G.VX_TF_OK = true
-				VX_NOTIFY("Twofold Kick: 3 M1s then slam", true)
-			end
-			task.wait(0.25)
-			-- 2) three M1s - as ONE HELD press, not three taps. See holdM1.
-			holdM1(3)
-			-- 3) the down slam. "twofold does kick but it dont do down slam" - two reasons, both fixed here.
-			--    The ragdoll wait could burn its whole second and then still slam into a 1.0s doSlam cooldown
-			--    that the M1s had just refreshed; and if the target reference went stale the wait never
-			--    resolved. So: wait for the ragdoll but only briefly, clear the slam's own gate, and fire.
-			local deadline = tick() + 0.7
+			local deadline = tick() + 0.6
 			while tick() < deadline do
 				if t and t.Parent and isDown(t) then break end
-				task.wait(0.05)
+				task.wait(0.04)
 			end
-			print("[DreamHub Twofold] M1s done - slamming")
+			print("[DreamHub Twofold] kick seen - slamming")
 			slam()
-			-- One retry a beat later: the kick's own ragdoll sometimes lands after the first attempt, and a
-			-- slam that arrives while they are still rising simply does not connect.
-			task.delay(0.35, function() if on then slam() end end)
-			task.wait(0.4)
+			-- one retry a beat later: the ragdoll sometimes lands after the first slam request
+			task.delay(0.30, function() if on then slam() end end)
 			running = false
 		end)
 	end
@@ -15177,7 +15235,7 @@ do
     end
     if unreleased() then   -- ═══ EVERYTHING BELOW THIS LINE (to the matching end) IS STILL IN TESTING ═══
     -- GOJO TWOFOLD KICK: press 2 -> kick -> 3 M1s -> down slam once they hit the floor. Free / VIP / PLUS.
-    acSec:Toggle({ Name = "Twofold Kick Assist (2 -> 3 M1s -> slam)", Default = false, Callback = function(b) if TwofoldApi then TwofoldApi.set(b) end end })
+    acSec:Toggle({ Name = "Twofold Kick Assist (press 4 -> quick slam)", Default = false, Callback = function(b) if TwofoldApi then TwofoldApi.set(b) end end })
     acSec:Button({ Name = "Twofold Now", Callback = function() if TwofoldApi then TwofoldApi.now() end end })
     -- AUTO HAKARI: Reserve Balls + Shutter Doors on the same beat. Both remotes verbatim from the captures;
     -- neither service name is guessed - they are derived from the move names.
