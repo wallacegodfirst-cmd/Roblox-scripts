@@ -3933,6 +3933,17 @@ do
         -- The dash is finished by the time we swing - we are standing on their spine. Clear the dash blind so
         -- a swing that the game defers by a few frames cannot land inside a window meant for the dash clip.
         _G.VX_BF_DASHANIM = 0
+        -- ═══ ARRIVE THE WAY TELEPORT ARRIVES ═══ Auto BF flashes (your real M1s), Teleport flashes (instant
+        -- writes, clean state), the ARC modes do not - and they all share this exact click. The remaining
+        -- difference is what the arc leaves behind: per-frame CFrame writes can park the humanoid in a
+        -- physics/falling state, and JJS refuses an M1 from there, so there is no swing for the press to
+        -- flash. Assert the grounded state and kill residual drift, exactly the body Teleport hands over.
+        pcall(function()
+            local c = GetChar(); local h = c and c:FindFirstChildOfClass("Humanoid")
+            local r = c and c:FindFirstChild("HumanoidRootPart")
+            if h and h.FloorMaterial ~= Enum.Material.Air then h:ChangeState(Enum.HumanoidStateType.Running) end
+            if r then local v = r.AssemblyLinearVelocity; r.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0) end
+        end)
         VMouseClick()
         -- ═══ THE FALLBACK PRESS HAS TO LAND ON THE FLASH FRAME, NOT AFTER IT ═══
         -- Both trigger tables and the reference script agree the flash input goes in 0.19-0.20s after the
@@ -4222,6 +4233,11 @@ do
                 -- momentum is the rubber-band. Poll the blind, capped.
                 local dl = tick() + 0.5
                 while tick() < (tonumber(_G.VX_BF_DASHANIM) or 0) and tick() < dl do task.wait() end
+                -- ═══ ONTO THE CORNER, TRAVELLED ═══ Your own dash went wherever you were steering - rarely
+                -- the corner of their back. This short arc carries you the rest of the way (0.10s, tiny
+                -- sweep, noKey so no dash-recovery state). It moves you there; it does not blink you there.
+                dashToBack(t, { duration = 0.10, extraSweep = math.pi * 0.08, endRadius = 4.4,
+                    endBias = (_G.VX_SIDE_END == "Back") and 0 or 0.5, noKey = true })
                 faceBackOf(t)                              -- rotation only - never a position write
                 local hold = tonumber(_G.VX_SIDE_HOLD) or 0.8
                 task.spawn(function() holdBack(t, hold) end)
@@ -5561,10 +5577,14 @@ do
 				-- Spaced a few frames apart so they arrive as four distinct calls rather than one batched burst.
 				do
 					local fires = math.max(1, tonumber(_G.VX_UPPER_FIRES) or 4)   -- renamed off 'n' so it cannot shadow the swing count
+					-- 0.22s apart, not 0.06. Your manual proof ran the remote by hand - seconds apart - and
+					-- worked; at 0.06s all four can land inside one server debounce window and count as one
+					-- or two. 0.22 matches a human-fast repeat while keeping the burst under a second.
+					local gap = tonumber(_G.VX_UPPER_GAP) or 0.22
 					task.spawn(function()
 						for i = 1, fires do
 							fireDir("Up")
-							if i < fires then task.wait(0.06) end
+							if i < fires then task.wait(gap) end
 						end
 					end)
 				end
@@ -7553,9 +7573,41 @@ do
 	local track = {}             -- GuiObject -> {x=, y=, t=} from the previous sample (motion classification)
 	local dumped = false
 
+	-- ═══ FIND THE REAL SCREEN, WHEREVER IT IS ═══ DeviceUI holds the REMOTE, but the drawing can live
+	-- elsewhere - the green screen in your screenshot is on the CABINET, which usually means a SurfaceGui
+	-- (in PlayerGui with an Adornee, or on the part itself). Scan: DeviceUI first, then any PlayerGui gui
+	-- with a crowd of small frames, then SurfaceGuis on parts near you. Cached; re-found each enable.
+	local screenCache
+	local function busyGui(root)
+		local n = 0
+		for _, g in ipairs(root:GetDescendants()) do
+			if g:IsA("GuiObject") and g.Visible then n = n + 1; if n >= 4 then return true end end
+		end
+		return false
+	end
 	local function deviceGui()
+		if screenCache and screenCache.Parent then return screenCache end
 		local pg = LP:FindFirstChild("PlayerGui"); if not pg then return nil end
-		return pg:FindFirstChild("DeviceUI")
+		local d = pg:FindFirstChild("DeviceUI")
+		if d and busyGui(d) then screenCache = d; return d end
+		for _, g in ipairs(pg:GetChildren()) do
+			if (g:IsA("ScreenGui") or g:IsA("SurfaceGui")) and g ~= d and busyGui(g) then screenCache = g; return g end
+		end
+		-- SurfaceGui on the cabinet itself, near you
+		local chs = workspace:FindFirstChild("Characters")
+		local me = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
+		local hrp = me and me:FindFirstChild("HumanoidRootPart")
+		if hrp then
+			for _, sg in ipairs(workspace:GetDescendants()) do
+				if sg:IsA("SurfaceGui") and sg.Enabled then
+					local part = sg.Adornee or sg.Parent
+					if part and part:IsA("BasePart") and (part.Position - hrp.Position).Magnitude < 40 and busyGui(sg) then
+						screenCache = sg; return sg
+					end
+				end
+			end
+		end
+		return d   -- fall back to DeviceUI even if quiet, so the warn path still reports something sane
 	end
 	local function deviceRemote()
 		local d = deviceGui(); if not d then return nil end
@@ -7672,6 +7724,7 @@ do
 				end
 			else
 				table.clear(track)
+				screenCache = nil          -- re-find the screen next enable; a new cabinet is a new gui
 				task.wait(0.5)
 			end
 		end
@@ -7872,9 +7925,12 @@ do
 		-- 0.04 rather than 0.06: four calls now leave in ~0.12s instead of ~0.18s. They still arrive as four
 		-- distinct calls (a frame is ~0.017s), so the server counter still reaches 4 - it just gets there
 		-- sooner, which is the whole of "make it do it faster".
+		-- 0.22s apart (see the auto path): the manual proof pressed slowly; a machine-gun burst can collapse
+		-- into one debounced call and the counter never reaches four.
+		local gap = tonumber(_G.VX_UPPER_GAP) or 0.22
 		for i = 1, 4 do
 			fireKnit(svc, "Activated", "Up")
-			if i < 4 then task.wait(0.04) end
+			if i < 4 then task.wait(gap) end
 		end
 		return true
 	end
@@ -7932,6 +7988,51 @@ do
 			end
 		end
 	end)
+	-- ═══ PREDICTIVE SLAM ═══ "it must do it as soon as I do my move that makes them ragdoll." Polling
+	-- notices the ragdoll a few frames late; this watches for it the moment YOU cast. Your 1/2/3/4 press
+	-- arms a tight 60Hz watcher on the nearest enemy for 1.2s, and the FRAME they go down, the finisher
+	-- fires - no poll latency, no lockout in the way.
+	local function armPredict()
+		if not (downOn or upOn) then return end
+		local t = downedTarget()               -- already down? the main loop has it
+		if t then return end
+		local hrp = myHRP(); if not hrp then return end
+		-- nearest living enemy, no down requirement - the one your move is about to hit
+		local best, bd
+		local chs = workspace:FindFirstChild("Characters")
+		if chs then for _, m in ipairs(chs:GetChildren()) do
+			if m.Name ~= LP.Name and m ~= myModel() then
+				local r = m:FindFirstChild("HumanoidRootPart")
+				local h = m:FindFirstChildOfClass("Humanoid")
+				if r and (not h or h.Health > 0) then
+					local d = (r.Position - hrp.Position).Magnitude
+					if d <= farDist and (not bd or d < bd) then best, bd = m, d end
+				end
+			end
+		end end
+		if not best then return end
+		task.spawn(function()
+			local deadline = tick() + 1.2
+			while tick() < deadline do
+				if not best.Parent then return end
+				if isDown(best) then
+					busyUntil = tick() + 0.6
+					faceAt(best)
+					if downOn then slamNow() elseif upOn then upNow() end
+					return
+				end
+				game:GetService("RunService").Heartbeat:Wait()
+			end
+		end)
+	end
+	if _G.VX_ON_KEY then
+		_G.VX_ON_KEY("fa_predict", function(kc)
+			if kc ~= Enum.KeyCode.One and kc ~= Enum.KeyCode.Two and kc ~= Enum.KeyCode.Three and kc ~= Enum.KeyCode.Four then return end
+			local injK = _G.VX_INJ_KEYS
+			if injK and injK[kc] and tick() < injK[kc] then return end   -- our own injected keys are not your cast
+			pcall(armPredict)
+		end)
+	end
 	FinisherAssistApi = {
 		setUpper = function(v) upOn = v == true end,
 		setSlam  = function(v) downOn = v == true end,
