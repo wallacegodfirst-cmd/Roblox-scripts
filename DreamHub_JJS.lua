@@ -8494,7 +8494,10 @@ do
 	-- ═══ HIS TIMINGS, HIS ORDER, NOTHING OF MINE ═══ I added a service fallback, a capped wait and a faster
 	-- gap "to make it hit". It stopped working. Every one of those is gone: this is his 0.35 and his 0.2.
 	local function finisher()
-		local gap = 0.35
+		-- "twofold is good, just make it click faster" - the GAP only. His 0.2 jump wait and his order are
+		-- untouched, because those are the parts that make it land. 0.28 keeps the three Downs inside the
+		-- same combo string while shaving ~0.2s off the whole finisher.
+		local gap = tonumber(_G.VX_TF_GAP) or 0.28
 		for _ = 1, 3 do
 			pcall(function() game:GetService("ReplicatedStorage").Knit.Knit.Services.GojoService.RE.Activated:FireServer("Down") end)
 			task.wait(gap)
@@ -15753,7 +15756,6 @@ do
     -- "Slam / Uppercut on M1 #" dropdown REMOVED - it is automatic now (see the note in onSwing).
     -- (Removed the "Launcher after N hits" slider — the mechanic is now the FIXED real game rule per the wiki:
     -- Uppercut = 4 M1s with Space held, Down Slam = 3 M1s then jump+M1. No slider needed or accurate anymore.)
-    pcall(function() acSec:Label("Uppercut soon: Crow, Mangaka, Black Death, Disaster Plants") end)
     if tier("premium") then acSec:Toggle({ Name = "Auto Adapt", Callback = function(b) if AutoAdaptApi then AutoAdaptApi.set(b) end end }) end   -- FREE: no Auto Adapt (Auto Domain Adapt below is kept)
     acSec:Toggle({ Name = "Auto Domain Adapt", Callback = function(b) if AutoDomainAdaptApi then AutoDomainAdaptApi.set(b) end end })
     acSec:Toggle({ Name = "Auto Earthquake", Callback = function(b) if AutoQuakeApi then AutoQuakeApi.set(b) end end })
