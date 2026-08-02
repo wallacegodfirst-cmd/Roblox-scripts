@@ -925,11 +925,14 @@ _G.VX_BF_DASHANIM   = 0
 _G.VX_BFAPI_ON      = false   -- the engine re-arms itself from the GUI toggles a moment later
 _G.VX_M1BF_ON       = false
 _G.VX_SYNTH_CLICK   = 0       -- a stale "this click was ours" mark suppresses your real clicks
+_G.VX_HOOK_COUNT    = 0       -- combo position the finisher rewrite counts from
+_G.VX_HOOK_LASTCLICK = 0
 _G.VX_AIR_HOOK      = false   -- auto-air rewrite; a stale true would air-cast every move on a fresh run
 _G.VX_SLAM_FLAG     = false   -- mirrors of the finisher toggles, read by the M1 rewrite hook. MUST be seeded:
 _G.VX_UPPER_FLAG    = false   -- a stale true here would rewrite every M1 into a finisher on a fresh run.
 _G.VX_INJ_KEYS      = {}      -- same, for keys
 _G.VX_FINISHER_T    = 0
+_G.VX_UPPER_T       = 0       -- last uppercut; the Cursed Strike assist arms off this and only this
 _G.VX_TOTAL_MOVE_T  = 0
 _G.VX_LAUNCHING     = 0
 _G.VX_CROW_FLYING   = 0
@@ -3833,6 +3836,9 @@ do
         BFCooldown = 1.35, BFTeleportDist = 3.0, BFM1 = false,
         SideAssist = false, BackAssist = false,
     }
+    -- Shared so the finisher assists can perform a REAL, legit dash-in ("dash all the way, in a normal way")
+    -- instead of writing your CFrame across the map. One source of truth for which key the game dashes on.
+    _G.VX_DASH_KEY = Settings.DashKey
     local AnimationTriggers = {
         -- Restored: Divergent Fist IS the Black Flash input on Itadori (see the engine table).
         ["rbxassetid://100962226150441"] = 0.19,
@@ -4249,7 +4255,9 @@ do
         end
         pcall(lockClipOn)
     end
-    local function doSideDash(isBF)
+    -- prog = "nobody pressed Q, the hub called this" (the finisher assists). See the noKey note below: that is
+    -- the ONE difference between the two callers, and getting it wrong is what makes the animation look wrong.
+    local function doSideDash(isBF, prog)
         if tick() - R.lastDash < Settings.DashCooldown and not isBF then return false end
         -- ═══ "IF I DO 1 M1, THEN SIDE DASH IT NO WORK" ═══ That is these two flags left stuck by whatever ran
         -- before you pressed Q. R.curving used to hard-refuse re-entry, and a chain that bailed early could
@@ -4276,10 +4284,16 @@ do
                 -- and it leaves a body the game accepts an M1 from.
                 _G.VX_BF_DASHANIM = tick() + 0.20
                 aimCameraAt(e.Position)
+                -- ═══ "SIDE DASH ANIMATION IS WEIRD" ═══ noKey = true means NO dash key is pressed, so the game
+                -- plays no dash clip at all and your body just slides along the arc. That is fine when YOU
+                -- pressed Q (the game already dashed you - a second one on top is what felt wrong), and it is
+                -- exactly wrong when the hub called this itself, which is every assist. So the key is skipped
+                -- only for a real Q press; a programmatic dash taps the real key first and the arc rides the
+                -- game's own dash animation, which is what "physically side dash, in a normal way" means.
                 -- radius 3.2, not 4.4: "very close to their body". Sweep 0.75pi so it genuinely travels AROUND them
                 -- rather than cutting a corner, and the bias puts the landing on the corner of the back.
                 dashToBack(t, { duration = 0.16, extraSweep = math.pi * 0.75, endRadius = 2.5,
-                    endBias = (_G.VX_SIDE_END == "Back") and 0 or 0.55, noKey = true })
+                    endBias = (_G.VX_SIDE_END == "Back") and 0 or 0.55, noKey = not prog })
                 faceBackOf(t)                              -- rotation only - never a position write
                 local hold = tonumber(_G.VX_SIDE_HOLD) or 0.8
                 task.spawn(function() holdBack(t, hold) end)
@@ -4737,7 +4751,7 @@ do
         setBackAssist = function(v) Settings.BackAssist = v == true end,
         setCooldown = function(v) if type(v) == "number" then Settings.BFCooldown = v end end,
         setTeleportDist = function(v) if type(v) == "number" then Settings.BFTeleportDist = v end end,
-        doSide = function() doSideDash(false) end,
+        doSide = function() doSideDash(false, true) end,   -- programmatic: taps the real dash key, so it animates
         doBack = function() doBackDash(false) end,
     }
     -- assist keys: Q = side dash assist, E = back dash assist (only when their toggle is on)
@@ -5672,6 +5686,7 @@ do
 					end)
 				end
 				_G.VX_FINISHER_T = tick()   -- see doSlam: Auto Swap must not interrupt a finisher
+				_G.VX_UPPER_T = tick()      -- and THIS is what the Cursed Strike assist waits on
 			end
 		end
 	end
@@ -5815,6 +5830,11 @@ do
 				local method = getnamecallmethod and getnamecallmethod() or nil
 				if method == "FireServer" and self.Name == "Activated" then
 					local args = { ... }
+					-- ═══ EVERY UPPERCUT, INCLUDING THE ONES THE HUB DIDN'T SEND ═══ An uppercut is
+					-- Activated("Up") whoever fires it, so stamping it here catches a manual one (you holding
+					-- W and clicking) as well as the hub's. The Cursed Strike assist waits on this stamp and
+					-- on nothing else, which is what "ONLY after an uppercut" means.
+					if args[1] == "Up" then _G.VX_UPPER_T = tick() end
 					-- ═══ AUTO AIR, THE SAME WAY: BLOCK THE GROUND CAST, SEND THE AIR ONE ═══
 					-- "if I click 1 it will block the game from firing it" - exactly. Your capture:
 					--     CursedStrikesService.RE.Activated:FireServer(Moveset["Cursed Strikes"], true)
@@ -5850,8 +5870,24 @@ do
 						-- run and its upvalues are that run's dead flags - the new GUI's toggles would drive
 						-- nothing. The mirrors are written by setSlam/setUpper every time, so whichever
 						-- execution's hook survives, the live toggles reach it.
-						if _G.VX_UPPER_FLAG then args[1] = "Up"
-						elseif _G.VX_SLAM_FLAG then args[1] = "Down" end
+						-- ═══════════ WHY THE BLACK FLASH DIED WHEN THE FINISHERS GOT PERFECT ═══════════
+						-- This rewrote EVERY M1 into "Down"/"Up". A slam is not an M1 windup - so with Auto
+						-- Down Slam on (which you have, because it is perfect) the flash engine never saw a
+						-- single M1 windup again, and no mode could ever flash. The two features were
+						-- mutually exclusive by construction and I never noticed.
+						-- The fix is also how the game actually plays: a finisher is the END of a combo, not
+						-- every swing. Clicks 1 and 2 pass through as NORMAL M1s - which is exactly what the
+						-- flash engine needs - and the rewrite starts at click 3. You get the flash on the
+						-- early swings and the finisher on the late ones, in the same combo.
+						local nowT = tick()
+						if nowT - (_G.VX_HOOK_LASTCLICK or 0) > 1.2 then _G.VX_HOOK_COUNT = 0 end
+						_G.VX_HOOK_LASTCLICK = nowT
+						_G.VX_HOOK_COUNT = (_G.VX_HOOK_COUNT or 0) + 1
+						local from = tonumber(_G.VX_FINISH_FROM) or 3
+						if _G.VX_HOOK_COUNT >= from then
+							if _G.VX_UPPER_FLAG then args[1] = "Up"; _G.VX_UPPER_T = tick()
+							elseif _G.VX_SLAM_FLAG then args[1] = "Down" end
+						end
 						if args[1] ~= false then
 							return oldNamecall(self, unpack(args))
 						end
@@ -7748,10 +7784,44 @@ do
 		end
 		return d   -- fall back to DeviceUI even if quiet, so the warn path still reports something sane
 	end
+	-- ═══ FIND THE REMOTE WHEREVER IT ACTUALLY LIVES ═══ This used to look only at the DIRECT CHILDREN of the
+	-- screen gui, so if the game parents the event one level deeper - or under a different gui, or in
+	-- ReplicatedStorage - we reported "open the machine first" while the machine was open in front of you.
+	-- That is "auto play flight dont work" with no flap ever sent. Now: the screen's whole subtree first
+	-- (nearest to the game we are reading), then the rest of PlayerGui, then ReplicatedStorage.
+	local remoteCache
 	local function deviceRemote()
-		local d = deviceGui(); if not d then return nil end
-		return d:FindFirstChild("UnreliableRemoteEvent") or d:FindFirstChildWhichIsA("UnreliableRemoteEvent")
-			or d:FindFirstChildWhichIsA("RemoteEvent")
+		if remoteCache and remoteCache.Parent then return remoteCache end
+		local function pick(root)
+			if not root then return nil end
+			local fallback
+			for _, o in ipairs(root:GetDescendants()) do
+				if o:IsA("UnreliableRemoteEvent") then return o end
+				if o:IsA("RemoteEvent") and not fallback then fallback = o end
+			end
+			return fallback
+		end
+		local r = pick(deviceGui())
+		if not r then
+			local pg = LP:FindFirstChild("PlayerGui")
+			if pg then
+				for _, g in ipairs(pg:GetChildren()) do
+					local nm = string.lower(g.Name)
+					if string.find(nm, "device", 1, true) or string.find(nm, "arcade", 1, true) or string.find(nm, "game", 1, true) then
+						r = pick(g); if r then break end
+					end
+				end
+				if not r then r = pick(pg) end
+			end
+		end
+		if not r then
+			local rs = game:GetService("ReplicatedStorage")
+			for _, o in ipairs(rs:GetChildren()) do
+				if o:IsA("UnreliableRemoteEvent") then r = o break end
+			end
+		end
+		remoteCache = r
+		return r
 	end
 	local function flap()
 		if tick() - lastFlap < minGap then return end
@@ -7859,15 +7929,22 @@ do
 						if birdY > aimY + 4 then flap() end
 						if fired == 1 and VX_NOTIFY then VX_NOTIFY("Flight game: I can see it - playing", true) end
 					else
-						-- Screen exists but nothing readable is MOVING yet = the run has not started. The
-						-- first flap is also what starts a Flappy game, so give one nudge a second.
-						if tick() - lastFlap > 1.0 then flap() end
+						-- Screen exists but nothing readable is MOVING yet. Two cases, and they need
+						-- different answers: the run has not STARTED (one nudge starts it), or it is running
+						-- and our reader cannot see it. One flap a second loses the second case immediately,
+						-- so fall back to a steady flappy cadence instead - blind, but alive.
+						if fired < 2 then
+							if tick() - lastFlap > 0.8 then flap() end
+						else
+							flap()          -- flap() enforces minGap itself
+						end
 					end
 					task.wait(0.03)     -- ~33 samples/s: enough to track the bird between frames
 				end
 			else
 				table.clear(track)
 				screenCache = nil          -- re-find the screen next enable; a new cabinet is a new gui
+				remoteCache = nil
 				task.wait(0.5)
 			end
 		end
@@ -8279,9 +8356,14 @@ do
 	local VIM = game:GetService("VirtualInputManager")
 	local LP = Players.LocalPlayer
 	local upOn, downOn = false, false
+	-- ═══ THREE BANDS, YOUR WORDS ═══
+	--   VERY CLOSE (<= nearDist)  "as soon as I use it, I need to down slam"      -> the finisher, immediately
+	--   KINDA FAR  (<= midDist)   "3 M1s, then physically side dash to them"      -> M1s, dash, finisher
+	--   REALLY FAR (<= farDist)   "increase the distance, dash all the way, legit" -> real dashes in, then the
+	--                                                                                kinda-far routine
 	-- nearDist 20, was 12: "make sure it dont side dash or move around unless the target is kind of far."
-	-- Inside 20 studs the burst simply fires where you stand; only past that does it close the gap first.
-	local nearDist, farDist = 20, 90
+	-- farDist 140, was 90: "now they're really far to target - increase the distance."
+	local nearDist, midDist, farDist = 20, 55, 140
 	local busyUntil = 0
 	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
 	local function myHRP() local m = myModel(); return m and m:FindFirstChild("HumanoidRootPart") end
@@ -8393,6 +8475,7 @@ do
 		local gap = tonumber(_G.VX_UPPER_GAP) or 0.22
 		for i = 1, 4 do
 			pcall(function() re:FireServer("Up") end)
+			_G.VX_UPPER_T = tick()    -- the Cursed Strike assist waits on THIS, and only on an uppercut
 			if i < 4 then task.wait(gap) end
 		end
 		if _G.VX_M1_DEBUG then print("[DreamHub Finisher] uppercut -> 4x Activated(Up)") end
@@ -8421,6 +8504,33 @@ do
 	-- loop re-ran the whole finisher every time the lockout expired while a downed body was still nearby, and
 	-- the finisher contains a jump. A target is now finished ONCE and remembered until they get up, so the
 	-- sequence fires on the knockdown and never again for it.
+	-- ═══ A LEGIT DASH-IN ═══ "now they're really far to target - increase the distance - and dash all the
+	-- way to the target in a normal way, that's legit." Nothing here writes your position: it faces them,
+	-- holds W, and taps the game's OWN dash key on its own cooldown until you are in range. That is a player
+	-- crossing the map, not a teleport, so there is nothing for the server to disagree with.
+	local function dashIn(t, want)
+		local key = _G.VX_DASH_KEY or Enum.KeyCode.Q
+		local function mark(k) _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[k] = tick() + 0.45 end
+		local deadline = tick() + 3.2
+		mark(Enum.KeyCode.W)
+		pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.W, false, game) end)
+		while tick() < deadline do
+			local hrp = myHRP()
+			local r = t.Parent and t:FindFirstChild("HumanoidRootPart")
+			if not (hrp and r) then break end
+			if (r.Position - hrp.Position).Magnitude <= (want or nearDist) then break end
+			faceAt(t)                                  -- W is "forward", so forward has to keep meaning them
+			mark(key)
+			pcall(function()
+				VIM:SendKeyEvent(true, key, false, game); task.wait(0.04); VIM:SendKeyEvent(false, key, false, game)
+			end)
+			task.wait(0.30)                            -- the game's dash cooldown; spamming it just eats the input
+		end
+		mark(Enum.KeyCode.W)
+		pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.W, false, game) end)
+		local hrp, r = myHRP(), t.Parent and t:FindFirstChild("HumanoidRootPart")
+		return (hrp and r) and (r.Position - hrp.Position).Magnitude <= (want or nearDist) + 8 or false
+	end
 	local doneWith = setmetatable({}, { __mode = "k" })
 	local function run(which)
 		if tick() < busyUntil then return end
@@ -8440,18 +8550,43 @@ do
 				doneWith[t] = nil
 			end)
 			if d and d <= nearDist then
-				-- CLOSE: "if the target is by me it should do uppercut" - straight in, nothing to set up.
+				-- VERY CLOSE: "if I use a move that makes the target very close to me, as soon as I use it, I
+				-- need to down slam." Nothing to set up - face them and finish.
 				busyUntil = tick() + 1.2
 				faceAt(t)
 				if which == "Up" then upNow() else slamNow() end
 				return
 			end
-			-- FAR: "3 M1s, then uppercut or down slam, by dashing." Dash in, three swings, then the finisher.
-			busyUntil = tick() + 3.0
-			if _G.VXBF2 and _G.VXBF2.doSide then pcall(_G.VXBF2.doSide) end
-			task.wait(0.26)
-			faceAt(t)
-            holdM1(3)                                   -- one held press = three swings
+			-- REALLY FAR: "they're really far - dash all the way in a normal way, that's legit." Real dash
+			-- keys, real dash animation, no CFrame writes. This only closes the gap; the kinda-far routine
+			-- below is what actually punishes them, so a far target ends up handled exactly like a near one.
+			busyUntil = tick() + 5.0
+			if d and d > midDist then
+				dashIn(t, midDist - 6)
+				if not (t.Parent and isDown(t)) then busyUntil = 0 doneWith[t] = nil return end
+			end
+			-- KINDA FAR: "you need to do three M1s, and they need to dash - physically side dash to them -
+			-- and on the fourth, the finisher."
+			-- The dash is a GAP CLOSER as well as a reposition, and an M1 thrown from 40 studs hits nothing.
+			-- So the order depends on whether the swings can actually land from here: inside melee reach we
+			-- do it your way (3 M1s, then the side dash onto their back, then the finisher); outside it the
+			-- dash has to come first or the three swings are three swings at empty air.
+			local function reach()
+				local hrp = myHRP(); local r = t.Parent and t:FindFirstChild("HumanoidRootPart")
+				return (hrp and r) and (r.Position - hrp.Position).Magnitude or 999
+			end
+			local MELEE = 14
+			if reach() > MELEE then
+				if _G.VXBF2 and _G.VXBF2.doSide then pcall(_G.VXBF2.doSide) end
+				task.wait(0.26)
+				faceAt(t)
+				holdM1(3)                               -- one held press = three swings
+			else
+				faceAt(t)
+				holdM1(3)
+				if _G.VXBF2 and _G.VXBF2.doSide then pcall(_G.VXBF2.doSide) end
+				task.wait(0.22)
+			end
 			faceAt(t)
 			if which == "Up" then upNow() else slamNow() end
 		end)
@@ -8532,6 +8667,139 @@ do
 end
 
 -- ============================================================
+-- MODULE: CURSED STRIKE ASSIST  ("when I do uppercut, the moment the target is in the air, cast move 1")
+--
+-- WHAT IT DOES, IN YOUR WORDS
+-- "after the target... if they uppercut them, as soon as they ragdoll, it will do cursed strike - ONLY after
+--  an uppercut. Time it very good."  and  "the moment the target is in the air, it needs to do curse strike,
+--  or the first move. Timing is important."
+--
+-- SO THE TIMING IS THE WHOLE FEATURE, and it is built out of two facts rather than a guess at a delay:
+--   1) ONLY AN UPPERCUT ARMS IT. An uppercut is Activated("Up") no matter who sends it, so the __namecall
+--      hook stamps _G.VX_UPPER_T on every one - the hub's Auto Uppercut, the assist's, and a manual one you
+--      do yourself. A down slam never writes that stamp, so a slam can never trigger this.
+--   2) THE CAST GOES OUT ON THE FRAME THEY LEAVE THE GROUND. Not on a timer - a fixed delay is wrong the
+--      moment ping or the launch height changes. This watches the target at 60Hz and fires the frame their
+--      feet are off the floor, which is the earliest instant the airborne move can connect.
+--
+-- The remote is your capture verbatim:
+--     CursedStrikesService.RE.Activated:FireServer(Moveset["Cursed Strikes"], true)
+-- resolved through _G.VX_CAST_MOVE, which derives the service from the move's own name - so this is not a
+-- Yuji-only feature. It casts whatever sits in SLOT 1 for the character you are on, with the airborne flag.
+-- ============================================================
+do
+	local Players = game:GetService("Players")
+	local RunService = game:GetService("RunService")
+	local LP = Players.LocalPlayer
+	local on = false
+	local seenStamp, lastCast = 0, 0
+
+	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
+	local function myHRP() local m = myModel(); return m and m:FindFirstChild("HumanoidRootPart") end
+	-- Slot 1, whatever it is called. On vessel Yuji that IS Cursed Strikes; on anyone else it is their own
+	-- first move, which is what "curse strike or the first move" asks for.
+	local function slot1Name()
+		for _, c in ipairs({ myModel(), LP.Character }) do
+			local mv = c and c:FindFirstChild("Moveset")
+			if mv then local kids = mv:GetChildren(); if kids[1] then return kids[1].Name end end
+		end
+		return nil
+	end
+	-- Who did you just uppercut? The locked target if you have one, else the nearest body in front of you -
+	-- an uppercut is a melee move, so "nearest" is the right answer at the moment it lands.
+	local function victim()
+		local g = _G.VX_LOCK; local lt = (g and g.get) and g.get() or nil
+		if lt and lt.Parent then return lt end
+		local hrp = myHRP(); if not hrp then return nil end
+		local best, bd
+		local function chk(m)
+			if not m or m == myModel() or m.Name == LP.Name then return end
+			local r = m:FindFirstChild("HumanoidRootPart"); if not r then return end
+			local h = m:FindFirstChildOfClass("Humanoid"); if h and h.Health <= 0 then return end
+			local d = (r.Position - hrp.Position).Magnitude
+			if d <= 45 and (not bd or d < bd) then best, bd = m, d end
+		end
+		local chs = workspace:FindFirstChild("Characters")
+		if chs then for _, m in ipairs(chs:GetChildren()) do chk(m) end end
+		for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP then chk(plr.Character) end end
+		return best
+	end
+	-- Airborne, judged three ways so a launch is never missed: the humanoid says it has no floor, OR it is
+	-- rising fast, OR it has simply gained height since the uppercut connected. Any one is enough.
+	local function airborne(t, baseY)
+		local r = t.Parent and t:FindFirstChild("HumanoidRootPart"); if not r then return false end
+		local h = t:FindFirstChildOfClass("Humanoid")
+		if h and h.FloorMaterial == Enum.Material.Air then return true end
+		if r.AssemblyLinearVelocity.Y > 12 then return true end
+		if baseY and (r.Position.Y - baseY) > 3.5 then return true end
+		return false
+	end
+	local function fire()
+		local nm = slot1Name()
+		if not (nm and _G.VX_CAST_MOVE) then return false end
+		-- The airborne flag is the second argument, and it is only correct while YOU are actually up there.
+		-- An uppercut takes you up with them, so this is normally true; sending true from the ground would
+		-- ask the server for a variant your state cannot support.
+		local c = myModel(); local h = c and c:FindFirstChildOfClass("Humanoid")
+		local up = (h and h.FloorMaterial == Enum.Material.Air) or false
+		local ok
+		if up then ok = _G.VX_CAST_MOVE(nm, true) else ok = _G.VX_CAST_MOVE(nm) end
+		if _G.VX_MOVE_DEBUG then print("[DreamHub CursedStrike] " .. tostring(nm) .. " air=" .. tostring(up) .. " -> " .. tostring(ok)) end
+		return ok
+	end
+
+	-- One watcher, armed by the stamp. Nothing polls the world while you are not uppercutting.
+	task.spawn(function()
+		while true do
+			if on then
+				local st = tonumber(_G.VX_UPPER_T) or 0
+				if st > seenStamp and tick() - st < 0.5 and tick() - lastCast > 1.0 then
+					seenStamp = st
+					local t = victim()
+					if t then
+						lastCast = tick()
+						task.spawn(function()
+							local r = t:FindFirstChild("HumanoidRootPart")
+							local baseY = r and r.Position.Y
+							-- 1.5s: the uppercut is four remotes 0.22s apart, so the launch can be most of a
+							-- second after the first one. Past that it did not land and there is nothing to hit.
+							local deadline = tick() + 1.5
+							while tick() < deadline do
+								if not t.Parent then return end
+								if airborne(t, baseY) then
+									-- face them so the cast goes where they are, then send it THIS frame.
+									pcall(function()
+										local hrp = myHRP(); local rr = t:FindFirstChild("HumanoidRootPart")
+										if hrp and rr then hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(rr.Position.X, hrp.Position.Y, rr.Position.Z)) end
+									end)
+									fire()
+									return
+								end
+								RunService.Heartbeat:Wait()
+							end
+							if _G.VX_MOVE_DEBUG then print("[DreamHub CursedStrike] target never left the ground - no cast") end
+						end)
+					end
+				end
+				task.wait(0.02)
+			else
+				task.wait(0.4)
+			end
+		end
+	end)
+
+	CursedStrikeApi = {
+		set = function(v)
+			on = v == true
+			-- Take the current stamp on the way in, so arming the toggle right after an uppercut does not
+			-- immediately fire off a stale one.
+			seenStamp = tonumber(_G.VX_UPPER_T) or 0
+		end,
+		now = fire,
+	}
+end
+
+-- ============================================================
 -- MODULE: TWOFOLD KICK ASSIST  (the friend's script VERBATIM - my "improvements" are gone)
 -- Last build I ported this with tweaks: both-rig animator checks, a resolver with a fallback, trimmed
 -- timings. It stopped working. The friend's original works. So this is now that script line for line -
@@ -8562,20 +8830,13 @@ do
 	-- ═══ HIS TIMINGS, HIS ORDER, NOTHING OF MINE ═══ I added a service fallback, a capped wait and a faster
 	-- gap "to make it hit". It stopped working. Every one of those is gone: this is his 0.35 and his 0.2.
 	local function finisher()
-		-- "slow + not clicking": gap to 0.22, and a real M1 CLICK on each Down so the combo actually advances
-		-- and lands visibly. His order and his 0.2 jump wait are still untouched - those are what make it hit.
-		local gap = tonumber(_G.VX_TF_GAP) or 0.22
-		local function tfClick()
-			_G.VX_SYNTH_CLICK = tick() + 0.2; _G.VX_LAST_HUMAN_CLICK = tick()
-			local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
-			local cx, cy = (vp and vp.X / 2) or 400, (vp and vp.Y / 2) or 300
-			pcall(function()
-				local V = game:GetService("VirtualInputManager")
-				V:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.02); V:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
-			end)
-		end
+		-- ═══ THE INJECTED CLICK IS GONE ═══ Last build I added an M1 click on each "Down" to make it "hit
+		-- harder", and you came back with "twofold kick assist dont work". His script has no click - the Down
+		-- remote IS the strike, and a click on top of it starts a fresh M1 that cancels the one in flight. So
+		-- the click is removed and this is his sequence again: three Downs, jump, the airborne fourth.
+		-- The ONLY thing that is mine is the gap, which is the "make it faster" knob and nothing else.
+		local gap = tonumber(_G.VX_TF_GAP) or 0.28
 		for _ = 1, 3 do
-			tfClick()
 			pcall(function() game:GetService("ReplicatedStorage").Knit.Knit.Services.GojoService.RE.Activated:FireServer("Down") end)
 			task.wait(gap)
 		end
@@ -15762,7 +16023,14 @@ do
         acSec:Toggle({ Name = "Upper Cut Assist (on downed)", Default = false, Callback = function(b) if FinisherAssistApi then FinisherAssistApi.setUpper(b) end end })
         acSec:Toggle({ Name = "Down Slam Assist (on downed)", Default = false, Callback = function(b) if FinisherAssistApi then FinisherAssistApi.setSlam(b) end end })
         acSec:Slider({ Name = "Assist Reach", Min = 4, Max = 40, Default = 20, Decimals = 1, Callback = function(v) if FinisherAssistApi then FinisherAssistApi.setNear(v) end end })   -- closer than this = finish where you stand; further = dash in first
-        acSec:Slider({ Name = "Assist Max Range", Min = 20, Max = 250, Default = 90, Decimals = 1, Callback = function(v) if FinisherAssistApi then FinisherAssistApi.setFar(v) end end })
+        acSec:Slider({ Name = "Assist Max Range", Min = 20, Max = 250, Default = 140, Decimals = 1, Callback = function(v) if FinisherAssistApi then FinisherAssistApi.setFar(v) end end })   -- 140, not 90: "they're really far - increase the distance"
+        -- CURSED STRIKE ASSIST: arms ONLY on an uppercut, and casts slot 1 the frame the target leaves the
+        -- ground. No timer to tune - the launch itself is the cue.
+        -- unreleased() as well as the tier: this is brand new, so it stays off the old direct link until you
+        -- release it, exactly like everything else below the testing line.
+        if unreleased() then
+            acSec:Toggle({ Name = "Cursed Strike Assist (uppercut -> move 1 in air)", Default = false, Callback = function(b) if CursedStrikeApi then CursedStrikeApi.set(b) end end })
+        end
     end
     if unreleased() then   -- ═══ EVERYTHING BELOW THIS LINE (to the matching end) IS STILL IN TESTING ═══
     -- GOJO TWOFOLD KICK: press 2 -> kick -> 3 M1s -> down slam once they hit the floor. Free / VIP / PLUS.
