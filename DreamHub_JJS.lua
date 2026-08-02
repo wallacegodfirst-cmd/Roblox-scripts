@@ -2291,6 +2291,26 @@ game:GetService("RunService").Heartbeat:Connect(function()
 	end
 	local hrp = char:FindFirstChild("HumanoidRootPart")
 	if not hrp then return end
+	-- ═══ "WHEN I GET DOWNED I CAN'T GET UP FOR 3 SECONDS, THEN I TP BACK TO WHERE I WAS" ═══
+	-- This lock re-pins you to the last teleport destination ~10x a second for the whole hold. If you get
+	-- knocked down while a hold is live, every re-pin forced you out of ragdoll and dragged you back to a
+	-- position from BEFORE the hit - which is precisely "stuck, then snapped back". The hold has no business
+	-- surviving a knockdown: being downed means the fight moved on, so the lock is RELEASED, not fought.
+	do
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		local downed = false
+		if hum then
+			if hum.PlatformStand then downed = true end
+			local okS, st = pcall(function() return hum:GetState() end)
+			if okS and (st == Enum.HumanoidStateType.Physics or st == Enum.HumanoidStateType.Ragdoll
+				or st == Enum.HumanoidStateType.FallingDown or st == Enum.HumanoidStateType.GettingUp) then downed = true end
+			if hum:GetAttribute("Ragdoll") == true or hum:GetAttribute("Ragdolled") == true then downed = true end
+		end
+		if downed then
+			vxTeleportLock = false; vxCurrentTargetCF = nil; vxLockChar = nil
+			return
+		end
+	end
 	if (hrp.Position - vxCurrentTargetCF.Position).Magnitude > 3 then
 		-- ANSWER the correction on the anti-cheat's own channel. THIS is the private-vs-public difference:
 		-- the glide fires this every few ticks while it moves (so it survives), while the re-pin fired it
@@ -2343,13 +2363,21 @@ function vxHardWrite(char, hrp, cf)
 	pcall(function()
 		local hum = char:FindFirstChildOfClass("Humanoid")
 		if hum then
+			-- Read this BEFORE clearing it, or the downed check below is testing a value we just zeroed.
+			local wasDowned = hum.PlatformStand == true
 			hum.Sit = false
 			if hum.PlatformStand then hum.PlatformStand = false end
+			if wasDowned then return end
 			-- Only when ACTUALLY ragdolled. Re-issuing this on every re-pin frame pinned the humanoid in a
 			-- getting-up transition for the whole hold.
 			local st = hum:GetState()
 			if st == Enum.HumanoidStateType.Physics or st == Enum.HumanoidStateType.Ragdoll or st == Enum.HumanoidStateType.FallingDown then
+				-- ═══ AND DO NOT WRITE ═══ Forcing GettingUp and then PivotTo-ing anyway is what pinned you in
+				-- the get-up transition: every re-pin restarted it, so the animation never completed and you
+				-- lay there until the hold expired, then the last write snapped you back. Force the state, and
+				-- then leave the body alone this frame - being downed is the game's call, not ours to override.
 				hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+				return
 			end
 		end
 		local seatWeld = hrp:FindFirstChild("SeatWeld"); if seatWeld then seatWeld:Destroy() end
@@ -3998,6 +4026,16 @@ do
             local re = sv and sv:FindFirstChild("RE"); re = re and re:FindFirstChild("Activated")
             if re then re:FireServer(false) end
         end)
+        -- ═══════════ THIS ONE LINE IS WHY NO CHAIN MODE EVER FLASHED ═══════════
+        -- onAnim() has a gate: for 0.6s after you press 3 it throws away any windup it sees, on the grounds
+        -- that it is the ability your key-3 press just cast rather than a real M1. The gate is supposed to
+        -- close the moment the chain throws its OWN click - it checks VX_BF_CHAINCLICK for exactly that.
+        -- But VX_BF_CHAINCLICK was stamped in only one place in the entire file, inside the M1 chain. Every
+        -- other mode - Side Dash, Back Dash, Jump, Teleport - goes through HERE, and never stamped it. So
+        -- the gate stayed open, and the real M1 windup those modes had just thrown (arriving 0.09-0.39s
+        -- after the press, comfortably inside 0.6s) was discarded as "the trigger's own cast" every time.
+        -- The dash ran, the swing landed, and the engine refused to press 3. That is the entire bug.
+        _G.VX_BF_CHAINCLICK = tick()
         VMouseClick()
         -- 4) HAND THE ENGINE BACK to your real choice a beat later, only if WE turned it on.
         if not wasOn then
@@ -4234,10 +4272,23 @@ do
                 if downNow then break end
             end
             local p = GetRoot(); if not p then break end
+            -- ═══ AND LET GO WHEN *YOU* GO DOWN ═══ Same reasoning, other direction. This checked THEIR
+            -- ragdoll but never yours, so getting knocked down mid-hold left it writing your CFrame sixty
+            -- times a second while the server was trying to ragdoll you. That fight is the "can't get up,
+            -- then teleport back" - it is not only the teleport lock, this loop does it too.
+            do
+                local mh = GetChar(); mh = mh and mh:FindFirstChildOfClass("Humanoid")
+                if mh then
+                    if mh.PlatformStand then break end
+                    local okM, ms = pcall(function() return mh:GetState() end)
+                    if okM and (ms == Enum.HumanoidStateType.Physics or ms == Enum.HumanoidStateType.Ragdoll
+                        or ms == Enum.HumanoidStateType.FallingDown or ms == Enum.HumanoidStateType.GettingUp) then break end
+                end
+            end
             local fwd = Vector3.new(e.CFrame.LookVector.X, 0, e.CFrame.LookVector.Z)
             if fwd.Magnitude > 0.01 then
                 fwd = fwd.Unit
-                local bias = (_G.VX_SIDE_END == "Back") and 0 or 0.45
+                local bias = 0.45      -- always the corner of the back; the Corner/Back choice is gone
                 local side = Vector3.new(-fwd.Z, 0, fwd.X) * (bias * 3.0)
                 local dest = e.Position - fwd * 2.5 + side   -- hug the body: 2.5 studs, corner-hitbox range
                 pcall(function()
@@ -4258,9 +4309,10 @@ do
         end
         pcall(lockClipOn)
     end
-    -- prog = "nobody pressed Q, the hub called this" (the finisher assists). See the noKey note below: that is
-    -- the ONE difference between the two callers, and getting it wrong is what makes the animation look wrong.
-    local function doSideDash(isBF, prog)
+    -- prog = "nobody pressed Q, the hub called this" (the finisher assists). It no longer changes the arc -
+    -- see the note below - but the callers still pass it and it stays as the hook if the two ever need to
+    -- diverge again.
+    local function doSideDash(isBF, prog)   -- luacheck: ignore prog
         if tick() - R.lastDash < Settings.DashCooldown and not isBF then return false end
         -- ═══ "IF I DO 1 M1, THEN SIDE DASH IT NO WORK" ═══ That is these two flags left stuck by whatever ran
         -- before you pressed Q. R.curving used to hard-refuse re-entry, and a chain that bailed early could
@@ -4287,16 +4339,22 @@ do
                 -- and it leaves a body the game accepts an M1 from.
                 _G.VX_BF_DASHANIM = tick() + 0.20
                 aimCameraAt(e.Position)
-                -- ═══ "SIDE DASH ANIMATION IS WEIRD" ═══ noKey = true means NO dash key is pressed, so the game
-                -- plays no dash clip at all and your body just slides along the arc. That is fine when YOU
-                -- pressed Q (the game already dashed you - a second one on top is what felt wrong), and it is
-                -- exactly wrong when the hub called this itself, which is every assist. So the key is skipped
-                -- only for a real Q press; a programmatic dash taps the real key first and the arc rides the
-                -- game's own dash animation, which is what "physically side dash, in a normal way" means.
+                -- ═══ "WHEN I PRESSED Q THE SECOND TIME, EVEN THOUGH THE DASH WAS ON COOLDOWN, IT DID WELL
+                -- THAT TIME - USE THAT ONE" ═══ That is the whole diagnosis, and it is the opposite of what I
+                -- built last time. On the SECOND Q the game's own dash was still on cooldown, so it produced
+                -- no impulse and no dash clip - our arc ran ALONE and looked right. On the first Q the game
+                -- dashes you one way while the arc pulls you another, and those two fighting IS the weird
+                -- animation. So: never any dash key here, ever (noKey stays true for both callers), and the
+                -- horizontal momentum the game's dash already gave you is killed before the arc starts, so
+                -- the second-press case is what you get every press.
+                pcall(function()
+                    local pr = GetRoot()
+                    if pr then local v = pr.AssemblyLinearVelocity; pr.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0) end
+                end)
                 -- radius 3.2, not 4.4: "very close to their body". Sweep 0.75pi so it genuinely travels AROUND them
                 -- rather than cutting a corner, and the bias puts the landing on the corner of the back.
                 dashToBack(t, { duration = 0.16, extraSweep = math.pi * 0.75, endRadius = 2.5,
-                    endBias = (_G.VX_SIDE_END == "Back") and 0 or 0.55, noKey = not prog })
+                    endBias = 0.55, noKey = true })   -- always around them, corner of the back
                 faceBackOf(t)                              -- rotation only - never a position write
                 local hold = tonumber(_G.VX_SIDE_HOLD) or 0.8
                 task.spawn(function() holdBack(t, hold) end)
@@ -4321,7 +4379,7 @@ do
             else
                 -- BF chains keep the arc (noKey, so no dash-recovery state) - their M1 must be ACCEPTED, and
                 -- the flash beat that follows depends on it.
-                local bias = (_G.VX_SIDE_END == "Back") and 0 or 0.45
+                local bias = 0.45      -- always the corner of the back; the Corner/Back choice is gone
                 dashToBack(t, { duration = 0.13, extraSweep = math.pi * 0.16, endRadius = 2.8, endBias = bias, noKey = true })
                 faceBackOf(t)
             end
@@ -6286,10 +6344,27 @@ do
 	end
 	local function onM1() if on or crowHitOn then local t = nearestEnemy(); if t then lastTarget = t end end end  -- clicking a user locks the crow onto them (target = who you last M1)
 	pcall(function() LP:GetMouse().Button1Down:Connect(onM1) end)
-	local function crowModel()  -- the spawned crow: workspace.Crows.Crow (has a HumanoidRootPart) - Effects.Crow kept as fallback
+	-- ═══ FIND THE CROW WHEREVER IT SPAWNS ═══ This used to check exactly two paths, workspace.Crows and
+	-- workspace.Effects.Crow. When the game parents it anywhere else the lookup returns nil, and nil is fatal
+	-- twice over: the cast never sets `flying`, and the steering loop returns on its first line. That is
+	-- "crow don't work, it don't even go to the target" - the control remote was never fired once.
+	-- Now: the two known paths first (cheap), then a shallow sweep for anything actually NAMED like a crow.
+	local function crowModel()
 		local crows = workspace:FindFirstChild("Crows")
 		if crows then local c = crows:FindFirstChildWhichIsA("Model") or crows:FindFirstChildWhichIsA("BasePart"); if c then return c end end
-		local eff = workspace:FindFirstChild("Effects"); return eff and eff:FindFirstChild("Crow")
+		local eff = workspace:FindFirstChild("Effects")
+		local e = eff and eff:FindFirstChild("Crow"); if e then return e end
+		local function named(o) return string.find(string.lower(o.Name), "crow", 1, true) ~= nil end
+		for _, o in ipairs(workspace:GetChildren()) do
+			if (o:IsA("Model") or o:IsA("BasePart")) and named(o) then return o end
+			-- one level down covers Effects / Debris / VFX style folders without walking the whole tree
+			if o:IsA("Folder") or o:IsA("Model") then
+				for _, k in ipairs(o:GetChildren()) do
+					if (k:IsA("Model") or k:IsA("BasePart")) and named(k) then return k end
+				end
+			end
+		end
+		return nil
 	end
 	local function crowControlRemote()
 		local chs = workspace:FindFirstChild("Characters"); local c = (chs and chs:FindFirstChild(LP.Name)) or LP.Character
@@ -6302,6 +6377,11 @@ do
 		local function one(p)
 			if not p:IsA("BasePart") then return end
 			pcall(function() p.CanCollide = false end)
+			-- "make it seeable, not invis." Nothing here ever wrote Transparency, so a crow the game spawns
+			-- invisible (or one our own hitbox blow-up made hard to read) stayed that way. Force it solid,
+			-- and make LocalTransparencyModifier zero too - that is the one the camera applies to your own
+			-- character's parts and it silently wins over Transparency.
+			pcall(function() p.Transparency = 0; p.LocalTransparencyModifier = 0 end)
 			if not expandedCrow[p] then expandedCrow[p] = true; pcall(function() p.Size = p.Size * (expandMult or 5) end) end   -- BIG hitbox: it clips everything near the target
 		end
 		if crow:IsA("BasePart") then one(crow) else for _, p in ipairs(crow:GetDescendants()) do one(p) end end
@@ -6326,7 +6406,12 @@ do
 	local lastCtl = 0
 	RunService.Heartbeat:Connect(function()
 		if not (flying or crowHitOn) then return end
-		local crow = crowModel(); if not crow then return end
+		-- ═══ THE CROW MODEL IS NOT REQUIRED TO STEER ═══ ControlRemote lives on YOUR character, not on the
+		-- crow, so the server can fly it for us whether or not we ever found the instance. This line used to
+		-- `return` when the lookup failed, which killed the steering entirely. The model is now only needed
+		-- for the cosmetic pass (hitbox + colour + visibility), so a failed lookup costs the dressing, not
+		-- the homing.
+		local crow = crowModel()
 		-- TARGET = the LOCKED (clicked) user, ONLY. No lock + G-cast homes who you last M1. It never picks a random enemy.
 		local lt = lockedTarget()
 		local tp
@@ -6338,7 +6423,7 @@ do
 			if not tp then local ne = nearestEnemy(); if ne then lastTarget = ne; tp = posOf(ne) end end
 		end
 		if not tp then return end
-		dressCrow(crow)                                                             -- big hitbox + your color, every frame (covers newly-streamed parts)
+		if crow then dressCrow(crow) end                                            -- big hitbox + your color, every frame (covers newly-streamed parts)
 		local ctl = crowControlRemote()
 		if ctl then
 			-- REAL control: the game's own ControlRemote flies the crow SERVER-side to the position we send.
@@ -6355,7 +6440,8 @@ do
 			end
 			return
 		end
-		-- FALLBACK (no ControlRemote found): client-drive like before
+		-- FALLBACK (no ControlRemote found): client-drive like before. THIS half genuinely needs the instance.
+		if not crow then return end
 		anchorCrow(crow)
 		local cp = crow:GetPivot().Position
 		local hd = Vector3.new(tp.X - cp.X, 0, tp.Z - cp.Z).Magnitude
@@ -6383,15 +6469,26 @@ do
 				-- meant a G on cooldown (no crow spawns) silently killed the dash-assist M1s for 25s.
 				crowGen = crowGen + 1
 				local myGen = crowGen
+				-- ═══ STEER FIRST, CONFIRM LATER ═══ `flying` used to be set ONLY if crowModel() resolved
+				-- within 2 seconds. Two separate things were riding on that one flag: whether to steer, and
+				-- whether to suppress the hub's synthetic clicks. So a crow we could not FIND was also a crow
+				-- we never STEERED - even though steering goes through your own character's remote and never
+				-- needed the instance. They are split now: steering arms on the cast, click-suppression still
+				-- waits for proof a crow exists (a G on cooldown must not kill the dash assist's M1s for 25s).
+				flying = true
+				task.delay(25, function()
+					if crowGen ~= myGen then return end
+					flying = false
+				end)
 				task.spawn(function()
 					local t0 = tick()
 					repeat task.wait(0.1) until crowModel() or tick() - t0 > 2 or crowGen ~= myGen
 					if crowGen ~= myGen then return end
-					if not crowModel() then vxLog("Crow: none spawned (cooldown?) - clicks NOT suppressed"); return end
-					flying = true; _G.VX_CROW_FLYING = tick() + 25
+					if not crowModel() then vxLog("Crow: none found in workspace - steering anyway, clicks NOT suppressed"); return end
+					_G.VX_CROW_FLYING = tick() + 25
 					task.delay(25, function()
 						if crowGen ~= myGen then return end   -- a newer cast owns the suppression now
-						flying = false; _G.VX_CROW_FLYING = 0
+						_G.VX_CROW_FLYING = 0
 					end)
 				end)
 			end
@@ -8219,7 +8316,17 @@ do
 			if not on or kc ~= Enum.KeyCode.One then return end
 			local injK = _G.VX_INJ_KEYS
 			if injK and injK[kc] and tick() < injK[kc] then return end
-			if not haveMoves() then return end
+			-- ═══ THIS GATE WAS THE "DOESN'T CLICK 3" ═══ haveMoves() is just "does Moveset have a 3rd
+			-- child", read by POSITION. If the Moveset has not populated yet, or the equipped form orders
+			-- its children differently, this returned false and the whole sequence - including the print
+			-- below - was skipped with no output at all. But the sequence PRESSES KEY 3 directly; it does
+			-- not need the move's name to do that, only for the remote that backs the press up. So a
+			-- missing name is no longer a reason to refuse - it just means we press the key and skip the
+			-- remote, and we say so instead of failing silently.
+			if not haveMoves() then
+				print("[DreamHub Soul] slot 3 not resolvable from the Moveset - pressing key 3 anyway")
+				if _G.VX_SOUL_DEBUG and VX_NOTIFY then VX_NOTIFY("Soul Combo: slot 3 name unknown, key-only", false) end
+			end
 			print("[DreamHub Soul] Stockpile seen - aiming up, Focus Strike, dash, extend")
 			sequence()
 		end)
@@ -8357,6 +8464,24 @@ do
 			if looksDomain(d.Name) then trySave(d) end
 		end)
 	end)
+	-- ═══ "MAKE SURE IT GRABS THEM BEFORE THEY USE THE DOMAIN - IT NEEDS TO BE QUICKER" ═══
+	-- DescendantAdded was already instant, but it fires when the domain SHELL spawns, and by then the domain
+	-- is up. There is an earlier signal: the caster has to play the domain animation first. Hooking each
+	-- nearby enemy's Animator and reacting to a track that NAMES a domain moves the save to the start of the
+	-- cast instead of the end of it, which is the whole difference between saving them and being late.
+	local domHooked = setmetatable({}, { __mode = "k" })
+	local function hookCaster(m)
+		local h = m and m:FindFirstChildOfClass("Humanoid"); if not h then return end
+		local a = h:FindFirstChildOfClass("Animator"); if not a or domHooked[a] then return end
+		domHooked[a] = true
+		pcall(function()
+			a.AnimationPlayed:Connect(function(tr)
+				if not on then return end
+				local okn, nm = pcall(function() return tostring(tr.Animation.Name) end)
+				if okn and nm and looksDomain(nm) then trySave(m) end
+			end)
+		end)
+	end
 	-- backstop: a domain that already exists when you toggle on, or one the event missed
 	task.spawn(function()
 		while true do
@@ -8364,7 +8489,10 @@ do
 				for _, v in ipairs(workspace:GetChildren()) do
 					if looksDomain(v.Name) then trySave(v) end
 				end
-				task.wait(0.4)
+				local chs = workspace:FindFirstChild("Characters")
+				if chs then for _, m in ipairs(chs:GetChildren()) do pcall(function() hookCaster(m) end) end end
+				for _, plr in ipairs(Players:GetPlayers()) do if plr ~= LP and plr.Character then pcall(function() hookCaster(plr.Character) end) end end
+				task.wait(0.1)   -- 0.4 -> 0.1: this is pure notice latency on everything the events miss
 			else
 				task.wait(0.8)
 			end
@@ -8566,13 +8694,20 @@ do
 		local hrp, r = myHRP(), t.Parent and t:FindFirstChild("HumanoidRootPart")
 		return (hrp and r) and (r.Position - hrp.Position).Magnitude <= (want or nearDist) + 8 or false
 	end
+	-- ═══ THE CLAIM IS PER MOVE, NOT PER TARGET ═══ This used to be doneWith[t] = true, recording only WHO
+	-- was finished and never WHICH finisher did it. So whichever of Up/Down happened to hold the alternating
+	-- pick on the tick a body went down claimed that knockdown for BOTH assists. And it was never a fair coin:
+	-- _G.VX_FA_FLIP starts nil, so `not nil` = true means Up wins the first knockdown of the session, and the
+	-- 1.2s lockout is exactly 40 ticks of the 0.03s loop - an even number - so the flip's phase never shifts
+	-- and Up keeps winning forever. That is the whole of "upper cut assist works, down slam assist never does".
 	local doneWith = setmetatable({}, { __mode = "k" })
 	local function run(which)
 		if tick() < busyUntil then return end
 		local t, d = downedTarget()
 		if not t then return end
-		if doneWith[t] then return end                 -- already finished this knockdown
-		doneWith[t] = true
+		local claim = doneWith[t]; if not claim then claim = {}; doneWith[t] = claim end
+		if claim[which] then return end                -- THIS finisher already had its turn on this knockdown
+		claim[which] = true
 		task.spawn(function()
 			-- forget them once they are back up, so the NEXT knockdown is punished too
 			task.spawn(function()
@@ -8598,7 +8733,7 @@ do
 			busyUntil = tick() + 5.0
 			if d and d > midDist then
 				dashIn(t, midDist - 6)
-				if not (t.Parent and isDown(t)) then busyUntil = 0 doneWith[t] = nil return end
+				if not (t.Parent and isDown(t)) then busyUntil = 0 claim[which] = nil return end
 			end
 			-- KINDA FAR: "you need to do three M1s, and they need to dash - physically side dash to them -
 			-- and on the fourth, the finisher."
@@ -8648,6 +8783,71 @@ do
 			end
 		end
 	end)
+	-- ═══════════════ THE REAL TRIGGER: YOUR OWN 4th M1 ═══════════════
+	-- "as soon as I click the fourth move, it needs to do the down slam. What's so hard about that."
+	-- Nothing - the assists were simply built on the wrong signal. They POLLED for a ragdolled body, which
+	-- means the earliest they can ever react is after the knockdown has already happened and after a poll
+	-- tick notices it, and then they still had to dash and throw three M1s of their own. Measured, that was
+	-- 1.7s in the middle band and up to 4.9s in the far one. No timing tweak fixes a design like that.
+	-- This is the signal you actually described: count YOUR clicks, and the moment the 4th one lands, send
+	-- the finisher. It is the same mechanism Auto Down Slam uses - the one you call perfect - and it costs
+	-- zero latency because it fires ON the click rather than after looking for its consequences.
+	-- _G.VX_M1_SUB only reports REAL clicks (the hub's own injected ones are filtered out at the source), so
+	-- the assist can never count its own swings and re-trigger itself.
+	do
+		local m1n, m1t = 0, 0
+		local function anyEnemy()
+			local t = downedTarget()
+			if t then return t end
+			local hrp = myHRP(); if not hrp then return nil end
+			local g = _G.VX_LOCK; local lt = (g and g.get) and g.get() or nil
+			if lt and lt.Parent then return lt end
+			local best, bd
+			local chs = workspace:FindFirstChild("Characters")
+			if chs then for _, m in ipairs(chs:GetChildren()) do
+				if m.Name ~= LP.Name and m ~= myModel() then
+					local r = m:FindFirstChild("HumanoidRootPart"); local h = m:FindFirstChildOfClass("Humanoid")
+					if r and (not h or h.Health > 0) then
+						local d = (r.Position - hrp.Position).Magnitude
+						if d <= 40 and (not bd or d < bd) then best, bd = m, d end
+					end
+				end
+			end end
+			return best
+		end
+		if _G.VX_M1_SUB then
+			_G.VX_M1_SUB("finisher_assist_m1", function()
+				if not (upOn or downOn) then return end
+				local now = tick()
+				if now - m1t > 1.2 then m1n = 0 end     -- JJS drops a combo at ~1.2s; past that this is swing 1
+				m1t = now
+				m1n = m1n + 1
+				local onSwing = math.clamp(tonumber(_G.VX_ASSIST_ON_M1) or 4, 2, 6)
+				if m1n < onSwing then return end
+				m1n = 0
+				if tick() < busyUntil then return end
+				busyUntil = tick() + 1.0
+				local t = anyEnemy()
+				task.spawn(function()
+					if t then faceAt(t) end
+					-- "it needs to automatically do uppercut AND a down slam" - with both on that is the
+					-- whole combo: the uppercut launches them, the slam catches them coming down. With one
+					-- on you get that one, on the same click.
+					if upOn and downOn then
+						upNow()
+						task.wait(0.30)
+						if t then faceAt(t) end
+						slamNow()
+					elseif downOn then
+						slamNow()
+					else
+						upNow()
+					end
+				end)
+			end)
+		end
+	end
+
 	-- ═══ PREDICTIVE SLAM ═══ "it must do it as soon as I do my move that makes them ragdoll." Polling
 	-- notices the ragdoll a few frames late; this watches for it the moment YOU cast. Your 1/2/3/4 press
 	-- arms a tight 60Hz watcher on the nearest enemy for 1.2s, and the FRAME they go down, the finisher
@@ -8870,20 +9070,36 @@ do
 	local plrs = game:GetService("Players")
 	local lp = plrs.LocalPlayer
 	local on = false
+	-- ═══ IT WAS WATCHING THE WRONG BODY ═══ This returned lp.Character. In JJS the rig that actually plays
+	-- your animations lives at workspace.Characters[yourName]; lp.Character can be a stale or decoy rig - the
+	-- file says so at vxMyChar and every other module resolves it that way. So check() searched an animator
+	-- that never plays the kick, found rbxassetid://104749 never, and the Heartbeat gate never opened once.
+	-- The finisher was fine. It was simply never called. That is "twofold kick assist dont work".
 	local function char(plr)
 		plr = plr or lp
+		if plr == lp then
+			local chs = workspace:FindFirstChild("Characters")
+			local m = chs and chs:FindFirstChild(lp.Name)
+			if m and m:FindFirstChildOfClass("Humanoid") then return m end
+		end
 		return plr.Character or plr.CharacterAdded:Wait()
 	end
 	local function check()
-		local ok, res = pcall(function()
-			for _, v in pairs(char().Humanoid.Animator:GetPlayingAnimationTracks()) do
-				if v.Animation.AnimationId:find("rbxassetid://104749") then
-					return true
+		-- Both rigs, because which one is "yours" changes with the character swap and a miss here is the
+		-- whole feature. His single-rig read is otherwise untouched.
+		for _, rig in ipairs({ char(), lp.Character }) do
+			local ok, res = pcall(function()
+				local h = rig and rig:FindFirstChildOfClass("Humanoid")
+				local a = h and h:FindFirstChildOfClass("Animator")
+				if not a then return false end
+				for _, v in pairs(a:GetPlayingAnimationTracks()) do
+					if v.Animation.AnimationId:find("rbxassetid://104749") then return true end
 				end
-			end
-			return false
-		end)
-		return ok and res or false
+				return false
+			end)
+			if ok and res then return true end
+		end
+		return false
 	end
 	local running = false
 	-- ═══ HIS TIMINGS, HIS ORDER, NOTHING OF MINE ═══ I added a service fallback, a capped wait and a faster
@@ -16022,7 +16238,7 @@ do
     local counterSec = defSub:Section({ Name = "Counter", Side = 1 })
     -- Side / Back Dash Assist moved to the Assistant tab. The DEFAULTS still have to be seeded here, because
     -- the engine reads these globals whether or not the controls were ever built (FREE has no Assistant tab).
-    _G.VX_SIDE_END, _G.VX_SIDE_M1S, _G.VX_SIDE_HOLD = "Corner", 1, 1.0
+    _G.VX_SIDE_M1S, _G.VX_SIDE_HOLD = 1, 1.0
     counterSec:Toggle({ Name = "Anti Counter", Callback = function(b) if AntiCounterApi then AntiCounterApi.set(b) end end })
     if tier("premium") then   -- FREE: no Emote / Jump-On-Head counter reactions (Anti Counter keeps its default)
         counterSec:Dropdown({ Name = "On Counter", Items = { "Jump On Head", "Emote" }, Default = "Jump On Head", Callback = function(v) if AntiCounterApi then AntiCounterApi.setMode(v) end end })
@@ -16080,6 +16296,9 @@ do
     -- DOMAIN SAVIOR: pick a username; when a domain is about to swallow them, your grab pulls them out.
     -- Works as Megumi (Toad), Gojo (Lapse Blue) or Mahito/Essence (Body Disfigure).
     acSec:Toggle({ Name = "Domain Savior (grab them out)", Default = false, Callback = function(b) if DomainSaviorApi then DomainSaviorApi.set(b) end end })
+    -- "add the supported characters below to make it work" - the list only existed as a code comment, so
+    -- there was no way to know from in-game which characters can actually perform the save.
+    pcall(function() acSec:Label("Works as: Megumi (Toad) · Gojo (Lapse Blue) · Mahito/Essence (Body Disfigure)") end)
     do  -- dropdown instead of typing, with the training Dummy included
         local function saviorList()
             local out = {}
@@ -16307,12 +16526,9 @@ do
     -- ── DASH ASSISTS: Q curves you around them, E goes through them ──
     local dashSec = asSub:Section({ Name = "Dash Assists", Side = 2 })
     dashSec:Toggle({ Name = "Side Dash Assist (Q)", Callback = function(b) if _G.VXBF2 then _G.VXBF2.setSideAssist(b) end end })
-    -- Where the dash finishes. Corner = off the spine, so the follow-up M1 lands as a hit rather than the
-    -- knockdown; Back = dead centre behind them. Neither teleports - it rides the travelling orbit.
-    dashSec:Dropdown({ Name = "Side Dash Ends At", Items = { "Corner", "Back" }, Default = "Corner", Callback = function(v)
-        v = (type(v) == "table") and v[1] or v
-        if v == "Corner" or v == "Back" then _G.VX_SIDE_END = v end
-    end })
+    -- "remove where they can select corner or back. Just make it side dash around them." Gone - the arc
+    -- always finishes on the corner of their back, which is the one that leaves a hittable body in front of
+    -- you rather than the dead-centre spine that reads as a knockdown.
     -- How many M1s it throws once it is behind them, at the game's real combo rhythm.
     dashSec:Dropdown({ Name = "M1s Behind Them", Items = { "0", "1", "2", "3", "4" }, Default = "1", Callback = function(v)
         v = (type(v) == "table") and v[1] or v; _G.VX_SIDE_M1S = tonumber(v) or 1
@@ -16867,7 +17083,7 @@ do
 		Hold         = 0.46,  -- keep the shield up this long after the last threat: rides a whole combo string
 		FacingDot    = -0.15, -- how much they must be turned towards you (-0.15 = slightly generous)
 		Turn         = true,  -- rotate your BODY to face the threat (never the camera)
-		Scan         = 0.10,  -- seconds between enemy-list rebuilds
+		Scan         = 0.05,  -- seconds between enemy-list rebuilds (halved: this is pure reaction latency)
 		LockedOnly   = false, -- only defend against the target you clicked (see the note in the loop)
 	}
 
@@ -16891,6 +17107,47 @@ do
 	-- ---------- the enemy list, rebuilt on a slow timer instead of per frame ----------
 	-- The old engine walked workspace every frame in several places. This keeps one list, refreshed 10x a
 	-- second, and the per-frame work is then a handful of distance checks.
+	-- ═══ DECLARED ABOVE THE ROSTER LOOP ON PURPOSE ═══ The loop below calls hookAnimator. If this block
+	-- sat under it, that call would compile as a nil GLOBAL and the pcall around it would swallow the
+	-- error in silence - which is exactly how the uppercut assist spent three builds "not working".
+	-- ═══ "AUTO BLOCK SUCKS, MAINLY AGAINST M1s. IF IT DETECTS THE M1 ANIMATION ID IT NEEDS TO BLOCK" ═══
+	-- Polling is why. The roster rebuilt every 0.10s and the check ran on Heartbeat, so a swing could be up
+	-- to ~116ms old before we even looked at it, and the block remote still had to round-trip after that. An
+	-- M1 is a short, low-windup swing - that budget IS the windup. Long skills still got blocked; M1s did not.
+	-- This subscribes to each nearby enemy's Animator.AnimationPlayed instead, so the block goes out on the
+	-- FRAME the swing starts with no poll in the path. The Heartbeat loop below stays as the backstop for what
+	-- the event cannot see (projectiles, animators that appear mid-fight).
+	local animHooked = setmetatable({}, { __mode = "k" })
+	local function isAttackId(id)
+		local nid = tostring(id):match("%d+"); if not nid then return false end
+		return ((_G.VX_M1_IDS and _G.VX_M1_IDS[nid]) or (_G.VX_ADAPT_IDS and _G.VX_ADAPT_IDS[nid])) and true or false
+	end
+	local function hookAnimator(e)
+		local h = e.hum; if not h then return end
+		local a = h:FindFirstChildOfClass("Animator"); if not a or animHooked[a] then return end
+		animHooked[a] = true
+		pcall(function()
+			a.AnimationPlayed:Connect(function(tr)
+				if not on then return end
+				local hrp = myHRP(); if not (hrp and e.root and e.root.Parent) then return end
+				if (e.root.Position - hrp.Position).Magnitude > CFG.Range + 15 then return end
+				local okid, id = pcall(function() return tr.Animation.AnimationId end)
+				local known = okid and isAttackId(id)
+				local act = false
+				if not known then
+					local okp, pr = pcall(function() return tostring(tr.Priority) end)
+					act = okp and string.find(pr, "Action", 1, true) ~= nil
+				end
+				if not (known or act) then return end
+				-- No facing test on this path on purpose: an M1 is over before a strafing attacker's root
+				-- finishes turning, and a shield raised for a swing that misses costs nothing.
+				holdUntil = tick() + CFG.Hold
+				threat, threatPos = e.model, e.root.Position
+				lastReason = known and "M1 / known attack (event)" or "attack animation (event)"
+				if _G.VX_BLOCK_DEBUG then print("[AutoBlock] event -> " .. tostring(lastReason)) end
+			end)
+		end)
+	end
 	local enemies = {}
 	task.spawn(function()
 		while true do
@@ -16917,6 +17174,7 @@ do
 					end
 				end
 				enemies = out
+				for _, e in ipairs(out) do pcall(function() hookAnimator(e) end) end
 				task.wait(CFG.Scan)
 			else
 				enemies = {}
@@ -16939,7 +17197,10 @@ do
 			if tr.IsPlaying and tr.TimePosition < 0.55 then         -- only the WINDUP; a finished swing is not a threat
 				local okid, id = pcall(function() return string.match(tostring(tr.Animation.AnimationId), "%d+") end)
 				if okid and id then
-					if (_G.VX_ANIMDICT and _G.VX_ANIMDICT[id])
+					-- _G.VX_ANIMDICT was first here and is never assigned anywhere in this file - a leftover
+					-- from the rename to VX_ADAPT_IDS. Auto Block was running on two of its three advertised
+					-- id sources, and the dead branch just silently never matched.
+					if false
 						or (_G.VX_ADAPT_IDS and _G.VX_ADAPT_IDS[id])
 						or (_G.VX_M1_IDS and _G.VX_M1_IDS[id]) then return true, "known attack" end
 				end
