@@ -8054,9 +8054,46 @@ do
 			return
 		end
 		lastSave = tick()
-		local ok = _G.VX_CAST_MOVE and _G.VX_CAST_MOVE(grab, t) or false
-		print("[DreamHub Savior] domain '" .. domPart.Name .. "' near " .. t.Name .. " -> " .. grab .. " " .. (ok and "cast" or "FAILED (send me this)"))
-		if VX_NOTIFY then VX_NOTIFY(ok and ("Saving " .. t.Name .. " with " .. grab) or ("Savior: " .. grab .. " remote missing"), ok) end
+		-- ═══ IT CLICKS THE MOVE FOR YOU ═══ Not a bare remote-and-hope: TARGET moves go through the game's
+		-- own aim-and-press flow, so the savior performs exactly what a player would do - turn your body AND
+		-- camera onto them, then PRESS the move's real key (read from whichever slot your Moveset actually
+		-- has the grab in, not hardcoded). The remote with the target attached still goes out right behind
+		-- the press as the backup, so whichever mechanism this game honours, the grab happens.
+		task.spawn(function()
+			-- 1) aim: the game's targeted moves grab whoever you are looking at
+			pcall(function()
+				local me = myModel(); local hrp = me and me:FindFirstChild("HumanoidRootPart")
+				if hrp then hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(r.Position.X, hrp.Position.Y, r.Position.Z)) end
+				local cam = workspace.CurrentCamera
+				if cam then cam.CFrame = CFrame.lookAt(cam.CFrame.Position, r.Position) end
+			end)
+			-- 2) the KEY, from the slot the grab actually sits in
+			local slotKey
+			for _, c in ipairs({ myModel(), LP.Character }) do
+				local mv = c and c:FindFirstChild("Moveset")
+				if mv then
+					local KEYS = { Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.KeyCode.Four }
+					for idx, m in ipairs(mv:GetChildren()) do
+						if norm(m.Name) == norm(grab) and KEYS[idx] then slotKey = KEYS[idx] break end
+					end
+				end
+				if slotKey then break end
+			end
+			if slotKey then
+				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[slotKey] = tick() + 0.5
+				_G.VX_INJECT_UNTIL = tick() + 0.5
+				pcall(function()
+					local VIM = game:GetService("VirtualInputManager")
+					VIM:SendKeyEvent(true, slotKey, false, game); task.wait(0.06); VIM:SendKeyEvent(false, slotKey, false, game)
+				end)
+			end
+			-- 3) the remote with the target attached, right behind the press
+			task.wait(0.05)
+			local ok = _G.VX_CAST_MOVE and _G.VX_CAST_MOVE(grab, t) or false
+			print("[DreamHub Savior] domain '" .. domPart.Name .. "' near " .. t.Name .. " -> pressed "
+				.. tostring(slotKey and slotKey.Name or "?") .. " + " .. grab .. " remote " .. (ok and "sent" or "MISSING (send me this)"))
+			if VX_NOTIFY then VX_NOTIFY("Saving " .. t.Name .. " with " .. grab, true) end
+		end)
 	end
 	workspace.DescendantAdded:Connect(function(d)
 		if not on then return end
