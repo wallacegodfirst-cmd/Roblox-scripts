@@ -933,6 +933,10 @@ _G.VX_UPPER_FLAG    = false   -- a stale true here would rewrite every M1 into a
 _G.VX_INJ_KEYS      = {}      -- same, for keys
 _G.VX_FINISHER_T    = 0
 _G.VX_UPPER_T       = 0       -- last uppercut; the Cursed Strike assist arms off this and only this
+_G.VX_SIDEASSIST_ON = false   -- read by the Dash-rewrite hook; sticky true would hijack every dash on a fresh run
+_G.VX_BF_CHAINDRIVE = 0
+_G.VX_SLOT_MOVE     = {}      -- learned key->move map; stale entries from the LAST character would cast their moves
+_G.VX_MOVE_RE       = _G.VX_MOVE_RE or {}   -- learned move->remote map (instances die with the rig on their own)
 _G.VX_TOTAL_MOVE_T  = 0
 _G.VX_LAUNCHING     = 0
 _G.VX_CROW_FLYING   = 0
@@ -1232,7 +1236,11 @@ do
 			-- AND this engine's flash count. At 3 the chain correctly waited three swings and then fired - but
 			-- the engine had also only seen ONE windup by then, so it counted 1/3 and never flashed. When a
 			-- chain is driving (borrowed), the chain has already done the counting: flash on this windup.
-			local need = _G.VX_BF_BORROWED and 1 or (tonumber(_G.VX_BF_AFTER) or 1)
+			-- A chain's injected swing must flash on THAT swing: the old exemption keyed off VX_BF_BORROWED,
+			-- which the rebuilt m1ThenBF no longer sets, so with "BF After (M1s)" at 2 or 3 the chain's single
+			-- M1 counted 1-of-N and the flash never fired. VX_BF_CHAINDRIVE is m1ThenBF saying "this one is mine".
+			local chainDriven = tick() < (tonumber(_G.VX_BF_CHAINDRIVE) or 0)
+			local need = (_G.VX_BF_BORROWED or chainDriven) and 1 or (tonumber(_G.VX_BF_AFTER) or 1)
 			if swingCount < need then return end   -- wait until your chosen number of M1s
 			swingCount = 0
 			local prevFire = _G.VX_BF_LAST_FIRE
@@ -2110,6 +2118,17 @@ do
 			if type(key) ~= "string" then return end
 			_G.VX_KEY_SUBS[key] = (type(fn) == "function") and fn or nil
 		end
+		-- ═══ SLOT LEARNING, HALF 1 ═══ Stamp which number key YOU pressed (injected keys excluded - our own
+		-- synthetic presses must not teach the map). The namecall hook pairs this stamp with the move the game
+		-- casts right after, giving the REAL key->move mapping with no GetChildren-order assumption. It is a
+		-- permanent subscriber, so the key poll below always has at least one consumer.
+		_G.VX_ON_KEY("slotlearn", function(kc)
+			local injK = _G.VX_INJ_KEYS
+			if injK and injK[kc] and tick() < injK[kc] then return end
+			local map = { [Enum.KeyCode.One] = 1, [Enum.KeyCode.Two] = 2, [Enum.KeyCode.Three] = 3, [Enum.KeyCode.Four] = 4 }
+			local n = map[kc]
+			if n then _G.VX_LASTNUM_KEY = { n = n, t = tick() } end
+		end)
 		do
 			local WATCH = { Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.KeyCode.Four,
 				Enum.KeyCode.R, Enum.KeyCode.Space, Enum.KeyCode.Q, Enum.KeyCode.E, Enum.KeyCode.G }
@@ -3045,6 +3064,19 @@ local function vxCastMove(moveName, ...)
 		if _G.VX_MOVE_DEBUG then print("[DreamHub Move] pressed slot " .. moveSlot .. " for '" .. tostring(obj.Name) .. "'") end
 		return true
 	end
+	-- ═══ THE LEARNED REMOTE BEATS EVERY GUESS ═══ If the game itself has cast this move once this session,
+	-- the namecall hook recorded the exact remote it used. Fire that and skip the name derivation entirely -
+	-- this is the only path with zero assumptions in it.
+	do
+		local lr = _G.VX_MOVE_RE and _G.VX_MOVE_RE[obj.Name]
+		if lr and lr.Parent then
+			local extraL = table.pack(...)
+			_G.VX_HUB_CAST = tick() + 0.25
+			local okL = pcall(function() lr:FireServer(obj, table.unpack(extraL, 1, extraL.n)) end)
+			if _G.VX_MOVE_DEBUG then print("[DreamHub Move] learned remote " .. (okL and "fired " or "FAILED ") .. "for " .. obj.Name) end
+			if okL then return true end
+		end
+	end
 	local svcName = vxMoveService(obj.Name) or vxMoveService(moveName)
 	if not svcName then
 		-- _G.VX_NO_KEYFALLBACK: set by the universal AIR path, where the key press that got us here IS the
@@ -3056,7 +3088,13 @@ local function vxCastMove(moveName, ...)
 	local svcs = vxServicesFolder()
 	local re = svcs and svcs:FindFirstChild(svcName)
 	re = re and re:FindFirstChild("RE"); re = re and re:FindFirstChild("Activated")
-	if not re then return false end
+	if not re then
+		-- This used to `return false` in silence - the most likely failure of the whole function, and it
+		-- produced no key press, no remote, no message. Now it says so and still tries the key.
+		if _G.VX_MOVE_DEBUG then print("[DreamHub Move] " .. svcName .. " exists but has no RE.Activated - key fallback") end
+		if _G.VX_NO_KEYFALLBACK then return false end
+		return pressSlotKey()
+	end
 	local extra = table.pack(...)
 	-- Announce the cast, so Auto Cancel does not block the hub's own moves. Auto Cancel exists to swallow a
 	-- MISCLICK; a move the hub deliberately fired is never a misclick.
@@ -3067,6 +3105,31 @@ local function vxCastMove(moveName, ...)
 	return true
 end
 _G.VX_CAST_MOVE = vxCastMove    -- shared: Auto Air, Auto Hakari and anything else that casts by name
+
+-- ═══════════════════════ THE DASH IS A REMOTE ═══════════════════════
+-- Your capture:
+--     MovementService.RE.Dash:FireServer("Right")
+-- This changes everything about the dash features. Every dash in this hub up to now was either a simulated
+-- Q key press (which the game can ignore, and which competes with your own real presses) or a hand-rolled
+-- arc of CFrame writes (which is what "the side dash animation is weird" has always been - the game plays
+-- no dash clip at all while your body slides along a curve we invented).
+-- Firing the game's own Dash remote is neither: the SERVER dashes you. Real animation, real distance, real
+-- cooldown, nothing for the anti-cheat to disagree with, and nothing of ours fighting it.
+local function vxDash(dir)
+	local svcs = vxServicesFolder(); if not svcs then return false end
+	local mv = svcs:FindFirstChild("MovementService")
+	local re = mv and mv:FindFirstChild("RE"); re = re and re:FindFirstChild("Dash")
+	if not re then
+		if _G.VX_MOVE_DEBUG then print("[DreamHub Dash] MovementService.RE.Dash not found") end
+		return false
+	end
+	dir = tostring(dir or "Right")
+	_G.VX_HUB_DASH = tick() + 0.2   -- ours: the Dash-rewrite hook must not touch a direction we chose ourselves
+	local ok = pcall(function() re:FireServer(dir) end)
+	if _G.VX_MOVE_DEBUG then print("[DreamHub Dash] " .. (ok and "fired " or "FAILED ") .. "Dash(" .. dir .. ")") end
+	return ok
+end
+_G.VX_DASH = vxDash
 
 -- ═══════════════════════ ONE BUTTON THAT ANSWERS "WHY DOESN'T ANYTHING WORK" ═══════════════════════
 -- Every round of this has been me reasoning about the code and you testing blind, and that loop is not
@@ -4036,6 +4099,7 @@ do
         -- after the press, comfortably inside 0.6s) was discarded as "the trigger's own cast" every time.
         -- The dash ran, the swing landed, and the engine refused to press 3. That is the entire bug.
         _G.VX_BF_CHAINCLICK = tick()
+        _G.VX_BF_CHAINDRIVE = tick() + 0.8   -- engine: this swing is chain-driven, flash it on swing ONE
         VMouseClick()
         -- 4) HAND THE ENGINE BACK to your real choice a beat later, only if WE turned it on.
         if not wasOn then
@@ -4327,34 +4391,34 @@ do
         R.lockTarget = t; R.lockKind = "cam"; R.lockEnd = tick() + 1.4   -- camera stays on them through the hold
         task.spawn(function()
             if not isBF then
-                -- ═══ THE Q YOU PRESSED IS ALREADY THE DASH ═══ Q is the game's own dash key, so by the time
-                -- this runs the game has ALREADY dashed you - a real, legit side dash. Injecting a second
-                -- dash on top is what made it feel wrong. So we do NOT dash again: we stamp the dash-blind (so
-                -- the engine and the combo counter know a dash clip is playing), wait that window out, then
-                -- get behind them and swing. When the caller is programmatic (doSide, no real Q), we DO need
-                -- to produce the dash - detect that by whether a dash key is actually down.
-                -- ═══ "IT NEEDS TO DASH AROUND THEIR BACK" ═══ Not accept-your-dash-then-hop: one continuous
-                -- arc AROUND them, ending on the back or the corner per your setting. This is the stepped
-                -- teleport-arc (the primitive from the mode that works) - it travels, it curves, it is fast,
-                -- and it leaves a body the game accepts an M1 from.
-                _G.VX_BF_DASHANIM = tick() + 0.20
+                -- ═══════════ REBUILT ON THE GAME'S OWN DASH REMOTE ═══════════ Your capture:
+                --     MovementService.RE.Dash:FireServer("Right")
+                -- Every previous version of this assist either simulated the Q key or slid you along a
+                -- hand-made arc, and both are why it never looked right: the game played no dash of its own,
+                -- or played one that fought ours. Now the SERVER dashes you - real animation, real speed -
+                -- and the only thing we add is the direction (the side that leads behind them) and a short
+                -- finishing arc onto the corner of their back once the dash has carried you level with them.
+                -- When YOU pressed Q, the game already fired Dash for you and the hook rewrote its direction
+                -- (see the M1 hook) - so this path only fires the remote itself when the hub is the caller.
+                _G.VX_BF_DASHANIM = tick() + 0.30
                 aimCameraAt(e.Position)
-                -- ═══ "WHEN I PRESSED Q THE SECOND TIME, EVEN THOUGH THE DASH WAS ON COOLDOWN, IT DID WELL
-                -- THAT TIME - USE THAT ONE" ═══ That is the whole diagnosis, and it is the opposite of what I
-                -- built last time. On the SECOND Q the game's own dash was still on cooldown, so it produced
-                -- no impulse and no dash clip - our arc ran ALONE and looked right. On the first Q the game
-                -- dashes you one way while the arc pulls you another, and those two fighting IS the weird
-                -- animation. So: never any dash key here, ever (noKey stays true for both callers), and the
-                -- horizontal momentum the game's dash already gave you is killed before the arc starts, so
-                -- the second-press case is what you get every press.
-                pcall(function()
-                    local pr = GetRoot()
-                    if pr then local v = pr.AssemblyLinearVelocity; pr.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0) end
-                end)
-                -- radius 3.2, not 4.4: "very close to their body". Sweep 0.75pi so it genuinely travels AROUND them
-                -- rather than cutting a corner, and the bias puts the landing on the corner of the back.
-                dashToBack(t, { duration = 0.16, extraSweep = math.pi * 0.75, endRadius = 2.5,
-                    endBias = 0.55, noKey = true })   -- always around them, corner of the back
+                if prog and _G.VX_DASH then
+                    local dir = "Right"
+                    pcall(function()
+                        local pr = GetRoot()
+                        local fwd = Vector3.new(e.CFrame.LookVector.X, 0, e.CFrame.LookVector.Z)
+                        if fwd.Magnitude > 0.01 then
+                            local dest = e.Position - fwd.Unit * 2.5
+                            if pr and (dest - pr.Position):Dot(pr.CFrame.RightVector) < 0 then dir = "Left" end
+                        end
+                    end)
+                    _G.VX_DASH(dir)
+                end
+                task.wait(0.24)                            -- let the server's dash actually travel
+                -- finishing arc: short and shallow - the dash did the moving, this just wraps the last step
+                -- around onto the corner of their back so the M1 lands from behind.
+                dashToBack(t, { duration = 0.10, extraSweep = math.pi * 0.30, endRadius = 2.5,
+                    endBias = 0.55, noKey = true })
                 faceBackOf(t)                              -- rotation only - never a position write
                 local hold = tonumber(_G.VX_SIDE_HOLD) or 0.8
                 task.spawn(function() holdBack(t, hold) end)
@@ -4690,6 +4754,9 @@ do
         do local injK = _G.VX_INJ_KEYS; if injK and injK[input.KeyCode] and tick() < injK[input.KeyCode] then return end end
         local st = R.stamp[input.KeyCode]; if st and tick() - st < WIN then return end
         if input.KeyCode == Settings.BFKey and Settings.Enabled and Settings.Mode ~= "M1" then
+            -- Handled (and SUNK) by the ContextActionService binding below; reaching here means CAS is not
+            -- available on this executor, so fall through and at least run the chain the old way.
+            if R.casBound and tick() - (R.casSeen or 0) < 0.10 then return end
             -- ═══ YOUR TRIGGER PRESS IS ALSO A CAST ═══ On Itadori, 3 IS Divergent Fist - so the press that
             -- starts a chain also casts it, and that cast's animation is in the engine's trigger table. It
             -- was arriving as a "windup" and SPENDING the chain's single-shot flash before the chain's own M1
@@ -4699,6 +4766,7 @@ do
             _G.VX_BF_TRIG3 = tick()
             doBlackFlash(); return
         end
+        -- (the CAS route stamps TRIG3 itself - see the binding below this connection)
         -- CLICK path for BF: covers characters whose M1 anim isn't in the database (the anim path can't catch
     -- ═══ THE EVIDENCE SAYS THE "DUPLICATE" PRESS WAS THE ONE LANDING ═══
     -- Last build an agent argued this path was a harmful duplicate: it presses 3 at CLICK+0.14s, before the
@@ -4728,6 +4796,32 @@ do
                 end)
             end
         end
+    end)
+    -- ═══════════ SINK THE TRIGGER PRESS - THE REAL REASON NO CHAIN MODE EVER FLASHED ═══════════
+    -- On Itadori, key 3 IS Divergent Fist. The chain trigger above runs from InputBegan, which OBSERVES input
+    -- but cannot consume it - so every chain started with the game ALSO casting Divergent Fist at t=0,
+    -- putting the move on its real cooldown. The chain then dashed, swung, and the engine pressed 3 at the
+    -- perfect moment... onto a move that was already spent. Swing lands, no flash, every time, every mode.
+    -- Auto BF never had this problem because it has no trigger press - nothing burnt the slot first.
+    -- ContextActionService is the one input API that CAN consume: binding at high priority and returning
+    -- Sink marks the press gameProcessed, so the game's own handler ignores it. The move is never cast by
+    -- the trigger, the slot is cold when the engine's timed press arrives, and THAT press casts it - as the
+    -- flash. Injected presses (the engine's own key 3) are passed through untouched, or we would sink the
+    -- very press that makes the flash happen.
+    pcall(function()
+        local CAS = game:GetService("ContextActionService")
+        R.casBound = pcall(function()
+            CAS:BindActionAtPriority("VX_BF_TRIGGER", function(_, state, input)
+                if state ~= Enum.UserInputState.Begin then return Enum.ContextActionResult.Pass end
+                do local injK = _G.VX_INJ_KEYS; if injK and injK[input.KeyCode] and tick() < injK[input.KeyCode] then return Enum.ContextActionResult.Pass end end
+                if UserInputService:GetFocusedTextBox() then return Enum.ContextActionResult.Pass end
+                if not (Settings.Enabled and Settings.Mode ~= "M1" and input.KeyCode == Settings.BFKey) then return Enum.ContextActionResult.Pass end
+                R.casSeen = tick()
+                _G.VX_BF_TRIG3 = tick()
+                task.spawn(doBlackFlash)
+                return Enum.ContextActionResult.Sink        -- the game never sees this 3: Divergent Fist stays cold
+            end, false, 3000, Settings.BFKey)
+        end)
     end)
     LocalPlayer.CharacterAdded:Connect(ReleaseAll)
 
@@ -4808,11 +4902,22 @@ do
         setMode = function(m) if type(m) == "string" then vxbfStop(); Settings.Mode = m end end,   -- Side Dash / Back Dash / Jump / Teleport / M1
         setBFM1 = function(v) Settings.BFM1 = v == true end,
         setAutoBF = function(v) Settings.AutoBF = v == true end,
-        setSideAssist = function(v) Settings.SideAssist = v == true end,
+        setSideAssist = function(v) Settings.SideAssist = v == true; _G.VX_SIDEASSIST_ON = Settings.SideAssist end,
         setBackAssist = function(v) Settings.BackAssist = v == true end,
         setCooldown = function(v) if type(v) == "number" then Settings.BFCooldown = v end end,
         setTeleportDist = function(v) if type(v) == "number" then Settings.BFTeleportDist = v end end,
-        doSide = function() doSideDash(false, true) end,   -- programmatic: taps the real dash key, so it animates
+        doSide = function() doSideDash(false, true) end,   -- programmatic: fires the Dash remote itself
+        -- For the Dash-rewrite hook: which way should a dash go to end up behind the nearest target?
+        -- nil = no target in range, leave the player's dash alone.
+        sideDir = function()
+            local t = GetClosestTarget(Settings.DashRange); if not t then return nil end
+            local e = t:FindFirstChild("HumanoidRootPart"); if not e then return nil end
+            local pr = GetRoot(); if not pr then return nil end
+            local fwd = Vector3.new(e.CFrame.LookVector.X, 0, e.CFrame.LookVector.Z)
+            if fwd.Magnitude < 0.01 then return "Right" end
+            local dest = e.Position - fwd.Unit * 2.5
+            return ((dest - pr.Position):Dot(pr.CFrame.RightVector) < 0) and "Left" or "Right"
+        end,
         doBack = function() doBackDash(false) end,
     }
     -- assist keys: Q = side dash assist, E = back dash assist (only when their toggle is on)
@@ -5889,8 +5994,47 @@ do
 			if setreadonly then setreadonly(mt, false) end
 			mt.__namecall = (newcclosure or function(f) return f end)(function(self, ...)
 				local method = getnamecallmethod and getnamecallmethod() or nil
+				-- ═══ SIDE DASH ASSIST = REPLACE THE DASH REMOTE'S DIRECTION ═══ "instead of the keybind of
+				-- Q, it destroys the Q dash remote and replaces it with the right remote - Dash." Exactly
+				-- this, minus the destroying: when YOU dash (the game fires MovementService.RE.Dash) and the
+				-- assist is on, the direction argument is swapped for the one that curves you behind the
+				-- nearest target before the call goes through. Your dash, their back. Dashes the hub fires
+				-- itself are stamped VX_HUB_DASH and pass through untouched - their direction was already
+				-- chosen on purpose.
+				if method == "FireServer" and self.Name == "Dash" and _G.VX_SIDEASSIST_ON
+					and tick() > (tonumber(_G.VX_HUB_DASH) or 0) then
+					local v2 = _G.VXBF2
+					local okD, d = pcall(function() return v2 and v2.sideDir and v2.sideDir() end)
+					if okD and (d == "Left" or d == "Right") then
+						local args = { ... }
+						args[1] = d
+						return oldNamecall(self, unpack(args))
+					end
+				end
 				if method == "FireServer" and self.Name == "Activated" then
 					local args = { ... }
+					-- ═══ LEARN, DON'T GUESS ═══ Every service name this hub fires was DERIVED from the move's
+					-- name by string surgery, and the derivation is wrong exactly often enough to matter
+					-- (CrushJawService vs "Crushing Jaws"). But right here, every time the game itself casts a
+					-- move, it hands us the truth: args[1] IS the Moveset entry and self IS its remote. Record
+					-- the pair, and record which NUMBER KEY you pressed just before - that is the real slot
+					-- mapping, straight from the game, no GetChildren() ordering assumption. After you cast
+					-- each move once, every assist can fire it as a pure remote with zero guessing.
+					if typeof(args[1]) == "Instance" then
+						pcall(function()
+							local mv = args[1]
+							if mv.Parent and mv.Parent.Name == "Moveset" then
+								_G.VX_MOVE_RE = _G.VX_MOVE_RE or {}
+								_G.VX_MOVE_RE[mv.Name] = self
+								local lk = _G.VX_LASTNUM_KEY
+								if lk and tick() - (lk.t or 0) < 0.5 then
+									_G.VX_SLOT_MOVE = _G.VX_SLOT_MOVE or {}
+									_G.VX_SLOT_MOVE[lk.n] = mv.Name
+									if _G.VX_MOVE_DEBUG then print("[DreamHub Learn] slot " .. lk.n .. " = " .. mv.Name) end
+								end
+							end
+						end)
+					end
 					-- ═══ EVERY UPPERCUT, INCLUDING THE ONES THE HUB DIDN'T SEND ═══ An uppercut is
 					-- Activated("Up") whoever fires it, so stamping it here catches a manual one (you holding
 					-- W and clicking) as well as the hub's. The Cursed Strike assist waits on this stamp and
@@ -8203,6 +8347,9 @@ do
 	-- perfection assist dont click 3", exactly. The move in slot 3 is the move it wants, whatever its name,
 	-- so it now reads the name out of your own Moveset and works on both forms and any future one.
 	local function slot3Name()
+		-- Learned slot map first - see slot1Name in the Cursed Strike module for why.
+		local sm = _G.VX_SLOT_MOVE
+		if sm and sm[3] then return sm[3] end
 		for _, c in ipairs({ myModel(), LP.Character }) do
 			local mv = c and c:FindFirstChild("Moveset")
 			if mv then
@@ -8815,33 +8962,55 @@ do
 			end end
 			return best
 		end
+		-- ═══ A HELD BUTTON IS FOUR SWINGS, ONE EDGE ═══ The M1 poll fires subscribers on the rising edge
+		-- only, and this game advances the combo while the button is HELD (recorder-proven: one 1.38s hold =
+		-- four swings). Counting edges meant a held combo counted 1 and the 4th-swing trigger never fired
+		-- unless you tapped four separate times. So on each edge we also watch the button: for as long as it
+		-- stays down, another swing is credited every 0.35s - the game's own combo beat.
+		local holdWatch = 0
+		local function credit()
+			local now = tick()
+			if now - m1t > 1.2 then m1n = 0 end     -- JJS drops a combo at ~1.2s; past that this is swing 1
+			m1t = now
+			m1n = m1n + 1
+			local onSwing = math.clamp(tonumber(_G.VX_ASSIST_ON_M1) or 4, 2, 6)
+			if m1n < onSwing then return end
+			m1n = 0
+			if tick() < busyUntil then return end
+			busyUntil = tick() + 1.0
+			local t = anyEnemy()
+			task.spawn(function()
+				if t then faceAt(t) end
+				-- "it needs to automatically do uppercut AND a down slam" - with both on that is the
+				-- whole combo: the uppercut launches them, the slam catches them coming down. With one
+				-- on you get that one, on the same click.
+				if upOn and downOn then
+					upNow()
+					task.wait(0.30)
+					if t then faceAt(t) end
+					slamNow()
+				elseif downOn then
+					slamNow()
+				else
+					upNow()
+				end
+			end)
+		end
 		if _G.VX_M1_SUB then
 			_G.VX_M1_SUB("finisher_assist_m1", function()
 				if not (upOn or downOn) then return end
-				local now = tick()
-				if now - m1t > 1.2 then m1n = 0 end     -- JJS drops a combo at ~1.2s; past that this is swing 1
-				m1t = now
-				m1n = m1n + 1
-				local onSwing = math.clamp(tonumber(_G.VX_ASSIST_ON_M1) or 4, 2, 6)
-				if m1n < onSwing then return end
-				m1n = 0
-				if tick() < busyUntil then return end
-				busyUntil = tick() + 1.0
-				local t = anyEnemy()
+				credit()
+				-- keep crediting while the button stays down (one watcher at a time)
+				local mine = tick()
+				holdWatch = mine
 				task.spawn(function()
-					if t then faceAt(t) end
-					-- "it needs to automatically do uppercut AND a down slam" - with both on that is the
-					-- whole combo: the uppercut launches them, the slam catches them coming down. With one
-					-- on you get that one, on the same click.
-					if upOn and downOn then
-						upNow()
-						task.wait(0.30)
-						if t then faceAt(t) end
-						slamNow()
-					elseif downOn then
-						slamNow()
-					else
-						upNow()
+					local UIS = game:GetService("UserInputService")
+					local last = tick()
+					while holdWatch == mine do
+						local okD, down = pcall(function() return UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) end)
+						if not (okD and down) then break end
+						if tick() - last >= 0.35 then last = tick(); credit() end
+						task.wait(0.05)
 					end
 				end)
 			end)
@@ -8958,6 +9127,10 @@ do
 	-- Slot 1, whatever it is called. On vessel Yuji that IS Cursed Strikes; on anyone else it is their own
 	-- first move, which is what "curse strike or the first move" asks for.
 	local function slot1Name()
+		-- The learned map first: it comes from pairing YOUR key presses with the game's own casts, so it is
+		-- the real slot order. GetChildren() is creation order, which is only usually the same thing.
+		local sm = _G.VX_SLOT_MOVE
+		if sm and sm[1] then return sm[1] end
 		for _, c in ipairs({ myModel(), LP.Character }) do
 			local mv = c and c:FindFirstChild("Moveset")
 			if mv then local kids = mv:GetChildren(); if kids[1] then return kids[1].Name end end
@@ -8994,6 +9167,15 @@ do
 		return false
 	end
 	local function fire()
+		-- ═══ "IT NEEDS TO CLICK 1, NOT 3" ═══ The press is now literal and explicit: KEY ONE, sent first,
+		-- marked as ours. The remote follows as the backup. Nothing here can ever touch key 3 - the only
+		-- keycode in this function is One.
+		pcall(function()
+			local VIM = game:GetService("VirtualInputManager")
+			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.One] = tick() + 0.4
+			_G.VX_INJECT_UNTIL = tick() + 0.4
+			VIM:SendKeyEvent(true, Enum.KeyCode.One, false, game); task.wait(0.03); VIM:SendKeyEvent(false, Enum.KeyCode.One, false, game)
+		end)
 		local nm = slot1Name()
 		if not (nm and _G.VX_CAST_MOVE) then return false end
 		-- The airborne flag is the second argument, and it is only correct while YOU are actually up there.
@@ -9116,8 +9298,38 @@ do
 			task.wait(gap)
 		end
 		task.wait()
-		pcall(function() char().Humanoid:ChangeState(Enum.HumanoidStateType.Jumping) end)
-		task.wait(0.2)
+		pcall(function() local h = char():FindFirstChildOfClass("Humanoid"); if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end end)
+		-- ═══ "IT NEEDS TO DOWN SLAM AFTER THEY ARE IN THE AIR" ═══ His 0.2s was a guess at when the kick has
+		-- launched them; on a laggy hit it fires while they are still rising past you, and the slam whiffs.
+		-- So the final Down now waits for the actual launch: watch the nearest enemy and fire the FRAME they
+		-- are airborne. His 0.2s stays as the fallback ceiling - if nothing is detectably airborne by then,
+		-- fire anyway, which is exactly the old behaviour.
+		do
+			local hrp
+			pcall(function() hrp = char():FindFirstChild("HumanoidRootPart") end)
+			local best, bd
+			if hrp then
+				local chs = workspace:FindFirstChild("Characters")
+				if chs then for _, m in ipairs(chs:GetChildren()) do
+					if m.Name ~= lp.Name then
+						local r = m:FindFirstChild("HumanoidRootPart")
+						if r then
+							local d = (r.Position - hrp.Position).Magnitude
+							if d <= 30 and (not bd or d < bd) then best, bd = m, d end
+						end
+					end
+				end end
+			end
+			local dl = tick() + 0.2
+			while tick() < dl do
+				if best then
+					local r = best:FindFirstChild("HumanoidRootPart")
+					local h = best:FindFirstChildOfClass("Humanoid")
+					if (h and h.FloorMaterial == Enum.Material.Air) or (r and r.AssemblyLinearVelocity.Y > 10) then break end
+				end
+				game:GetService("RunService").Heartbeat:Wait()
+			end
+		end
 		pcall(function() game:GetService("ReplicatedStorage").Knit.Knit.Services.GojoService.RE.Activated:FireServer("Down") end)
 	end
 	game:GetService("RunService").Heartbeat:Connect(function()
@@ -11808,7 +12020,12 @@ end
 -- An explicitly requested higher tier now wins, and we clear the stale lower flags so nothing can resurrect them.
 -- Derived from the ONE tier resolved (and consumed) at the top of the file, so it always matches the flag you
 -- set for this run. "full" (no flag at all) keeps the historical everything-unlocked behaviour.
-local VX_TIER = (_G.__DreamTierKey == "full") and "premium" or (_G.__DreamTierKey or "premium")
+-- ═══ "full" MUST OUTRANK "plus" ═══ This line used to map full -> "premium" (rank 2), and the rank
+-- helper puts plus at 3. So a direct/dev load - YOUR load - failed every tier("plus") check: the Upper Cut
+-- and Down Slam Assist toggles were never BUILT, on your screen specifically, while the label right where
+-- they should be said "...are PLUS". That is the whole of "downslam/upper cut assi dont even work": the
+-- module was fine, its switches did not exist. full is now its own rank above plus.
+local VX_TIER = _G.__DreamTierKey or "premium"
 local VX_VERSION = "5.8"
 local VX_BUILD = "B58"   -- bump every push; shows in the title so you can tell a stale cached download from the real newest build
 
@@ -15792,7 +16009,7 @@ end
 do
     local Players = game:GetService("Players")
     local LocalPlayer = Players.LocalPlayer
-    local function tier(min) local r = { free = 1, premium = 2, plus = 3 } return (r[VX_TIER] or 3) >= (r[min] or 99) end
+    local function tier(min) local r = { free = 1, premium = 2, plus = 3, full = 4 } return (r[VX_TIER] or 4) >= (r[min] or 99) end   -- full = the dev/direct load, sees everything
     -- ═══ UNRELEASED = UPDATE CHANNEL (or a paid tier) ONLY ═══ "remove the new updates from the free - I
     -- think people can see it." They could: the ORIGINAL free one-liner pointed straight at this dev file, so
     -- everyone who kept it was previewing every unreleased feature. The update loaders set a marker before
@@ -15810,7 +16027,7 @@ do
         return t
     end
 
-    local tierNice = (VX_TIER == "free" and "FREE") or (VX_TIER == "plus" and "PLUS") or "VIP"
+    local tierNice = (VX_TIER == "free" and "FREE") or (VX_TIER == "plus" and "PLUS") or (VX_TIER == "full" and "FULL") or "VIP"
 
     -- ════════ ABILITY-ARENA GUI PORT (Fluriore) ════════
     -- The hub uses the "Ability Arena" GUI library (Fluriore) instead of the embedded Vaultix UI, per request.
