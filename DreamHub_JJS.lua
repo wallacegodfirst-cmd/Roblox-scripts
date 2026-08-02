@@ -925,6 +925,8 @@ _G.VX_BF_DASHANIM   = 0
 _G.VX_BFAPI_ON      = false   -- the engine re-arms itself from the GUI toggles a moment later
 _G.VX_M1BF_ON       = false
 _G.VX_SYNTH_CLICK   = 0       -- a stale "this click was ours" mark suppresses your real clicks
+_G.VX_SLAM_FLAG     = false   -- mirrors of the finisher toggles, read by the M1 rewrite hook. MUST be seeded:
+_G.VX_UPPER_FLAG    = false   -- a stale true here would rewrite every M1 into a finisher on a fresh run.
 _G.VX_INJ_KEYS      = {}      -- same, for keys
 _G.VX_FINISHER_T    = 0
 _G.VX_TOTAL_MOVE_T  = 0
@@ -1025,7 +1027,10 @@ do
 	local lastAnimId, lastAnimAt = nil, 0   -- per-id dedupe: the same swing arriving from both hooked rigs
 	-- A chain that wants to flash on THIS swing resets the counter first; otherwise it inherits however many
 	-- swings were already counted and appears to "need 2 or 3 M1s" even with BF After (M1s) set to 1.
-	_G.VX_BF_RESETCOUNT = function() swingCount = 0; lastSwing = 0 end
+	-- Also clear the between-flashes cooldown. Both callers of this mean "flash on THIS swing", and the
+	-- chain's own swing arrives inside the 0.45s floor left by the previous flash - so the gate that exists
+	-- to stop flash spam was rejecting exactly the flash the chain had just asked for.
+	_G.VX_BF_RESETCOUNT = function() swingCount = 0; lastSwing = 0; _G.VX_BF_LAST_FIRE = 0 end
 	-- "if I M1 but there's no target, no dummy, near me it should not click 3" - checked in the ENGINE itself
 	-- so that every path into it (M1 BF, Auto BF, any borrowed chain) obeys it. Nothing downstream can bypass.
 	local function bfEnemyNear()
@@ -3010,6 +3015,9 @@ local function vxCastMove(moveName, ...)
 	end
 	local svcName = vxMoveService(obj.Name) or vxMoveService(moveName)
 	if not svcName then
+		-- _G.VX_NO_KEYFALLBACK: set by the universal AIR path, where the key press that got us here IS the
+		-- cast - pressing it again just re-casts the ground version on top of our airborne one.
+		if _G.VX_NO_KEYFALLBACK then return false end
 		if _G.VX_MOVE_DEBUG then print("[DreamHub Move] no service for '" .. tostring(obj.Name) .. "' - pressing its key instead") end
 		return pressSlotKey()
 	end
@@ -4090,6 +4098,7 @@ do
                     local pos = e3.Position + Vector3.new(math.cos(ang) * r, 0, math.sin(ang) * r)
                     pos = Vector3.new(pos.X, hh.Position.Y, pos.Z)
                     local step = pos - hh.Position
+                    if _G.VX_ACPASS then _G.VX_ACPASS() end   -- announce each write, exactly as tpBehind does
                     pcall(function()
                         c2:PivotTo(CFrame.lookAt(pos, Vector3.new(e3.Position.X, pos.Y, e3.Position.Z)))
                         if step.Magnitude > 0.1 then hh.AssemblyLinearVelocity = step.Unit * math.clamp(step.Magnitude / math.max(dur / steps, 0.016), 16, 80) end
@@ -4737,7 +4746,10 @@ do
         -- dash key, and without this an assist could fire off our own tap and chain into itself.
         do local injK = _G.VX_INJ_KEYS; if injK and injK[input.KeyCode] and tick() < injK[input.KeyCode] then return end end
         local st = R.stamp[input.KeyCode]; if st and tick() - st < WIN then return end
-        if input.KeyCode == Enum.KeyCode.Q and Settings.SideAssist and not Settings.Enabled then doSideDash(false) end
+        -- `and not Settings.Enabled` used to be here: the moment you picked ANY BF Mode from the dropdown,
+        -- the Q assist switched itself off. That is "side dash assist dont work" in one clause. The Side Dash
+        -- CHAIN fires off key 3, never Q, so the two cannot collide.
+        if input.KeyCode == Enum.KeyCode.Q and Settings.SideAssist then doSideDash(false) end
         if input.KeyCode == Enum.KeyCode.E and Settings.BackAssist then doBackDash(false) end
     end)
 end
@@ -5803,8 +5815,13 @@ do
 				if method == "FireServer" and self.Name == "Activated" then
 					local args = { ... }
 					if args[1] == false then
-						if upperOn() then args[1] = "Up"
-						elseif slamOn() then args[1] = "Down" end
+						-- Read the MIRRORED globals, not the upvalues: _G.VX_M1HOOK_ON is sticky across
+						-- executions, so on a re-exec the still-installed closure belongs to the PREVIOUS
+						-- run and its upvalues are that run's dead flags - the new GUI's toggles would drive
+						-- nothing. The mirrors are written by setSlam/setUpper every time, so whichever
+						-- execution's hook survives, the live toggles reach it.
+						if _G.VX_UPPER_FLAG then args[1] = "Up"
+						elseif _G.VX_SLAM_FLAG then args[1] = "Down" end
 						if args[1] ~= false then
 							return oldNamecall(self, unpack(args))
 						end
@@ -5834,9 +5851,9 @@ do
 		isUpper  = function() return upperFlag end,
 		-- The two independent toggles. Each one refreshes detection on the way in, so arming either from a
 		-- cold start hooks the animators immediately instead of on the next sweep.
-		setSlam  = function(v) slamFlag  = v == true; State.m1Count = 0; if slamFlag then refreshDetection() end
+		setSlam  = function(v) slamFlag  = v == true; _G.VX_SLAM_FLAG = slamFlag; State.m1Count = 0; if slamFlag then refreshDetection() end
 			if _G.VX_M1_DEBUG then print("[M1COMBO] Auto Down Slam = " .. tostring(slamFlag)) end end,
-		setUpper = function(v) upperFlag = v == true; State.m1Count = 0; if upperFlag then refreshDetection() end
+		setUpper = function(v) upperFlag = v == true; _G.VX_UPPER_FLAG = upperFlag; State.m1Count = 0; if upperFlag then refreshDetection() end
 			if _G.VX_M1_DEBUG then print("[M1COMBO] Auto Uppercut = " .. tostring(upperFlag)) end end,
 		setDelay = function() end,
 		setCount = function() end,
@@ -7974,15 +7991,25 @@ do
 		end end
 		return best
 	end
-	local function aimUp()
-		pcall(function()
-			local cam = workspace.CurrentCamera; if not cam then return end
-			local pos = cam.CFrame.Position
-			local flat = cam.CFrame.LookVector
-			flat = Vector3.new(flat.X, 0, flat.Z)
-			if flat.Magnitude < 0.05 then flat = Vector3.new(0, 0, -1) end
-			-- steeply up, keeping your horizontal facing: Focus Strike goes where the camera looks
-			cam.CFrame = CFrame.lookAt(pos, pos + (flat.Unit + Vector3.new(0, 1.6, 0)))
+	-- ═══ HOLD THE AIM, DO NOT JUST SET IT ═══ One CFrame write is undone by the default camera on the very
+	-- next RenderStepped, so by the time the slot-3 press landed the camera was level again and the move
+	-- fired straight ahead. This re-applies the lookAt every frame for a short window, so the aim is still up
+	-- when the cast goes out. CameraType is never touched - your zoom and camera control stay yours.
+	local aimHoldUntil = 0
+	local function aimUp(hold)
+		aimHoldUntil = tick() + (hold or 0.35)
+		task.spawn(function()
+			while tick() < aimHoldUntil do
+				pcall(function()
+					local cam = workspace.CurrentCamera; if not cam then return end
+					local pos = cam.CFrame.Position
+					local flat = cam.CFrame.LookVector
+					flat = Vector3.new(flat.X, 0, flat.Z)
+					if flat.Magnitude < 0.05 then flat = Vector3.new(0, 0, -1) end
+					cam.CFrame = CFrame.lookAt(pos, pos + (flat.Unit + Vector3.new(0, 1.6, 0)))
+				end)
+				game:GetService("RunService").RenderStepped:Wait()
+			end
 		end)
 	end
 	local function sequence()
@@ -8292,46 +8319,10 @@ do
 		if hrp and r then pcall(function() hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(r.Position.X, hrp.Position.Y, r.Position.Z)) end) end
 	end
 	-- The uppercut, exactly as captured: FOUR calls, the fourth is the one that lands.
-	local function upNow()
-		local svc = vxMyCharSvc()
-		if not svc then
-			if tick() - (_G.VX_FA_WARN or 0) > 6 then
-				_G.VX_FA_WARN = tick()
-				print("[DreamHub Finisher] cannot resolve your character service - uppercut has nowhere to fire")
-				if VX_NOTIFY then VX_NOTIFY("Finisher Assist: no character service", false) end
-			end
-			return false
-		end
-		-- ═══ GROUNDED, SETTLED, THEN THE BURST ═══ Your capture of the working uppercut was four bare
-		-- Activated("Up") calls - NO Space. The Space hold this used to inject caused a real jump, so the
-		-- four fires left a RISING body, and a launcher is a ground move: counted, then ignored. Mirror the
-		-- slam's state discipline instead - kill horizontal drift, assert a grounded state, then send the
-		-- four calls the capture shows.
-		pcall(function()
-			local c = myModel()
-			local r = c and c:FindFirstChild("HumanoidRootPart")
-			local h = c and c:FindFirstChildOfClass("Humanoid")
-			if r then local v = r.AssemblyLinearVelocity; r.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0) end
-			if h and h.FloorMaterial ~= Enum.Material.Air then h:ChangeState(Enum.HumanoidStateType.Landed) end
-		end)
-		-- 0.04 rather than 0.06: four calls now leave in ~0.12s instead of ~0.18s. They still arrive as four
-		-- distinct calls (a frame is ~0.017s), so the server counter still reaches 4 - it just gets there
-		-- sooner, which is the whole of "make it do it faster".
-		-- 0.22s apart (see the auto path): the manual proof pressed slowly; a machine-gun burst can collapse
-		-- into one debounced call and the counter never reaches four.
-		local re = select(1, svcRE())
-		local gap = tonumber(_G.VX_UPPER_GAP) or 0.22
-		for i = 1, 4 do
-			throwM1()                                   -- the M1 the "Up" rides on (server swing + animation)
-			if re then pcall(function() re:FireServer("Up") end) else fireKnit(svc, "Activated", "Up") end
-			if i < 4 then task.wait(gap) end
-		end
-		return true
-	end
-	-- ═══ THE CAPTURE, FOR EVERY CHARACTER ═══ A normal M1 is Activated(false); the slam is Activated("Down")
-	-- airborne, the uppercut Activated("Up"). vxMyCharSvc resolves YOUR service (Gojo fallback), so both
-	-- assists work on whoever you play, not just the character they were written for. The finisher rides a
-	-- REAL M1 - remote(false) for the server swing plus the click for the animation - exactly like your own.
+	-- ═══ DECLARED ABOVE upNow ON PURPOSE ═══ These sat BELOW it, so upNow's calls to svcRE()/throwM1()
+	-- compiled as nil GLOBALS: the uppercut assist raised "attempt to call a nil value" on its first
+	-- line, inside a task.spawn where nothing catches it. You saw yourself turn to face the target and
+	-- then nothing at all - no swing, no remote, no error. That was the whole of "assi upper cut dont work".
 	local function svcRE()
 		local svcs = game:GetService("ReplicatedStorage"):FindFirstChild("Knit")
 		svcs = svcs and svcs:FindFirstChild("Knit"); svcs = svcs and svcs:FindFirstChild("Services")
@@ -8345,18 +8336,55 @@ do
 		local cx, cy = (vp and vp.X / 2) or 400, (vp and vp.Y / 2) or 300
 		pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.02); VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0) end)
 	end
+	-- ═══════════ BOTH ASSISTS NOW COPY TWOFOLD, WHICH YOU CONFIRM WORKS ═══════════
+	-- Twofold's finisher is BARE remotes and NO injected click: Activated("Down") x3 at 0.28s, then
+	-- ChangeState(Jumping), then a fourth "Down". You call it good. These assists were doing something no
+	-- working path in this file does - injecting an M1 click AND sending one lone directional remote ~20ms
+	-- later. So they now do exactly what Twofold does, because that is the recipe with evidence behind it.
+	local function upNow()
+		local re = select(1, svcRE())
+		if not re then
+			if tick() - (_G.VX_FA_WARN or 0) > 6 then
+				_G.VX_FA_WARN = tick()
+				print("[DreamHub Finisher] no Activated remote resolved - uppercut has nowhere to fire")
+				if VX_NOTIFY then VX_NOTIFY("Finisher Assist: no character service", false) end
+			end
+			return false
+		end
+		-- settle: a launcher is a ground move, so kill horizontal drift first (no click, no Space)
+		pcall(function()
+			local c = myModel()
+			local r = c and c:FindFirstChild("HumanoidRootPart")
+			local h = c and c:FindFirstChildOfClass("Humanoid")
+			if r then local v = r.AssemblyLinearVelocity; r.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0) end
+			if h and h.FloorMaterial ~= Enum.Material.Air then h:ChangeState(Enum.HumanoidStateType.Landed) end
+		end)
+		-- four BARE "Up" calls - exactly what your own capture showed working, nothing riding on them
+		local gap = tonumber(_G.VX_UPPER_GAP) or 0.22
+		for i = 1, 4 do
+			pcall(function() re:FireServer("Up") end)
+			if i < 4 then task.wait(gap) end
+		end
+		if _G.VX_M1_DEBUG then print("[DreamHub Finisher] uppercut -> 4x Activated(Up)") end
+		return true
+	end
 	local function slamNow()
 		local re, nm = svcRE()
 		if not re then if VX_NOTIFY then VX_NOTIFY("Slam: no Activated remote", false) end return false end
-		-- airborne (the state the server accepts the slam from) via ChangeState, then the M1 that carries Down
+		-- Twofold's shape, verbatim: three grounded Downs at his rhythm, jump-state, then the airborne fourth
+		local gap = tonumber(_G.VX_TF_GAP) or 0.28
+		for _ = 1, 3 do
+			pcall(function() re:FireServer("Down") end)
+			task.wait(gap)
+		end
+		task.wait()
 		pcall(function()
 			local c = myModel(); local h = c and c:FindFirstChildOfClass("Humanoid")
-			if h and h.FloorMaterial ~= Enum.Material.Air then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+			if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
 		end)
-		task.wait(0.06)
-		throwM1()
+		task.wait(0.2)
 		pcall(function() re:FireServer("Down") end)
-		if _G.VX_M1_DEBUG then print("[DreamHub Finisher] slam -> " .. nm .. ".Activated(Down)") end
+		if _G.VX_M1_DEBUG then print("[DreamHub Finisher] slam -> 3x Down + airborne Down (" .. tostring(nm) .. ")") end
 		return true
 	end
 	local function run(which)
@@ -10361,8 +10389,14 @@ do
 								end
 							end)
 						end
-						task.wait(0.13)
-						local ok = _G.VX_CAST_MOVE and _G.VX_CAST_MOVE(mv.Name)
+						game:GetService("RunService").Heartbeat:Wait()   -- land the cast while genuinely airborne
+						-- The AIR flag. The Vessel branch's own working call is FireServer(move, true) - the
+						-- second argument is what asks for the airborne variant. Without it we jumped and then
+						-- politely requested the GROUND move, which is why "auto air moves dont work" even when
+						-- the remote resolved fine.
+						_G.VX_NO_KEYFALLBACK = true
+						local ok = _G.VX_CAST_MOVE and _G.VX_CAST_MOVE(mv.Name, true)
+						_G.VX_NO_KEYFALLBACK = nil
 						dbgAir("universal air: slot " .. slot .. " = " .. mv.Name .. "  -> " .. (ok and "cast" or "no service"))
 						if not ok and tick() - (_G.VX_AIRUNI_T or 0) > 3 then
 							_G.VX_AIRUNI_T = tick()
@@ -15672,7 +15706,10 @@ do
     acSec:Toggle({ Name = "Auto Upper Cut", Default = false, Callback = function(b) if M1ComboApi and M1ComboApi.setUpper then M1ComboApi.setUpper(b) end end })
     -- FINISHER ASSIST - PLUS only, as asked. Watches for a DOWNED enemy and punishes them: in reach it sends
     -- the finisher straight away, out of reach it side dashes in, throws three M1s and finishes on the fourth.
-    if VX_TIER == "plus" then
+    -- tier("plus") not VX_TIER == "plus": a direct load of the dev file has tier key "full", which outranks
+    -- plus but is not EQUAL to it - so the == test built neither toggle and the assists could not be turned
+    -- on at all. The rank helper says full >= plus, which is what was meant.
+    if tier("plus") then
         acSec:Toggle({ Name = "Upper Cut Assist (on downed)", Default = false, Callback = function(b) if FinisherAssistApi then FinisherAssistApi.setUpper(b) end end })
         acSec:Toggle({ Name = "Down Slam Assist (on downed)", Default = false, Callback = function(b) if FinisherAssistApi then FinisherAssistApi.setSlam(b) end end })
         acSec:Slider({ Name = "Assist Reach", Min = 4, Max = 40, Default = 20, Decimals = 1, Callback = function(v) if FinisherAssistApi then FinisherAssistApi.setNear(v) end end })   -- closer than this = finish where you stand; further = dash in first
