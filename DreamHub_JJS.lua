@@ -4101,6 +4101,23 @@ do
         _G.VX_BF_CHAINCLICK = tick()
         _G.VX_BF_CHAINDRIVE = tick() + 0.8   -- engine: this swing is chain-driven, flash it on swing ONE
         VMouseClick()
+        -- ═══════════ THE PRESS THAT ACTUALLY LANDS ═══════════
+        -- The file's own A/B evidence (see the click-path note below): presses timed from YOUR CLICK flash;
+        -- presses timed from the windup ANIMATION do not. Auto BF works because of a click+0.14s press. The
+        -- chains had NO click-timed press at all - this function's old 0.19s fallback was lost in the rebuild,
+        -- and the click path in InputBegan is (a) gated on the Auto BF/M1 BF toggles a chain never sets and
+        -- (b) refused by the R.bfCD stamp every chain writes on entry. So every chain ended on the animation-
+        -- timed engine press, the exact class that never lands: perfect dash, no flash, all four modes.
+        -- This is the chain's OWN click-timed press, gate-free on purpose: no R.bfCD (the chain set it
+        -- itself moments ago), no AutoBF check (the chain mode IS the request), no windupLive (at click+0.14
+        -- the windup may not have dispatched yet, and on uncaptured characters that gate never opens at all).
+        R.chainUntil = tick() + 0.8            -- the chain owns this flash: the click path stands down (no double 3)
+        task.delay(0.14, function()
+            markThree()
+            VIM:SendKeyEvent(true, Settings.BFKey, false, game)
+            task.wait(0.03)
+            VIM:SendKeyEvent(false, Settings.BFKey, false, game)
+        end)
         -- 4) HAND THE ENGINE BACK to your real choice a beat later, only if WE turned it on.
         if not wasOn then
             task.delay(0.7, function()
