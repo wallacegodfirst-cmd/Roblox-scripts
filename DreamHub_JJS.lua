@@ -2005,7 +2005,7 @@ do
 		UISm.InputEnded:Connect(function(i)
 			if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
 				if dragging and not moved then
-					if _G.JJS_FREE then pcall(function() local _vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize; local _cx, _cy = (_vp and _vp.X/2) or 400, (_vp and _vp.Y/2) or 300; VIMm:SendMouseButtonEvent(_cx,_cy,0,true,game,0); task.wait(0.03); VIMm:SendMouseButtonEvent(_cx,_cy,0,false,game,0); task.wait(0.14); VIMm:SendKeyEvent(true, Enum.KeyCode.Three, false, game); task.wait(0.04); VIMm:SendKeyEvent(false, Enum.KeyCode.Three, false, game) end)   -- mobile BF: M1 then 3
+					if _G.JJS_FREE then pcall(function() local _vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize; local _cx, _cy = (_vp and _vp.X/2) or 400, (_vp and _vp.Y/2) or 300; VIMm:SendMouseButtonEvent(_cx,_cy,0,true,game,0); task.wait(0.03); VIMm:SendMouseButtonEvent(_cx,_cy,0,false,game,0); task.wait(0.14); _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.4; VIMm:SendKeyEvent(true, Enum.KeyCode.Three, false, game); task.wait(0.04); VIMm:SendKeyEvent(false, Enum.KeyCode.Three, false, game) end)   -- mobile BF: M1 then 3
 					else pcall(doEPress) end
 				end
 				dragging = false
@@ -6051,8 +6051,21 @@ do
 						if slots then
 							local mv = args[1].Parent
 							if mv and mv.Name == "Moveset" then
+								-- ═══ "IT BLOCKS KEYS I DIDN'T PICK" ═══ The slot used to be args[1]'s index in
+								-- Moveset:GetChildren() - creation order, which the game never promised matches
+								-- the 1-4 key order on your screen. When they differ, "Block Key 1" blocked
+								-- whatever move happened to be the FIRST CHILD - key 2's Crushing Blow, your
+								-- Stockpile, anything. The decision is now the KEY YOU PHYSICALLY PRESSED
+								-- (stamped by slotlearn, hub-injected keys excluded), with the learned key->move
+								-- map as the fallback, and NO GetChildren guess at all. No stamp and no map
+								-- match = fail OPEN: an unattributable cast is never blocked.
 								local idx
-								for i, m in ipairs(mv:GetChildren()) do if m == args[1] then idx = i break end end
+								local lk = _G.VX_LASTNUM_KEY
+								if lk and tick() - (lk.t or 0) < 0.5 then idx = lk.n end
+								if not idx then
+									local sm = _G.VX_SLOT_MOVE
+									if sm then for k, v in pairs(sm) do if v == args[1].Name then idx = k break end end end
+								end
 								if idx and slots[idx] then
 									-- Character filter. "Any" (or nothing picked) cancels on every character;
 									-- otherwise only while you are actually playing the one you chose, so a
@@ -8416,7 +8429,15 @@ do
 			end)
 			local m3 = slot3Name()
 			local ok = (m3 and _G.VX_CAST_MOVE) and _G.VX_CAST_MOVE(m3) or false
-			if _G.VX_SOUL_DEBUG then print("[DreamHub Soul] slot3 = " .. tostring(m3) .. " -> " .. (ok and "cast" or "key only")) end
+			-- ═══ WHEN THIS FAILS, IT NOW SAYS SO AND SAYS WHY ═══ The key press above cannot cast (this game
+			-- ignores synthetic key presses for abilities - proven), so the REMOTE is the whole feature. It
+			-- resolves from the learned map (filled the first time the game itself casts the move) or a
+			-- derived service name. If neither resolves yet, one manual press of 3 teaches it permanently
+			-- for the session - so the failure message tells you exactly that instead of dying silently.
+			if not ok then
+				print("[DreamHub Soul] could not cast '" .. tostring(m3) .. "' by remote yet - press 3 manually ONCE and I learn its real remote; it works automatically after that")
+				if VX_NOTIFY then VX_NOTIFY("Soul Combo: press 3 once so I can learn the move", false) end
+			elseif _G.VX_SOUL_DEBUG then print("[DreamHub Soul] slot3 = " .. tostring(m3) .. " -> cast") end
 			-- 2) "when it detects the target is in the air it must click 3" - watch them; the frame they
 			--    leave the ground, the SECOND Focus Strike goes out to catch them up there.
 			task.spawn(function()
@@ -9284,52 +9305,19 @@ do
 		return false
 	end
 	local running = false
-	-- ═══ HIS TIMINGS, HIS ORDER, NOTHING OF MINE ═══ I added a service fallback, a capped wait and a faster
-	-- gap "to make it hit". It stopped working. Every one of those is gone: this is his 0.35 and his 0.2.
+	-- ═══ HIS SCRIPT, CHARACTER FOR CHARACTER ═══ You pasted it a third time, so a third time I deleted
+	-- everything of mine: the 0.22 gap experiment, the injected clicks, and last build's watch-the-target-
+	-- into-the-air gate before the 4th Down. What follows is the friend's finisher VERBATIM - his 0.35s
+	-- gaps, his jump, his flat 0.2s wait, his 4th Down - because the verbatim version is the only one that
+	-- has ever been reported working, both times it regressed it was my "improvement", and I am done.
 	local function finisher()
-		-- ═══ THE INJECTED CLICK IS GONE ═══ Last build I added an M1 click on each "Down" to make it "hit
-		-- harder", and you came back with "twofold kick assist dont work". His script has no click - the Down
-		-- remote IS the strike, and a click on top of it starts a fresh M1 that cancels the one in flight. So
-		-- the click is removed and this is his sequence again: three Downs, jump, the airborne fourth.
-		-- The ONLY thing that is mine is the gap, which is the "make it faster" knob and nothing else.
-		local gap = tonumber(_G.VX_TF_GAP) or 0.28
 		for _ = 1, 3 do
 			pcall(function() game:GetService("ReplicatedStorage").Knit.Knit.Services.GojoService.RE.Activated:FireServer("Down") end)
-			task.wait(gap)
+			task.wait(.35)
 		end
 		task.wait()
 		pcall(function() local h = char():FindFirstChildOfClass("Humanoid"); if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end end)
-		-- ═══ "IT NEEDS TO DOWN SLAM AFTER THEY ARE IN THE AIR" ═══ His 0.2s was a guess at when the kick has
-		-- launched them; on a laggy hit it fires while they are still rising past you, and the slam whiffs.
-		-- So the final Down now waits for the actual launch: watch the nearest enemy and fire the FRAME they
-		-- are airborne. His 0.2s stays as the fallback ceiling - if nothing is detectably airborne by then,
-		-- fire anyway, which is exactly the old behaviour.
-		do
-			local hrp
-			pcall(function() hrp = char():FindFirstChild("HumanoidRootPart") end)
-			local best, bd
-			if hrp then
-				local chs = workspace:FindFirstChild("Characters")
-				if chs then for _, m in ipairs(chs:GetChildren()) do
-					if m.Name ~= lp.Name then
-						local r = m:FindFirstChild("HumanoidRootPart")
-						if r then
-							local d = (r.Position - hrp.Position).Magnitude
-							if d <= 30 and (not bd or d < bd) then best, bd = m, d end
-						end
-					end
-				end end
-			end
-			local dl = tick() + 0.2
-			while tick() < dl do
-				if best then
-					local r = best:FindFirstChild("HumanoidRootPart")
-					local h = best:FindFirstChildOfClass("Humanoid")
-					if (h and h.FloorMaterial == Enum.Material.Air) or (r and r.AssemblyLinearVelocity.Y > 10) then break end
-				end
-				game:GetService("RunService").Heartbeat:Wait()
-			end
-		end
+		task.wait(.2)
 		pcall(function() game:GetService("ReplicatedStorage").Knit.Knit.Services.GojoService.RE.Activated:FireServer("Down") end)
 	end
 	game:GetService("RunService").Heartbeat:Connect(function()
@@ -16150,10 +16138,27 @@ do
                             function S:Label(t) local el; pcall(function() el = sec():AddParagraph({ Title = tostring(t or ""), Content = "" }) end); return elemWrap(el) end
                             function S:Textbox(c) c = c or {}; local el; local nm=c.Name or "Input"; local ph=c.Placeholder or c.PlaceholderText or ""
                                 pcall(function() el = sec():AddInput({ Title = nm, Content = ph, Callback = c.Callback or function() end }) end)
+                                -- ═══ FLURIORE IGNORES THE TITLE ═══ Its AddInput hardcodes the labels to
+                                -- "TextBox" / "This is a TextBox" and never reads InputConfig.Title - a bug in the
+                                -- library itself, and it is why the sound-ID box shipped with placeholder text as
+                                -- its NAME. So after it builds, find the freshly-made row (its TextBox still says
+                                -- the stock placeholder) and write the real name onto its labels ourselves.
                                 task.defer(function() pcall(function()
                                     local host=(typeof(gethui)=="function" and gethui()) or game:GetService("CoreGui")
                                     for _,d in ipairs(host:GetDescendants()) do
-                                        if d:IsA("TextBox") and d.PlaceholderText=="Write your input there" then d.PlaceholderText=(ph~="" and ph or "type here...") break end
+                                        if d:IsA("TextBox") and d.PlaceholderText=="Write your input there" then
+                                            d.PlaceholderText=(ph~="" and ph or "type here...")
+                                            local row = d.Parent and d.Parent.Parent   -- InputTextBox -> InputFrame -> Input row
+                                            if row then
+                                                for _, l in ipairs(row:GetChildren()) do
+                                                    if l:IsA("TextLabel") then
+                                                        if l.Text == "TextBox" then l.Text = nm
+                                                        elseif l.Text == "This is a TextBox" then l.Text = (c.Info or "") end
+                                                    end
+                                                end
+                                            end
+                                            break
+                                        end
                                     end
                                 end) end)
                                 return elemWrap(el) end
@@ -17178,7 +17183,7 @@ do
                 cur = SOUNDS[v] or SOUNDS["Keyboard (Basic)"]; curName = v
                 playClick()   -- instant preview (also resolves + reports a dead id right away)
             end })
-            miscSec:Textbox({ Name = "Custom Sound ID", Default = "", Callback = function(txt)
+            miscSec:Textbox({ Name = "Roblox Sound ID Changer", Info = "Paste any Roblox sound ID - the click sound becomes that sound.", Placeholder = "sound id here", Callback = function(txt)
                 local id = tostring(txt or ""):match("%d+")
                 if id then cur = { ids = { "rbxassetid://" .. id }, vol = 0.6, speed = 1, cut = 2 }; curName = "Custom"; playClick() end
             end })
