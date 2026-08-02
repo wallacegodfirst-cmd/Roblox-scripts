@@ -925,6 +925,7 @@ _G.VX_BF_DASHANIM   = 0
 _G.VX_BFAPI_ON      = false   -- the engine re-arms itself from the GUI toggles a moment later
 _G.VX_M1BF_ON       = false
 _G.VX_SYNTH_CLICK   = 0       -- a stale "this click was ours" mark suppresses your real clicks
+_G.VX_AIR_HOOK      = false   -- auto-air rewrite; a stale true would air-cast every move on a fresh run
 _G.VX_SLAM_FLAG     = false   -- mirrors of the finisher toggles, read by the M1 rewrite hook. MUST be seeded:
 _G.VX_UPPER_FLAG    = false   -- a stale true here would rewrite every M1 into a finisher on a fresh run.
 _G.VX_INJ_KEYS      = {}      -- same, for keys
@@ -5814,6 +5815,35 @@ do
 				local method = getnamecallmethod and getnamecallmethod() or nil
 				if method == "FireServer" and self.Name == "Activated" then
 					local args = { ... }
+					-- ═══ AUTO AIR, THE SAME WAY: BLOCK THE GROUND CAST, SEND THE AIR ONE ═══
+					-- "if I click 1 it will block the game from firing it" - exactly. Your capture:
+					--     CursedStrikesService.RE.Activated:FireServer(Moveset["Cursed Strikes"], true)
+					-- The SECOND argument is the airborne flag. So when Auto Air is armed and the game fires a
+					-- MOVE cast (args[1] is a Moveset Instance, not a bool/string), we stop that call and send
+					-- the same one with true - the air variant - after putting you in the air. No key guessing,
+					-- no re-casting, no service to resolve: the game already told us the move and the service.
+					if _G.VX_AIR_HOOK and typeof(args[1]) == "Instance" and args[2] ~= true then
+						local reAir, argsAir = self, args
+						task.spawn(function()
+							pcall(function()
+								local Pl = game:GetService("Players").LocalPlayer
+								local chs = workspace:FindFirstChild("Characters")
+								local c = (chs and chs:FindFirstChild(Pl.Name)) or Pl.Character
+								local h = c and c:FindFirstChildOfClass("Humanoid")
+								local r = c and c:FindFirstChild("HumanoidRootPart")
+								if h and r and h.FloorMaterial ~= Enum.Material.Air then
+									local pw = (tonumber(_G.VX_AIR_POWER) or 100) / 100
+									r.AssemblyLinearVelocity = Vector3.new(r.AssemblyLinearVelocity.X, 45 * pw, r.AssemblyLinearVelocity.Z)
+									h:ChangeState(Enum.HumanoidStateType.Jumping)
+								end
+							end)
+							game:GetService("RunService").Heartbeat:Wait()
+							argsAir[2] = true
+							pcall(function() reAir:FireServer(unpack(argsAir)) end)
+							if _G.VX_MOVE_DEBUG then print("[AutoAir hook] air-cast " .. tostring(argsAir[1] and argsAir[1].Name)) end
+						end)
+						return                                  -- BLOCK the ground cast; ours replaces it
+					end
 					if args[1] == false then
 						-- Read the MIRRORED globals, not the upvalues: _G.VX_M1HOOK_ON is sticky across
 						-- executions, so on a re-exec the still-installed closure belongs to the PREVIOUS
@@ -8387,31 +8417,41 @@ do
 		if _G.VX_M1_DEBUG then print("[DreamHub Finisher] slam -> 3x Down + airborne Down (" .. tostring(nm) .. ")") end
 		return true
 	end
+	-- ═══ ONCE PER KNOCKDOWN, NOT ONCE PER POLL ═══ "when I turn on downslam assi, I keep jumping" - the
+	-- loop re-ran the whole finisher every time the lockout expired while a downed body was still nearby, and
+	-- the finisher contains a jump. A target is now finished ONCE and remembered until they get up, so the
+	-- sequence fires on the knockdown and never again for it.
+	local doneWith = setmetatable({}, { __mode = "k" })
 	local function run(which)
 		if tick() < busyUntil then return end
 		local t, d = downedTarget()
 		if not t then return end
+		if doneWith[t] then return end                 -- already finished this knockdown
+		doneWith[t] = true
 		task.spawn(function()
+			-- forget them once they are back up, so the NEXT knockdown is punished too
+			task.spawn(function()
+				local dl = tick() + 12
+				while tick() < dl do
+					if not t.Parent then break end
+					if not isDown(t) then break end
+					task.wait(0.15)
+				end
+				doneWith[t] = nil
+			end)
 			if d and d <= nearDist then
-				-- In reach there is nothing to set up: the burst goes out on the beat we noticed.
-				-- ═══ IN REACH: FINISH IMMEDIATELY ═══ "when the target is down, it needs to QUICKLY do down
-				-- slam." A ragdoll is a short window, so there is nothing to line up here - face them and
-				-- send it on the same beat we noticed. A short lockout only, so the next knockdown is not
-				-- sitting behind a 2.5s timer.
-				busyUntil = tick() + 0.6   -- shorter lockout = the next knockdown is punished sooner
+				-- CLOSE: "if the target is by me it should do uppercut" - straight in, nothing to set up.
+				busyUntil = tick() + 1.2
 				faceAt(t)
 				if which == "Up" then upNow() else slamNow() end
 				return
 			end
-			-- ═══ FAR: HIT THEM WHILE THEY SLIDE ═══ "if they are far away, it must hit them while they
-			-- dashing, like legit." A ragdolled body slides; waiting through three M1s let them stop and
-			-- stand. So: dash in immediately, one swing to connect, and the finisher goes out WHILE they are
-			-- still moving - which is when it reads as a real chase-down.
-			busyUntil = tick() + 2.0
+			-- FAR: "3 M1s, then uppercut or down slam, by dashing." Dash in, three swings, then the finisher.
+			busyUntil = tick() + 3.0
 			if _G.VXBF2 and _G.VXBF2.doSide then pcall(_G.VXBF2.doSide) end
-			task.wait(0.28)
+			task.wait(0.26)
 			faceAt(t)
-			holdM1(1)          -- one connecting swing, held just long enough to register
+            holdM1(3)                                   -- one held press = three swings
 			faceAt(t)
 			if which == "Up" then upNow() else slamNow() end
 		end)
@@ -8522,11 +8562,20 @@ do
 	-- ═══ HIS TIMINGS, HIS ORDER, NOTHING OF MINE ═══ I added a service fallback, a capped wait and a faster
 	-- gap "to make it hit". It stopped working. Every one of those is gone: this is his 0.35 and his 0.2.
 	local function finisher()
-		-- "twofold is good, just make it click faster" - the GAP only. His 0.2 jump wait and his order are
-		-- untouched, because those are the parts that make it land. 0.28 keeps the three Downs inside the
-		-- same combo string while shaving ~0.2s off the whole finisher.
-		local gap = tonumber(_G.VX_TF_GAP) or 0.28
+		-- "slow + not clicking": gap to 0.22, and a real M1 CLICK on each Down so the combo actually advances
+		-- and lands visibly. His order and his 0.2 jump wait are still untouched - those are what make it hit.
+		local gap = tonumber(_G.VX_TF_GAP) or 0.22
+		local function tfClick()
+			_G.VX_SYNTH_CLICK = tick() + 0.2; _G.VX_LAST_HUMAN_CLICK = tick()
+			local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
+			local cx, cy = (vp and vp.X / 2) or 400, (vp and vp.Y / 2) or 300
+			pcall(function()
+				local V = game:GetService("VirtualInputManager")
+				V:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.02); V:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+			end)
+		end
 		for _ = 1, 3 do
+			tfClick()
 			pcall(function() game:GetService("ReplicatedStorage").Knit.Knit.Services.GojoService.RE.Activated:FireServer("Down") end)
 			task.wait(gap)
 		end
@@ -15777,9 +15826,13 @@ do
         end
         -- The universal path: any character, any moveset. Press 1/2/4 and it jumps and casts that slot.
         -- (3 is left alone while a flash mode is armed - it is the Black Flash input.)
-        acSec:Toggle({ Name = "Air Cast Any Character (1/2/4)", Default = false, Callback = function(b)
-            _G.VX_AIR_UNIVERSAL = (b == true)
+        -- The hook version: your key press is blocked and re-sent with the airborne flag. Works on every
+        -- character and every move, because the game itself supplies the move object and the service.
+        acSec:Toggle({ Name = "Air Cast Any Character (all moves)", Default = false, Callback = function(b)
+            _G.VX_AIR_HOOK = (b == true)
+            _G.VX_AIR_UNIVERSAL = false      -- the old jump-then-recast path is superseded by the hook
             if AutoAirApi_set then AutoAirApi_set(b) end
+            if b and VX_NOTIFY then VX_NOTIFY("Air Cast: your move keys now cast airborne", true) end
         end })
         -- Scales the launch the air cast gives you. 100% is a normal jump; higher throws you further up so a
         -- move that needs real height has it. It only touches the jump, never the move itself.
