@@ -2548,7 +2548,10 @@ local function safeTeleport(targetCFrame, holdTime)
 						-- studs/s: a full map crossing lands in ~0.6s - reads as a blink, while each write is
 						-- still the single-hop size you proved a public server accepts. _G.VX_TP_GAP re-slows
 						-- it if a server starts reverting again; that trade is now yours to make.
-						GAP  = tonumber(_G.VX_TP_GAP) or 0.045
+						-- "works well in a private server but not public": pace by population, like STEP.
+						-- Empty = 0.045 (the blink you asked for); populated = 0.09, still ~310 studs/s, a map
+						-- crossing in ~1.3s, but each hop lands with the breathing room a watched server needs.
+						GAP  = tonumber(_G.VX_TP_GAP) or (populated and 0.09 or 0.045)
 						-- Within one step = ONE write. No walking, no glide feel - just there.
 						local hops  = (total <= STEP) and 1 or math.clamp(math.ceil(total / STEP), 1, 400)
 					for k = 1, hops do
@@ -3973,6 +3976,19 @@ do
             if r then local v = r.AssemblyLinearVelocity; r.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0) end
         end)
         VMouseClick()
+        -- ═══ THE REAL M1, BY REMOTE ═══ Your capture shows a NORMAL click is GojoService.RE.Activated(false)
+        -- - the M1 IS a remote. A synthetic mouse click plays the animation locally, but whether the SERVER
+        -- ever registered an M1 from it mid-chain was always the open question. Now it is not open: send the
+        -- real thing right behind the click. Teleport and Auto BF ride your genuine clicks, which is why they
+        -- flash - this gives every chain the same server-side swing.
+        pcall(function()
+            local svcs = game:GetService("ReplicatedStorage"):FindFirstChild("Knit")
+            svcs = svcs and svcs:FindFirstChild("Knit"); svcs = svcs and svcs:FindFirstChild("Services")
+            local okS, nm = pcall(vxMyCharSvc)
+            local sv = svcs and svcs:FindFirstChild((okS and nm) or "GojoService")
+            local re = sv and sv:FindFirstChild("RE"); re = re and re:FindFirstChild("Activated")
+            if re then re:FireServer(false) end
+        end)
         -- ═══ THE FALLBACK PRESS HAS TO LAND ON THE FLASH FRAME, NOT AFTER IT ═══
         -- Both trigger tables and the reference script agree the flash input goes in 0.19-0.20s after the
         -- windup starts. This branch waited 0.42s - more than double - because it was written as a
@@ -5439,6 +5455,30 @@ do
 		if not airborneNow() then return end
 		doSlam("armed click")
 	end
+	-- ═══════════ THE CAPTURE THAT REWRITES THIS MODULE ═══════════
+	-- A NORMAL M1 click is:   <Char>Service.RE.Activated:FireServer(false)
+	-- The finishers are the SAME remote with "Down" / "Up" instead of false. So "turn each click into the
+	-- Down remote" is exactly implementable: on every real click's rising edge, while a finisher toggle is
+	-- on, we send the directional Activated right behind the game's own false. No counting to mistime, no
+	-- hop to be swallowed - the click IS the finisher request. (Slam wins when both toggles are on.)
+	local lastDirSend = 0
+	if _G.VX_M1_SUB then
+		_G.VX_M1_SUB("m1combo_dirclick", function()
+			if not (slamOn() or upperOn()) then return end
+			if tick() - lastDirSend < 0.22 then return end
+			lastDirSend = tick()
+			local dir = slamOn() and "Down" or "Up"
+			if dir == "Down" then
+				-- the slam is the AIR variant: flip to the jump state on the same beat (the friend's trick)
+				pcall(function()
+					local c = myModel(); local h = c and c:FindFirstChildOfClass("Humanoid")
+					if h and h.FloorMaterial ~= Enum.Material.Air then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+				end)
+			end
+			fireDir(dir)
+			if _G.VX_M1_DEBUG then print("[M1COMBO] click -> Activated(\"" .. dir .. "\")") end
+		end)
+	end
 	local function onSwing()
 		if not (slamOn() or upperOn()) then return end
 		-- HARD GATE: no real click in the last 0.4s means this was not your M1, so we do nothing at all. This is
@@ -5473,6 +5513,17 @@ do
 		-- Separate counts, because they are different moves at different points of the combo:
 		-- Down Slam lands on M1 #3, Uppercut on M1 #4. The direction is held and named on the swing BEFORE
 		-- the finisher, since once the game commits to an ordinary M1 the remote arrives too late to change it.
+		-- ═══ SUPERSEDED BY THE PER-CLICK SENDER ABOVE ═══ Every real click now carries the direction on the
+		-- same remote the game itself uses for the M1 (Activated(false) -> Activated("Down"/"Up")). Counting
+		-- swings, hopping, arming windows - the whole machine below existed to guess the beat the game wanted,
+		-- and the capture says there is no beat to guess. Left in place for the airborne re-announce only.
+		if true then
+			if slamOn() and airborneNow() and not State.slamDone then
+				State.slamDone = true
+				doSlam("airborne swing re-announce")
+			end
+			return
+		end
 		local needSlam = 2      -- act on swing 2 -> M1 #3 is the slam
 		-- Act one swing BEFORE the one you want it to land on: the direction has to be named before the game
 		-- commits to an ordinary M1. Default 4 - 1 = 3, exactly what it was; the dropdown lets you move it.
@@ -5796,12 +5847,10 @@ do
 				local c = myModel(); local h = c and c:FindFirstChildOfClass("Humanoid")
 				if h and h.FloorMaterial ~= Enum.Material.Air then
 					_G.VX_LAUNCHING = tick()
-					pcall(function()
-						local r = c and c:FindFirstChild("HumanoidRootPart")
-						if r then local v = r.AssemblyLinearVelocity; r.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 34), v.Z) end
-					end)
-					pcall(function() h.Jump = true end)
-					task.wait(0.08)           -- just enough to be airborne; every extra frame is slam latency
+					-- ChangeState, not a velocity rocket: the friend's Twofold finisher proves this is the
+					-- state flip the server accepts for the airborne Down, with nothing to be swallowed.
+					pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end)
+					task.wait(0.08)
 				end
 				State.lastDown = 0            -- this is a deliberate, one-off slam: do not let the combo gate eat it
 				State.slamDone = false        -- and it is not the auto-combo's slam, so it does not consume that latch
@@ -7929,6 +7978,12 @@ do
 			--    Focus Strike right behind it. No commit wait: the lift is the aim, the aim must be first.
 			aimUp()
 			task.wait(0.05)
+			-- "soul grab dont click 3" - so CLICK 3: the real key, marked as ours, with the remote behind it.
+			pcall(function()
+				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.5
+				_G.VX_INJECT_UNTIL = tick() + 0.5
+				VIM:SendKeyEvent(true, Enum.KeyCode.Three, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
+			end)
 			local ok = _G.VX_CAST_MOVE and _G.VX_CAST_MOVE("Focus Strike") or false
 			if not ok then print("[DreamHub Soul] Focus Strike remote not found (send me this)") end
 			-- 2) "when it detects the target is in the air it must click 3" - watch them; the frame they
@@ -7941,6 +7996,11 @@ do
 					if r and ((h and h.FloorMaterial == Enum.Material.Air) or r.AssemblyLinearVelocity.Y > 14) then
 						aimUp()
 						task.wait(0.04)
+					pcall(function()
+						_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.5
+						_G.VX_INJECT_UNTIL = tick() + 0.5
+						VIM:SendKeyEvent(true, Enum.KeyCode.Three, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
+					end)
 						if _G.VX_CAST_MOVE then _G.VX_CAST_MOVE("Focus Strike") end
 						break
 					end
@@ -8384,7 +8444,7 @@ do
 	end
 	local running = false
 	local function finisher()
-		local gap = tonumber(_G.VX_TF_GAP) or 0.35
+		local gap = tonumber(_G.VX_TF_GAP) or 0.30   -- a touch under the friend's 0.35; his knob restores it
 		for _ = 1, 3 do
 			pcall(function() game:GetService("ReplicatedStorage").Knit.Knit.Services.GojoService.RE.Activated:FireServer("Down") end)
 			task.wait(gap)
@@ -8400,7 +8460,10 @@ do
 		running = true
 		task.delay(5, function() running = false end)   -- watchdog: the latch can never stick
 		task.spawn(function()
-			repeat task.wait() until not check()
+			-- capped wait: "as soon as after I click, it must quickly do down slam." The kick clip can hang
+			-- around past its useful part; 0.55s in, the finisher starts regardless.
+			local dl = tick() + 0.55
+			repeat task.wait() until not check() or tick() > dl
 			finisher()
 			running = false
 		end)
@@ -15574,7 +15637,28 @@ do
     -- DOMAIN SAVIOR: pick a username; when a domain is about to swallow them, your grab pulls them out.
     -- Works as Megumi (Toad), Gojo (Lapse Blue) or Mahito/Essence (Body Disfigure).
     acSec:Toggle({ Name = "Domain Savior (grab them out)", Default = false, Callback = function(b) if DomainSaviorApi then DomainSaviorApi.set(b) end end })
-    acSec:Textbox({ Name = "Savior: Player Name", Placeholder = "username to save", Default = "", Callback = function(v) if DomainSaviorApi then DomainSaviorApi.setName(v) end end })
+    do  -- dropdown instead of typing, with the training Dummy included
+        local function saviorList()
+            local out = {}
+            for _, plr in ipairs(game:GetService("Players"):GetPlayers()) do
+                if plr ~= game:GetService("Players").LocalPlayer then out[#out + 1] = plr.Name end
+            end
+            local chs = workspace:FindFirstChild("Characters")
+            if chs then for _, m in ipairs(chs:GetChildren()) do
+                if not game:GetService("Players"):FindFirstChild(m.Name) and m:FindFirstChild("HumanoidRootPart") then out[#out + 1] = m.Name end
+            end end
+            table.sort(out)
+            if #out == 0 then out = { "Dummy" } end
+            return out
+        end
+        local dd = acSec:Dropdown({ Name = "Savior: Who To Save", Items = saviorList(), Default = "", Callback = function(v)
+            v = (type(v) == "table") and v[1] or v
+            if DomainSaviorApi and type(v) == "string" then DomainSaviorApi.setName(v) end
+        end })
+        acSec:Button({ Name = "Refresh Savior List", Callback = function()
+            pcall(function() if dd and dd.Refresh then dd:Refresh(saviorList()) end end)
+        end })
+    end
     -- AUTO HAKARI: Reserve Balls + Shutter Doors on the same beat. Both remotes verbatim from the captures;
     -- neither service name is guessed - they are derived from the move names.
     acSec:Toggle({ Name = "Auto Hakari (1 + 2 together)", Default = false, Callback = function(b) if HakariApi then HakariApi.set(b) end end })
@@ -15587,7 +15671,6 @@ do
     acSec:Slider({ Name = "Throwable Range", Min = 4, Max = 60, Default = 14, Decimals = 1, Callback = function(v) if ThrowableApi then ThrowableApi.setRange(v) end end })
     acSec:Button({ Name = "Grab Throwable Now", Callback = function() if ThrowableApi then ThrowableApi.grabNow() end end })
     acSec:Slider({ Name = "Hakari Rate", Min = 0.5, Max = 10, Default = 3, Decimals = 0.1, Suffix = "s", Callback = function(v) if HakariApi then HakariApi.setRate(v) end end })
-    acSec:Button({ Name = "Hakari Cast Now", Callback = function() if HakariApi then HakariApi.now() end end })
     -- ═══ NO "AUTO AIR" MASTER TOGGLE ANY MORE ═══ Each of these is its own switch and does its own thing the
     -- moment you turn it on - there is no second switch above them to find first, and the label is gone.
     -- They are also no longer premium-only: the whole point is that using one does what it says.
