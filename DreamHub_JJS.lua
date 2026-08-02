@@ -7980,6 +7980,118 @@ do
 end
 
 -- ============================================================
+-- MODULE: DOMAIN SAVIOR  (auto-save a chosen player from a domain)
+-- "select a username; when it detects the target is about to go in a domain, use the grab move."
+-- The savers and their grabs, straight from the three movesets in the screenshots:
+--     Megumi ("Insanity")             ->  move 3, Toad          (TARGET tag: it grabs and pulls)
+--     Gojo   ("Six Eyes")             ->  move 1, Lapse Blue    (pull)
+--     Mahito ("Essence of the Soul")  ->  move 2, Body Disfigure
+-- (The "must have the R special" note is the awakened form those movesets belong to - if the move is not
+-- in your Moveset, the cast resolver simply refuses and reports, so the wrong form cannot misfire.)
+-- Detection: a domain CONTAINER appearing in the world (same keyword net Walk Into Domains uses, on the
+-- instant DescendantAdded event) with your chosen player inside its reach. The moment both are true, the
+-- grab is cast AT their character - the same Activated(move, targetChar) shape as the Shutter Doors capture.
+-- ============================================================
+do
+	local Players = game:GetService("Players")
+	local LP = Players.LocalPlayer
+	local on, savedName = false, ""
+	local lastSave = 0
+	local GRABS = { { "Toad" }, { "Lapse Blue" }, { "Body Disfigure" } }   -- tried in order; first one you own fires
+	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
+	local function norm(x) return (string.gsub(string.lower(tostring(x or "")), "[^%a%d]", "")) end
+	local function myGrab()
+		for _, c in ipairs({ myModel(), LP.Character }) do
+			local mv = c and c:FindFirstChild("Moveset")
+			if mv then
+				for _, g in ipairs(GRABS) do
+					for _, m in ipairs(mv:GetChildren()) do
+						if norm(m.Name) == norm(g[1]) then return g[1] end
+					end
+				end
+			end
+		end
+		return nil
+	end
+	local function targetChar()
+		if savedName == "" then return nil end
+		local want = norm(savedName)
+		local chs = workspace:FindFirstChild("Characters")
+		if chs then for _, m in ipairs(chs:GetChildren()) do
+			if norm(m.Name):find(want, 1, true) then return m end
+		end end
+		for _, plr in ipairs(Players:GetPlayers()) do
+			if norm(plr.Name):find(want, 1, true) or norm(plr.DisplayName):find(want, 1, true) then
+				local c = plr.Character
+				local w = chs and c and chs:FindFirstChild(c.Name)
+				return w or c
+			end
+		end
+		return nil
+	end
+	local DOM_WORDS = { "domain", "expansion", "malevolent", "shrine", "unlimited", "void", "chimera", "selfembodiment", "coffin", "horizon" }
+	local function looksDomain(n)
+		n = norm(n)
+		for _, w in ipairs(DOM_WORDS) do if n:find(w, 1, true) then return true end end
+		return false
+	end
+	local function trySave(domPart)
+		if not on or tick() - lastSave < 4 then return end
+		local t = targetChar(); if not t then return end
+		local r = t:FindFirstChild("HumanoidRootPart"); if not r then return end
+		if t == myModel() then return end                 -- saving yourself is Anti-Domain's job, not a grab
+		local center = domPart:IsA("BasePart") and domPart.Position
+			or (domPart:IsA("Model") and domPart:GetPivot().Position) or nil
+		if not center then return end
+		-- inside or about to be swallowed: domes in this game reach ~60 studs; act on anyone that close
+		if (r.Position - center).Magnitude > 80 then return end
+		local grab = myGrab()
+		if not grab then
+			if tick() - (_G.VX_DS_WARN or 0) > 8 then
+				_G.VX_DS_WARN = tick()
+				if VX_NOTIFY then VX_NOTIFY("Domain Savior: you have no grab move (need Toad / Lapse Blue / Body Disfigure)", false) end
+			end
+			return
+		end
+		lastSave = tick()
+		local ok = _G.VX_CAST_MOVE and _G.VX_CAST_MOVE(grab, t) or false
+		print("[DreamHub Savior] domain '" .. domPart.Name .. "' near " .. t.Name .. " -> " .. grab .. " " .. (ok and "cast" or "FAILED (send me this)"))
+		if VX_NOTIFY then VX_NOTIFY(ok and ("Saving " .. t.Name .. " with " .. grab) or ("Savior: " .. grab .. " remote missing"), ok) end
+	end
+	workspace.DescendantAdded:Connect(function(d)
+		if not on then return end
+		if not (d:IsA("BasePart") or d:IsA("Model")) then return end
+		task.defer(function()
+			if not d.Parent then return end
+			local a = d
+			for _ = 1, 5 do
+				if not a or a == workspace then break end
+				if looksDomain(a.Name) then trySave(d) return end
+				a = a.Parent
+			end
+			if looksDomain(d.Name) then trySave(d) end
+		end)
+	end)
+	-- backstop: a domain that already exists when you toggle on, or one the event missed
+	task.spawn(function()
+		while true do
+			if on then
+				for _, v in ipairs(workspace:GetChildren()) do
+					if looksDomain(v.Name) then trySave(v) end
+				end
+				task.wait(0.4)
+			else
+				task.wait(0.8)
+			end
+		end
+	end)
+	DomainSaviorApi = {
+		set     = function(v) on = v == true end,
+		setName = function(v) savedName = tostring(v or "") end,
+	}
+end
+
+-- ============================================================
 -- MODULE: FINISHER ASSIST  (Uppercut Assist / Down Slam Assist - PLUS only)
 -- "when a player is ragdoll, as the player is down, it is going to do down slam / uppercut on them. if their
 --  body is far away, it will do 3 M1s, dash to them side dash, and do the 4th remote uppercut/downslam."
@@ -15422,6 +15534,10 @@ do
     acSec:Button({ Name = "Twofold Now", Callback = function() if TwofoldApi then TwofoldApi.now() end end })
     -- SOUL COMBO ("Mahito assist"): press 1 (Stockpile) -> camera up + Focus Strike -> dash in -> extend.
     acSec:Toggle({ Name = "Soul Combo (1 -> aim up + 3 -> dash)", Default = false, Callback = function(b) if SoulComboApi then SoulComboApi.set(b) end end })
+    -- DOMAIN SAVIOR: pick a username; when a domain is about to swallow them, your grab pulls them out.
+    -- Works as Megumi (Toad), Gojo (Lapse Blue) or Mahito/Essence (Body Disfigure).
+    acSec:Toggle({ Name = "Domain Savior (grab them out)", Default = false, Callback = function(b) if DomainSaviorApi then DomainSaviorApi.set(b) end end })
+    acSec:Textbox({ Name = "Savior: Player Name", Placeholder = "username to save", Default = "", Callback = function(v) if DomainSaviorApi then DomainSaviorApi.setName(v) end end })
     -- AUTO HAKARI: Reserve Balls + Shutter Doors on the same beat. Both remotes verbatim from the captures;
     -- neither service name is guessed - they are derived from the move names.
     acSec:Toggle({ Name = "Auto Hakari (1 + 2 together)", Default = false, Callback = function(b) if HakariApi then HakariApi.set(b) end end })
