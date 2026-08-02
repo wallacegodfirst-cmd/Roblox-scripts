@@ -15959,7 +15959,7 @@ do
     if tier("premium") then bfSec:Dropdown({ Name = "Stop After", Items = { "1", "2", "3", "4" }, Default = "2", Callback = function(v) if ChainApi then ChainApi.setFeintBFStop(v) end end }) end
     if tier("premium") then bfSec:Dropdown({ Name = "Move After Feint", Items = { "1", "2", "3", "4" }, Default = "1", Callback = function(v) if ChainApi then ChainApi.setFeintMove(v) end end }) end
     bfSec:Toggle({ Name = "Feint Abilities", Default = false, Callback = function(b) if ChainApi and ChainApi.setFeintMoves then ChainApi.setFeintMoves(b) end end })
-    if tier("premium") then bfSec:Toggle({ Name = "Aim Assist", Default = false, Callback = function(b) if AimAssistApi then AimAssistApi.set(b) end end }) end
+    -- Aim Assist moved to the Assistant tab (every "... Assist" now lives in one place).
     bfSec:Toggle({ Name = "Yuta Black Flash", Default = false, Callback = function(b) if YutaBFApi then YutaBFApi.setManual(b) end end })
     bfSec:Slider({ Name = "Cooldown", Min = 0.1, Max = 1, Default = 0.45, Decimals = 0.01, Suffix = "s", Callback = function(v) if BFApi then BFApi.SetCooldown(v) end end })
     bfSec:Toggle({ Name = "Mobile BF Button", Default = false, Callback = function(b)   -- phone: floating tap button that fires the black flash for the current mode
@@ -16020,27 +16020,9 @@ do
     end
     local defSub = CombatPage:SubPage({ Name = "Defense", Columns = 2 })
     local counterSec = defSub:Section({ Name = "Counter", Side = 1 })
-    -- Side/Back Dash Assist now use the reworked VXBF2 engine (Q = side curve, E = back-through). Free gets both.
-    if tier("premium") then   -- FREE: no Side/Back Dash Assist (premium only)
-        counterSec:Toggle({ Name = "Side Dash Assist (Q)", Callback = function(b) if _G.VXBF2 then _G.VXBF2.setSideAssist(b) end end })
-        -- Where the dash finishes. Corner = off the spine, so the follow-up M1 lands as a hit rather than the
-        -- knockdown; Back = dead centre behind them. Neither teleports - the assist rides the travelling orbit
-        -- and never writes your position.
-        _G.VX_SIDE_END = "Corner"
-        counterSec:Dropdown({ Name = "Side Dash Ends At", Items = { "Corner", "Back" }, Default = "Corner", Callback = function(v)
-            v = (type(v) == "table") and v[1] or v
-            if v == "Corner" or v == "Back" then _G.VX_SIDE_END = v end
-        end })
-        -- How many M1s it throws once it is behind them, at the game's real combo rhythm.
-        _G.VX_SIDE_M1S = 1
-        counterSec:Dropdown({ Name = "M1s Behind Them", Items = { "0", "1", "2", "3", "4" }, Default = "1", Callback = function(v)
-            v = (type(v) == "table") and v[1] or v; _G.VX_SIDE_M1S = tonumber(v) or 1
-        end })
-        -- How long it holds their back afterwards, so a target that walks or turns cannot drift out of it.
-        _G.VX_SIDE_HOLD = 1.0
-        counterSec:Slider({ Name = "Back Lock Time", Min = 0, Max = 2.5, Default = 1, Decimals = 0.05, Suffix = "s", Callback = function(v) _G.VX_SIDE_HOLD = tonumber(v) or 1 end })
-        counterSec:Toggle({ Name = "Back Dash Assist (E)", Callback = function(b) if _G.VXBF2 then _G.VXBF2.setBackAssist(b) end end })
-    end
+    -- Side / Back Dash Assist moved to the Assistant tab. The DEFAULTS still have to be seeded here, because
+    -- the engine reads these globals whether or not the controls were ever built (FREE has no Assistant tab).
+    _G.VX_SIDE_END, _G.VX_SIDE_M1S, _G.VX_SIDE_HOLD = "Corner", 1, 1.0
     counterSec:Toggle({ Name = "Anti Counter", Callback = function(b) if AntiCounterApi then AntiCounterApi.set(b) end end })
     if tier("premium") then   -- FREE: no Emote / Jump-On-Head counter reactions (Anti Counter keeps its default)
         counterSec:Dropdown({ Name = "On Counter", Items = { "Jump On Head", "Emote" }, Default = "Jump On Head", Callback = function(v) if AntiCounterApi then AntiCounterApi.setMode(v) end end })
@@ -16078,19 +16060,7 @@ do
     -- tier("plus") not VX_TIER == "plus": a direct load of the dev file has tier key "full", which outranks
     -- plus but is not EQUAL to it - so the == test built neither toggle and the assists could not be turned
     -- on at all. The rank helper says full >= plus, which is what was meant.
-    if tier("plus") then
-        acSec:Toggle({ Name = "Upper Cut Assist (on downed)", Default = false, Callback = function(b) if FinisherAssistApi then FinisherAssistApi.setUpper(b) end end })
-        acSec:Toggle({ Name = "Down Slam Assist (on downed)", Default = false, Callback = function(b) if FinisherAssistApi then FinisherAssistApi.setSlam(b) end end })
-        acSec:Slider({ Name = "Assist Reach", Min = 4, Max = 40, Default = 20, Decimals = 1, Callback = function(v) if FinisherAssistApi then FinisherAssistApi.setNear(v) end end })   -- closer than this = finish where you stand; further = dash in first
-        acSec:Slider({ Name = "Assist Max Range", Min = 20, Max = 250, Default = 140, Decimals = 1, Callback = function(v) if FinisherAssistApi then FinisherAssistApi.setFar(v) end end })   -- 140, not 90: "they're really far - increase the distance"
-        -- CURSED STRIKE ASSIST: arms ONLY on an uppercut, and casts slot 1 the frame the target leaves the
-        -- ground. No timer to tune - the launch itself is the cue.
-        -- unreleased() as well as the tier: this is brand new, so it stays off the old direct link until you
-        -- release it, exactly like everything else below the testing line.
-        if unreleased() then
-            acSec:Toggle({ Name = "Cursed Strike Assist (uppercut -> move 1 in air)", Default = false, Callback = function(b) if CursedStrikeApi then CursedStrikeApi.set(b) end end })
-        end
-    end
+    -- Upper Cut / Down Slam / Cursed Strike Assist moved to the Assistant tab.
     if unreleased() then
         -- ═══ AUTO CANCEL ═══ Pick the character and tick the slots you keep misclicking. While it is on those
         -- keys fire nothing: the cast is stopped in the hook before it reaches the server, so the move is not
@@ -16106,11 +16076,7 @@ do
         end
     end
     if unreleased() then   -- ═══ EVERYTHING BELOW THIS LINE (to the matching end) IS STILL IN TESTING ═══
-    -- GOJO TWOFOLD KICK: press 2 -> kick -> 3 M1s -> down slam once they hit the floor. Free / VIP / PLUS.
-    acSec:Toggle({ Name = "Twofold Kick Assist (kick -> auto slam)", Default = false, Callback = function(b) if TwofoldApi then TwofoldApi.set(b) end end })   -- triggers off the kick ANIMATION, no key to press
-    acSec:Button({ Name = "Twofold Now", Callback = function() if TwofoldApi then TwofoldApi.now() end end })
-    -- SOUL COMBO ("Mahito assist"): press 1 (Stockpile) -> camera up + Focus Strike -> dash in -> extend.
-    acSec:Toggle({ Name = "Soul Combo (1 -> aim up + 3 -> dash)", Default = false, Callback = function(b) if SoulComboApi then SoulComboApi.set(b) end end })
+    -- Twofold Kick Assist and Soul Combo moved to the Assistant tab.
     -- DOMAIN SAVIOR: pick a username; when a domain is about to swallow them, your grab pulls them out.
     -- Works as Megumi (Toad), Gojo (Lapse Blue) or Mahito/Essence (Body Disfigure).
     acSec:Toggle({ Name = "Domain Savior (grab them out)", Default = false, Callback = function(b) if DomainSaviorApi then DomainSaviorApi.set(b) end end })
@@ -16299,6 +16265,66 @@ do
     swapSec:Button({ Name = "Swap Now", Callback = function() if TodoApi then TodoApi.swapNow() end end })
 
     end   -- end unreleased() (Total sub-page)
+
+    -- ===================== ASSISTANT (every "... Assist" in one place) =====================
+    -- These were scattered across three tabs - Aim Assist under Black Flash, the dash assists under Defense,
+    -- the finishers under Auto - which is why you kept asking where a feature went. They are MOVED here, not
+    -- copied: two toggles driving one API would disagree with each other the moment you used either.
+    -- VIP and PLUS only, as asked. FREE does not get the tab at all rather than getting an empty one.
+    -- Icon is a numeric asset id on purpose: the GUI does "rbxassetid://" .. Icon, so a name like "swords"
+    -- only resolves under the ported UI. A number resolves under both.
+    if tier("premium") then
+    local AssistPage = Window:Page({ Name = "Assistant", Icon = "16932740082" })
+    local asSub = AssistPage:SubPage({ Name = "Assistant", Columns = 2 })
+
+    -- ── COMBO ASSISTS: they watch what YOU did and finish it ──
+    local finSec = asSub:Section({ Name = "Combo Assists", Side = 1 })
+    if tier("plus") then
+        -- Punish a DOWNED enemy. Three bands: in reach it finishes on the spot; kinda far it throws three M1s
+        -- and side dashes onto their back for the fourth; really far it dashes all the way in on the real dash
+        -- key first, then does the same thing.
+        finSec:Toggle({ Name = "Upper Cut Assist (on downed)", Default = false, Callback = function(b) if FinisherAssistApi then FinisherAssistApi.setUpper(b) end end })
+        finSec:Toggle({ Name = "Down Slam Assist (on downed)", Default = false, Callback = function(b) if FinisherAssistApi then FinisherAssistApi.setSlam(b) end end })
+        finSec:Slider({ Name = "Assist Reach", Min = 4, Max = 40, Default = 20, Decimals = 1, Callback = function(v) if FinisherAssistApi then FinisherAssistApi.setNear(v) end end })   -- inside this = finish where you stand; outside = close the gap first
+        finSec:Slider({ Name = "Assist Max Range", Min = 20, Max = 250, Default = 140, Decimals = 1, Callback = function(v) if FinisherAssistApi then FinisherAssistApi.setFar(v) end end })
+        if unreleased() then
+            -- Arms ONLY on an uppercut, and casts slot 1 with the airborne flag the frame the target's feet
+            -- leave the ground. No timer to tune - the launch itself is the cue.
+            finSec:Toggle({ Name = "Cursed Strike Assist (uppercut -> move 1 in air)", Default = false, Callback = function(b) if CursedStrikeApi then CursedStrikeApi.set(b) end end })
+        end
+    else
+        pcall(function() finSec:Label("Upper Cut / Down Slam / Cursed Strike Assist are PLUS") end)
+    end
+    if unreleased() then
+        -- Triggers off the kick ANIMATION, so there is no key to press: kick -> the slam lands as they drop.
+        finSec:Toggle({ Name = "Twofold Kick Assist (kick -> auto slam)", Default = false, Callback = function(b) if TwofoldApi then TwofoldApi.set(b) end end })
+        finSec:Button({ Name = "Twofold Now", Callback = function() if TwofoldApi then TwofoldApi.now() end end })
+        -- The Mahito / Perfection assist: press 1 -> camera up + slot 3 -> dash in -> extend, and a second
+        -- slot-3 the frame the target is detected airborne.
+        finSec:Toggle({ Name = "Soul Combo (1 -> aim up + 3 -> dash)", Default = false, Callback = function(b) if SoulComboApi then SoulComboApi.set(b) end end })
+    end
+
+    -- ── DASH ASSISTS: Q curves you around them, E goes through them ──
+    local dashSec = asSub:Section({ Name = "Dash Assists", Side = 2 })
+    dashSec:Toggle({ Name = "Side Dash Assist (Q)", Callback = function(b) if _G.VXBF2 then _G.VXBF2.setSideAssist(b) end end })
+    -- Where the dash finishes. Corner = off the spine, so the follow-up M1 lands as a hit rather than the
+    -- knockdown; Back = dead centre behind them. Neither teleports - it rides the travelling orbit.
+    dashSec:Dropdown({ Name = "Side Dash Ends At", Items = { "Corner", "Back" }, Default = "Corner", Callback = function(v)
+        v = (type(v) == "table") and v[1] or v
+        if v == "Corner" or v == "Back" then _G.VX_SIDE_END = v end
+    end })
+    -- How many M1s it throws once it is behind them, at the game's real combo rhythm.
+    dashSec:Dropdown({ Name = "M1s Behind Them", Items = { "0", "1", "2", "3", "4" }, Default = "1", Callback = function(v)
+        v = (type(v) == "table") and v[1] or v; _G.VX_SIDE_M1S = tonumber(v) or 1
+    end })
+    -- How long it holds their back afterwards, so a target that walks or turns cannot drift out of it.
+    dashSec:Slider({ Name = "Back Lock Time", Min = 0, Max = 2.5, Default = 1, Decimals = 0.05, Suffix = "s", Callback = function(v) _G.VX_SIDE_HOLD = tonumber(v) or 1 end })
+    dashSec:Toggle({ Name = "Back Dash Assist (E)", Callback = function(b) if _G.VXBF2 then _G.VXBF2.setBackAssist(b) end end })
+
+    -- ── AIM ──
+    local aimSec = asSub:Section({ Name = "Aim", Side = 2 })
+    aimSec:Toggle({ Name = "Aim Assist", Default = false, Callback = function(b) if AimAssistApi then AimAssistApi.set(b) end end })
+    end
 
     -- ===================== TARGET (type a username -> act on that player) =====================
     local TargetPage = Window:Page({ Name = "Target", Icon = "crosshair" })
