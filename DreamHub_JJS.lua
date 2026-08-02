@@ -5447,30 +5447,8 @@ do
 		if not airborneNow() then return end
 		doSlam("armed click")
 	end
-	-- ═══════════ THE CAPTURE THAT REWRITES THIS MODULE ═══════════
-	-- A NORMAL M1 click is:   <Char>Service.RE.Activated:FireServer(false)
-	-- The finishers are the SAME remote with "Down" / "Up" instead of false. So "turn each click into the
-	-- Down remote" is exactly implementable: on every real click's rising edge, while a finisher toggle is
-	-- on, we send the directional Activated right behind the game's own false. No counting to mistime, no
-	-- hop to be swallowed - the click IS the finisher request. (Slam wins when both toggles are on.)
-	local lastDirSend = 0
-	if _G.VX_M1_SUB then
-		_G.VX_M1_SUB("m1combo_dirclick", function()
-			if not (slamOn() or upperOn()) then return end
-			if tick() - lastDirSend < 0.22 then return end
-			lastDirSend = tick()
-			local dir = slamOn() and "Down" or "Up"
-			if dir == "Down" then
-				-- the slam is the AIR variant: flip to the jump state on the same beat (the friend's trick)
-				pcall(function()
-					local c = myModel(); local h = c and c:FindFirstChildOfClass("Humanoid")
-					if h and h.FloorMaterial ~= Enum.Material.Air then h:ChangeState(Enum.HumanoidStateType.Jumping) end
-				end)
-			end
-			fireDir(dir)
-			if _G.VX_M1_DEBUG then print("[M1COMBO] click -> Activated(\"" .. dir .. "\")") end
-		end)
-	end
+	-- (The per-click directional sender that lived here is gone: the namecall hook below rewrites the M1
+	--  remote itself, which is the same idea done at the only place that cannot be mistimed.)
 	local function onSwing()
 		if not (slamOn() or upperOn()) then return end
 		-- HARD GATE: no real click in the last 0.4s means this was not your M1, so we do nothing at all. This is
@@ -5805,6 +5783,43 @@ do
 		end
 	end)
 
+	-- ═══════════════ THE M1 REWRITE HOOK (user's working script) ═══════════════
+	-- Your script replaces the M1 remote itself: when the game fires Activated(false) - a normal click - it
+	-- goes out as "Up" or "Down" instead, and the game's own combo system does the rest. That is strictly
+	-- better than everything this module was doing, because there is no beat to guess, no swing to count and
+	-- no state to force: the finisher IS your click.
+	-- Wired to the existing Auto Down Slam / Auto Upper Cut toggles (no second GUI, as asked). Uppercut wins
+	-- if both are somehow on, matching your script's mutual exclusion.
+	-- NOTE: this is a __namecall hook - the exact class this game 267-kicked for earlier in the project. You
+	-- have tested it and say it works, so it is in; if kicks come back, this is the first thing to switch off.
+	do
+		local ok = pcall(function()
+			if _G.VX_M1HOOK_ON then return end          -- one install per session; re-exec must not stack hooks
+			local mt = getrawmetatable(game)
+			local oldNamecall = mt.__namecall
+			if setreadonly then setreadonly(mt, false) end
+			mt.__namecall = (newcclosure or function(f) return f end)(function(self, ...)
+				local method = getnamecallmethod and getnamecallmethod() or nil
+				if method == "FireServer" and self.Name == "Activated" then
+					local args = { ... }
+					if args[1] == false then
+						if upperOn() then args[1] = "Up"
+						elseif slamOn() then args[1] = "Down" end
+						if args[1] ~= false then
+							return oldNamecall(self, unpack(args))
+						end
+					end
+				end
+				return oldNamecall(self, ...)
+			end)
+			if setreadonly then setreadonly(mt, true) end
+			_G.VX_M1HOOK_ON = true
+		end)
+		if not ok then
+			warn("[M1COMBO] this executor does not allow the M1 rewrite hook - Auto Slam/Uppercut will use the remote path instead")
+		end
+	end
+
 	M1ComboApi = {
 		setMode = function(m)
 			if type(m) == "table" then m = m[1] end
@@ -5814,6 +5829,9 @@ do
 			-- module and what string it set, which separates "mode never set" from "swings never counted".
 			if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] mode set to: " .. tostring(mode)) end
 		end,   -- unwrap Fluriore's {"Down Slam"} table (else the mode check never matched = "doesn't work")
+		-- Read-backs so the finisher assists can borrow the toggle for a beat and put it back.
+		isSlam   = function() return slamFlag end,
+		isUpper  = function() return upperFlag end,
 		-- The two independent toggles. Each one refreshes detection on the way in, so arming either from a
 		-- cold start hooks the animators immediately instead of on the next sweep.
 		setSlam  = function(v) slamFlag  = v == true; State.m1Count = 0; if slamFlag then refreshDetection() end
@@ -7693,6 +7711,10 @@ do
 		local re = deviceRemote(); if not re then return end
 		lastFlap = tick()
 		fired = fired + 1
+		-- BOTH captured forms. Your spy shows the game firing this remote with 0 AND with no argument at
+		-- all - so the flap is probably one of them and the other is a different signal (start / score).
+		-- Sending both costs nothing and guarantees whichever one is the flap actually goes out.
+		pcall(function() re:FireServer(0) end)
 		pcall(function() re:FireServer() end)
 	end
 
@@ -8469,20 +8491,10 @@ do
 		return ok and res or false
 	end
 	local running = false
-	-- If GojoService is not where your Down lives (you are not Gojo), fall back to the shared combo slam so
-	-- the assist still finishes - "twofold kick assi dont work" should never mean silence.
-	local function haveGojoRemote()
-		local ok = pcall(function()
-			return game:GetService("ReplicatedStorage").Knit.Knit.Services.GojoService.RE.Activated
-		end)
-		return ok
-	end
+	-- ═══ HIS TIMINGS, HIS ORDER, NOTHING OF MINE ═══ I added a service fallback, a capped wait and a faster
+	-- gap "to make it hit". It stopped working. Every one of those is gone: this is his 0.35 and his 0.2.
 	local function finisher()
-		if not haveGojoRemote() then
-			if M1ComboApi and M1ComboApi.slamNow then M1ComboApi.slamNow() end
-			return
-		end
-		local gap = tonumber(_G.VX_TF_GAP) or 0.30   -- a touch under the friend's 0.35; his knob restores it
+		local gap = 0.35
 		for _ = 1, 3 do
 			pcall(function() game:GetService("ReplicatedStorage").Knit.Knit.Services.GojoService.RE.Activated:FireServer("Down") end)
 			task.wait(gap)
@@ -8498,10 +8510,7 @@ do
 		running = true
 		task.delay(5, function() running = false end)   -- watchdog: the latch can never stick
 		task.spawn(function()
-			-- capped wait: "as soon as after I click, it must quickly do down slam." The kick clip can hang
-			-- around past its useful part; 0.55s in, the finisher starts regardless.
-			local dl = tick() + 0.55
-			repeat task.wait() until not check() or tick() > dl
+			repeat task.wait() until not check()      -- his exact wait: until the kick animation is over
 			finisher()
 			running = false
 		end)
