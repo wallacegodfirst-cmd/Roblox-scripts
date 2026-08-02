@@ -2460,7 +2460,12 @@ MS("4 menu ready ("..(USE_FLUENT and "Fluent" or "built-in")..") - building tabs
 -- Stored on __gg (NOT new locals) — the main chunk is at Luau's 200-local cap and two more broke loading.
 __gg.PE_PLUS = (_G.PE_PLUS==true) or (_G.PE_PREM==true) or (_G.PE_PREMIUM==true)
 __gg.PE_PREM = (_G.PE_PREM==true) or (_G.PE_PREMIUM==true)
-mkTab("Combat",1); mkTab("PvP",2); mkTab("Movement",3); mkTab("Survival",4); mkTab("Growth",5); mkTab("Auto Farm",6); mkTab("Teleport",7)
+mkTab("Combat",1); mkTab("PvP",2); mkTab("Movement",3); mkTab("Survival",4)
+-- PREMIUM: no Growth tab. That tab is the food-growth suite (INF Food + helpers), which premium buyers are
+-- not supposed to see at all - they were seeing the whole page. INF Water is the one thing in it they DO
+-- get, and that lives on the Combat (main) page for them instead - see the Combat block.
+if not __gg.PE_PREM then mkTab("Growth",5) end
+mkTab("Auto Farm",6); mkTab("Teleport",7)
 mkTab("Target",7.5)   -- Target tab always loads (the PE_PLUS gate made it vanish whenever the tier flag wasn't set)
 mkTab("Visuals",8); mkTab("Skins",9); mkTab("Misc",10); mkTab("Settings",11); mkTab("Info",12); mkTab("Rules",12.4)
 -- ADMIN tab — only the whitelisted Roblox user(s) ever get it built.
@@ -2471,6 +2476,12 @@ __gg.PE_ADMIN  = (__gg.PE_ADMINS[string.lower(LP.Name)] == true) or (__gg.PE_ADM
 if __gg.PE_ADMIN then mkTab("Admin",12.9) end
 
 do local p=Pages["Combat"]
+	-- PREMIUM keeps INF Water even though its old home (the Growth tab) is not built for them - it sits
+	-- here on the main page, first thing they see. Non-premium still gets it in Growth, so no duplicate.
+	if __gg.PE_PREM then
+		local _,w=mkSec(p,"Survival",0.5)
+		mkToggle(w,"INF Water","InfWater",1)
+	end
 	local _,a=mkSec(p,"Aim",1)
 	mkToggle(a,"Silent Aim","SilentAim",1)
 	mkToggle(a,"Lock On","LockOn",2)
@@ -2576,6 +2587,7 @@ do local p=Pages["Survival"]
 	end,5)
 end
 do local p=Pages["Growth"]
+	if p then   -- premium builds never create this tab; without this guard mkSec(nil,...) would error out the whole GUI
 	if not _G.PE_HIDE_LITE then
 		local _,g=mkSec(p,"Pro Food",1)
 		mkToggle(g,"Pro Food","ProFood",1)
@@ -2592,6 +2604,7 @@ do local p=Pages["Growth"]
 	end
 	local _,pg=mkSec(p,"Progress",3)
 	mkBtn(pg,"Progress Restore",function() progressRestore() end,1)
+	end   -- if p
 end
 do local p=Pages["Auto Farm"]
 	local _,f=mkSec(p,"Fossils & Gems",1)
