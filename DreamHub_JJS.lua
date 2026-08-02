@@ -2544,7 +2544,11 @@ local function safeTeleport(targetCFrame, holdTime)
 						-- is what made the old walker an 840 studs/s blur. Net ~280 studs/s: a map crossing lands
 						-- in about 1.5s, and anything within 30 studs is ONE write - genuinely instant.
 						STEP = tonumber(_G.VX_TP_STEP) or 28
-						GAP  = 0.1
+						-- "I dont want teleport to glide, I want instant." 0.045s per 28-stud hop is ~620
+						-- studs/s: a full map crossing lands in ~0.6s - reads as a blink, while each write is
+						-- still the single-hop size you proved a public server accepts. _G.VX_TP_GAP re-slows
+						-- it if a server starts reverting again; that trade is now yours to make.
+						GAP  = tonumber(_G.VX_TP_GAP) or 0.045
 						-- Within one step = ONE write. No walking, no glide feel - just there.
 						local hops  = (total <= STEP) and 1 or math.clamp(math.ceil(total / STEP), 1, 400)
 					for k = 1, hops do
@@ -3849,6 +3853,30 @@ do
     -- instead, which is the actual Black Flash mechanic and works on everyone.
     -- Key 3 IS the Black Flash input (see the note in the engine). Always press it; "Never" is the only
     -- opt-out, for anyone who wants the re-click on its own.
+    -- ═══ A 3 WITHOUT A WINDUP IS JUST DIVERGENT FIST ═══ "even if I have m1 bf chain or m1 bf off, it
+    -- still does divergent fist when I m1." The twin press paths fired 3 on a timer after your click; when
+    -- the M1 windup was live at that instant, that press is a Black Flash - when it was not (whiff, dropped
+    -- swing, timing skew), the SAME press is a raw Divergent Fist cast. So every timed press now checks a
+    -- windup is actually playing first. Flash kept, DF spam gone.
+    local function windupLive()
+        local ok, res = pcall(function()
+            for _, c in ipairs({ GetChar(), LocalPlayer.Character }) do
+                local h = c and c:FindFirstChildOfClass("Humanoid")
+                local a = h and h:FindFirstChildOfClass("Animator")
+                if a then
+                    for _, tr in ipairs(a:GetPlayingAnimationTracks()) do
+                        if tr.IsPlaying and tr.TimePosition < 0.5 then
+                            local id = tostring(tr.Animation.AnimationId)
+                            local nid = id:match("%d+")
+                            if (nid and _G.VX_M1_IDS and _G.VX_M1_IDS[nid]) or AnimationTriggers[id] then return true end
+                        end
+                    end
+                end
+            end
+            return false
+        end)
+        return ok and res or false
+    end
     local function pressBF()
         if _G.VX_BF_PRESSKEY == "Never" then VMouseClick() return end
         markThree()
@@ -4049,10 +4077,49 @@ do
         -- So a BF chain now travels on the arc ALONE (opts.noKey), which still crosses the ground and still
         -- reads as movement, but leaves you in a state the game will accept an attack from. The Q assist keeps
         -- the real key, because it wants the dash animation and never needs an M1 to be accepted.
-        if not opts.noKey then
-            VKeyTap(Settings.DashKey, 0.04)   -- REAL dash key = the game's own dash anim + impulse
-            task.wait(0.06)                   -- let that impulse start before the arc takes over (else it looks cancelled)
+        if opts.noKey then
+            -- ═══ THE ARC IS NOW MADE OF TELEPORT ═══ Teleport's primitive (PivotTo + matched velocity, one
+            -- Heartbeat apart) is the only movement in this file that both survives the server AND leaves a
+            -- body the game accepts an M1 from - it is the mode that flashes. VX_ORBIT's per-frame CFrame
+            -- lerp is neither. So a noKey "dash" is now six teleport-steps laid along the curve: same look
+            -- (it travels, it curves), same primitive as the mode that works, and nothing for the humanoid
+            -- to fight. Collisions are never touched.
+            local e2 = t:FindFirstChild("HumanoidRootPart")
+            local p2 = GetRoot()
+            if e2 and p2 then
+                local dur   = opts.duration or 0.2
+                local sweep = opts.extraSweep or (math.pi * 0.25)
+                local rad   = opts.endRadius or 4.6
+                local bias  = opts.endBias or 0
+                local off   = p2.Position - e2.Position
+                local a0    = math.atan2(off.Z, off.X)
+                local fwd   = e2.CFrame.LookVector
+                local aB    = math.atan2(-fwd.Z, -fwd.X) + bias           -- behind the spine (+ corner bias)
+                local diff  = ((aB - a0 + math.pi) % (2 * math.pi)) - math.pi
+                local r0    = math.max(off.Magnitude, rad)
+                local steps = 6
+                local dirSweep = (diff >= 0) and 1 or -1
+                for k = 1, steps do
+                    local c2 = GetChar(); local hh = c2 and c2:FindFirstChild("HumanoidRootPart")
+                    if not hh then break end
+                    local e3 = t.Parent and t:FindFirstChild("HumanoidRootPart"); if not e3 then break end
+                    local f  = k / steps
+                    local ang = a0 + diff * f + dirSweep * (sweep - math.abs(diff) > 0 and (sweep - math.abs(diff)) or 0) * math.sin(f * math.pi)
+                    local r   = r0 + (rad - r0) * f
+                    local pos = e3.Position + Vector3.new(math.cos(ang) * r, 0, math.sin(ang) * r)
+                    pos = Vector3.new(pos.X, hh.Position.Y, pos.Z)
+                    local step = pos - hh.Position
+                    pcall(function()
+                        c2:PivotTo(CFrame.lookAt(pos, Vector3.new(e3.Position.X, pos.Y, e3.Position.Z)))
+                        if step.Magnitude > 0.1 then hh.AssemblyLinearVelocity = step.Unit * math.clamp(step.Magnitude / math.max(dur / steps, 0.016), 16, 80) end
+                    end)
+                    task.wait(dur / steps)
+                end
+            end
+            return true
         end
+        VKeyTap(Settings.DashKey, 0.04)   -- REAL dash key = the game's own dash anim + impulse
+        task.wait(0.06)                   -- let that impulse start before the arc takes over (else it looks cancelled)
         local p = GetRoot(); if p then pcall(function() p.AssemblyLinearVelocity = Vector3.zero end) end   -- kill the dash burst so the arc can't fling
         if _G.VX_ORBIT then
             _G.VX_ORBIT(e, {
@@ -4212,31 +4279,13 @@ do
                 -- the engine and the combo counter know a dash clip is playing), wait that window out, then
                 -- get behind them and swing. When the caller is programmatic (doSide, no real Q), we DO need
                 -- to produce the dash - detect that by whether a dash key is actually down.
-                local realQ = UserInputService:IsKeyDown(Settings.DashKey) or UserInputService:IsKeyDown(Enum.KeyCode.Q)
-                -- 0.22, not 0.30: the game's dash is over sooner than that, and every extra hundredth here is
-                -- "it needs to dash immediately" latency before the get-behind starts.
-                _G.VX_BF_DASHANIM = tick() + 0.22
+                -- ═══ "IT NEEDS TO DASH AROUND THEIR BACK" ═══ Not accept-your-dash-then-hop: one continuous
+                -- arc AROUND them, ending on the back or the corner per your setting. This is the stepped
+                -- teleport-arc (the primitive from the mode that works) - it travels, it curves, it is fast,
+                -- and it leaves a body the game accepts an M1 from.
+                _G.VX_BF_DASHANIM = tick() + 0.20
                 aimCameraAt(e.Position)
-                if not realQ then
-                    -- programmatic call: produce a real dash toward their side, once
-                    local p0 = GetRoot()
-                    local side = (p0 and chooseSide(p0, e, nil)) or 1
-                    local strafe = (side == -1) and Enum.KeyCode.A or Enum.KeyCode.D
-                    VKeyDown(strafe)
-                    game:GetService("RunService").RenderStepped:Wait()
-                    VKeyTap(Settings.DashKey, 0.04)
-                    task.wait(0.02)
-                    VKeyUp(strafe)
-                end
-                -- Wait for the dash to actually END before repositioning - an M1 or a CFrame write during
-                -- dash recovery is refused (the file's own rule), and holdBack fighting the dash's leftover
-                -- momentum is the rubber-band. Poll the blind, capped.
-                local dl = tick() + 0.5
-                while tick() < (tonumber(_G.VX_BF_DASHANIM) or 0) and tick() < dl do task.wait() end
-                -- ═══ ONTO THE CORNER, TRAVELLED ═══ Your own dash went wherever you were steering - rarely
-                -- the corner of their back. This short arc carries you the rest of the way (0.10s, tiny
-                -- sweep, noKey so no dash-recovery state). It moves you there; it does not blink you there.
-                dashToBack(t, { duration = 0.10, extraSweep = math.pi * 0.08, endRadius = 4.4,
+                dashToBack(t, { duration = 0.16, extraSweep = math.pi * 0.45, endRadius = 4.4,
                     endBias = (_G.VX_SIDE_END == "Back") and 0 or 0.5, noKey = true })
                 faceBackOf(t)                              -- rotation only - never a position write
                 local hold = tonumber(_G.VX_SIDE_HOLD) or 0.8
@@ -4542,7 +4591,10 @@ do
             bfPending = true
             task.delay(dly, function()
                 bfPending = false
-                if (Settings.BFM1 or Settings.AutoBF) and tick() - R.bfCD >= Settings.BFCooldown then R.bfCD = tick(); pressBF() end
+                if (Settings.BFM1 or Settings.AutoBF) and tick() - R.bfCD >= Settings.BFCooldown then
+                    if windupLive() then R.bfCD = tick(); pressBF()
+                    elseif _G.VX_BF_DEBUG then print("[DreamHub BF] anim-hook press skipped - windup already gone") end
+                end
             end)
         end)
     end
@@ -4598,7 +4650,14 @@ do
             if not R.bfActive and not targetInChainRange() then return end   -- same range rule as the anim path above
             if tick() - R.bfCD >= Settings.BFCooldown then
                 R.bfCD = tick()
-                task.delay(0.14, function() if Settings.AutoBF or Settings.BFM1 then pressBF() end end)
+                task.delay(0.14, function()
+                    if not (Settings.AutoBF or Settings.BFM1) then return end
+                    if not windupLive() then
+                        if _G.VX_BF_DEBUG then print("[DreamHub BF] no windup at press time - holding 3 (would be raw DF)") end
+                        return
+                    end
+                    pressBF()
+                end)
             end
         end
     end)
@@ -5438,43 +5497,21 @@ do
 				State.m1Count = 0
 				State.lastFire = now
 				State.slamDone = false        -- the hop below owns THIS combo's single slam
-				-- ═══ "IT KEEPS MOVING ME BACK" ═══ There used to be a doSlam("swing "..n) right here, and the
-				-- very next lines prove it fired from the GROUND: they test FloorMaterial ~= Air to decide
-				-- whether to hop you. A grounded directional M1 is not the down slam - it is a different move
-				-- with its own recoil, and that recoil is the shove. Worse, doSlam's own gate was 0.30s while
-				-- a held combo puts swings 0.35s apart, so the same combo sent THREE "Down"s: this grounded
-				-- one, then the airborne branch above on swing 3, then again on swing 4.
-				-- Now: hop first, and let the airborne branch be the single fire point. One "Down", off the
-				-- ground, on the swing that is actually the slam.
+				-- ═══ THE FRIEND'S RECIPE, PORTED ═══ His working Twofold finisher is: three "Down"s at combo
+				-- rhythm, ChangeState(Jumping), one more "Down" airborne = the slam. Here YOUR OWN three M1s
+				-- are the count - so all that is left is the ending: flip to the jump state (his trick - no
+				-- velocity rocket, no Space press anything can react to) and send the Down. "If I go past 3
+				-- M1s it needs to bring the down slam remote" - this is that, verbatim, and it fires whether
+				-- or not you are also dashing or clicking: the count is the count.
 				task.spawn(function()
 					local c = myModel()
 					local h = c and c:FindFirstChildOfClass("Humanoid")
-					if h and h.FloorMaterial ~= Enum.Material.Air then
-						_G.VX_LAUNCHING = tick()
-						-- Humanoid.Jump alone can be swallowed while the combo animation owns the state, and then
-						-- you never go airborne and the slam never arms. A modest Y floor guarantees the lift
-						-- without the rocket the old 65/30-plus-three-mechanisms stack produced.
-						pcall(function()
-							local r = c and c:FindFirstChild("HumanoidRootPart")
-							if r then
-								local v = r.AssemblyLinearVelocity
-								r.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, 34), v.Z)
-							end
-						end)
-						pcall(function() h.Jump = true end)
-					end
-					slamArmed = tick() + 1.6      -- your next M1 within this window announces the slam again
-					-- SAFETY NET. Everything above now depends on the hop landing, so if the lift is swallowed
-					-- (the combo animation owns the humanoid state, a stun, a domain floor) the slam would
-					-- simply never fire and the feature would look dead. Give it 0.45s; if you are still on
-					-- the ground by then, send it anyway. One grounded Down as a last resort is much better
-					-- than no slam - and it is one, not the three the old path sent every combo.
-					task.delay(0.45, function()
-						if not slamOn() then return end
-						if airborneNow() then return end                       -- the hop worked; the airborne branch owns it
-						if tick() - (State.lastDown or 0) < 1.00 then return end  -- already slammed this combo
-						doSlam("hop never left the ground")
-					end)
+					_G.VX_LAUNCHING = tick()
+					pcall(function() if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end end)
+					task.wait(0.18)
+					State.slamDone = true
+					doSlam("3 M1s -> jump-state -> Down (friend recipe)")
+					slamArmed = tick() + 1.2      -- an M1 right after can announce it again (air M1 = slam)
 				end)
 			end
 			end
@@ -5559,6 +5596,12 @@ do
 					-- or two. 0.22 matches a human-fast repeat while keeping the burst under a second.
 					local gap = tonumber(_G.VX_UPPER_GAP) or 0.22
 					task.spawn(function()
+						-- name the burst so "auto uppercut dont work" finally says WHERE the four went
+						local okS, svcN = pcall(vxMyCharSvc)
+						if VX_NOTIFY and tick() - (_G.VX_UP_TOAST or 0) > 5 then
+							_G.VX_UP_TOAST = tick()
+							VX_NOTIFY("Uppercut: 4x Up -> " .. tostring(okS and svcN or "??"), true)
+						end
 						for i = 1, fires do
 							fireDir("Up")
 							if i < fires then task.wait(gap) end
@@ -7882,14 +7925,29 @@ do
 		task.delay(3, function() running = false end)
 		task.spawn(function()
 			local t = nearest()
-			-- 1) your Stockpile is already casting (you pressed the real 1). Give it a beat to commit.
-			task.wait(0.20)
-			-- 2) camera UP, then Focus Strike - it follows the camera, which is the whole trick
+			-- 1) lift the camera THE MOMENT you clicked 1 - "lift camera just when I click 1" - and send
+			--    Focus Strike right behind it. No commit wait: the lift is the aim, the aim must be first.
 			aimUp()
-			task.wait(0.06)
+			task.wait(0.05)
 			local ok = _G.VX_CAST_MOVE and _G.VX_CAST_MOVE("Focus Strike") or false
 			if not ok then print("[DreamHub Soul] Focus Strike remote not found (send me this)") end
-			-- 3) dash to the target and extend: one held press = a real combo string, not tap-spam
+			-- 2) "when it detects the target is in the air it must click 3" - watch them; the frame they
+			--    leave the ground, the SECOND Focus Strike goes out to catch them up there.
+			task.spawn(function()
+				local dl = tick() + 1.4
+				while tick() < dl do
+					local r = t and t.Parent and t:FindFirstChild("HumanoidRootPart")
+					local h = t and t.Parent and t:FindFirstChildOfClass("Humanoid")
+					if r and ((h and h.FloorMaterial == Enum.Material.Air) or r.AssemblyLinearVelocity.Y > 14) then
+						aimUp()
+						task.wait(0.04)
+						if _G.VX_CAST_MOVE then _G.VX_CAST_MOVE("Focus Strike") end
+						break
+					end
+					game:GetService("RunService").Heartbeat:Wait()
+				end
+			end)
+			-- 3) dash to the target and extend
 			task.wait(0.30)
 			if t and t.Parent and _G.VXBF2 and _G.VXBF2.doSide then pcall(_G.VXBF2.doSide) end
 			task.wait(0.26)
@@ -7935,7 +7993,9 @@ do
 	local Players = game:GetService("Players")
 	local LP = Players.LocalPlayer
 	local upOn, downOn = false, false
-	local nearDist, farDist = 12, 90
+	-- nearDist 20, was 12: "make sure it dont side dash or move around unless the target is kind of far."
+	-- Inside 20 studs the burst simply fires where you stand; only past that does it close the gap first.
+	local nearDist, farDist = 20, 90
 	local busyUntil = 0
 	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
 	local function myHRP() local m = myModel(); return m and m:FindFirstChild("HumanoidRootPart") end
@@ -8147,91 +8207,53 @@ do
 end
 
 -- ============================================================
--- MODULE: TWOFOLD KICK ASSIST  (rebuilt on the user's WORKING reference script)
--- The reference settles every question this module ever guessed at:
---   TRIGGER   the Twofold Kick ANIMATION on your own animator (id prefix 104749) - not a key. The game
---             knows when you kicked better than any key listener does.
---   WAIT      until that animation ENDS - firing during it is what never connected.
---   FINISHER  Activated("Down") THREE times at combo rhythm, then a Jumping humanoid state, then a FOURTH
---             "Down" while airborne. Same counted-remote pattern as the uppercut's four "Up"s: the airborne
---             fourth is the down slam.
--- "just make it faster to make sure it hits": the reference's 0.35s gaps and 0.2s jump wait are trimmed to
--- 0.30 and 0.14 - inside the same combo rhythm, ~0.25s faster end to end - and the anim-end poll runs every
--- Heartbeat so the finisher starts the first frame the kick is over. _G.VX_TF_GAP tunes the gap if a build
--- of the game ever tightens the window.
+-- MODULE: TWOFOLD KICK ASSIST  (the friend's script VERBATIM - my "improvements" are gone)
+-- Last build I ported this with tweaks: both-rig animator checks, a resolver with a fallback, trimmed
+-- timings. It stopped working. The friend's original works. So this is now that script line for line -
+-- hardcoded GojoService, single rig, 0.35s gaps, 0.2s jump wait - wrapped in nothing but the on/off
+-- toggle and a watchdog on the latch. The ONLY speed knob is _G.VX_TF_GAP, default the friend's own 0.35;
+-- lower it yourself if you want to experiment. I am done experimenting with a thing that works.
 -- ============================================================
 do
-	local Players = game:GetService("Players")
-	local RunService = game:GetService("RunService")
-	local RS = game:GetService("ReplicatedStorage")
-	local LP = Players.LocalPlayer
-	local on, running = false, false
-	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
-	-- the kick anim can play on either rig; check both animators
-	local function kickPlaying()
-		for _, c in ipairs({ myModel(), LP.Character }) do
-			local h = c and c:FindFirstChildOfClass("Humanoid")
-			local a = h and h:FindFirstChildOfClass("Animator")
-			if a then
-				local ok, tracks = pcall(function() return a:GetPlayingAnimationTracks() end)
-				if ok and tracks then
-					for _, tr in ipairs(tracks) do
-						local okid, id = pcall(function() return tostring(tr.Animation.AnimationId) end)
-						if okid and id and id:find("rbxassetid://104749") then return true end
-					end
+	local plrs = game:GetService("Players")
+	local lp = plrs.LocalPlayer
+	local on = false
+	local function char(plr)
+		plr = plr or lp
+		return plr.Character or plr.CharacterAdded:Wait()
+	end
+	local function check()
+		local ok, res = pcall(function()
+			for _, v in pairs(char().Humanoid.Animator:GetPlayingAnimationTracks()) do
+				if v.Animation.AnimationId:find("rbxassetid://104749") then
+					return true
 				end
 			end
-		end
-		return false
-	end
-	local function downRemote()
-		-- Twofold is a Gojo move, so GojoService is the reference's (correct) target; the resolver covers a
-		-- future where the same anim id belongs to someone else.
-		local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
-		local ok, svc = pcall(vxMyCharSvc)
-		local name = (ok and svc) or "GojoService"
-		local sName = k and (k:FindFirstChild(name) or k:FindFirstChild("GojoService"))
-		local re = sName and sName:FindFirstChild("RE")
-		return re and re:FindFirstChild("Activated")
-	end
-	local function finisher()
-		if running then return end
-		running = true
-		task.delay(4, function() running = false end)   -- watchdog: nothing may brick the latch
-		task.spawn(function()
-			local re = downRemote()
-			if not re then
-				print("[DreamHub Twofold] no Activated remote resolved (send me this)")
-				running = false
-				return
-			end
-			local gap = tonumber(_G.VX_TF_GAP) or 0.30
-			-- three grounded "Down"s at combo rhythm - the count the server expects before the launcher
-			for i = 1, 3 do
-				pcall(function() re:FireServer("Down") end)
-				task.wait(gap)
-			end
-			-- airborne, then the fourth "Down" = the slam. ChangeState is the reference's own trick: it
-			-- flips the humanoid to Jumping without a Space press that something else could react to.
-			pcall(function()
-				local c = myModel(); local h = c and c:FindFirstChildOfClass("Humanoid")
-				if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
-			end)
-			task.wait(0.14)
-			pcall(function() re:FireServer("Down") end)
-			if _G.VX_TF_DEBUG then print("[DreamHub Twofold] kick ended -> 3x Down + airborne Down sent") end
-			running = false
+			return false
 		end)
+		return ok and res or false
 	end
-	RunService.Heartbeat:Connect(function()
-		if not on or running then return end
-		if not kickPlaying() then return end
-		running = true                                   -- claim NOW; the waiter below hands off to finisher
+	local running = false
+	local function finisher()
+		local gap = tonumber(_G.VX_TF_GAP) or 0.35
+		for _ = 1, 3 do
+			pcall(function() game:GetService("ReplicatedStorage").Knit.Knit.Services.GojoService.RE.Activated:FireServer("Down") end)
+			task.wait(gap)
+		end
+		task.wait()
+		pcall(function() char().Humanoid:ChangeState(Enum.HumanoidStateType.Jumping) end)
+		task.wait(0.2)
+		pcall(function() game:GetService("ReplicatedStorage").Knit.Knit.Services.GojoService.RE.Activated:FireServer("Down") end)
+	end
+	game:GetService("RunService").Heartbeat:Connect(function()
+		if not on then return end
+		if not check() or running then return end
+		running = true
+		task.delay(5, function() running = false end)   -- watchdog: the latch can never stick
 		task.spawn(function()
-			-- wait for the kick animation to END - the first frame it is gone, the finisher starts
-			repeat task.wait() until not kickPlaying() or not on
+			repeat task.wait() until not check()
+			finisher()
 			running = false
-			if on then finisher() end
 		end)
 	end)
 	TwofoldApi = { set = function(v) on = v == true end, now = finisher }
@@ -9985,6 +10007,19 @@ do
 		-- staying silent, so when it is ON and you press one of its keys and it DECLINES, it now says why in F9
 		-- without any debug flag. Throttled to one line every 2s per reason, so it is a hint and not a spam.
 		-- (It prints only on refusal - a working sequence stays quiet.)
+		-- ═══ NAME THE SILENCE ═══ "the auto airs moves dont work" has never come with data. If a sequence
+		-- toggle is on, the key is an air key, airOK passed, and NOTHING below claimed the press, say which
+		-- character/key found no branch - that one toast is the whole diagnosis.
+		if autoAirOn and airOK and input.KeyCode and AIR_KEYS[input.KeyCode] then
+			task.delay(0.1, function()
+				if tick() - (tonumber(_G.VX_AIR_RAN) or 0) < 0.3 then return end   -- a branch ran; quiet
+				if tick() - (_G.VX_AIRNOSEQ_T or 0) < 4 then return end
+				_G.VX_AIRNOSEQ_T = tick()
+				local msg = "Auto Air: no sequence matched key " .. tostring(input.KeyCode.Name) .. " on your character"
+				print("[DreamHub AutoAir] " .. msg .. " (send me this)")
+				if VX_NOTIFY then VX_NOTIFY(msg, false) end
+			end)
+		end
 		if autoAirOn and not airOK and input.KeyCode and AIR_KEYS[input.KeyCode] then
 			if tick() - (_G.VX_AIRWHY_T or 0) > 2 or _G.VX_AIRWHY_LAST ~= _airWhy then
 				_G.VX_AIRWHY_T = tick(); _G.VX_AIRWHY_LAST = _airWhy
@@ -10288,6 +10323,7 @@ do
 		-- including ones nobody has ever captured, which is the whole problem.
 		-- The old paths stay as fallbacks, in that order, so nothing that used to work can stop working.
 		local function fireMove(moveSvc, re, key, ...)
+			_G.VX_AIR_RAN = tick()   -- a sequence claimed this press; the no-sequence toast stands down
 			-- 1) THE DERIVED MOVE SERVICE. Only for Activated (the cast remote); a directional/right-click
 			--    remote still belongs to the character service below.
 			if re == "Activated" then
@@ -15377,7 +15413,7 @@ do
     if VX_TIER == "plus" then
         acSec:Toggle({ Name = "Upper Cut Assist (on downed)", Default = false, Callback = function(b) if FinisherAssistApi then FinisherAssistApi.setUpper(b) end end })
         acSec:Toggle({ Name = "Down Slam Assist (on downed)", Default = false, Callback = function(b) if FinisherAssistApi then FinisherAssistApi.setSlam(b) end end })
-        acSec:Slider({ Name = "Assist Reach", Min = 4, Max = 40, Default = 12, Decimals = 1, Callback = function(v) if FinisherAssistApi then FinisherAssistApi.setNear(v) end end })   -- closer than this = finish now; further = dash in first
+        acSec:Slider({ Name = "Assist Reach", Min = 4, Max = 40, Default = 20, Decimals = 1, Callback = function(v) if FinisherAssistApi then FinisherAssistApi.setNear(v) end end })   -- closer than this = finish where you stand; further = dash in first
         acSec:Slider({ Name = "Assist Max Range", Min = 20, Max = 250, Default = 90, Decimals = 1, Callback = function(v) if FinisherAssistApi then FinisherAssistApi.setFar(v) end end })
     end
     if unreleased() then   -- ═══ EVERYTHING BELOW THIS LINE (to the matching end) IS STILL IN TESTING ═══
