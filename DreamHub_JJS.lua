@@ -8147,153 +8147,94 @@ do
 end
 
 -- ============================================================
--- MODULE: GOJO TWOFOLD KICK  ("when u do 2, it will do 3 m1s, then down slam for you")
--- Cast remote is the user's capture verbatim:
---   TwofoldKickService.RE.Activated(Moveset["Twofold Kick"])
--- and the service name is derived, not guessed - _G.VX_CAST_MOVE resolves it from the move's own name.
--- The kick pops them up and ragdolls them; the sequence then throws three M1s and finishes with the down
--- slam, which is announced the same way the combo module announces it: <Char>Service.RE.Activated("Down").
+-- MODULE: TWOFOLD KICK ASSIST  (rebuilt on the user's WORKING reference script)
+-- The reference settles every question this module ever guessed at:
+--   TRIGGER   the Twofold Kick ANIMATION on your own animator (id prefix 104749) - not a key. The game
+--             knows when you kicked better than any key listener does.
+--   WAIT      until that animation ENDS - firing during it is what never connected.
+--   FINISHER  Activated("Down") THREE times at combo rhythm, then a Jumping humanoid state, then a FOURTH
+--             "Down" while airborne. Same counted-remote pattern as the uppercut's four "Up"s: the airborne
+--             fourth is the down slam.
+-- "just make it faster to make sure it hits": the reference's 0.35s gaps and 0.2s jump wait are trimmed to
+-- 0.30 and 0.14 - inside the same combo rhythm, ~0.25s faster end to end - and the anim-end poll runs every
+-- Heartbeat so the finisher starts the first frame the kick is over. _G.VX_TF_GAP tunes the gap if a build
+-- of the game ever tightens the window.
 -- ============================================================
 do
 	local Players = game:GetService("Players")
-	local VIM = game:GetService("VirtualInputManager")
+	local RunService = game:GetService("RunService")
+	local RS = game:GetService("ReplicatedStorage")
 	local LP = Players.LocalPlayer
 	local on, running = false, false
 	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
-	local function myHRP() local m = myModel(); return m and m:FindFirstChild("HumanoidRootPart") end
-	local function norm(s) return (string.gsub(string.lower(tostring(s or "")), "[^%a%d]", "")) end
-	local function hasTwofold()
+	-- the kick anim can play on either rig; check both animators
+	local function kickPlaying()
 		for _, c in ipairs({ myModel(), LP.Character }) do
-			local mv = c and c:FindFirstChild("Moveset")
-			if mv then for _, m in ipairs(mv:GetChildren()) do if norm(m.Name) == "twofoldkick" then return true end end end
+			local h = c and c:FindFirstChildOfClass("Humanoid")
+			local a = h and h:FindFirstChildOfClass("Animator")
+			if a then
+				local ok, tracks = pcall(function() return a:GetPlayingAnimationTracks() end)
+				if ok and tracks then
+					for _, tr in ipairs(tracks) do
+						local okid, id = pcall(function() return tostring(tr.Animation.AnimationId) end)
+						if okid and id and id:find("rbxassetid://104749") then return true end
+					end
+				end
+			end
 		end
 		return false
 	end
-	local function click()
-		_G.VX_SYNTH_CLICK = tick() + 0.25   -- ours: the shared M1 detector must not re-enter its subscribers
-		local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
-		local cx, cy = (vp and vp.X / 2) or 400, (vp and vp.Y / 2) or 300
-		pcall(function()
-			VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.03)
-			VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
-		end)
+	local function downRemote()
+		-- Twofold is a Gojo move, so GojoService is the reference's (correct) target; the resolver covers a
+		-- future where the same anim id belongs to someone else.
+		local k = RS:FindFirstChild("Knit"); k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
+		local ok, svc = pcall(vxMyCharSvc)
+		local name = (ok and svc) or "GojoService"
+		local sName = k and (k:FindFirstChild(name) or k:FindFirstChild("GojoService"))
+		local re = sName and sName:FindFirstChild("RE")
+		return re and re:FindFirstChild("Activated")
 	end
-	-- ═══ HOLD THE BUTTON, DO NOT TAP IT ═══ Your own recorder capture settled this: ONE hold of 1.381s
-	-- produced FOUR swings about 0.35s apart. JJS advances the combo while the button is DOWN. Tapping three
-	-- times is three separate first-swings, and the game only accepted the first - which is exactly "twofold
-	-- kick assist only did 1 M1". So we hold for as long as the swings we want take, and let the game count.
-	local function holdM1(swings)
-		local n = math.max(1, tonumber(swings) or 3)
-		local dur = 0.12 + (n - 1) * 0.35        -- first swing lands quickly, the rest follow on the combo beat
-		_G.VX_SYNTH_CLICK = tick() + dur + 0.25  -- ours for the whole hold: the M1 detector must not re-enter
-		local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
-		local cx, cy = (vp and vp.X / 2) or 400, (vp and vp.Y / 2) or 300
-		local VIM = game:GetService("VirtualInputManager")
-		pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0) end)
-		local t0 = tick()
-		while tick() - t0 < dur do
-			_G.VX_SYNTH_CLICK = tick() + 0.25    -- ours: the per-click subscribers must not re-enter
-			_G.VX_LAST_HUMAN_CLICK = tick()      -- but the SWINGS count - you started this sequence
-			task.wait(0.05)
-		end
-		pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0) end)
-	end
-	local function nearest()
-		local hrp = myHRP(); if not hrp then return nil end
-		local g = _G.VX_LOCK; local lt = (g and g.get) and g.get() or nil
-		if lt and lt.Parent then return lt end
-		local best, bd
-		local chs = workspace:FindFirstChild("Characters")
-		if chs then for _, m in ipairs(chs:GetChildren()) do
-			if m.Name ~= LP.Name and m ~= myModel() then
-				local r = m:FindFirstChild("HumanoidRootPart"); local h = m:FindFirstChildOfClass("Humanoid")
-				if r and (not h or h.Health > 0) then
-					local d = (r.Position - hrp.Position).Magnitude
-					if not bd or d < bd then best, bd = m, d end
-				end
-			end
-		end end
-		return best
-	end
-	-- "it will do down slam for you AFTER they ragdoll". The kick is what ragdolls them, so rather than guess
-	-- a delay we watch for it: the same knocked-down signals Auto Block reads, on the target we kicked.
-	local function isDown(t)
-		local h = t and t:FindFirstChildOfClass("Humanoid"); if not h then return false end
-		if h.PlatformStand then return true end
-		local ok, st = pcall(function() return h:GetState() end)
-		if ok and (st == Enum.HumanoidStateType.Physics or st == Enum.HumanoidStateType.Ragdoll
-			or st == Enum.HumanoidStateType.FallingDown or st == Enum.HumanoidStateType.GettingUp) then return true end
-		if h:GetAttribute("Ragdoll") == true or h:GetAttribute("Ragdolled") == true then return true end
-		local info = t:FindFirstChild("Info")
-		local rag = info and (info:FindFirstChild("Ragdoll") or info:FindFirstChild("Ragdolled"))
-		return (rag and rag:IsA("ValueBase") and rag.Value == true) or false
-	end
-	-- ═══ "JUST AUTO DOWN SLAM" ═══ Use the slam that already works instead of re-deriving the service and
-	-- firing "Down" by hand, which is what this did and why the tail of the sequence went nowhere. Auto Down
-	-- Slam hops you first and fires from the air, and it is the one part of the combo module you confirmed
-	-- works - so the Twofold sequence now calls exactly that, with a raw fire only as a last resort if the
-	-- combo module somehow is not loaded.
-	local function slam()
-		if M1ComboApi and M1ComboApi.slamNow then M1ComboApi.slamNow() return end
-		local svc = vxMyCharSvc()
-		if svc then fireKnit(svc, "Activated", "Down") end
-	end
-	-- ═══ TWOFOLD KICK IS THE 4TH MOVE, NOT THE 2ND ═══ It was hardcoded to key 2 because that is what the
-	-- first description said; you have since said it is the 4th, and a hardcoded slot would be wrong again
-	-- the next time the game reorders anything. So we ASK YOUR MOVESET which slot holds it and listen on that
-	-- key - the same trick that made the universal air cast work on any character.
-	local SLOTKEY = { Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.KeyCode.Four }
-	local function twofoldKey()
-		for _, c in ipairs({ myModel(), LP.Character }) do
-			local mv = c and c:FindFirstChild("Moveset")
-			if mv then
-				for i, m in ipairs(mv:GetChildren()) do
-					if norm(m.Name) == "twofoldkick" and SLOTKEY[i] then return SLOTKEY[i] end
-				end
-			end
-		end
-		return Enum.KeyCode.Four   -- what you told us; used when the moveset cannot be read
-	end
-	local function sequence()
-		if running then print("[DreamHub Twofold] already running - ignored") return end
+	local function finisher()
+		if running then return end
 		running = true
-		task.delay(2, function() running = false end)   -- watchdog: nothing here may brick the latch
+		task.delay(4, function() running = false end)   -- watchdog: nothing may brick the latch
 		task.spawn(function()
-			-- ═══ "WHEN I PRESS 4, IT NEEDS TO DOWN SLAM QUICK. IS THAT SIMPLE." ═══ It is now. Your own key 4
-			-- already casts Twofold Kick - it IS the 4th move, the game handles it - so re-casting it here and
-			-- stuffing three M1s in the middle was me adding steps you never asked for, and every step was
-			-- another place to die. The whole sequence is: your kick goes out, we watch for the ragdoll for a
-			-- beat, and slam. Nothing else.
-			local t = nearest()
-			local deadline = tick() + 0.6
-			while tick() < deadline do
-				if t and t.Parent and isDown(t) then break end
-				task.wait(0.04)
+			local re = downRemote()
+			if not re then
+				print("[DreamHub Twofold] no Activated remote resolved (send me this)")
+				running = false
+				return
 			end
-			print("[DreamHub Twofold] kick seen - slamming")
-			slam()
-			-- one retry a beat later: the ragdoll sometimes lands after the first slam request
-			task.delay(0.30, function() if on then slam() end end)
+			local gap = tonumber(_G.VX_TF_GAP) or 0.30
+			-- three grounded "Down"s at combo rhythm - the count the server expects before the launcher
+			for i = 1, 3 do
+				pcall(function() re:FireServer("Down") end)
+				task.wait(gap)
+			end
+			-- airborne, then the fourth "Down" = the slam. ChangeState is the reference's own trick: it
+			-- flips the humanoid to Jumping without a Space press that something else could react to.
+			pcall(function()
+				local c = myModel(); local h = c and c:FindFirstChildOfClass("Humanoid")
+				if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+			end)
+			task.wait(0.14)
+			pcall(function() re:FireServer("Down") end)
+			if _G.VX_TF_DEBUG then print("[DreamHub Twofold] kick ended -> 3x Down + airborne Down sent") end
 			running = false
 		end)
 	end
-	-- Fires on YOUR key 2. Skips a 2 the hub injected itself (Hollow Purple presses 2), so it can never
-	-- chain off its own automation.
-	if _G.VX_ON_KEY then
-		_G.VX_ON_KEY("twofold", function(kc)
-			if not on then return end
-			if kc ~= twofoldKey() then return end
-			print("[DreamHub Twofold] key " .. tostring(kc.Name) .. " seen - starting the sequence")
-			local injK = _G.VX_INJ_KEYS
-			if injK and injK[kc] and tick() < injK[kc] then return end
-			if not hasTwofold() then
-				if VX_NOTIFY and tick() - (_G.VX_TF_WARN or 0) > 8 then _G.VX_TF_WARN = tick(); VX_NOTIFY("Twofold Kick: you do not have that move", false) end
-				return
-			end
-			sequence()
+	RunService.Heartbeat:Connect(function()
+		if not on or running then return end
+		if not kickPlaying() then return end
+		running = true                                   -- claim NOW; the waiter below hands off to finisher
+		task.spawn(function()
+			-- wait for the kick animation to END - the first frame it is gone, the finisher starts
+			repeat task.wait() until not kickPlaying() or not on
+			running = false
+			if on then finisher() end
 		end)
-	end
-	TwofoldApi = { set = function(v) on = v == true end, now = sequence }
+	end)
+	TwofoldApi = { set = function(v) on = v == true end, now = finisher }
 end
 
 -- ============================================================
@@ -15441,7 +15382,7 @@ do
     end
     if unreleased() then   -- ═══ EVERYTHING BELOW THIS LINE (to the matching end) IS STILL IN TESTING ═══
     -- GOJO TWOFOLD KICK: press 2 -> kick -> 3 M1s -> down slam once they hit the floor. Free / VIP / PLUS.
-    acSec:Toggle({ Name = "Twofold Kick Assist (press 4 -> quick slam)", Default = false, Callback = function(b) if TwofoldApi then TwofoldApi.set(b) end end })
+    acSec:Toggle({ Name = "Twofold Kick Assist (kick -> auto slam)", Default = false, Callback = function(b) if TwofoldApi then TwofoldApi.set(b) end end })   -- triggers off the kick ANIMATION, no key to press
     acSec:Button({ Name = "Twofold Now", Callback = function() if TwofoldApi then TwofoldApi.now() end end })
     -- SOUL COMBO ("Mahito assist"): press 1 (Stockpile) -> camera up + Focus Strike -> dash in -> extend.
     acSec:Toggle({ Name = "Soul Combo (1 -> aim up + 3 -> dash)", Default = false, Callback = function(b) if SoulComboApi then SoulComboApi.set(b) end end })
