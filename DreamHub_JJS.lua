@@ -3030,6 +3030,9 @@ local function vxCastMove(moveName, ...)
 	re = re and re:FindFirstChild("RE"); re = re and re:FindFirstChild("Activated")
 	if not re then return false end
 	local extra = table.pack(...)
+	-- Announce the cast, so Auto Cancel does not block the hub's own moves. Auto Cancel exists to swallow a
+	-- MISCLICK; a move the hub deliberately fired is never a misclick.
+	_G.VX_HUB_CAST = tick() + 0.25
 	local ok = pcall(function() re:FireServer(obj, table.unpack(extra, 1, extra.n)) end)
 	if _G.VX_MOVE_DEBUG then print("[DreamHub Move] " .. (ok and "fired " or "FAILED ") .. svcName .. ".RE.Activated(" .. obj.Name .. ")") end
 	if not ok then return pressSlotKey() end
@@ -5835,6 +5838,38 @@ do
 					-- W and clicking) as well as the hub's. The Cursed Strike assist waits on this stamp and
 					-- on nothing else, which is what "ONLY after an uppercut" means.
 					if args[1] == "Up" then _G.VX_UPPER_T = tick() end
+					-- ═══ AUTO CANCEL: THE SLOT YOU PICKED NEVER LEAVES THE CLIENT ═══
+					-- "if I don't mean to click 3, it's going to block 3 from firing." A move cast is
+					-- Activated(<Moveset entry>[, air]) - args[1] is an Instance parented to your Moveset - so
+					-- the slot is simply that entry's index. If the slot is cancelled and the character
+					-- matches, we return without calling through: the remote never reaches the server, so the
+					-- move is not spent, not on cooldown, and nothing happened.
+					if _G.VX_CANCEL_ON and typeof(args[1]) == "Instance" and tick() > (tonumber(_G.VX_HUB_CAST) or 0) then
+						local slots = _G.VX_CANCEL_SLOTS
+						if slots then
+							local mv = args[1].Parent
+							if mv and mv.Name == "Moveset" then
+								local idx
+								for i, m in ipairs(mv:GetChildren()) do if m == args[1] then idx = i break end end
+								if idx and slots[idx] then
+									-- Character filter. "Any" (or nothing picked) cancels on every character;
+									-- otherwise only while you are actually playing the one you chose, so a
+									-- swap does not silently disable moves on your next character.
+									local want = _G.VX_CANCEL_CHAR
+									local okChar = (not want) or want == "" or want == "Any"
+									if not okChar then
+										local okS, svc = pcall(vxMyCharSvc)
+										local mine = okS and svc and tostring(svc):gsub("Service$", "") or ""
+										okChar = vxNorm(mine) == vxNorm(want)
+									end
+									if okChar then
+										if _G.VX_MOVE_DEBUG then print("[DreamHub AutoCancel] blocked slot " .. idx .. " (" .. tostring(args[1].Name) .. ")") end
+										return
+									end
+								end
+							end
+						end
+					end
 					-- ═══ AUTO AIR, THE SAME WAY: BLOCK THE GROUND CAST, SEND THE AIR ONE ═══
 					-- "if I click 1 it will block the game from firing it" - exactly. Your capture:
 					--     CursedStrikesService.RE.Activated:FireServer(Moveset["Cursed Strikes"], true)
@@ -8663,6 +8698,30 @@ do
 		setSlam  = function(v) downOn = v == true end,
 		setNear  = function(v) nearDist = math.clamp(tonumber(v) or nearDist, 4, 40) end,
 		setFar   = function(v) farDist  = math.clamp(tonumber(v) or farDist, 20, 250) end,
+	}
+end
+
+-- ============================================================
+-- MODULE: AUTO CANCEL  ("if I don't mean to click 3, block 3 from firing")
+--
+-- Pick a character and pick which slots to cancel. While it is on, pressing one of those keys does nothing:
+-- the game still handles the keypress, but the Activated remote that spends the move is stopped dead in the
+-- __namecall hook and never reaches the server. Nothing is used, nothing goes on cooldown.
+--
+-- There is no state here on purpose - the hook has to read this decision on the hot path, from inside a
+-- newcclosure that survives a re-execution of the hub, and upvalues from a previous run are dead by then.
+-- Globals are the only thing both halves can see, so this module is just the setters for them. The blocking
+-- itself lives in the hook, next to the code it has to run before.
+-- ============================================================
+do
+	_G.VX_CANCEL_ON    = false
+	_G.VX_CANCEL_SLOTS = {}
+	_G.VX_CANCEL_CHAR  = "Any"
+	AutoCancelApi = {
+		set     = function(v) _G.VX_CANCEL_ON = v == true end,
+		setChar = function(v) v = (type(v) == "table") and v[1] or v; if type(v) == "string" then _G.VX_CANCEL_CHAR = v end end,
+		setSlot = function(n, v) n = tonumber(n); if n then _G.VX_CANCEL_SLOTS[n] = (v == true) or nil end end,
+		isOn    = function() return _G.VX_CANCEL_ON == true end,
 	}
 end
 
@@ -16030,6 +16089,20 @@ do
         -- release it, exactly like everything else below the testing line.
         if unreleased() then
             acSec:Toggle({ Name = "Cursed Strike Assist (uppercut -> move 1 in air)", Default = false, Callback = function(b) if CursedStrikeApi then CursedStrikeApi.set(b) end end })
+        end
+    end
+    if unreleased() then
+        -- ═══ AUTO CANCEL ═══ Pick the character and tick the slots you keep misclicking. While it is on those
+        -- keys fire nothing: the cast is stopped in the hook before it reaches the server, so the move is not
+        -- spent and does not go on cooldown. "Any" cancels on every character; naming one means the block
+        -- switches itself off the moment you swap away from it.
+        local cnSec = autoSub:Section({ Name = "Auto Cancel", Side = 2 })
+        cnSec:Toggle({ Name = "Auto Cancel", Default = false, Callback = function(b) if AutoCancelApi then AutoCancelApi.set(b) end end })
+        local cnNames = { "Any" }
+        pcall(function() if CharSwapApi then for _, n in ipairs(CharSwapApi.names()) do if n ~= "Any" then cnNames[#cnNames + 1] = n end end end end)
+        cnSec:Dropdown({ Name = "Cancel On Character", Items = cnNames, Default = cnNames[1], Callback = function(v) if AutoCancelApi then AutoCancelApi.setChar(v) end end })
+        for i = 1, 4 do
+            cnSec:Toggle({ Name = "Block Key " .. i, Default = false, Callback = function(b) if AutoCancelApi then AutoCancelApi.setSlot(i, b) end end })
         end
     end
     if unreleased() then   -- ═══ EVERYTHING BELOW THIS LINE (to the matching end) IS STILL IN TESTING ═══
