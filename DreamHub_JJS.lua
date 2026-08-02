@@ -3881,6 +3881,15 @@ do
         return ok and res or false
     end
     local function pressBF()
+        -- ═══ 3 IS ONLY A FLASH IF A WINDUP IS PLAYING ═══ Otherwise the exact same press casts slot 3 raw -
+        -- Divergent Fist on Itadori. That is "when I M1 with other modes on it does DivFist even with M1 BF
+        -- off". windupLive is the single truth: a real M1 windup on your rig right now. No windup, no press.
+        -- The engine's own key-3 is already tied to a windup it SAW; this gate covers every OTHER caller
+        -- (the click path, the anim hook, the chain fallback) at one choke point.
+        if not windupLive() then
+            if _G.VX_BF_DEBUG then print("[DreamHub BF] pressBF skipped - no windup (would be raw slot-3)") end
+            return
+        end
         if _G.VX_BF_PRESSKEY == "Never" then VMouseClick() return end
         markThree()
         VIM:SendKeyEvent(true, Settings.BFKey, false, game)
@@ -3920,67 +3929,33 @@ do
         local ee = t.Parent and t:FindFirstChild("HumanoidRootPart")
         return (p and ee and (ee.Position - p.Position).Magnitude <= 9) or false
     end
+    -- ═══════════ m1ThenBF, REBUILT TO **BE** AUTO BF ═══════════
+    -- "use the Auto BF logic and make it BF, it is not that hard." Correct. Auto BF is two things: the engine
+    -- is ENABLED, and you throw a REAL M1 - the engine's onAnim then sees the windup and presses 3. That is
+    -- ALL it is, and it works. Every failure of the chains came from the machinery I built AROUND that -
+    -- borrow guards, STRICT flags, single-shot counters, chainclick windows, token hand-backs - each one
+    -- another way for the engine to refuse a swing it would happily have flashed for Auto BF.
+    -- So this is gone. A chain now does exactly what you do when Auto BF works: make sure the engine is on,
+    -- and throw a genuine M1 (the game's own Activated(false) remote + the click for the animation). The
+    -- engine flashes it, because to the engine it is indistinguishable from one of your Auto-BF swings.
     local function m1ThenBF()
-        -- Do NOT touch R.bfCD here: it is doBFM1Chain's own entry gate, and zeroing it made the BF Cooldown
-        -- slider unreachable. BFApi keeps its own separate cooldown, so there is nothing to clear.
+        -- 1) ENGINE ON. Remember whether it was already, so we can hand it back to your real preference.
+        local wasOn = _G.VX_BFAPI_ON == true
+        if not wasOn and _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(true) end) end
         if _G.VX_BF_RESETCOUNT then pcall(_G.VX_BF_RESETCOUNT) end   -- flash on THIS swing, not after N more
-        -- ═══ CLAIM THE BORROW STATE EVERY TIME, NOT ONLY WHEN WE TURN THE ENGINE ON ═══
-        -- These two things were tangled together: "did I have to enable the engine" and "is a chain driving
-        -- it right now". When the engine was already on, the second was never recorded - so the guard, the
-        -- hand-back and the flash counter all disagreed with reality.
-        -- It also let two chains overlap: BF Cooldown (1.35s) is shorter than the old 1.5s hand-back, so a
-        -- natural double-press started chain 2 while chain 1's borrow was still live with its single shot
-        -- already spent - which made the engine reject every animation - and then chain 1's queued hand-back
-        -- disabled the engine outright in the middle of chain 2. A token fixes that properly: only the chain
-        -- that took the borrow may give it back.
-        local borrowed = not _G.VX_BFAPI_ON and _G.VX_BFAPI_SET ~= nil
-        _G.VX_BF_BORROWED = true; _G.VX_BF_BORROW_USED = 0; _G.VX_BF_BORROW_T = tick()   -- single-shot: one flash per chain
-        -- STRICT only when WE turned the engine on. If you already had M1 Black Flash armed, your own swings
-        -- must keep working through the chain - see the guard in the engine.
-        _G.VX_BF_BORROW_STRICT = borrowed
-        local myBorrow = tick(); _G.VX_BF_BORROW_ID = myBorrow
-        if borrowed then pcall(function() _G.VX_BFAPI_SET(true) end) end
-        local firedBefore = _G.VX_BF_LAST_FIRE or 0
-        -- ═══ THE "3 3 3 3 AND M1 M1 M1" SPAM ═══ FOUR different things were each throwing an input for one
-        -- press. (1) this click, (2) the BF engine's own re-click on the windup, (3) the engine's key-3, and
-        -- (4) the InputBegan click path pressing 3 again, plus my retry doubling 1-3. The engine's re-click is
-        -- also the "it flings them": every extra landed M1 stacks the server's knockback on the target.
-        -- So for the duration of a chain we suppress the engine's re-click and the InputBegan path, and the
-        -- chain throws EXACTLY ONE click. R.chainUntil is the window both of those check.
-        R.chainUntil = tick() + 1.0
-        local myGen = R.gen or 0
-        -- ═══ THE ONE THAT KILLED EVERY MODE BUT TELEPORT ═══ The engine's phantom-flash guard only lets a
-        -- BORROWED flash through for a swing that arrived within 0.45s of _G.VX_BF_CHAINCLICK. doBFM1Chain
-        -- stamped it; this function - which is the flash beat for Teleport, Jump, Side Dash AND Back Dash -
-        -- did not. So every borrowed chain armed the engine, threw the click, and then had its own windup
-        -- rejected by the guard: perfect dash, no flash. Stamp it on the same line we click.
-        -- THE CLICK BELOW IS THE SWING, NOT THE FLASH. A chain has to produce an M1 for the engine to time
-        -- against - that is all this click is for. The flash itself is the key-3 press the engine schedules
-        -- 0.19s into the windup that follows, which is exactly what the source AutoBlackFlash script does and
-        -- the only mechanism it has. (An earlier note here claimed the re-click was the primary trigger and
-        -- that removing it was what broke the modes; the source script has no re-click at all, so that was
-        -- never right - the modes were broken by the borrow guard and by key 3 being suppressed.)
-        _G.VX_BF_CHAINCLICK = tick()
-        -- The dash is finished by the time we swing - we are standing on their spine. Clear the dash blind so
-        -- a swing that the game defers by a few frames cannot land inside a window meant for the dash clip.
-        _G.VX_BF_DASHANIM = 0
-        -- ═══ ARRIVE THE WAY TELEPORT ARRIVES ═══ Auto BF flashes (your real M1s), Teleport flashes (instant
-        -- writes, clean state), the ARC modes do not - and they all share this exact click. The remaining
-        -- difference is what the arc leaves behind: per-frame CFrame writes can park the humanoid in a
-        -- physics/falling state, and JJS refuses an M1 from there, so there is no swing for the press to
-        -- flash. Assert the grounded state and kill residual drift, exactly the body Teleport hands over.
+        -- 2) LAND IN A CLEAN STATE. The arc can leave the humanoid in Physics/Falling, and JJS refuses an M1
+        --    from there. Assert Running + kill drift - the body Teleport (which flashes) hands over.
         pcall(function()
             local c = GetChar(); local h = c and c:FindFirstChildOfClass("Humanoid")
             local r = c and c:FindFirstChild("HumanoidRootPart")
             if h and h.FloorMaterial ~= Enum.Material.Air then h:ChangeState(Enum.HumanoidStateType.Running) end
             if r then local v = r.AssemblyLinearVelocity; r.AssemblyLinearVelocity = Vector3.new(0, v.Y, 0) end
         end)
-        VMouseClick()
-        -- ═══ THE REAL M1, BY REMOTE ═══ Your capture shows a NORMAL click is GojoService.RE.Activated(false)
-        -- - the M1 IS a remote. A synthetic mouse click plays the animation locally, but whether the SERVER
-        -- ever registered an M1 from it mid-chain was always the open question. Now it is not open: send the
-        -- real thing right behind the click. Teleport and Auto BF ride your genuine clicks, which is why they
-        -- flash - this gives every chain the same server-side swing.
+        _G.VX_BF_DASHANIM = 0    -- the dash is over; do not let its blind swallow this swing
+        -- 3) A REAL M1: the game's own click remote (Activated(false)) for the SERVER swing, and the mouse
+        --    click for the ANIMATION the engine watches. Stamp the human clock so every "is this a real M1"
+        --    gate in the engine says yes - which is the whole reason your Auto-BF swings flash.
+        _G.VX_LAST_HUMAN_CLICK = tick()
         pcall(function()
             local svcs = game:GetService("ReplicatedStorage"):FindFirstChild("Knit")
             svcs = svcs and svcs:FindFirstChild("Knit"); svcs = svcs and svcs:FindFirstChild("Services")
@@ -3989,41 +3964,15 @@ do
             local re = sv and sv:FindFirstChild("RE"); re = re and re:FindFirstChild("Activated")
             if re then re:FireServer(false) end
         end)
-        -- ═══ THE FALLBACK PRESS HAS TO LAND ON THE FLASH FRAME, NOT AFTER IT ═══
-        -- Both trigger tables and the reference script agree the flash input goes in 0.19-0.20s after the
-        -- windup starts. This branch waited 0.42s - more than double - because it was written as a
-        -- VERIFICATION ("did the engine flash? no? then press"), and a verification has to wait long enough
-        -- to be sure. But by 0.42s the swing has already resolved, so the press is no longer a flash input at
-        -- all: it just casts ability slot 3. That is exactly "it presses 3 and nothing happens".
-        -- So it now presses at 0.19s and simply skips if the engine got there first. One press either way.
-        -- ═══ AND WHY TELEPORT IS THE ONLY MODE STILL FLASHING ═══ This press is CLICK-timed, which is the
-        -- timing that lands. It used to stand down whenever the engine had "already flashed" since our click.
-        -- Teleport performs no dash, so the engine sees nothing, the stand-down never triggers, and this
-        -- press goes out: it flashes. Every DASH mode produces an arc/animation that the engine counts as a
-        -- windup and books as a flash - so this press stood down, while the engine's own animation-timed
-        -- press did not land. Result: Teleport flashes, every dash mode does not. Exactly your report.
-        -- The stand-down is gone. If the engine's press landed, a second 3 during the same swing is harmless
-        -- (it is on cooldown); if it did not, this is the press that saves the chain. pressBF marks the key,
-        -- so nothing else in the file re-enters off it.
-        task.spawn(function()
-            task.wait(0.19)
-            if (R.gen or 0) ~= myGen then return end                     -- mode was turned off; stand down
-            if _G.VX_BF_DEBUG then print("[DreamHub BF] click-timed flash press") end
-            pressBF()
-        end)
-        -- ═══ ONLY THE CHAIN THAT TOOK THE BORROW MAY GIVE IT BACK ═══ Without the token, chain 1's queued
-        -- hand-back fired in the middle of chain 2 and disabled the engine mid-swing. 0.9s is long enough
-        -- that if our injected click was eaten, the M1 YOU throw right after the dash still lands the flash,
-        -- and short enough to be clear of a normal re-press.
-        task.delay(0.9, function()
-            if _G.VX_BF_BORROW_ID ~= myBorrow then return end            -- a newer chain owns the engine now
-            -- ═══ ALWAYS restore, not only when WE armed it ═══ Two overlapping chains could interleave so
-            -- that chain 1's hand-back bailed on the token and chain 2's skipped the restore because IT had
-            -- not armed the engine - leaving the engine permanently on with every toggle reading off. The
-            -- restore is idempotent (it writes the user's recorded choice), so the token match alone decides.
-            if _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(_G.VX_BFAPI_WANT == true) end) end
-            _G.VX_BF_BORROWED = false; _G.VX_BF_BORROW_USED = 0
-        end)
+        VMouseClick()
+        -- 4) HAND THE ENGINE BACK to your real choice a beat later, only if WE turned it on.
+        if not wasOn then
+            task.delay(0.7, function()
+                if _G.VX_BFAPI_ON and _G.VX_BFAPI_WANT ~= true and _G.VX_BFAPI_SET then
+                    pcall(function() _G.VX_BFAPI_SET(false) end)
+                end
+            end)
+        end
     end
     local function GetClosestTarget(maxD)
         local myRoot = GetRoot(); if not myRoot then return nil end
@@ -4255,7 +4204,7 @@ do
                 fwd = fwd.Unit
                 local bias = (_G.VX_SIDE_END == "Back") and 0 or 0.45
                 local side = Vector3.new(-fwd.Z, 0, fwd.X) * (bias * 3.0)
-                local dest = e.Position - fwd * 4.4 + side
+                local dest = e.Position - fwd * 3.2 + side   -- hug the body: 3.2 studs, not 4.4
                 pcall(function()
                     -- ═══ FOLLOW, DO NOT SNAP ═══ Writing the exact spot every frame is a teleport sixty times
                     -- a second, and that is what made the assist look weird. Move a FRACTION of the way there
@@ -4301,8 +4250,10 @@ do
                 -- and it leaves a body the game accepts an M1 from.
                 _G.VX_BF_DASHANIM = tick() + 0.20
                 aimCameraAt(e.Position)
-                dashToBack(t, { duration = 0.16, extraSweep = math.pi * 0.45, endRadius = 4.4,
-                    endBias = (_G.VX_SIDE_END == "Back") and 0 or 0.5, noKey = true })
+                -- radius 3.2, not 4.4: "very close to their body". Sweep 0.75pi so it genuinely travels AROUND them
+                -- rather than cutting a corner, and the bias puts the landing on the corner of the back.
+                dashToBack(t, { duration = 0.16, extraSweep = math.pi * 0.75, endRadius = 3.2,
+                    endBias = (_G.VX_SIDE_END == "Back") and 0 or 0.55, noKey = true })
                 faceBackOf(t)                              -- rotation only - never a position write
                 local hold = tonumber(_G.VX_SIDE_HOLD) or 0.8
                 task.spawn(function() holdBack(t, hold) end)
@@ -8200,6 +8151,7 @@ end
 -- ============================================================
 do
 	local Players = game:GetService("Players")
+	local VIM = game:GetService("VirtualInputManager")
 	local LP = Players.LocalPlayer
 	local upOn, downOn = false, false
 	-- nearDist 20, was 12: "make sure it dont side dash or move around unless the target is kind of far."
@@ -8299,17 +8251,45 @@ do
 		-- sooner, which is the whole of "make it do it faster".
 		-- 0.22s apart (see the auto path): the manual proof pressed slowly; a machine-gun burst can collapse
 		-- into one debounced call and the counter never reaches four.
+		local re = select(1, svcRE())
 		local gap = tonumber(_G.VX_UPPER_GAP) or 0.22
 		for i = 1, 4 do
-			fireKnit(svc, "Activated", "Up")
+			throwM1()                                   -- the M1 the "Up" rides on (server swing + animation)
+			if re then pcall(function() re:FireServer("Up") end) else fireKnit(svc, "Activated", "Up") end
 			if i < 4 then task.wait(gap) end
 		end
 		return true
 	end
+	-- ═══ THE CAPTURE, FOR EVERY CHARACTER ═══ A normal M1 is Activated(false); the slam is Activated("Down")
+	-- airborne, the uppercut Activated("Up"). vxMyCharSvc resolves YOUR service (Gojo fallback), so both
+	-- assists work on whoever you play, not just the character they were written for. The finisher rides a
+	-- REAL M1 - remote(false) for the server swing plus the click for the animation - exactly like your own.
+	local function svcRE()
+		local svcs = game:GetService("ReplicatedStorage"):FindFirstChild("Knit")
+		svcs = svcs and svcs:FindFirstChild("Knit"); svcs = svcs and svcs:FindFirstChild("Services")
+		local okS, nm = pcall(vxMyCharSvc)
+		local sv = svcs and svcs:FindFirstChild((okS and nm) or "GojoService")
+		local re = sv and sv:FindFirstChild("RE"); return re and re:FindFirstChild("Activated"), (okS and nm) or "GojoService"
+	end
+	local function throwM1()
+		_G.VX_SYNTH_CLICK = tick() + 0.25; _G.VX_LAST_HUMAN_CLICK = tick()
+		local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
+		local cx, cy = (vp and vp.X / 2) or 400, (vp and vp.Y / 2) or 300
+		pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.02); VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0) end)
+	end
 	local function slamNow()
-		if M1ComboApi and M1ComboApi.slamNow then M1ComboApi.slamNow(); return true end
-		local svc = vxMyCharSvc(); if svc then return fireKnit(svc, "Activated", "Down") end
-		return false
+		local re, nm = svcRE()
+		if not re then if VX_NOTIFY then VX_NOTIFY("Slam: no Activated remote", false) end return false end
+		-- airborne (the state the server accepts the slam from) via ChangeState, then the M1 that carries Down
+		pcall(function()
+			local c = myModel(); local h = c and c:FindFirstChildOfClass("Humanoid")
+			if h and h.FloorMaterial ~= Enum.Material.Air then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+		end)
+		task.wait(0.06)
+		throwM1()
+		pcall(function() re:FireServer("Down") end)
+		if _G.VX_M1_DEBUG then print("[DreamHub Finisher] slam -> " .. nm .. ".Activated(Down)") end
+		return true
 	end
 	local function run(which)
 		if tick() < busyUntil then return end
