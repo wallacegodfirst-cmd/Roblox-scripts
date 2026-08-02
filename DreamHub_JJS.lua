@@ -2978,13 +2978,13 @@ local function vxCastMove(moveName, ...)
 	local rigs = { c }
 	local lp = game:GetService("Players").LocalPlayer
 	if lp.Character and lp.Character ~= c then rigs[#rigs + 1] = lp.Character end
-	local obj
+	local obj, moveSlot
 	for _, rig in ipairs(rigs) do
 		local mv = rig and rig:FindFirstChild("Moveset")
 		if mv then
-			obj = mv:FindFirstChild(moveName)
-			if not obj then
-				for _, m in ipairs(mv:GetChildren()) do if vxNorm(m.Name) == vxNorm(moveName) then obj = m break end end
+			local kids = mv:GetChildren()
+			for i, m in ipairs(kids) do
+				if m.Name == moveName or vxNorm(m.Name) == vxNorm(moveName) then obj = m; moveSlot = i break end
 			end
 			if obj then break end
 		end
@@ -2993,10 +2993,25 @@ local function vxCastMove(moveName, ...)
 		if _G.VX_MOVE_DEBUG then print("[DreamHub Move] you do not own '" .. tostring(moveName) .. "'") end
 		return false
 	end
+	-- ═══ IF THE REMOTE CANNOT BE RESOLVED, PRESS THE KEY ═══ A move the game gives you is always castable
+	-- by its slot key, whatever the service is called. Falling back to that is the difference between "the
+	-- assist does nothing" and "the assist casts the move" on every character whose services we cannot name.
+	local function pressSlotKey()
+		local KC = { Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.KeyCode.Four }
+		if not (moveSlot and KC[moveSlot]) then return false end
+		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[KC[moveSlot]] = tick() + 0.4
+		_G.VX_INJECT_UNTIL = tick() + 0.4
+		pcall(function()
+			local VIM = game:GetService("VirtualInputManager")
+			VIM:SendKeyEvent(true, KC[moveSlot], false, game); task.wait(0.05); VIM:SendKeyEvent(false, KC[moveSlot], false, game)
+		end)
+		if _G.VX_MOVE_DEBUG then print("[DreamHub Move] pressed slot " .. moveSlot .. " for '" .. tostring(obj.Name) .. "'") end
+		return true
+	end
 	local svcName = vxMoveService(obj.Name) or vxMoveService(moveName)
 	if not svcName then
-		if _G.VX_MOVE_DEBUG then print("[DreamHub Move] no service for '" .. tostring(obj.Name) .. "' (tried " .. tostring(obj.Name):gsub("%s+", "") .. "Service)") end
-		return false
+		if _G.VX_MOVE_DEBUG then print("[DreamHub Move] no service for '" .. tostring(obj.Name) .. "' - pressing its key instead") end
+		return pressSlotKey()
 	end
 	local svcs = vxServicesFolder()
 	local re = svcs and svcs:FindFirstChild(svcName)
@@ -3005,7 +3020,8 @@ local function vxCastMove(moveName, ...)
 	local extra = table.pack(...)
 	local ok = pcall(function() re:FireServer(obj, table.unpack(extra, 1, extra.n)) end)
 	if _G.VX_MOVE_DEBUG then print("[DreamHub Move] " .. (ok and "fired " or "FAILED ") .. svcName .. ".RE.Activated(" .. obj.Name .. ")") end
-	return ok
+	if not ok then return pressSlotKey() end
+	return true
 end
 _G.VX_CAST_MOVE = vxCastMove    -- shared: Auto Air, Auto Hakari and anything else that casts by name
 
@@ -4204,7 +4220,7 @@ do
                 fwd = fwd.Unit
                 local bias = (_G.VX_SIDE_END == "Back") and 0 or 0.45
                 local side = Vector3.new(-fwd.Z, 0, fwd.X) * (bias * 3.0)
-                local dest = e.Position - fwd * 3.2 + side   -- hug the body: 3.2 studs, not 4.4
+                local dest = e.Position - fwd * 2.5 + side   -- hug the body: 2.5 studs, corner-hitbox range
                 pcall(function()
                     -- ═══ FOLLOW, DO NOT SNAP ═══ Writing the exact spot every frame is a teleport sixty times
                     -- a second, and that is what made the assist look weird. Move a FRACTION of the way there
@@ -4252,7 +4268,7 @@ do
                 aimCameraAt(e.Position)
                 -- radius 3.2, not 4.4: "very close to their body". Sweep 0.75pi so it genuinely travels AROUND them
                 -- rather than cutting a corner, and the bias puts the landing on the corner of the back.
-                dashToBack(t, { duration = 0.16, extraSweep = math.pi * 0.75, endRadius = 3.2,
+                dashToBack(t, { duration = 0.16, extraSweep = math.pi * 0.75, endRadius = 2.5,
                     endBias = (_G.VX_SIDE_END == "Back") and 0 or 0.55, noKey = true })
                 faceBackOf(t)                              -- rotation only - never a position write
                 local hold = tonumber(_G.VX_SIDE_HOLD) or 0.8
@@ -4279,7 +4295,7 @@ do
                 -- BF chains keep the arc (noKey, so no dash-recovery state) - their M1 must be ACCEPTED, and
                 -- the flash beat that follows depends on it.
                 local bias = (_G.VX_SIDE_END == "Back") and 0 or 0.45
-                dashToBack(t, { duration = 0.13, extraSweep = math.pi * 0.16, endRadius = 4.6, endBias = bias, noKey = true })
+                dashToBack(t, { duration = 0.13, extraSweep = math.pi * 0.16, endRadius = 2.8, endBias = bias, noKey = true })
                 faceBackOf(t)
             end
         end)
@@ -4373,7 +4389,7 @@ do
         -- ═══ THE SAME DASH THE ASSIST USES ═══ You said the assist's side dash looks right and the BF modes'
         -- do not, so they are the same movement now: same duration, same sweep, same radius, same corner
         -- bias. The only difference between the assist and this is that this one flashes at the end.
-        dashToBack(t, { duration = 0.22, extraSweep = math.pi * 0.22, endRadius = 4.6, endBias = 0.45, yArc = 0, noKey = true })
+        dashToBack(t, { duration = 0.22, extraSweep = math.pi * 0.22, endRadius = 2.8, endBias = 0.45, yArc = 0, noKey = true })
         -- ═══ "THE SIDE DASHES ARE WEIRD" ═══ There used to be a tpBehind snap RIGHT HERE, on top of an arc
         -- that already ends behind the spine (dashToBack passes endBehind = true) - and then a second snap
         -- 0.12s later. Three movements for one dash: arc, blink, blink. That stutter is the weirdness. The arc
@@ -4427,7 +4443,7 @@ do
         -- they are facing you (go around to the spine), a short sweep when they already face away. noKey means
         -- no dash-recovery state, so the M1 that follows is accepted.
         local sweep = facingMe and (math.pi * 0.9) or (math.pi * 0.3)
-        dashToBack(t, { duration = 0.30, extraSweep = sweep, endRadius = 4.6, endBias = 0, noKey = true })
+        dashToBack(t, { duration = 0.30, extraSweep = sweep, endRadius = 2.8, endBias = 0, noKey = true })
         pcall(lockClipOn)                                 -- the arc drops collisions; Teleport never has them off
         if not tpBehind(t) then R.bfActive = false; return end
         faceBackOf(t)
@@ -4509,7 +4525,7 @@ do
         -- "it flings the person" - each extra landed M1 stacks the server's knockback on them.
         -- M1 Chain's own signature: a medium sweep ending DEAD behind the spine (endBias 0), distinct from
         -- Side Dash's off-spine clip and Back Dash's wide half-circle.
-        local dashed = dashToBack(t, { duration = 0.22, extraSweep = math.pi * 0.22, endRadius = 4.6, endBias = 0, noKey = true })
+        local dashed = dashToBack(t, { duration = 0.22, extraSweep = math.pi * 0.22, endRadius = 2.8, endBias = 0, noKey = true })
         if dashed then faceBackOf(t) end
         task.delay(0.9, function()   -- hand the engine back exactly as we found it (token: only OUR borrow)
             if _G.VX_BF_BORROW_ID ~= myBorrow then return end
@@ -5249,6 +5265,31 @@ do
 				local ok = pcall(function() re:FireServer(dir) end)
 				if _G.VX_M1_DEBUG or _G.VX_BF_DEBUG then print("[M1COMBO] fired " .. svcName .. '.RE.Activated("' .. dir .. '") -> ' .. tostring(ok)) end
 			end
+		end
+		-- ═══ PHYSICAL FALLBACK ═══ If NO remote resolved, do the move the way a player does: the direction key
+		-- held across a real click. It is slower and cruder than the remote, but it works on a character whose
+		-- service we cannot name - which is the whole of "it must work for ALL characters".
+		if not resolved and not State.remote then
+			task.spawn(function()
+				local VIMf = game:GetService("VirtualInputManager")
+				local cam = workspace.CurrentCamera
+				local vp = (cam and cam.ViewportSize) or Vector2.new(800, 600)
+				local cx, cy = vp.X / 2, vp.Y / 2
+				local key = (dir == "Up") and Enum.KeyCode.Space or Enum.KeyCode.S
+				if dir == "Down" then
+					local c = myModel(); local h = c and c:FindFirstChildOfClass("Humanoid")
+					if h and h.FloorMaterial ~= Enum.Material.Air then h:ChangeState(Enum.HumanoidStateType.Jumping); task.wait(0.08) end
+				end
+				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[key] = tick() + 0.5
+				_G.VX_SYNTH_CLICK = tick() + 0.3; _G.VX_LAST_HUMAN_CLICK = tick()
+				pcall(function()
+					VIMf:SendKeyEvent(true, key, false, game); task.wait(0.02)
+					VIMf:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.05)
+					VIMf:SendMouseButtonEvent(cx, cy, 0, false, game, 0); task.wait(0.12)
+					VIMf:SendKeyEvent(false, key, false, game)
+				end)
+				if _G.VX_M1_DEBUG then print("[M1COMBO] no remote for " .. dir .. " - used physical input") end
+			end)
 		end
 		-- The v5 resolver is a SEPARATE detection path, so fire it too rather than only as a fallback: when the
 		-- two disagree one of them is right, and the wrong one is a no-op. Two sends, not eleven.
@@ -7877,20 +7918,23 @@ do
 	local function myModel() local chs = workspace:FindFirstChild("Characters"); return (chs and chs:FindFirstChild(LP.Name)) or LP.Character end
 	local function myHRP() local m = myModel(); return m and m:FindFirstChild("HumanoidRootPart") end
 	local function norm(x) return (string.gsub(string.lower(tostring(x or "")), "[^%a%d]", "")) end
-	local function haveMoves()
+	-- ═══ SLOT 3, WHATEVER IT IS CALLED ═══ Your two Essence-of-the-Soul screenshots are DIFFERENT forms:
+	--     1 Stockpile / 2 Soul Fire / 3 Focus Strike / 4 Body Repel
+	--     1 Idle Transfiguration / 2 Body Disfigure / 3 Spike Wrath / 4 Embodiment of Self Perfection
+	-- This module hardcoded "Focus Strike", so on the Perfection form it found nothing and refused - "the
+	-- perfection assist dont click 3", exactly. The move in slot 3 is the move it wants, whatever its name,
+	-- so it now reads the name out of your own Moveset and works on both forms and any future one.
+	local function slot3Name()
 		for _, c in ipairs({ myModel(), LP.Character }) do
 			local mv = c and c:FindFirstChild("Moveset")
 			if mv then
-				local st, fs = false, false
-				for _, m in ipairs(mv:GetChildren()) do
-					local n = norm(m.Name)
-					if n == "stockpile" then st = true elseif n == "focusstrike" then fs = true end
-				end
-				if st and fs then return true end
+				local kids = mv:GetChildren()
+				if kids[3] then return kids[3].Name end
 			end
 		end
-		return false
+		return nil
 	end
+	local function haveMoves() return slot3Name() ~= nil end
 	local function nearest()
 		local hrp = myHRP(); if not hrp then return nil end
 		local g = _G.VX_LOCK; local lt = (g and g.get) and g.get() or nil
@@ -7935,8 +7979,9 @@ do
 				_G.VX_INJECT_UNTIL = tick() + 0.5
 				VIM:SendKeyEvent(true, Enum.KeyCode.Three, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
 			end)
-			local ok = _G.VX_CAST_MOVE and _G.VX_CAST_MOVE("Focus Strike") or false
-			if not ok then print("[DreamHub Soul] Focus Strike remote not found (send me this)") end
+			local m3 = slot3Name()
+			local ok = (m3 and _G.VX_CAST_MOVE) and _G.VX_CAST_MOVE(m3) or false
+			if _G.VX_SOUL_DEBUG then print("[DreamHub Soul] slot3 = " .. tostring(m3) .. " -> " .. (ok and "cast" or "key only")) end
 			-- 2) "when it detects the target is in the air it must click 3" - watch them; the frame they
 			--    leave the ground, the SECOND Focus Strike goes out to catch them up there.
 			task.spawn(function()
@@ -7952,7 +7997,8 @@ do
 						_G.VX_INJECT_UNTIL = tick() + 0.5
 						VIM:SendKeyEvent(true, Enum.KeyCode.Three, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
 					end)
-						if _G.VX_CAST_MOVE then _G.VX_CAST_MOVE("Focus Strike") end
+						local m3b = slot3Name()
+						if m3b and _G.VX_CAST_MOVE then _G.VX_CAST_MOVE(m3b) end
 						break
 					end
 					game:GetService("RunService").Heartbeat:Wait()
@@ -8423,7 +8469,19 @@ do
 		return ok and res or false
 	end
 	local running = false
+	-- If GojoService is not where your Down lives (you are not Gojo), fall back to the shared combo slam so
+	-- the assist still finishes - "twofold kick assi dont work" should never mean silence.
+	local function haveGojoRemote()
+		local ok = pcall(function()
+			return game:GetService("ReplicatedStorage").Knit.Knit.Services.GojoService.RE.Activated
+		end)
+		return ok
+	end
 	local function finisher()
+		if not haveGojoRemote() then
+			if M1ComboApi and M1ComboApi.slamNow then M1ComboApi.slamNow() end
+			return
+		end
 		local gap = tonumber(_G.VX_TF_GAP) or 0.30   -- a touch under the friend's 0.35; his knob restores it
 		for _ = 1, 3 do
 			pcall(function() game:GetService("ReplicatedStorage").Knit.Knit.Services.GojoService.RE.Activated:FireServer("Down") end)
