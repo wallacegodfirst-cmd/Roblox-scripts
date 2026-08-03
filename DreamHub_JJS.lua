@@ -936,6 +936,29 @@ _G.VX_UPPER_T       = 0       -- last uppercut; the Cursed Strike assist arms of
 _G.VX_SIDEASSIST_ON = false   -- read by the Dash-rewrite hook; sticky true would hijack every dash on a fresh run
 _G.VX_BF_CHAINDRIVE = 0
 _G.VX_CHAINFLASH_WINDOW = 0   -- the chain-flash listener only presses inside this window
+_G.VX_BF_PRESS_T    = 0       -- last flash press; the air-hook and Auto Cancel keep their hands off its cast
+-- ═══ CHAIN TRACER ═══ Every stage of a Black Flash chain records itself here, and 1.6s after the chain
+-- starts the whole trace is printed AND copied to the clipboard as one line. "still no black flash" has
+-- survived six fixes because every diagnosis was reasoned instead of observed - this makes the next report
+-- observational: the trace names the first stage that never happened.
+_G.VX_BF_TRACE = {}
+_G.VX_TRACE = function(tag)
+	local t = _G.VX_BF_TRACE
+	t[#t + 1] = string.format("%s@%.2f", tostring(tag), tick() - (tonumber(_G.VX_TRACE_T0) or tick()))
+end
+_G.VX_TRACE_BEGIN = function(mode)
+	_G.VX_TRACE_T0 = tick()
+	_G.VX_BF_TRACE = { "chain[" .. tostring(mode) .. "]" }
+	task.delay(1.6, function()
+		local line = table.concat(_G.VX_BF_TRACE, "  ")
+		print("[DreamHub BF TRACE] " .. line)
+		pcall(function() (setclipboard or toclipboard)(line) end)
+		pcall(function()
+			game:GetService("StarterGui"):SetCore("SendNotification",
+				{ Title = "BF trace (copied)", Text = line:sub(1, 90), Duration = 6 })
+		end)
+	end)
+end
 _G.VX_SLOT_MOVE     = {}      -- learned key->move map; stale entries from the LAST character would cast their moves
 _G.VX_MOVE_RE       = _G.VX_MOVE_RE or {}   -- learned move->remote map (instances die with the rig on their own)
 _G.VX_TOTAL_MOVE_T  = 0
@@ -1012,6 +1035,7 @@ do
 		-- the flash never comes out.
 		_G.VX_INJECT_UNTIL = tick() + 0.5
 		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[keyCode] = tick() + 0.5
+		_G.VX_BF_PRESS_T = tick()   -- this cast is a FLASH: the air-hook and Auto Cancel must not touch it
 		VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
 		-- 0.025 is what the source AutoBlackFlash script holds it for, and that script demonstrably lands the
 		-- flash. The 0.09 this used to hold was reasoned from "JJS eats instant taps for ABILITIES" - true for
@@ -3180,10 +3204,14 @@ do
 	end
 	local function onTrack(track)
 		if tick() > (tonumber(_G.VX_CHAINFLASH_WINDOW) or 0) then return end
-		if pending or os.clock() - lastFire < 0.45 then return end
 		local ok, id = pcall(function() return track and track.Animation and track.Animation.AnimationId or "" end)
 		id = normId(ok and id or "")
 		local d = delayFor(id)
+		-- trace EVERY track inside the window - if no "anim:" entry ever shows a windup, the remote M1 is
+		-- not animating locally and no animation-timed press can ever exist for chains. That single fact
+		-- decides the whole approach, and only this trace can prove it either way.
+		if _G.VX_TRACE then _G.VX_TRACE((d and "anim-WINDUP:" or "anim:") .. (id:match("%d+") or "?")) end
+		if pending or os.clock() - lastFire < 0.45 then if d and _G.VX_TRACE then _G.VX_TRACE("press-SKIP-cooldown") end return end
 		if not d then
 			if _G.VX_BF_DEBUG and id ~= "" then print("[ChainFlash] not a windup id: " .. id) end
 			return
@@ -3195,11 +3223,13 @@ do
 			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}
 			_G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.4
 			_G.VX_INJECT_UNTIL = tick() + 0.4
+			_G.VX_BF_PRESS_T = tick()
 			pcall(function()
 				VIMCF:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
 				task.wait(0.025)   -- his exact hold
 				VIMCF:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
 			end)
+			if _G.VX_TRACE then _G.VX_TRACE("press3") end
 			if _G.VX_BF_DEBUG then print("[ChainFlash] pressed 3 at +" .. d .. " for " .. id) end
 		end)
 	end
@@ -4144,6 +4174,7 @@ do
         end
         if _G.VX_BF_PRESSKEY == "Never" then VMouseClick() return end
         markThree()
+        _G.VX_BF_PRESS_T = tick()
         VIM:SendKeyEvent(true, Settings.BFKey, false, game)
         task.wait(0.03)   -- the source script holds it 0.025; long enough to register, short enough not to charge anything
         VIM:SendKeyEvent(false, Settings.BFKey, false, game)
@@ -4214,7 +4245,8 @@ do
             local okS, nm = pcall(vxMyCharSvc)
             local sv = svcs and svcs:FindFirstChild((okS and nm) or "GojoService")
             local re = sv and sv:FindFirstChild("RE"); re = re and re:FindFirstChild("Activated")
-            if re then re:FireServer(false) end
+            if re then re:FireServer(false); if _G.VX_TRACE then _G.VX_TRACE("m1-remote") end
+            elseif _G.VX_TRACE then _G.VX_TRACE("m1-remote-MISSING") end
         end)
         -- ═══════════ THIS ONE LINE IS WHY NO CHAIN MODE EVER FLASHED ═══════════
         -- onAnim() has a gate: for 0.6s after you press 3 it throws away any windup it sees, on the grounds
@@ -4238,6 +4270,7 @@ do
         -- CHAIN FLASH below), armed for just this window:
         R.chainUntil = tick() + 0.8            -- and the InputBegan click path stands down (no doubles)
         _G.VX_CHAINFLASH_WINDOW = tick() + 1.2
+        if _G.VX_TRACE then _G.VX_TRACE("click+window") end
         -- 4) HAND THE ENGINE BACK to your real choice a beat later, only if WE turned it on.
         if not wasOn then
             task.delay(0.7, function()
@@ -4954,6 +4987,8 @@ do
                 if not (Settings.Enabled and Settings.Mode ~= "M1" and input.KeyCode == Settings.BFKey) then return Enum.ContextActionResult.Pass end
                 R.casSeen = tick()
                 _G.VX_BF_TRIG3 = tick()
+                if _G.VX_TRACE_BEGIN then _G.VX_TRACE_BEGIN(Settings.Mode) end
+                if _G.VX_TRACE then _G.VX_TRACE("3-sunk") end
                 task.spawn(doBlackFlash)
                 return Enum.ContextActionResult.Sink        -- the game never sees this 3: Divergent Fist stays cold
             end, false, 3000, Settings.BFKey)
@@ -6160,6 +6195,11 @@ do
 					-- each move once, every assist can fire it as a pure remote with zero guessing.
 					if typeof(args[1]) == "Instance" then
 						pcall(function()
+							if _G.VX_TRACE and tick() - (tonumber(_G.VX_TRACE_T0) or 0) < 1.6 then
+								_G.VX_TRACE("cast:" .. tostring(args[1].Name))
+							end
+						end)
+						pcall(function()
 							local mv = args[1]
 							if mv.Parent and mv.Parent.Name == "Moveset" then
 								_G.VX_MOVE_RE = _G.VX_MOVE_RE or {}
@@ -6184,7 +6224,11 @@ do
 					-- the slot is simply that entry's index. If the slot is cancelled and the character
 					-- matches, we return without calling through: the remote never reaches the server, so the
 					-- move is not spent, not on cooldown, and nothing happened.
-					if _G.VX_CANCEL_ON and typeof(args[1]) == "Instance" and tick() > (tonumber(_G.VX_HUB_CAST) or 0) then
+					-- Same rule for Auto Cancel: if you were still physically holding your trigger 3 when the
+					-- flash press cast DF, the keyboard check would attribute the cast to key 3 and a ticked
+					-- Block Key 3 would eat the flash. A recent flash press makes this cast untouchable.
+					if _G.VX_CANCEL_ON and typeof(args[1]) == "Instance" and tick() > (tonumber(_G.VX_HUB_CAST) or 0)
+						and tick() - (tonumber(_G.VX_BF_PRESS_T) or 0) > 0.5 then
 						local slots = _G.VX_CANCEL_SLOTS
 						if slots then
 							local mv = args[1].Parent
@@ -6235,6 +6279,7 @@ do
 										okChar = vxNorm(mine) == vxNorm(want)
 									end
 									if okChar then
+										pcall(function() if _G.VX_TRACE and tick() - (tonumber(_G.VX_TRACE_T0) or 0) < 1.6 then _G.VX_TRACE("CANCEL-ate:" .. tostring(args[1].Name)) end end)
 										if _G.VX_MOVE_DEBUG then print("[DreamHub AutoCancel] blocked slot " .. idx .. " (" .. tostring(args[1].Name) .. ")") end
 										return
 									end
@@ -6249,7 +6294,12 @@ do
 					-- MOVE cast (args[1] is a Moveset Instance, not a bool/string), we stop that call and send
 					-- the same one with true - the air variant - after putting you in the air. No key guessing,
 					-- no re-casting, no service to resolve: the game already told us the move and the service.
-					if _G.VX_AIR_HOOK and typeof(args[1]) == "Instance" and args[2] ~= true then
+					-- A cast born from a flash press IS the Black Flash. Blocking it and re-firing the air
+					-- variant a Heartbeat later (what this branch does) un-times it - raw DF, no flash. So the
+					-- air rewrite stands down for half a second after any flash press.
+					if _G.VX_AIR_HOOK and typeof(args[1]) == "Instance" and args[2] ~= true
+						and tick() - (tonumber(_G.VX_BF_PRESS_T) or 0) > 0.5 then
+						pcall(function() if _G.VX_TRACE and tick() - (tonumber(_G.VX_TRACE_T0) or 0) < 1.6 then _G.VX_TRACE("AIRHOOK-took:" .. tostring(args[1].Name)) end end)
 						local reAir, argsAir = self, args
 						task.spawn(function()
 							pcall(function()
