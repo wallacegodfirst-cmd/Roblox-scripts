@@ -4112,7 +4112,10 @@ do
         -- itself moments ago), no AutoBF check (the chain mode IS the request), no windupLive (at click+0.14
         -- the windup may not have dispatched yet, and on uncaptured characters that gate never opens at all).
         R.chainUntil = tick() + 0.8            -- the chain owns this flash: the click path stands down (no double 3)
-        task.delay(0.14, function()
+        -- 0.19, not 0.14: 0.14 is Auto BF's number, timed against YOUR real click, whose swing starts the same
+        -- frame. A chain's M1 is a REMOTE - its swing starts a round-trip later - and the one chain press with
+        -- recorded landings is the old Teleport fallback at exactly CLICK+0.19s. Use the number with evidence.
+        task.delay(0.19, function()
             markThree()
             VIM:SendKeyEvent(true, Settings.BFKey, false, game)
             task.wait(0.03)
@@ -4431,11 +4434,30 @@ do
                     end)
                     _G.VX_DASH(dir)
                 end
-                task.wait(0.24)                            -- let the server's dash actually travel
-                -- finishing arc: short and shallow - the dash did the moving, this just wraps the last step
-                -- around onto the corner of their back so the M1 lands from behind.
-                dashToBack(t, { duration = 0.10, extraSweep = math.pi * 0.30, endRadius = 2.5,
-                    endBias = 0.55, noKey = true })
+                task.wait(0.30)                            -- let the server's dash actually travel and its clip play
+                -- ═══ NO MORE FINISHING ARC ═══ The 6-step arc after the dash was the last "weird" left: the
+                -- game plays its dash clip, and then your body visibly SLIDES for another tenth of a second
+                -- along a curve the game is not animating. Teleport mode's primitive is ONE write - and you
+                -- call Teleport the mode that looks right - so the landing is now one write too: dash plays
+                -- clean, then a single snap onto the corner of their back, announced to the anti-cheat the
+                -- same way tpBehind announces its own.
+                pcall(function()
+                    local c = GetChar(); local pr = GetRoot()
+                    local e2 = t.Parent and t:FindFirstChild("HumanoidRootPart")
+                    if c and pr and e2 then
+                        local fwd = Vector3.new(e2.CFrame.LookVector.X, 0, e2.CFrame.LookVector.Z)
+                        if fwd.Magnitude > 0.01 then
+                            fwd = fwd.Unit
+                            local side = Vector3.new(-fwd.Z, 0, fwd.X) * (0.45 * 3.0)
+                            local dest = e2.Position - fwd * 2.5 + side
+                            dest = Vector3.new(dest.X, pr.Position.Y, dest.Z)
+                            if _G.VX_ACPASS then _G.VX_ACPASS() end
+                            local delta = dest - pr.Position
+                            c:PivotTo(CFrame.lookAt(dest, Vector3.new(e2.Position.X, dest.Y, e2.Position.Z)))
+                            if delta.Magnitude > 1 then pr.AssemblyLinearVelocity = delta.Unit * math.clamp(delta.Magnitude * 2, 16, 60) end
+                        end
+                    end
+                end)
                 faceBackOf(t)                              -- rotation only - never a position write
                 local hold = tonumber(_G.VX_SIDE_HOLD) or 0.8
                 task.spawn(function() holdBack(t, hold) end)
@@ -6076,9 +6098,28 @@ do
 								-- (stamped by slotlearn, hub-injected keys excluded), with the learned key->move
 								-- map as the fallback, and NO GetChildren guess at all. No stamp and no map
 								-- match = fail OPEN: an unattributable cast is never blocked.
+								-- ═══ READ THE KEYBOARD, NOT A STAMP ═══ The stamp version never blocked anything:
+								-- the game casts the move INSIDE its own InputBegan handler, synchronously with the
+								-- keypress - and our stamp is written by a RenderStepped poll that has not run yet
+								-- at that instant. So the cast always arrived stamp-less and failed open. But at
+								-- that same instant the key is still physically HELD - a human press lasts far
+								-- longer than the cast takes to fire - so the hook now just asks the keyboard
+								-- which number key is down right now. Synchronous, no poll in the path. Hub-
+								-- injected keys are skipped; the stamp and learned map remain as fallbacks.
 								local idx
-								local lk = _G.VX_LASTNUM_KEY
-								if lk and tick() - (lk.t or 0) < 0.5 then idx = lk.n end
+								do
+									local UISc = game:GetService("UserInputService")
+									local KCc = { Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.KeyCode.Four }
+									local injK = _G.VX_INJ_KEYS
+									for i, kc in ipairs(KCc) do
+										local okD, dn = pcall(function() return UISc:IsKeyDown(kc) end)
+										if okD and dn and not (injK and injK[kc] and tick() < injK[kc]) then idx = i break end
+									end
+								end
+								if not idx then
+									local lk = _G.VX_LASTNUM_KEY
+									if lk and tick() - (lk.t or 0) < 0.5 then idx = lk.n end
+								end
 								if not idx then
 									local sm = _G.VX_SLOT_MOVE
 									if sm then for k, v in pairs(sm) do if v == args[1].Name then idx = k break end end end
