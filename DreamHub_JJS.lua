@@ -1126,6 +1126,16 @@ do
 	end
 	local function onAnim(track)
 		if not enabled then return end
+		-- ═══ WHOSE FLASH IS THIS? ═══ "when I turn off M1 Black Flash / the chain and turn on another BF
+		-- mode, doing an M1 is NOT supposed to black flash." Exactly. A flash may only happen when one of
+		-- three parties asked for it: the user's own toggles (VX_BFAPI_WANT, set by M1 BF / Auto BF), a
+		-- chain's borrow, or a chain-driven swing (VX_BF_CHAINDRIVE, stamped by m1ThenBF right before its
+		-- click). A dash MODE being selected is none of those - your ordinary M1s stay ordinary.
+		if not (_G.VX_BFAPI_WANT == true or _G.VX_BF_BORROWED
+			or tick() < (tonumber(_G.VX_BF_CHAINDRIVE) or 0)) then
+			if _G.VX_BF_DEBUG then print("[BF] windup seen but nobody asked for a flash (no toggle, no chain) - ignoring") end
+			return
+		end
 		-- ═══ "IT M1s AND BLACK FLASHES WITHOUT ME PRESSING 3" ═══ A chain borrows this engine, which arms it
 		-- wholesale - so any swing during that window flashed, including an ordinary M1 thrown while walking up
 		-- to someone. A borrow now only authorises the swing produced by the chain's OWN injected click:
@@ -2803,6 +2813,39 @@ local function vxGlide(target, onArrive, holdTime)
 	safeTeleport(cf, holdTime or 0.5)
 	if onArrive then task.delay((holdTime or 0.5) + 0.05, function() pcall(onArrive) end) end
 end
+-- ═══ THE GAME'S OWN "TELEPORT TO PLAYER" ═══ Your capture, from the private-server menu:
+--     DebugService.RE.Debug:FireServer("Go", <Player>)
+-- In a private server the SERVER moves you - no CFrame writes, no anti-cheat conversation, no snapback,
+-- because it is the game's own feature. So every teleport-to-a-PLAYER tries this first and only falls back
+-- to the write-based teleport when the remote does not move us (public servers just ignore it).
+local function vxDebugGo(plr)
+	if typeof(plr) ~= "Instance" or not plr:IsA("Player") then return false end
+	local k = game:GetService("ReplicatedStorage"):FindFirstChild("Knit")
+	k = k and k:FindFirstChild("Knit"); k = k and k:FindFirstChild("Services")
+	local d = k and k:FindFirstChild("DebugService")
+	local re = d and d:FindFirstChild("RE"); re = re and re:FindFirstChild("Debug")
+	if not re then return false end
+	local before
+	do local c = vxMyChar(); local h = c and c:FindFirstChild("HumanoidRootPart"); before = h and h.Position end
+	local ok = pcall(function() re:FireServer("Go", plr) end)
+	if not ok then return false end
+	task.wait(0.35)
+	local c = vxMyChar(); local h = c and c:FindFirstChild("HumanoidRootPart")
+	local tc = plr.Character; local th = tc and tc:FindFirstChild("HumanoidRootPart")
+	if h and th and (h.Position - th.Position).Magnitude < 25 then return true end
+	if h and before and (h.Position - before).Magnitude > 15 then return true end   -- it moved us somewhere real
+	return false
+end
+_G.VX_TP_TO_PLAYER = function(plr, fallbackCf)
+	if vxDebugGo(plr) then return true end
+	local dest = fallbackCf
+	if not dest then
+		local tc = plr and plr.Character; local th = tc and tc:FindFirstChild("HumanoidRootPart")
+		dest = th and (th.CFrame * CFrame.new(0, 0, 3))
+	end
+	if dest then safeTeleport(dest, 0.6) return true end
+	return false
+end
 local function vxTeleportHard(dest, holdTime)
 	if typeof(dest) == "CFrame" then safeTeleport(dest, holdTime or 0.6); return end
 	local hrp
@@ -3607,7 +3650,15 @@ do
     end)
     TargetApi = {
         setName = function(n) targetName = tostring(n or "") end,
-        tpTo = function() local _, mdl = resolve(); local tr = partOf(mdl); if tr then vxTeleportHard(tr.Position - (tr.CFrame.LookVector * 4) + Vector3.new(0, 1, 0), 2) elseif VX_NOTIFY then VX_NOTIFY("Target not found", false) end end,
+        tpTo = function()
+            local plr, mdl = resolve()
+            -- Private server: the game's own "Go" teleport (DebugService) moves you server-side - use it
+            -- whenever the target is a real Player; the write-based teleport stays as the fallback.
+            if plr and _G.VX_TP_TO_PLAYER and _G.VX_TP_TO_PLAYER(plr) then return end
+            local tr = partOf(mdl)
+            if tr then vxTeleportHard(tr.Position - (tr.CFrame.LookVector * 4) + Vector3.new(0, 1, 0), 2)
+            elseif VX_NOTIFY then VX_NOTIFY("Target not found", false) end
+        end,
         bringItem = function(filter)
             task.spawn(function()
                 if grabNearestItem(filter) then
@@ -4434,33 +4485,13 @@ do
                     end)
                     _G.VX_DASH(dir)
                 end
-                task.wait(0.30)                            -- let the server's dash actually travel and its clip play
-                -- ═══ NO MORE FINISHING ARC ═══ The 6-step arc after the dash was the last "weird" left: the
-                -- game plays its dash clip, and then your body visibly SLIDES for another tenth of a second
-                -- along a curve the game is not animating. Teleport mode's primitive is ONE write - and you
-                -- call Teleport the mode that looks right - so the landing is now one write too: dash plays
-                -- clean, then a single snap onto the corner of their back, announced to the anti-cheat the
-                -- same way tpBehind announces its own.
-                pcall(function()
-                    local c = GetChar(); local pr = GetRoot()
-                    local e2 = t.Parent and t:FindFirstChild("HumanoidRootPart")
-                    if c and pr and e2 then
-                        local fwd = Vector3.new(e2.CFrame.LookVector.X, 0, e2.CFrame.LookVector.Z)
-                        if fwd.Magnitude > 0.01 then
-                            fwd = fwd.Unit
-                            local side = Vector3.new(-fwd.Z, 0, fwd.X) * (0.45 * 3.0)
-                            local dest = e2.Position - fwd * 2.5 + side
-                            dest = Vector3.new(dest.X, pr.Position.Y, dest.Z)
-                            if _G.VX_ACPASS then _G.VX_ACPASS() end
-                            local delta = dest - pr.Position
-                            c:PivotTo(CFrame.lookAt(dest, Vector3.new(e2.Position.X, dest.Y, e2.Position.Z)))
-                            if delta.Magnitude > 1 then pr.AssemblyLinearVelocity = delta.Unit * math.clamp(delta.Magnitude * 2, 16, 60) end
-                        end
-                    end
-                end)
+                task.wait(0.32)                            -- the server's dash: let it travel and let its clip finish
+                -- ═══ NO POSITION WRITES AT ALL ANY MORE ═══ "I don't want to teleport." The snap-onto-their-
+                -- back write and the holdBack follow-loop are both gone from this path - every previous
+                -- version of "weird animation" was one of our position writes fighting the game's own dash.
+                -- What remains is exactly what a player does: the real dash (direction picked for you),
+                -- turn to face them, swing. Rotation is the only thing we touch.
                 faceBackOf(t)                              -- rotation only - never a position write
-                local hold = tonumber(_G.VX_SIDE_HOLD) or 0.8
-                task.spawn(function() holdBack(t, hold) end)
                 local n = math.clamp(tonumber(_G.VX_SIDE_M1S) or 1, 0, 4)
                 if n > 0 then
                     aimCameraAt((t:FindFirstChild("HumanoidRootPart") or e).Position)
@@ -5299,6 +5330,8 @@ do
 		tpPlayer = function(name)  -- teleport just BEHIND a chosen player (setback-resistant)
 			local hrpTarget
 			local plr = name and Players:FindFirstChild(name)
+			-- Private server: the game's own "Go" teleport moves you server-side - try it first for a real Player.
+			if plr and _G.VX_TP_TO_PLAYER and _G.VX_TP_TO_PLAYER(plr) then return true end
 			if plr and plr.Character then hrpTarget = plr.Character:FindFirstChild("HumanoidRootPart") end
 			if not hrpTarget then local chs = workspace:FindFirstChild("Characters"); local mdl = chs and chs:FindFirstChild(name); hrpTarget = mdl and mdl:FindFirstChild("HumanoidRootPart") end
 			if hrpTarget then vxTeleportHard(hrpTarget.Position - hrpTarget.CFrame.LookVector * 4 + Vector3.new(0, 3, 0), 1.25); return true end
@@ -8483,6 +8516,11 @@ do
 			pcall(function()
 				_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.5
 				_G.VX_INJECT_UNTIL = tick() + 0.5
+				-- "USE TWICE" is printed on the move slot itself - one press arms it, the second fires it.
+				-- So every press here is a double-tap, 0.12s apart, and the remote below casts once more on top.
+				VIM:SendKeyEvent(true, Enum.KeyCode.Three, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
+				task.wait(0.12)
+				_G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.4
 				VIM:SendKeyEvent(true, Enum.KeyCode.Three, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
 			end)
 			local m3 = slot3Name()
@@ -8509,7 +8547,12 @@ do
 					pcall(function()
 						_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.5
 						_G.VX_INJECT_UNTIL = tick() + 0.5
-						VIM:SendKeyEvent(true, Enum.KeyCode.Three, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
+						-- "USE TWICE" is printed on the move slot itself - one press arms it, the second fires it.
+				-- So every press here is a double-tap, 0.12s apart, and the remote below casts once more on top.
+				VIM:SendKeyEvent(true, Enum.KeyCode.Three, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
+				task.wait(0.12)
+				_G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.4
+				VIM:SendKeyEvent(true, Enum.KeyCode.Three, false, game); task.wait(0.05); VIM:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
 					end)
 						local m3b = slot3Name()
 						if m3b and _G.VX_CAST_MOVE then _G.VX_CAST_MOVE(m3b) end
@@ -9041,59 +9084,11 @@ do
 			end end
 			return best
 		end
-		-- ═══ A HELD BUTTON IS FOUR SWINGS, ONE EDGE ═══ The M1 poll fires subscribers on the rising edge
-		-- only, and this game advances the combo while the button is HELD (recorder-proven: one 1.38s hold =
-		-- four swings). Counting edges meant a held combo counted 1 and the 4th-swing trigger never fired
-		-- unless you tapped four separate times. So on each edge we also watch the button: for as long as it
-		-- stays down, another swing is credited every 0.35s - the game's own combo beat.
-		local holdWatch = 0
-		local function credit()
-			local now = tick()
-			if now - m1t > 1.2 then m1n = 0 end     -- JJS drops a combo at ~1.2s; past that this is swing 1
-			m1t = now
-			m1n = m1n + 1
-			local onSwing = math.clamp(tonumber(_G.VX_ASSIST_ON_M1) or 4, 2, 6)
-			if m1n < onSwing then return end
-			m1n = 0
-			if tick() < busyUntil then return end
-			busyUntil = tick() + 1.0
-			local t = anyEnemy()
-			task.spawn(function()
-				if t then faceAt(t) end
-				-- "it needs to automatically do uppercut AND a down slam" - with both on that is the
-				-- whole combo: the uppercut launches them, the slam catches them coming down. With one
-				-- on you get that one, on the same click.
-				if upOn and downOn then
-					upNow()
-					task.wait(0.30)
-					if t then faceAt(t) end
-					slamNow()
-				elseif downOn then
-					slamNow()
-				else
-					upNow()
-				end
-			end)
-		end
-		if _G.VX_M1_SUB then
-			_G.VX_M1_SUB("finisher_assist_m1", function()
-				if not (upOn or downOn) then return end
-				credit()
-				-- keep crediting while the button stays down (one watcher at a time)
-				local mine = tick()
-				holdWatch = mine
-				task.spawn(function()
-					local UIS = game:GetService("UserInputService")
-					local last = tick()
-					while holdWatch == mine do
-						local okD, down = pcall(function() return UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) end)
-						if not (okD and down) then break end
-						if tick() - last >= 0.35 then last = tick(); credit() end
-						task.wait(0.05)
-					end
-				end)
-			end)
-		end
+		-- ═══ THE 4th-M1 TRIGGER IS GONE ═══ "every time I use a move, it don't do an uppercut on them. It
+		-- needs to EASILY do an uppercut - as long as they're down or far away." That is the downed-poll rule,
+		-- pure and simple - and the swing-counting trigger I layered on top fired finishers at STANDING targets
+		-- mid-combo and ate the busy lockout the downed path needed. One rule now: they are down, you finish,
+		-- instantly - the 0.03s poll plus the predictive 1/2/3/4 watcher below, nothing else in the way.
 	end
 
 	-- ═══ PREDICTIVE SLAM ═══ "it must do it as soon as I do my move that makes them ragdoll." Polling
@@ -17360,7 +17355,9 @@ do
 		Range        = 42,    -- an attack started further away than this cannot reach you before we re-check
 		ProjRange    = 60,    -- projectiles are watched further out; they close the distance themselves
 		ProjSpeed    = 28,    -- studs/s. Below this it is debris, not an attack
-		Hold         = 0.46,  -- keep the shield up this long after the last threat: rides a whole combo string
+		Hold         = 0.26,  -- "more faster": 0.46 rode out a whole combo, which is exactly the "just holds
+		                      -- block" complaint. 0.26 covers one swing; the release check below drops it the
+		                      -- moment the attacker's swing is over, so a combo re-triggers per hit instead.
 		FacingDot    = -0.15, -- how much they must be turned towards you (-0.15 = slightly generous)
 		Turn         = true,  -- rotate your BODY to face the threat (never the camera)
 		Scan         = 0.05,  -- seconds between enemy-list rebuilds (halved: this is pure reaction latency)
@@ -17597,6 +17594,18 @@ do
 			threat, threatPos, lastReason = found or threat, foundPos, why
 		end
 
+		-- ═══ "WHEN THE M1 IS DONE, DROP THE BLOCK" ═══ Blocking used to ride out the full Hold window even
+		-- after the attacker's swing had visibly ended. If we have a live threat and their animator no longer
+		-- plays ANY attack-shaped track, the danger is over THIS frame - cut the hold short and drop.
+		if blocking and threat and threat.Parent then
+			local e = nil
+			for _, en in ipairs(enemies) do if en.model == threat then e = en break end end
+			if e then
+				local still = false
+				pcall(function() still = startedAttacking(e) and true or false end)
+				if not still and tick() > holdUntil - CFG.Hold + 0.12 then holdUntil = 0 end   -- 0.12 floor: never flicker inside one swing
+			end
+		end
 		if tick() <= holdUntil then
 			faceThreat(threatPos)
 			if not blocking then
