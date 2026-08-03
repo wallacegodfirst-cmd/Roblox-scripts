@@ -1995,6 +1995,10 @@ do
 			-- Feint Abilities: you cast ANY skill (1/2/3/4) -> R right after = feint the move (own toggle OR the dropdown mode)
 			local injKeys = _G.VX_INJ_KEYS
 			local keyInjected = injKeys and injKeys[input.KeyCode] and tick() < injKeys[input.KeyCode]
+			-- A key-3 that a BF chain consumed is not a cast - it is the chain's trigger, and the R this
+			-- would press 0.14s later is the game's FEINT: it cancels the very flash the chain is setting up.
+			-- The audit caught this eating chains whenever Feint Abilities was on.
+			if input.KeyCode == Enum.KeyCode.Three and tick() - (tonumber(_G.VX_BF_TRIG3) or 0) < 0.9 then return end
 			if feintMode ~= "M1" and (feintMovesOn or feintMode == "Moves") and MOVEKEYS[input.KeyCode] and tick() >= (_G.VX_INJECT_UNTIL or 0) and not keyInjected then
 				task.delay(0.14, function() pressR() end)
 			end
@@ -3203,7 +3207,18 @@ do
 		return nil
 	end
 	local function onTrack(track)
-		if tick() > (tonumber(_G.VX_CHAINFLASH_WINDOW) or 0) then return end
+		-- trace FIRST: the audit found a race where a windup arriving before the window stamp was ignored
+		-- AND left no trace - the exact case the tracer exists to expose. Anything within 1.6s of a chain
+		-- start is recorded whether or not the window is open for it.
+		local inTraceWin = tick() - (tonumber(_G.VX_TRACE_T0) or 0) < 1.6
+		if tick() > (tonumber(_G.VX_CHAINFLASH_WINDOW) or 0) then
+			if inTraceWin and _G.VX_TRACE then
+				local okE, idE = pcall(function() return track and track.Animation and track.Animation.AnimationId or "" end)
+				local nE = tostring(okE and idE or ""):match("%d+")
+				if nE then _G.VX_TRACE("anim-outside-window:" .. nE) end
+			end
+			return
+		end
 		local ok, id = pcall(function() return track and track.Animation and track.Animation.AnimationId or "" end)
 		id = normId(ok and id or "")
 		local d = delayFor(id)
@@ -4239,6 +4254,19 @@ do
         --    click for the ANIMATION the engine watches. Stamp the human clock so every "is this a real M1"
         --    gate in the engine says yes - which is the whole reason your Auto-BF swings flash.
         _G.VX_LAST_HUMAN_CLICK = tick()
+        -- ═══ EVERY STAMP GOES DOWN BEFORE THE M1 EXISTS ═══ The audit caught the chain-flash window being
+        -- stamped AFTER VMouseClick's internal yield: a fast windup could arrive while the window was still
+        -- closed, be ignored, and leave no trace. Window, chainclick, chaindrive and the finisher-counter
+        -- reset all happen HERE, before the remote fires - nothing the M1 causes can outrun them.
+        _G.VX_BF_CHAINCLICK = tick()
+        _G.VX_BF_CHAINDRIVE = tick() + 0.8
+        _G.VX_CHAINFLASH_WINDOW = tick() + 1.2
+        -- ═══ THE FINISHER REWRITE MUST NOT EAT THIS M1 ═══ The hook counts every Activated(false), and a
+        -- chain fires TWO (the remote below + the click's own). With Auto Slam/Uppercut on and any real M1
+        -- within the last 1.2s, the chain's swing hit the "3rd click" threshold and went out as "Up"/"Down"
+        -- - a finisher, which has no windup animation, so nothing could ever flash it. Zero the counter
+        -- here; the hook additionally skips the rewrite for chain-driven swings.
+        _G.VX_HOOK_COUNT = 0
         pcall(function()
             local svcs = game:GetService("ReplicatedStorage"):FindFirstChild("Knit")
             svcs = svcs and svcs:FindFirstChild("Knit"); svcs = svcs and svcs:FindFirstChild("Services")
@@ -4248,29 +4276,27 @@ do
             if re then re:FireServer(false); if _G.VX_TRACE then _G.VX_TRACE("m1-remote") end
             elseif _G.VX_TRACE then _G.VX_TRACE("m1-remote-MISSING") end
         end)
-        -- ═══════════ THIS ONE LINE IS WHY NO CHAIN MODE EVER FLASHED ═══════════
-        -- onAnim() has a gate: for 0.6s after you press 3 it throws away any windup it sees, on the grounds
-        -- that it is the ability your key-3 press just cast rather than a real M1. The gate is supposed to
-        -- close the moment the chain throws its OWN click - it checks VX_BF_CHAINCLICK for exactly that.
-        -- But VX_BF_CHAINCLICK was stamped in only one place in the entire file, inside the M1 chain. Every
-        -- other mode - Side Dash, Back Dash, Jump, Teleport - goes through HERE, and never stamped it. So
-        -- the gate stayed open, and the real M1 windup those modes had just thrown (arriving 0.09-0.39s
-        -- after the press, comfortably inside 0.6s) was discarded as "the trigger's own cast" every time.
-        -- The dash ran, the swing landed, and the engine refused to press 3. That is the entire bug.
-        _G.VX_BF_CHAINCLICK = tick()
-        _G.VX_BF_CHAINDRIVE = tick() + 0.8   -- engine: this swing is chain-driven, flash it on swing ONE
         VMouseClick()
-        -- ═══════════ THE PRESS BELONGS TO THE ANIMATION, NOT THE CLOCK ═══════════
-        -- Your AutoBlackFlash.lua - the script you have tested working, twice pasted as the reference - is
-        -- ANIMATION-timed: it sees the windup track start, waits that id's own delay (0.19-0.20s), then
-        -- presses 3. My last build pressed 3 blind at click+0.19 instead, unconditionally. If that press was
-        -- mistimed even slightly it CAST Divergent Fist anyway - a raw one - and put the move on cooldown,
-        -- so any correctly-timed press arriving after it hit a spent move. The blind press was not a backstop,
-        -- it was the saboteur. It is deleted. What replaces it is a verbatim copy of your script's flow (see
-        -- CHAIN FLASH below), armed for just this window:
-        R.chainUntil = tick() + 0.8            -- and the InputBegan click path stands down (no doubles)
-        _G.VX_CHAINFLASH_WINDOW = tick() + 1.2
-        if _G.VX_TRACE then _G.VX_TRACE("click+window") end
+        if _G.VX_TRACE then _G.VX_TRACE("click") end
+        R.chainUntil = tick() + 0.8            -- the InputBegan click path stands down (no doubles)
+        -- ═══════════ THE BLIND PRESS IS BACK, AND IT IS PRIMARY ═══════════
+        -- The audit's history pass was unambiguous: the click-clocked press at +0.19s is the ONLY chain
+        -- press class with a recorded landing (old Teleport mode), there is NO in-file evidence that a
+        -- remote-fired M1 even plays a windup animation locally, and the build where I deleted this press
+        -- "on a theory" is the build where everything went dark. The theory blamed the blind press for
+        -- casting raw DF - but what was actually eating the flash was the pack of features the audit caught
+        -- red-handed (the finisher rewrite, Reversal Red's auto-R, Earthquake's key hold, the air hook,
+        -- Auto Cancel), every one of which is now guarded. So: the proven press is restored, the guards
+        -- stay up, and the animation-timed CHAIN FLASH remains as the second string for the case where the
+        -- windup genuinely plays.
+        task.delay(0.19, function()
+            markThree()
+            _G.VX_BF_PRESS_T = tick()
+            if _G.VX_TRACE then _G.VX_TRACE("press3-blind") end
+            VIM:SendKeyEvent(true, Settings.BFKey, false, game)
+            task.wait(0.03)
+            VIM:SendKeyEvent(false, Settings.BFKey, false, game)
+        end)
         -- 4) HAND THE ENGINE BACK to your real choice a beat later, only if WE turned it on.
         if not wasOn then
             task.delay(0.7, function()
@@ -6336,6 +6362,11 @@ do
 						-- every swing. Clicks 1 and 2 pass through as NORMAL M1s - which is exactly what the
 						-- flash engine needs - and the rewrite starts at click 3. You get the flash on the
 						-- early swings and the finisher on the late ones, in the same combo.
+						-- A chain-driven M1 is the flash's carrier: rewriting it into a finisher removes the
+						-- windup the whole Black Flash rides on. Chains zero the counter AND are skipped here.
+						if tick() < (tonumber(_G.VX_BF_CHAINDRIVE) or 0) then
+							return oldNamecall(self, unpack(args))
+						end
 						local nowT = tick()
 						if nowT - (_G.VX_HOOK_LASTCLICK or 0) > 1.2 then _G.VX_HOOK_COUNT = 0 end
 						_G.VX_HOOK_LASTCLICK = nowT
@@ -7964,6 +7995,10 @@ do
 		UISq.InputBegan:Connect(function(input)
 			if input.KeyCode ~= Enum.KeyCode.Three then return end
 			if not quakeOn then return end
+			-- A 3 the BF chain consumed is the chain's trigger, not a quake request. Starting the 2s VIM
+			-- key-3 hold here is what swallowed the chain's flash press (a down onto an already-down key is
+			-- no press at all) and re-pressed 3 at quake timing on release. The chain wins for that beat.
+			if tick() - (tonumber(_G.VX_BF_TRIG3) or 0) < 0.9 then return end
 			if UISq:GetFocusedTextBox() then return end
 			local injK = _G.VX_INJ_KEYS
 			if injK and injK[Enum.KeyCode.Three] and tick() < injK[Enum.KeyCode.Three] then return end   -- our own injected press
