@@ -935,6 +935,7 @@ _G.VX_FINISHER_T    = 0
 _G.VX_UPPER_T       = 0       -- last uppercut; the Cursed Strike assist arms off this and only this
 _G.VX_SIDEASSIST_ON = false   -- read by the Dash-rewrite hook; sticky true would hijack every dash on a fresh run
 _G.VX_BF_CHAINDRIVE = 0
+_G.VX_CHAINFLASH_WINDOW = 0   -- the chain-flash listener only presses inside this window
 _G.VX_SLOT_MOVE     = {}      -- learned key->move map; stale entries from the LAST character would cast their moves
 _G.VX_MOVE_RE       = _G.VX_MOVE_RE or {}   -- learned move->remote map (instances die with the rig on their own)
 _G.VX_TOTAL_MOVE_T  = 0
@@ -3149,6 +3150,81 @@ local function vxCastMove(moveName, ...)
 end
 _G.VX_CAST_MOVE = vxCastMove    -- shared: Auto Air, Auto Hakari and anything else that casts by name
 
+-- ═══════════════════════ CHAIN FLASH (your AutoBlackFlash.lua, scoped to chains) ═══════════════════════
+-- This is the flow of the script YOU tested working, copied faithfully: listen to the local animator,
+-- match the windup id, wait that id's own delay, press 3 once, 0.45s cooldown. Two additions only:
+--   * it acts ONLY inside _G.VX_CHAINFLASH_WINDOW (stamped by a chain the moment it throws its M1), so it
+--     can never flash an ordinary M1 - that right stays with the M1 BF / Auto BF toggles and their engine;
+--   * it binds BOTH rigs (LP.Character and workspace.Characters[you]) and re-binds forever, because which
+--     one animates depends on the character swap.
+do
+	local PlayersCF = game:GetService("Players")
+	local lpCF = PlayersCF.LocalPlayer
+	local VIMCF = game:GetService("VirtualInputManager")
+	local TRIG = {
+		["rbxassetid://100962226150441"] = 0.19,
+		["rbxassetid://95852624447551"]  = 0.19,
+		["rbxassetid://74145636023952"]  = 0.19,
+		["rbxassetid://72475960800126"]  = 0.20,
+		["rbxassetid://123171106092050"] = 0.19,
+	}
+	local lastFire, pending = 0, false
+	local function normId(id) id = tostring(id or ""); if id:match("^%d+$") then return "rbxassetid://" .. id end return id end
+	local function delayFor(id)
+		if TRIG[id] then return TRIG[id] end
+		-- every captured M1 windup for every character counts too: a chain M1 must flash on ANY character,
+		-- and 0.19 is the delay every known id in the reference table uses.
+		local n = id:match("%d+")
+		if n and _G.VX_M1_IDS and _G.VX_M1_IDS[n] then return 0.19 end
+		return nil
+	end
+	local function onTrack(track)
+		if tick() > (tonumber(_G.VX_CHAINFLASH_WINDOW) or 0) then return end
+		if pending or os.clock() - lastFire < 0.45 then return end
+		local ok, id = pcall(function() return track and track.Animation and track.Animation.AnimationId or "" end)
+		id = normId(ok and id or "")
+		local d = delayFor(id)
+		if not d then
+			if _G.VX_BF_DEBUG and id ~= "" then print("[ChainFlash] not a windup id: " .. id) end
+			return
+		end
+		pending = true
+		task.delay(d, function()
+			pending = false
+			lastFire = os.clock()
+			_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}
+			_G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.4
+			_G.VX_INJECT_UNTIL = tick() + 0.4
+			pcall(function()
+				VIMCF:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
+				task.wait(0.025)   -- his exact hold
+				VIMCF:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
+			end)
+			if _G.VX_BF_DEBUG then print("[ChainFlash] pressed 3 at +" .. d .. " for " .. id) end
+		end)
+	end
+	local boundCF = setmetatable({}, { __mode = "k" })
+	local function bindChar(c)
+		if not c then return end
+		task.spawn(function()
+			pcall(function()
+				local h = c:FindFirstChildOfClass("Humanoid") or c:WaitForChild("Humanoid", 8)
+				local a = h and (h:FindFirstChildOfClass("Animator") or h:WaitForChild("Animator", 8))
+				if a and not boundCF[a] then boundCF[a] = true; a.AnimationPlayed:Connect(onTrack) end
+			end)
+		end)
+	end
+	task.spawn(function()
+		while true do
+			bindChar(lpCF.Character)
+			local chs = workspace:FindFirstChild("Characters")
+			local m = chs and chs:FindFirstChild(lpCF.Name)
+			if m then bindChar(m) end
+			task.wait(1)
+		end
+	end)
+end
+
 -- ═══════════════════════ THE DASH IS A REMOTE ═══════════════════════
 -- Your capture:
 --     MovementService.RE.Dash:FireServer("Right")
@@ -4152,26 +4228,16 @@ do
         _G.VX_BF_CHAINCLICK = tick()
         _G.VX_BF_CHAINDRIVE = tick() + 0.8   -- engine: this swing is chain-driven, flash it on swing ONE
         VMouseClick()
-        -- ═══════════ THE PRESS THAT ACTUALLY LANDS ═══════════
-        -- The file's own A/B evidence (see the click-path note below): presses timed from YOUR CLICK flash;
-        -- presses timed from the windup ANIMATION do not. Auto BF works because of a click+0.14s press. The
-        -- chains had NO click-timed press at all - this function's old 0.19s fallback was lost in the rebuild,
-        -- and the click path in InputBegan is (a) gated on the Auto BF/M1 BF toggles a chain never sets and
-        -- (b) refused by the R.bfCD stamp every chain writes on entry. So every chain ended on the animation-
-        -- timed engine press, the exact class that never lands: perfect dash, no flash, all four modes.
-        -- This is the chain's OWN click-timed press, gate-free on purpose: no R.bfCD (the chain set it
-        -- itself moments ago), no AutoBF check (the chain mode IS the request), no windupLive (at click+0.14
-        -- the windup may not have dispatched yet, and on uncaptured characters that gate never opens at all).
-        R.chainUntil = tick() + 0.8            -- the chain owns this flash: the click path stands down (no double 3)
-        -- 0.19, not 0.14: 0.14 is Auto BF's number, timed against YOUR real click, whose swing starts the same
-        -- frame. A chain's M1 is a REMOTE - its swing starts a round-trip later - and the one chain press with
-        -- recorded landings is the old Teleport fallback at exactly CLICK+0.19s. Use the number with evidence.
-        task.delay(0.19, function()
-            markThree()
-            VIM:SendKeyEvent(true, Settings.BFKey, false, game)
-            task.wait(0.03)
-            VIM:SendKeyEvent(false, Settings.BFKey, false, game)
-        end)
+        -- ═══════════ THE PRESS BELONGS TO THE ANIMATION, NOT THE CLOCK ═══════════
+        -- Your AutoBlackFlash.lua - the script you have tested working, twice pasted as the reference - is
+        -- ANIMATION-timed: it sees the windup track start, waits that id's own delay (0.19-0.20s), then
+        -- presses 3. My last build pressed 3 blind at click+0.19 instead, unconditionally. If that press was
+        -- mistimed even slightly it CAST Divergent Fist anyway - a raw one - and put the move on cooldown,
+        -- so any correctly-timed press arriving after it hit a spent move. The blind press was not a backstop,
+        -- it was the saboteur. It is deleted. What replaces it is a verbatim copy of your script's flow (see
+        -- CHAIN FLASH below), armed for just this window:
+        R.chainUntil = tick() + 0.8            -- and the InputBegan click path stands down (no doubles)
+        _G.VX_CHAINFLASH_WINDOW = tick() + 1.2
         -- 4) HAND THE ENGINE BACK to your real choice a beat later, only if WE turned it on.
         if not wasOn then
             task.delay(0.7, function()
