@@ -7,6 +7,7 @@ __gg.__PRIOR_EXT_HUB = nil
 -- Captured replica/source ids are scoped to one server session. Reusing them after a re-execute or server hop
 -- makes INF Food replay dead ids forever and prevents its nearby-food bootstrap from running.
 __gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0
+__gg.MH_attackTemplate=nil; __gg.MH_soundTemplate=nil; __gg.MH_hbMade=nil; __gg.MH_hbBuildAt=nil
 __gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil
 -- EARLY visible proof-of-life (for console-less mobile executors): if you see this toast the script
 -- IS running -> press RightShift for the menu. If you DON'T see it, the executor failed to FETCH the
@@ -855,7 +856,7 @@ local CFG = {
 	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=15, StamDrive=true, StamRunSpeed=0, DeathFix=true, Noclip=false, Invis=false,
 	InfJump=false, BypassTP=true,
 	InfFood=false, InfWater=false, InfStam=false, InfOxygen=false,
-	AntiDrown=true, AntiDrownRise=14, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false, HeadDmgReduce=90,
+	AntiDrown=true, AntiDrownRise=14, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false, HeadDmgReduce=100,
 	SaveDino=false, SaveHP=30, NoSleep=true, AutoHealBlood=false, AfkEat=false, BotPvP=true,
 	AutoFarmPlayer=false, FarmPlayerRange=120, AutoFarmFossil=false, FarmFossilRange=1000000, FossilSlow=1.2,
 	TargetUser="", TargetTrack=false,
@@ -1157,9 +1158,20 @@ local function installHook()
 					-- live so Progress Restore can replay it — adapts if the id/dino/tag changes.
 					local ba = table.pack(...); local pp = ba[1]
 					if type(pp)=="table" and type(pp[1])=="table" and type(pp[1][3])=="table" and type(pp[1][3][1])=="table" and pp[1][3][1].Species then __gg.MH_restore = pp; __gg.MH_rsave = pp end
+				elseif self.Name=="SoundRemote" and not checkcaller() then
+					-- Keep the CURRENT dinosaur's genuine swing packet. Attack layouts can change by species/update;
+					-- replaying what the game itself just sent is safer than permanently assuming one hard-coded layout.
+					local sa=table.pack(...)
+					if sa.n>=2 and tostring(sa[1]):lower()=="pvp" and tostring(sa[2]):lower():find("attack",1,true) then
+						local snap={n=sa.n}; for i=1,sa.n do snap[i]=sa[i] end; __gg.MH_soundTemplate=snap
+					end
 				elseif self.Name=="ReplicaSignal" and not checkcaller() then
 				local a = table.pack(...)
 				local id, action = a[1], a[2]
+				if action=="Attack" and typeof(id)=="number" then
+					local snap={n=a.n}; for i=1,a.n do snap[i]=a[i] end
+					__gg.MH_attackTemplate=snap
+				end
 				-- Capture OUR dino id ONLY from SELF actions (HeadAngles/Fall/Attack/etc.). Sip/Bite/Eat fire with a
 				-- SOURCE id (e.g. water 3028) — recording those as myReplicaId would break Attack. Source ids → seenIds only.
 				if typeof(id)=="number" then
@@ -1217,7 +1229,13 @@ local function installHook()
 						-- Previously this swallowed the call entirely, which also blocked our own
 						-- refill fires at line ~1615 → server never got told stam was full = no drain fix.
 						if CFG.InfStam and action=="SetProperty" and typeof(a[3])=="string" then local lp=a[3]:lower()
-								if lp:find("stam",1,true) or lp=="energy" or lp=="sp" or lp=="endurance" or lp:find("endur",1,true) or lp:find("vigor",1,true) or lp:find("fatigue",1,true) or lp:find("exertion",1,true) then
+							-- Fatigue/exertion are PENALTIES, not stamina pools. The old hook filled them to 100,
+							-- which immediately made some dinosaurs exhausted even while their stamina bar looked full.
+							if lp:find("fatigue",1,true) or lp:find("exertion",1,true) or lp:find("exhaust",1,true) or lp:find("tired",1,true) or lp:find("winded",1,true) then
+								if typeof(a[4])=="number" then a[4]=0 elseif a[4]==true then a[4]=false end
+								return oldNC(self, table.unpack(a,1,a.n))
+							end
+								if lp:find("stam",1,true) or lp=="energy" or lp=="sp" or lp=="endurance" or lp:find("endur",1,true) or lp:find("vigor",1,true) then
 								if typeof(a[4])=="number" then
 									-- track the highest seen value per property name (= the real max when bar is full)
 									__gg.MH_max = __gg.MH_max or {}
@@ -1240,6 +1258,14 @@ local function installHook()
 						if CFG.InfStam and (action=="SetAction" or action=="SetProperty") and typeof(a[3])=="string" then
 							local tl=a[3]:lower()
 							if (tl:find("tired",1,true) or tl:find("exhaust",1,true) or tl:find("fatigu",1,true)) and (a[4]==true or (typeof(a[4])=="number" and a[4]>0)) then return end
+						end
+						-- Blood-pool drain is distinct from the Bleeding flag on several species. Preserve the highest
+						-- genuine blood value seen and rewrite a client-reported drain to that value.
+						if CFG.AntiBleed and action=="SetProperty" and typeof(a[3])=="string" then local bp=a[3]:lower()
+							if bp=="blood" or bp=="bloodlevel" or bp=="bloodvolume" or bp=="bloodpool" then
+								if typeof(a[4])=="number" then if a[4]>0 then __gg.MH_bloodMax=math.max(__gg.MH_bloodMax or 0,a[4]) end; a[4]=math.max(__gg.MH_bloodMax or a[4],a[4]) end
+								return oldNC(self,table.unpack(a,1,a.n))
+							end
 						end
 						-- ANTI-INJURY (report-block): injuries replicate the same way stamina does — the CLIENT reports
 						-- them to the server. While your antis are on, we SWALLOW any report that would tell the server
@@ -1300,6 +1326,7 @@ local function progSerde(mode, x)
 		return { marker=inner[1], bytes=bytes, tag=x[2], data={Species=data.Species, Variant=data.Variant, Skin=data.Skin, Gender=data.Gender, Stage=data.GrowthStage or data.Stage} }
 	else
 		if type(x)~="table" or not x.bytes then return nil end
+		if SLOTS and SLOTS.check then local ok=SLOTS.check(x); if not ok then return nil end end
 		local bid=""; for _,b in ipairs(x.bytes) do bid=bid..string.char(b) end
 		return { { x.marker or "\001", bid, { { Species=x.data.Species, Variant=x.data.Variant, Skin=x.data.Skin, Gender=x.data.Gender } } }, x.tag or "H" }
 	end
@@ -1307,6 +1334,50 @@ end
 -- Per-ACCOUNT file naming: every save file is tagged with the player's UserId, so different people using the same
 -- executor/PC can NEVER mix slots — each account only sees its own saves.
 local function slotFile(n) return "MH_PE_"..tostring(LP.UserId).."_Slot_"..tostring(n)..".json" end
+SLOTS={}
+function SLOTS.sum(rec)
+	local total=0
+	local function mix(s) s=tostring(s or ""); for i=1,#s do total=(total + string.byte(s,i)*(i+17))%2147483647 end end
+	for i,b in ipairs((rec and rec.bytes) or {}) do total=(total + (tonumber(b) or 0)*(i+31))%2147483647 end
+	local d=rec and rec.data or {}; mix(rec and rec.marker); mix(rec and rec.tag); mix(d.Species); mix(d.Variant); mix(d.Skin); mix(d.Gender); mix(d.Stage); mix(rec and rec.userId); mix(rec and rec.universeId)
+	return total
+end
+function SLOTS.check(rec)
+	if type(rec)~="table" or type(rec.bytes)~="table" or #rec.bytes<4 or #rec.bytes>256 or type(rec.data)~="table" then return false,"invalid structure" end
+	for _,b in ipairs(rec.bytes) do if type(b)~="number" or b<0 or b>255 or b%1~=0 then return false,"invalid bridge data" end end
+	if rec.userId and tonumber(rec.userId)~=LP.UserId then return false,"different account" end
+	if rec.universeId and tonumber(rec.universeId)~=game.GameId then return false,"different experience" end
+	if type(rec.data.Species)~="string" or rec.data.Species=="" or #rec.data.Species>100 then return false,"missing species" end
+	if rec.checksum and tonumber(rec.checksum)~=SLOTS.sum(rec) then return false,"checksum mismatch" end
+	return true
+end
+function SLOTS.read(n)
+	if not (readfile and isfile) then return nil,"file access unavailable" end
+	local function one(path)
+		if not isfile(path) then return nil,"missing" end
+		local ok,rec=pcall(function() return HttpService:JSONDecode(readfile(path)) end); if not ok then return nil,"invalid JSON" end
+		local good,why=SLOTS.check(rec); if not good then return nil,why end
+		return rec
+	end
+	local path=slotFile(n); local rec,why=one(path); if rec then return rec,false end
+	local backup=one(path..".bak"); if backup then return backup,true end
+	return nil,why
+end
+function SLOTS.write(n,rec)
+	if not (writefile and readfile) then return false,"file access unavailable" end
+	rec.schema=2; rec.userId=LP.UserId; rec.placeId=game.PlaceId; rec.universeId=game.GameId; rec.savedAt=os.time(); rec.checksum=nil; rec.checksum=SLOTS.sum(rec)
+	local good,why=SLOTS.check(rec); if not good then return false,why end
+	local path=slotFile(n); local tmp=path..".tmp"; local encoded=HttpService:JSONEncode(rec)
+	local ok=pcall(function()
+		writefile(tmp,encoded)
+		local test=HttpService:JSONDecode(readfile(tmp)); assert(SLOTS.check(test))
+		if isfile and isfile(path) then local old=readfile(path); if old and old~="" then writefile(path..".bak",old) end end
+		writefile(path,encoded)
+		local final=HttpService:JSONDecode(readfile(path)); assert(SLOTS.check(final))
+		if delfile and isfile and isfile(tmp) then delfile(tmp) end
+	end)
+	return ok,ok and nil or "verification failed"
+end
 local function saveRestore(pp) pcall(function() if writefile then local r=progSerde("rec",pp); if r then writefile("MH_PE_"..tostring(LP.UserId).."_Progress.json", HttpService:JSONEncode(r)) end end end) end
 local function loadRestore()
 	-- NOTE: we do NOT auto-load the single progress into MH_restore at startup anymore — that mixed old captures with
@@ -1320,9 +1391,11 @@ task.spawn(function() while RUNNING do task.wait(2); if __gg.MH_rsave then local
 local setHeadAngles
 -- PROGRESS RESTORE: replays the captured/saved bridge spawn/restore payload, then normalizes camera + controls.
 local function progressRestore()
-	local b = getBridge(); if not b then notify("Progress Restore","Progress loading…"); return false end
+	if __gg.MH_restoreBusy then notify("Progress Restore","A restore is already settling safely."); return false end
+	__gg.MH_restoreBusy=true
+	local b = getBridge(); if not b then __gg.MH_restoreBusy=false; notify("Progress Restore","Progress loading…"); return false end
 	local pp = __gg.MH_restore
-	if type(pp)~="table" then notify("Progress Restore","Progress loading…"); return false end
+	if type(pp)~="table" then __gg.MH_restoreBusy=false; notify("Progress Restore","Progress loading…"); return false end
 	local backPos; pcall(function() local r=hrp(); backPos = r and r.Position end)   -- keep your spot across the restore
 	local ok = pcall(function() b:FireServer(pp) end)
 	-- UNDER-MAP GUARD (fix "after restore I keep falling under the map / my teleport doesn't save"): the game
@@ -1402,6 +1475,7 @@ local function progressRestore()
 		end
 	end)
 	notify("Progress Restore","Progress loading…")
+	task.delay(12,function() __gg.MH_restoreBusy=false end)
 	return ok
 end
 local function getReplicaSignal()
@@ -1419,6 +1493,14 @@ local function getSoundRemote()
 	RCACHE.sound = (re and re:FindFirstChild("SoundRemote")) or RS:FindFirstChild("SoundRemote")
 	if not RCACHE.sound then for _,d in ipairs(RS:GetDescendants()) do if d.Name=="SoundRemote" and d:IsA("RemoteEvent") then RCACHE.sound=d break end end end
 	return RCACHE.sound
+end
+local function fireSwing()
+	local sr=getSoundRemote(); if not sr then return false end
+	local st=__gg.MH_soundTemplate
+	if type(st)=="table" and st.n and st.n>=2 then
+		return pcall(function() sr:FireServer(table.unpack(st,1,st.n)) end)
+	end
+	return pcall(function() sr:FireServer("PVP","Attacks/Primary",false,nil,1) end)
 end
 -- ═══ SPAWN RESCUE — the "I spawn outside the map and die, EVERY time, even without the script" fix ═══
 -- Cause: a teleport put you outside the map and you SAVED there — so the GAME itself now respawns you in the
@@ -1528,10 +1610,10 @@ end end)
 local function replicaFire(...)
 	local a=table.pack(...)
 	local rs=getReplicaSignal(); if not rs then return false end
-	local id = myReplicaId or seenIds[1]
+	local id = myReplicaId
+	if not id then pcall(function() local r=csReplica(); id=r and (r.Id or (rawget and rawget(r,"Id")) or (r.Data and (r.Data.Id or r.Data.ReplicaId))); if typeof(id)=="number" then noteReplicaId(id) end end) end
 	if id then return (pcall(function() rs:FireServer(id, table.unpack(a,1,a.n)) end)) end
-	local f=false; for _,sid in ipairs(seenIds) do pcall(function() rs:FireServer(sid, table.unpack(a,1,a.n)) end); f=true end
-	return f
+	return false
 end
 -- BROADCAST: fire with EVERY captured replica id (for source-targeted actions like "Sip"/"Eat",
 -- whose id is the water/food object, not the player — e.g. {3028,"Sip"}).
@@ -1617,6 +1699,18 @@ ATK_GROUPS = {
 	Hip = {{g="Body",n="Hip"},{g="Body",n="Pelvis"}},
 	Arm = {{g="Arm",n="ArmIK.L"},{g="Arm",n="ArmIK.R"},{g="Arm",n="Hand.L"},{g="Arm",n="Hand.R"},{g="Arm",n="Humerus.L"},{g="Arm",n="Humerus.R"},{g="Arm",n="Claw.L"},{g="Arm",n="Claw.R"}},
 }
+local function findHitboxContainer(model)
+	if not model then return nil end
+	for _,n in ipairs({"Hitbox","HitBox","HitboxPart","Hit"}) do local hb=model:FindFirstChild(n); if hb then return hb end end
+	-- Streaming/new species sometimes place the generated hitbox one model deeper. Keep the fallback bounded so
+	-- a large map model cannot turn a combat lookup into an unbounded workspace walk.
+	local scanned=0
+	for _,d in ipairs(model:GetDescendants()) do
+		scanned+=1; if scanned>700 then break end
+		if d.Name=="Hitbox" or d.Name=="HitBox" or d.Name=="HitboxPart" then return d end
+	end
+	return nil
+end
 -- Find a named hit point: the REAL parts are in model.Hitbox (lowercase container) as BaseParts (Neck.001, Spine,
 -- LegIK.L, Head…). Look there FIRST (real .Position), then MeshModel bones, then a recursive find as last resort.
 local function _findIn(model, name)
@@ -1638,7 +1732,7 @@ local function _findIn(model, name)
 		end
 		return nil
 	end
-	local hb=model:FindFirstChild("Hitbox") or model:FindFirstChild("HitBox")
+	local hb=findHitboxContainer(model)
 	if hb then local e=scan(hb); if e then return e end end
 	if best then return best end   -- a Hitbox prefix match beats searching other containers (real hit parts live there)
 	local mm=model:FindFirstChild("MeshModel"); if mm then local e=scan(mm); if e then return e end end
@@ -1672,8 +1766,9 @@ local getMyModel  -- FORWARD-DECLARED: fireAttack (below) calls it, but the defi
                   -- forward decl it bound to a nil global and fireAttack THREW before sending the Attack remote.
 local function fireAttack(targetModel, skipSound, clickedPart)
 	if not targetModel then return false end
-	-- Degrade gracefully like replicaFire does: if the hook didn't capture our id, use any seen id (no-hook executors).
-	local myId = myReplicaId or seenIds[1]
+	-- Resolve only our CharacterState replica. Reusing an arbitrary observed id can target a food source or another dinosaur.
+	local myId = myReplicaId
+	if not myId then pcall(function() local r=csReplica(); myId=r and (r.Id or (rawget and rawget(r,"Id")) or (r.Data and (r.Data.Id or r.Data.ReplicaId))); if typeof(myId)=="number" then noteReplicaId(myId) end end) end
 	if not myId then return false end
 	local rs=getReplicaSignal(); if not rs then return false end
 	-- pick a TARGET bone. If you picked a specific "Expand Bone" (Hitbox), AIM THAT SAME BONE; else use Always-hit part.
@@ -1713,7 +1808,7 @@ local function fireAttack(targetModel, skipSound, clickedPart)
 		for _,b in ipairs(ATK_GROUPS.Auto) do local bn=_findIn(targetModel,b.n); local p=_bonePos(bn); if p then group,boneName,targetPos=b.g,bn.Name,p; break end end
 	end
 	if not targetPos then
-		local hb=targetModel:FindFirstChild("Hitbox") or targetModel:FindFirstChild("HitBox")
+		local hb=findHitboxContainer(targetModel)
 		if hb then
 			local part = (hb:IsA("BasePart") and hb) or hb:FindFirstChildWhichIsA("BasePart", true)   -- descend the container (Hitbox.Head.Head)
 			if part then group, boneName, targetPos = boneGroupFor(part.Name), part.Name, part.Position end
@@ -1746,12 +1841,20 @@ local function fireAttack(targetModel, skipSound, clickedPart)
 	-- FIRE THE PRIMARY ATTACK FIRST (SoundRemote) — this initiates the swing the server validates, THEN report the
 	-- hit via ReplicaSignal "Attack". Positions MUST be native vectors (vector.create) to match the capture exactly.
 	-- arg[5] = OUR bite bone (capture shows Group="Head", Name="Head"); arg[6] = the TARGET group.
-	if not skipSound then local sr=getSoundRemote(); if sr then pcall(function() sr:FireServer("PVP","Attacks/Primary",false,nil,1) end) end end
-	local args = { [1]=myId, [2]="Attack",
-		[4]={Group=group, Name=boneName, Position=vec(targetPos)},
-		[5]={Group="Head", Name="Head", Position=vec(jawPos)},
-		[6]=group }
-	return pcall(function() rs:FireServer(table.unpack(args, 1, 6)) end)
+	if not skipSound then fireSwing() end
+	-- Preserve every species/update-specific field from the player's latest REAL attack packet and replace only
+	-- the target/attacker bone data. This fixes Always Damage/Silent Aim silently failing when the server adds an
+	-- extra attack argument or a dinosaur uses a different attacker-bone name.
+	local tpl=__gg.MH_attackTemplate
+	local args={n=6}
+	if type(tpl)=="table" and tpl.n then args.n=math.max(6,tpl.n); for i=1,tpl.n do args[i]=tpl[i] end end
+	args[1]=myId; args[2]="Attack"
+	local targetInfo={}; if type(args[4])=="table" then for k,v in pairs(args[4]) do targetInfo[k]=v end end
+	targetInfo.Group=group; targetInfo.Name=boneName; targetInfo.Position=vec(targetPos); args[4]=targetInfo
+	local attackerInfo={}; if type(args[5])=="table" then for k,v in pairs(args[5]) do attackerInfo[k]=v end end
+	attackerInfo.Group=attackerInfo.Group or "Head"; attackerInfo.Name=attackerInfo.Name or (myJaw and myJaw.Name) or "Head"; attackerInfo.Position=vec(jawPos); args[5]=attackerInfo
+	args[6]=group
+	return pcall(function() rs:FireServer(table.unpack(args, 1, args.n)) end)
 end
 _G.MH_attack = fireAttack   -- exposed so the Auto Play Bot's PvP combat can land real bone-targeted bites
 
@@ -1943,14 +2046,11 @@ local function getHitbox(model)
 	-- Priority the user confirmed: Hitbox (lowercase b) FIRST, then HitBox (capital B). NOTE: Hitbox may be a
 	-- BasePart OR a CONTAINER (per the screenshot: model.Hitbox.Head.Head is a Part). Handle both — if it is a
 	-- part use it, if it is a folder/model descend to a real BasePart inside (prefer Head, then any part).
-	for _,n in ipairs({"Hitbox","HitBox","HitboxPart","Hit"}) do
-		local hb=model:FindFirstChild(n)
-		if hb then
-			if hb:IsA("BasePart") then return hb end
-			-- container: prefer a Head part, else the first BasePart anywhere inside
-			local head=hb:FindFirstChild("Head", true); if head and head:IsA("BasePart") then return head end
-			local any=hb:FindFirstChildWhichIsA("BasePart", true); if any then return any end
-		end
+	local hb=findHitboxContainer(model)
+	if hb then
+		if hb:IsA("BasePart") then return hb end
+		local head=hb:FindFirstChild("Head", true); if head and head:IsA("BasePart") then return head end
+		local any=hb:FindFirstChildWhichIsA("BasePart", true); if any then return any end
 	end
 	-- GAME'S OWN HITBOX BUILDER (from the decompiled Common.CreateHitbox): when a dino has no Hitbox child yet,
 	-- ask the game to build the EXACT hitbox model it hits against itself (ragdoll-rig clone, grouped parts, or a
@@ -1961,19 +2061,14 @@ local function getHitbox(model)
 			__gg.MH_mkHB = (chb and require(chb)) or false
 		end
 		if type(__gg.MH_mkHB)=="function" then
-			__gg.MH_hbMade = __gg.MH_hbMade or setmetatable({}, {__mode="k"})
-			if not __gg.MH_hbMade[model] then
-				__gg.MH_hbMade[model] = true
-				__gg.MH_mkHB(model)
-				local hb=model:FindFirstChild("Hitbox")
-				if hb then
-					local any=(hb:IsA("BasePart") and hb) or hb:FindFirstChildWhichIsA("BasePart", true)
-					if any then return end   -- found next call via the loop above; fall through this pass
-				end
-			end
+			-- Do NOT mark the model permanently complete before its streamed rig exists. The old one-shot flag meant
+			-- a dinosaur that joined after execution was attempted once while empty and could never get a hitbox.
+			__gg.MH_hbBuildAt = __gg.MH_hbBuildAt or setmetatable({}, {__mode="k"})
+			local now=tick(); local last=__gg.MH_hbBuildAt[model]
+			if not last or now-last>0.75 then __gg.MH_hbBuildAt[model]=now; __gg.MH_mkHB(model) end
 		end
 	end)
-	do local hb=model:FindFirstChild("Hitbox")
+	do local hb=findHitboxContainer(model)
 		if hb then
 			local any=(hb:IsA("BasePart") and hb) or hb:FindFirstChildWhichIsA("BasePart", true)
 			if any then return any end
@@ -1987,12 +2082,21 @@ end
 -- you fight and eat) live under workspace.CharacterIgnore.LeftCharacters — NOT only workspace.Characters. Combat,
 -- targeting, the bot and the protectors all missed them before. This one list is the fix. Exposed globally.
 local function charModels()
-	local out={}
-	local function add(f) if f then for _,m in ipairs(f:GetChildren()) do if m:IsA("Model") then out[#out+1]=m end end end end
-	add(WS:FindFirstChild("Characters"))
+	local out,seen={},{}
+	local function put(m) if m and m:IsA("Model") and not seen[m] then seen[m]=true; out[#out+1]=m end end
+	local function add(f, deep)
+		if not f then return end
+		for _,m in ipairs(f:GetChildren()) do if m:IsA("Model") then put(m) end end
+		if deep then local scanned=0; for _,m in ipairs(f:GetDescendants()) do
+			scanned+=1; if scanned>1800 then break end
+			if m:IsA("Model") and (m:FindFirstChild("MeshModel") or m:FindFirstChild("TurningAnimation") or m:FindFirstChildOfClass("Humanoid") or m:FindFirstChild("Hitbox") or m:FindFirstChild("HitBox")) then put(m) end
+		end end
+	end
+	add(WS:FindFirstChild("Characters"), true)
 	local ci=WS:FindFirstChild("CharacterIgnore")
-	if ci then add(ci:FindFirstChild("LeftCharacters")); add(ci) end
-	for _,nm in ipairs({"Sandbox","Dinos","Creatures","NPCs","Entities","Mobs","Animals","DynamicCharacters"}) do add(WS:FindFirstChild(nm)) end
+	if ci then add(ci:FindFirstChild("LeftCharacters"), true); add(ci, false) end
+	for _,nm in ipairs({"Sandbox","Dinos","Creatures","NPCs","Entities","Mobs","Animals","DynamicCharacters"}) do add(WS:FindFirstChild(nm), true) end
+	for _,pl in ipairs(Players:GetPlayers()) do if pl~=LP then put(pl.Character) end end
 	return out
 end
 _G.MH_charModels = charModels
@@ -2036,34 +2140,16 @@ local function partPos(p)
 	local ok2,c=pcall(function() return p.WorldCFrame end); if ok2 and typeof(c)=="CFrame" then return c.Position end
 	return nil
 end
--- Targets scan ONLY workspace.Characters (every entity, incl. players, lives there) + getHitbox — NOT
--- WS:GetDescendants() (that full-workspace walk every call was the Silent Aim / aim lag).
+-- Use the shared streaming-aware character list so Silent Aim can acquire dinosaurs that joined after execution
+-- and species parented under CharacterIgnore.LeftCharacters or sandbox containers.
 local function nearestTarget(range, anyCreature)
 	local me = hrp(); if not me then return nil end
 	local mine = getMyModel()
 	local best, bestRoot, bd = nil, nil, range or 1e9
-	local chars = WS:FindFirstChild("Characters")
-	if chars then
-		for _,m in ipairs(chars:GetChildren()) do
-			if m:IsA("Model") and m~=mine then
-				local h = m:FindFirstChildOfClass("Humanoid")
-				if (not h) or h.Health>0 then
-					local r = getHitbox(m) or rootOf(m)
-					if r then local d = dist(me.Position, r.Position); if d<bd then best,bestRoot,bd = m, r, d end end
-				end
-			end
-		end
-	end
-	-- fallback to Players if Characters didn't yield (some maps parent elsewhere)
-	if not best then
-		for _,pl in ipairs(Players:GetPlayers()) do
-			if pl~=LP and pl.Character then
-				local r = getHitbox(pl.Character) or rootOf(pl.Character)
-				local h = pl.Character:FindFirstChildOfClass("Humanoid")
-				if r and ((not h) or h.Health>0) then local d = dist(me.Position, r.Position); if d<bd then best,bestRoot,bd = pl.Character, r, d end end
-			end
-		end
-	end
+	for _,m in ipairs(charModels()) do if m~=mine then
+		local h=m:FindFirstChildOfClass("Humanoid")
+		if (not h) or h.Health>0 then local r=getHitbox(m) or rootOf(m); if r then local d=dist(me.Position,r.Position); if d<bd then best,bestRoot,bd=m,r,d end end end
+	end end
 	-- SANDBOX fallback: in Sandbox/test places dinos aren't under workspace.Characters — they sit in other folders
 	-- or are nil-parented. Scan extra containers, then getnilinstances() for Models with a Hitbox. (Only runs when
 	-- nothing was found above, so normal play never pays for the nil-instance walk.)
@@ -2073,9 +2159,6 @@ local function nearestTarget(range, anyCreature)
 			local h = m:FindFirstChildOfClass("Humanoid"); if h and h.Health<=0 then return end
 			local r = getHitbox(m) or rootOf(m)
 			if r then local d=dist(me.Position, r.Position); if d<bd then best,bestRoot,bd = m, r, d end end
-		end
-		for _,nm in ipairs({"Sandbox","Dinos","Creatures","NPCs","Entities","Mobs","Animals","DynamicCharacters","CharacterIgnore"}) do
-			local f=WS:FindFirstChild(nm); if f then for _,m in ipairs(f:GetChildren()) do consider(m) end end
 		end
 		if not best and typeof(getnilinstances)=="function" then
 			pcall(function() local c=0; for _,v in next, getnilinstances() do c+=1; if c>4000 then break end
@@ -2533,7 +2616,7 @@ do local p=Pages["Survival"]
 	mkToggle(pr,"Walk on Water","WalkWater",2)
 	mkToggle(pr,"Auto Clean","AutoClean",3)
 	mkToggle(pr,"Anti Head","AntiFracture",4)
-	mkSlider(pr,"Damage Reduce %","HeadDmgReduce",0,95,4,5)
+	mkSlider(pr,"Damage Reduce %","HeadDmgReduce",0,100,4,5)
 	mkToggle(pr,"Anti Bleed","AntiBleed",5)
 	mkToggle(pr,"Anti Fall","AntiFall",6)
 	mkToggle(pr,"No Sleep Screen","NoSleep",7)
@@ -2554,7 +2637,7 @@ do local p=Pages["Survival"]
 	-- (spawn in as that dino first so it's captured). Pick a slot, then Restore or Delete it. Per-account (UserId).
 	local slotsDD = mkDropdown(pg, "Saved Slots", function()
 		local out={}
-		for n=1,40 do if isfile and isfile(slotFile(n)) then local sp,st="Dino",nil; pcall(function() local r=HttpService:JSONDecode(readfile(slotFile(n))); if r and r.data then sp=r.data.Species or "Dino"; st=r.data.Stage end end); out[#out+1]=n..": "..sp..(st and (" - "..tostring(st)) or "") end end
+		for n=1,40 do if isfile and (isfile(slotFile(n)) or isfile(slotFile(n)..".bak")) then local sp,st="Dino",nil; local r=SLOTS.read(n); if r and r.data then sp=r.data.Species or "Dino"; st=r.data.Stage end; out[#out+1]=n..": "..sp..(st and (" - "..tostring(st)) or "") end end
 		if #out==0 then out[1]="(none)" end
 		return out
 	end, function() return CFG.ProgSlotSel or "(none)" end, function(opt) CFG.ProgSlotSel=opt; saveCfg() end, 2)
@@ -2564,22 +2647,26 @@ do local p=Pages["Survival"]
 		local r=progSerde("rec",pp); if not r then notify("Progress","Couldn't save that."); return end
 		-- label with the current growth stage if we can detect it
 		pcall(function() local rr=csReplica(); if rr and rr.Data then r.data.Stage = rr.Data.GrowthStage or rr.Data.Stage or (rr.Data.Growth and rr.Data.Growth.Stage) end if not r.data.Stage then local mm=getMyModel(); if mm then r.data.Stage = mm:GetAttribute("Stage") or mm:GetAttribute("GrowthStage") end end end)
-		local n=1; while isfile and isfile(slotFile(n)) do n=n+1 end
-		pcall(function() if writefile then writefile(slotFile(n), HttpService:JSONEncode(r)) end end)
+		local n=1; while n<=40 and isfile and (isfile(slotFile(n)) or isfile(slotFile(n)..".bak")) do n=n+1 end
+		if n>40 then notify("Progress","All 40 slots are full. Delete one first."); return end
+		local ok,why=SLOTS.write(n,r); if not ok then notify("Progress","Save failed: "..tostring(why)); return end
 		if slotsDD and slotsDD.refresh then slotsDD.refresh() end
 		notify("Progress","Saved slot "..n.." — "..((r.data and r.data.Species) or "dino")..(r.data.Stage and (" "..tostring(r.data.Stage)) or ""))
 	end,3)
 	mkBtn(pg,"Restore Selected",function()
 		local n=tonumber(tostring(CFG.ProgSlotSel or ""):match("^(%d+)"))
-		if not (n and isfile and isfile(slotFile(n))) then notify("Progress","Pick a saved slot first."); return end
-		local rec; pcall(function() rec=HttpService:JSONDecode(readfile(slotFile(n))) end)
-		local pld=progSerde("pay",rec); if pld then __gg.MH_restore=pld; progressRestore() else notify("Progress","That slot is corrupted.") end
+		if not n then notify("Progress","Pick a saved slot first."); return end
+		local rec,backupOrWhy=SLOTS.read(n)
+		if not rec then notify("Progress","Slot rejected: "..tostring(backupOrWhy)); return end
+		local pld=progSerde("pay",rec); if pld then __gg.MH_restore=pld; if backupOrWhy==true then notify("Progress","Main slot was damaged; using its verified backup.") end; progressRestore() else notify("Progress","That slot is corrupted.") end
 	end,4)
 	mkBtn(pg,"Delete Selected",function()
 		local n=tonumber(tostring(CFG.ProgSlotSel or ""):match("^(%d+)"))
-		if not (n and isfile and isfile(slotFile(n))) then notify("Progress","Pick a saved slot first."); return end
+		if not (n and isfile and (isfile(slotFile(n)) or isfile(slotFile(n)..".bak"))) then notify("Progress","Pick a saved slot first."); return end
+		if __gg.MH_deleteArm~=n or tick()-(__gg.MH_deleteArmT or 0)>4 then __gg.MH_deleteArm=n; __gg.MH_deleteArmT=tick(); notify("Progress","Click Delete Selected again within 4 seconds to confirm."); return end
 		local f=slotFile(n)
-		if delfile then pcall(function() delfile(f) end) elseif writefile then pcall(function() writefile(f,"") end) end
+		if delfile then pcall(function() if isfile(f) then delfile(f) end; if isfile(f..".bak") then delfile(f..".bak") end; if isfile(f..".tmp") then delfile(f..".tmp") end end) elseif writefile then pcall(function() writefile(f,"") end) end
+		__gg.MH_deleteArm=nil; __gg.MH_deleteArmT=nil
 		CFG.ProgSlotSel="(none)"
 		if slotsDD and slotsDD.refresh then slotsDD.refresh() end
 		notify("Progress","Deleted slot "..n..".")
@@ -3142,20 +3229,18 @@ conn(RunService.RenderStepped:Connect(function()
 		local function zero(keys) for _,k in ipairs(keys) do if stats[k]~=nil then if type(stats[k])=="boolean" then stats[k]=false else stats[k]=0 end end end end
 		if stats then
 			if CFG.InfStam   then pin({"Stamina","Stam","Energy","Endurance"}); zero({"Exhaustion","Fatigue","Tired","Exhausted"}) end
-			-- FOOD = 20% FLOOR ("can't eat / E blocked" fix): forcing the bar high made the game think you were
-			-- full, which hides the eat prompt and blocks the E key. A 20% floor means you can never starve, but
-			-- the bar stays LOW enough that manual eating up to 100% always works. Growth comes from the Bite
-			-- spam, not the bar level. Raise-only, and hands-off while you hold E (+3s after).
+			-- FOOD = REAL MAX while INF Food is enabled. Manual E gets a short hands-off window; otherwise the
+			-- server/client stat is topped immediately without requiring a previously captured food id.
 			local eNow=false; pcall(function() eNow=UIS:IsKeyDown(Enum.KeyCode.E) end)
 			if eNow then __gg.MH_lastE=tick() end
 			-- 3s GRACE after you let go of E: your manual eat's result stays on screen / registers server-side
 			-- before any forcing resumes — this is the "E sometimes works" fix (we were overwriting it instantly).
-			if CFG.InfFood and not eNow and tick()-(__gg.MH_lastE or 0)>5 then for _,k in ipairs({"Food","Hunger","Nutrition","Fullness","Satiation"}) do
+			if CFG.InfFood and not eNow and tick()-(__gg.MH_lastE or 0)>1.25 then for _,k in ipairs({"Food","Hunger","Nutrition","Fullness","Satiation"}) do
 				if stats[k]~=nil then
 					local cur=tonumber(stats[k])
 					if cur then __gg.MH_max=__gg.MH_max or {}; if not __gg.MH_max[k] or cur>__gg.MH_max[k] then __gg.MH_max[k]=cur end end
 					local target=(maxs and maxs[k]) or (__gg.MH_max and __gg.MH_max[k])
-					if target and cur and cur < target*0.2 then stats[k]=target*0.2 end   -- only pin to 20% so you can still eat manually
+					if target and cur and cur < target then stats[k]=target end
 				end
 			end end
 			if CFG.InfOxygen then pin({"Oxygen","Air","Breath","O2","Lung"}) end
@@ -3213,7 +3298,7 @@ end))
 --       higher your Activity / Comfort / nutrition are, and buffered stats don't drain at all. We max those on the
 --       real Wellbeing replica and keep their buffer timers open, so the drain multiplier bottoms out — the bar
 --       stops falling in the first place, which is why exhaustion never triggers.
-local STAM_KEYS = {"Stamina","Stam","Energy","Endurance","Vigor","SP","Fatigue","Exertion"}
+local STAM_KEYS = {"Stamina","Stam","Energy","Endurance","Vigor","SP"}
 task.spawn(function() while RUNNING do
 	if CFG.InfStam and alive() then
 		pcall(function()
@@ -3367,15 +3452,8 @@ end
 conn(RunService.Stepped:Connect(stamPinNow))
 conn(RunService.Heartbeat:Connect(stamPinNow))
 
--- INF FOOD — FLOOR KEEPER (keep the bar UP whether you eat or not, WITHOUT hiding the eat prompt): the food bar
--- is only topped up when it falls BELOW ~60% of max, and only raised to ~80% — never to 100%. So:
---   · you never starve / go low (the bar always stays high), and
---   · because it is never pinned to full, the eat ProximityPrompt keeps showing, so you can still hold E to eat
---     for growth. Eating pushes you toward 100%; this keeper never pulls you back down (it only fires when low).
--- Reports through the SAME ReplicaSignal SetProperty the game uses, plus a client write so the HUD matches.
--- ═══ INF FOOD — SEVEN STRONG (20% floor + Bite spam) ═══ Keeps the food bar off the floor and re-fires your captured
--- Bite remotes so the server keeps registering you eating (= growth). Backs off only while YOU hold E, so a manual
--- hold-to-eat still works. Bite fires are capped per pass so this stays strong WITHOUT re-introducing the lag.
+-- INF FOOD — immediate real-max stat report plus automatic diet-source discovery. Captured Bite packets are still
+-- replayed for server growth, but the food bar itself no longer depends on capturing a food id first.
 task.spawn(function() while RUNNING do
 	if CFG.InfFood and alive() then
 		local eHeld=false; pcall(function() eHeld=UIS:IsKeyDown(Enum.KeyCode.E) end)
@@ -3392,10 +3470,10 @@ task.spawn(function() while RUNNING do
 					if foodKey then
 						mx = (maxs and (maxs[foodKey] or maxs.Food)) or (__gg.MH_maxFood) or 100
 						if cur and cur > 0 then __gg.MH_maxFood = math.max(__gg.MH_maxFood or 0, cur, mx); mx = __gg.MH_maxFood end
-						if cur and cur < mx*0.2 and tick()-(__gg.MH_foodFloorT or 0)>0.75 then   -- throttle server reports; local HUD stays responsive below
+						if cur and cur < mx*0.995 and tick()-(__gg.MH_foodFloorT or 0)>0.35 then
 							__gg.MH_foodFloorT=tick()
-							pcall(function() replicaFire("SetProperty", foodKey, mx*0.2) end)
-							pcall(function() stats[foodKey] = mx*0.2 end)
+							pcall(function() csFireProp(foodKey, mx) end)
+							pcall(function() stats[foodKey] = mx end)
 						end
 					end
 				end
@@ -3463,30 +3541,8 @@ conn(UIS.InputBegan:Connect(function(input, gp)
 	end) end)
 end))
 
--- BITE-REMOTE WATCHER ("make sure INF Food is catching the Bite REMOTE, not the animation"): growth comes ONLY
--- from replaying the game's real Bite RemoteEvent call, captured the first time a bite fires. This watcher tells
--- you plainly which state you're in: still waiting for a capture (and how to force one — eat anything once), or
--- captured and remote-driven. No animation is ever involved — animations don't grow you and we never play one.
-task.spawn(function()
-	local told=false
-	local waitedT=nil
-	while RUNNING do
-		if CFG.InfFood and alive() then
-			-- (VAGUE on purpose — the toasts never say HOW it works, so nothing here can get the method patched.)
-			if __gg.MH_lastEatCall then
-				if not told then told=true; pcall(function() notify("INF Food","Active.") end) end
-				waitedT=nil
-			else
-				waitedT = waitedT or tick()
-				if tick()-waitedT > 20 then
-					waitedT = tick()
-					pcall(function() notify("INF Food","Eat any food once (hold E) to activate.") end)
-				end
-			end
-		else waitedT=nil end
-		task.wait(1)
-	end
-end)
+-- No "eat once" requirement/toast: the direct food-stat controller fills immediately, while the source scanner
+-- below independently discovers a diet-correct plant/meat prompt and captures a genuine Bite packet when possible.
 -- WELLBEING PIN (the "INF Stam breaks with INF Food" fix): PE hides a stamina-drain MULTIPLIER behind the
 -- Wellbeing stats — WellbeingData says "High activity makes your stamina drain less" and "Comfort goes down… eating
 -- bad food". When those drop (e.g. from eating the wrong diet) stamina drains faster than any pin can refill, so
@@ -3636,6 +3692,7 @@ end
 -- 1k head hit nets ~100. This is what actually stops you dying to head hits / bleed / breaks (not just the blur).
 -- Tied to Anti Head (AntiFracture) OR Bone Protection so either toggle gives real damage reduction.
 conn(RunService.Heartbeat:Connect(function()
+	if true then return end -- superseded by the single protection controller below
 	if not ((CFG.AntiFracture or CFG.BoneProtect) and alive()) then __gg.MH_lastHP=nil; return end
 	pcall(function()
 		local h=hum(); local stats,maxs=csStats()
@@ -3673,6 +3730,7 @@ end))
 -- Incoming damage is dealt SERVER-side (the attacker's client reports the bite; the server drops your HP), so we
 -- can't refuse it. Instead: the instant HP drops, heal straight back to max, block the Dead state, and report full.
 conn(RunService.Heartbeat:Connect(function()
+	if true then return end -- superseded by the single protection controller below
 	if not ((CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso) and alive()) then __gg.MH_lastHP=nil; return end
 	pcall(function()
 		local h=hum(); local stats,maxs=csStats()
@@ -3757,7 +3815,7 @@ do local bpSaved={}
 	end
 	task.spawn(function() while RUNNING do task.wait(0.15)
 		local m=getMyModel()
-		if CFG.BoneProtect and alive() and m then
+		if false and CFG.BoneProtect and alive() and m then -- local hitbox shrinking cannot protect against another client's server hit and broke outgoing attacks
 			for _,cn in ipairs({"Hitbox","HitBox","HitboxPart","Hit"}) do local hb=m:FindFirstChild(cn)
 				if hb then local parts = hb:IsA("BasePart") and {hb} or hb:GetDescendants()
 					for _,d in ipairs(parts) do if d:IsA("BasePart") and protMatch(d.Name) then
@@ -3772,6 +3830,68 @@ do local bpSaved={}
 			for d,v in pairs(bpSaved) do pcall(function() if d and d.Parent then d.Size=v[1]; d.CanQuery=v[2]; d.CanTouch=v[3]; d.Massless=v[4] end end); bpSaved[d]=nil end
 		end
 	end end)
+end
+-- ═══ UNIFIED DAMAGE / BLEED / BONE GUARD ═══ The previous build ran two HP healers through the same MH_lastHP
+-- variable, so the first loop consumed the damage event before the stronger loop saw it. One controller now owns
+-- damage restoration, blood restoration, injury cleanup and server-side clear reports. It never edits our hitbox,
+-- preserving the jaw/head parts outgoing attacks need.
+do
+	local statusProps={
+		{"bleed","Bleed"},{"bleed","Bleeding"},{"bleed","BleedRate"},{"bleed","BleedDamage"},{"bleed","BloodLoss"},{"bleed","Hemorrhage"},{"bleed","Wound"},{"bleed","Wounds"},
+		{"head","HeadDamage"},{"head","HeadInjury"},{"head","HeadFracture"},{"head","SkullFracture"},{"head","Concussion"},{"head","JawBreak"},
+		{"bone","Fracture"},{"bone","BrokenBone"},{"bone","BoneDamage"},{"bone","LimbDamage"},{"bone","Trauma"}
+	}
+	local cursor,lastSweep,deadHeld=0,0,false
+	local function enabled(kind)
+		if kind=="bleed" then return CFG.AntiBleed end
+		if kind=="head" then return CFG.AntiFracture or CFG.AntiBreakHead or (CFG.BoneProtect and (CFG.ProtectBone=="All" or CFG.ProtectBone=="Head")) end
+		return CFG.BoneProtect or CFG.AntiFracture or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso
+	end
+	local function fullHealth()
+		local h=hum(); local stats,maxs=csStats(); local hp,mx
+		if stats then for _,k in ipairs({"Health","HP","Hp","health","hp","Hitpoints","HitPoints"}) do local v=tonumber(stats[k]); if v then hp=hp and math.min(hp,v) or v end end end
+		if maxs then for _,k in ipairs({"Health","HP","MaxHealth","MaxHP","Hitpoints","HitPoints"}) do local v=tonumber(maxs[k]); if v and v>0 then mx=math.max(mx or 0,v) end end end
+		if h then if h.Health>=0 then hp=hp and math.min(hp,h.Health) or h.Health end; if h.MaxHealth>0 then mx=math.max(mx or 0,h.MaxHealth) end end
+		if CharacterState then for _,k in ipairs({"Health","HP"}) do local v=tonumber(CharacterState[k]); if v then hp=hp and math.min(hp,v) or v end end; for _,k in ipairs({"MaxHealth","MaxHP"}) do local v=tonumber(CharacterState[k]); if v and v>0 then mx=math.max(mx or 0,v) end end end
+		__gg.MH_guardMax=math.max(__gg.MH_guardMax or 0,mx or 0,hp or 0)
+		mx=(mx and mx>0 and mx) or __gg.MH_guardMax
+		if not (hp and mx and mx>0 and mx<1e8) or hp>=mx-0.01 then return end
+		if stats then for _,k in ipairs({"Health","HP","Hp","health","hp","Hitpoints","HitPoints"}) do if stats[k]~=nil then stats[k]=mx end end end
+		if h then pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Dead,false); h.Health=mx end) end
+		if CharacterState then for _,k in ipairs({"Health","HP"}) do if type(CharacterState[k])=="number" then CharacterState[k]=mx end end end
+		pcall(function() local m=getMyModel(); if m then for _,k in ipairs({"Health","HP"}) do if m:GetAttribute(k)~=nil then m:SetAttribute(k,mx) end end end end)
+		pcall(function() setReplicaProp("Health",mx) end)
+	end
+	conn(RunService.Heartbeat:Connect(function()
+		local any=CFG.AntiBleed or CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso
+		if not (any and alive()) then
+			__gg.MH_guardMax=nil
+			if deadHeld then pcall(function() local h=hum(); if h then h:SetStateEnabled(Enum.HumanoidStateType.Dead,true) end end); deadHeld=false end
+			return
+		end
+		pcall(function()
+			fullHealth()
+			if CFG.AntiBleed then
+				local stats,maxs=csStats()
+				if stats then for _,k in ipairs({"Bleed","Bleeding","BleedRate","BleedDamage","BloodLoss","Hemorrhage","Wound","Wounds"}) do if stats[k]~=nil then stats[k]=(type(stats[k])=="boolean") and false or 0 end end
+					for _,k in ipairs({"Blood","BloodLevel","BloodVolume"}) do if type(stats[k])=="number" then
+						local stateMax=CharacterState and (CharacterState["Max"..k] or (CharacterState.MaxStats and CharacterState.MaxStats[k]))
+						local m=(maxs and maxs[k]) or (type(stateMax)=="number" and stateMax) or math.max(__gg.MH_bloodMax or 0,stats[k])
+						__gg.MH_bloodMax=math.max(__gg.MH_bloodMax or 0,m); stats[k]=__gg.MH_bloodMax
+					end end
+				end
+			end
+			if tick()-lastSweep>0.08 then
+				lastSweep=tick()
+				local r=csReplica(); if r and r.Data then antiInjurySweep(r.Data,"",0) end
+				if CharacterState then for _,s in ipairs({"Stats","State","Data","Wounds","Bones","BodyParts","Status"}) do local t=CharacterState[s]; if type(t)=="table" then antiInjurySweep(t,s:lower()..".",0) end end end
+				-- Rotate exact server property/action clears instead of blasting every guessed key every frame.
+				for _=1,#statusProps do cursor=(cursor%#statusProps)+1; local e=statusProps[cursor]; if enabled(e[1]) then csFireProp(e[2],0); replicaFire("SetAction",e[2],false); break end end
+			end
+			if CharacterState and type(CharacterState.Fractures)=="table" and (CFG.BoneProtect or CFG.AntiFracture) then for k in pairs(CharacterState.Fractures) do CharacterState.Fractures[k]=false end end
+			local h=hum(); if h then h:SetStateEnabled(Enum.HumanoidStateType.Dead,false); deadHeld=true; if h.PlatformStand then h.PlatformStand=false end end
+		end)
+	end))
 end
 FLY={}  -- bv/bg/conn (one table instead of 3 locals — Luau 200-local-cap mgmt)
 MB={up=false, down=false}  -- mobile fly up/down state, set by the on-screen touch buttons
@@ -3963,7 +4083,7 @@ end end)
 -- the food's ProximityPrompt + touch + hold E + Bite/Eat packets for nearby food while you stand still, plus
 -- the client pin. The food scan is THROTTLED + capped (so it can't lag you like a per-frame workspace scan would).
 local function nearbyFood(range)
-	if tick()-FARM.food.t < 3 then return FARM.food.list end  -- 3s cache (was 1.5) — lighter
+	if tick()-FARM.food.t < 3 and (FARM.food.range or 0)>=range then return FARM.food.list end
 	local me=hrp(); local out={}; local seen={}
 	if me then
 		local cnt=0
@@ -3994,7 +4114,7 @@ local function nearbyFood(range)
 		end
 		table.sort(out,function(a,b) return a[3]<b[3] end)
 	end
-	FARM.food={t=tick(), list=out}
+	FARM.food={t=tick(), list=out, range=range}
 	return out
 end
 -- CARNIVORE MEAT TP: herbivores keep their bar up just eating any plant food-id (plants are everywhere), but a
@@ -4542,24 +4662,27 @@ end
 task.spawn(function() while RUNNING do
 	-- ONLY runs UNTIL you have bitten once. After that, __gg.MH_lastEatCall is set and the pure Bite-spam loop
 	-- below takes over — so INF Food stops firing prompts entirely, which is what was interfering with your manual
-	-- E-hold. This block exists only to get that FIRST real bite (to capture the Bite remote) if you never eat yourself.
+	-- E-hold. This block discovers and probes a correct food source automatically until a genuine Bite is captured.
 	if CFG.InfFood and alive() and not __gg.MH_lastEatCall then
 		-- Get the first correct-diet bite so we can capture the Bite remote (herbivore→plants, carnivore→meat).
 		local eHeld = false; pcall(function() eHeld = UIS:IsKeyDown(Enum.KeyCode.E) end)
 		if not eHeld then
-			fakeEat()   -- replay your last captured bite (fills bar); harmless, presses no keys
-			local me=hrp(); local list=nearbyFood(24)   -- only prompts the game could legitimately activate nearby
+			-- Search the whole streamed map, not only a 24-stud bubble. The direct stat pin already fills the bar;
+			-- this background probe obtains a genuine diet-correct Bite packet for server growth without asking the
+			-- player to find/eat something first.
+			local me=hrp(); local list=nearbyFood(math.huge)
 			local edible = _G.MH_edible                  -- diet gate (set once the diet helpers load); nil-safe
-			if me then for _,fd in ipairs(list) do
+			if me and edible and #list>0 then for step=1,#list do
+				__gg.MH_foodProbeCursor=((__gg.MH_foodProbeCursor or 0)%#list)+1
+				local fd=list[__gg.MH_foodProbeCursor]
 				local m,r,prompt=fd[1],fd[2],fd.prompt
 				if not prompt and m then prompt=m:FindFirstChildWhichIsA("ProximityPrompt",true) end
 				-- DIET FILTER: skip anything your dino should not eat (this is what keeps Comfort — and INF Stam — healthy)
-				local dietOk = true
-				if edible and m then local okc,res=pcall(function() return edible(m, prompt) end); if okc then dietOk=(res==true) end end
+				local dietOk = false
+				if m then local okc,res=pcall(function() return edible(m, prompt) end); if okc then dietOk=(res==true) end end
 				if dietOk and prompt and r and r.Parent then
-					-- nearest DIET-CORRECT food: eat it, then stop for this pass. NO "eat once then remember the id"
-					-- cooldown (removed per request) — it just fires the correct food every pass so the bar keeps
-					-- topping up. RE-CHECK the hold RIGHT before firing (fakeEat above yields ~0.36s); honor a rebound key.
+					-- Try one diet-correct source per pass, rotating after rejection so a stale/streamed prompt cannot
+					-- starve every valid source behind it.
 					local stillHold=false
 					pcall(function() stillHold = UIS:IsKeyDown(Enum.KeyCode.E)
 						or (prompt.KeyboardKeyCode and prompt.KeyboardKeyCode~=Enum.KeyCode.Unknown and UIS:IsKeyDown(prompt.KeyboardKeyCode)) end)
@@ -4569,7 +4692,7 @@ task.spawn(function() while RUNNING do
 						if fireprox then pcall(function() fireprox(prompt) end) end   -- remote eat: fire from anywhere, no key press
 						pcall(function() prompt.HoldDuration=oh; prompt.MaxActivationDistance=od; prompt.RequiresLineOfSight=ol end)   -- restore so your hold-to-eat still works
 					end
-					break  -- one diet-correct eat per pass (no lag / no anti-cheat spam)
+					break
 				end
 			end end
 		end
@@ -4669,12 +4792,9 @@ task.spawn(function() while RUNNING do
 				if #targs>=8 or not (m and m:IsA("Model") and m~=mine) or seen[m] then return end
 				seen[m]=true
 				local h=m:FindFirstChildOfClass("Humanoid"); if h and h.Health<=0 then return end
-				local hb=getHitbox(m); if hb and dist(me.Position,hb.Position)<=CFG.DamageRange then targs[#targs+1]=m end
+				local hb=getHitbox(m); if hb and dist(me.Position,hb.Position)<=(tonumber(CFG.DamageRange) or 120) then targs[#targs+1]=m end
 			end
-			local chars=WS:FindFirstChild("Characters"); if chars then for _,m in ipairs(chars:GetChildren()) do consider(m) end end
-			for _,nm in ipairs({"Sandbox","Dinos","Creatures","NPCs","Entities","Mobs","Animals","DynamicCharacters"}) do
-				if #targs>=8 then break end local f=WS:FindFirstChild(nm); if f then for _,m in ipairs(f:GetChildren()) do consider(m) end end
-			end
+			for _,m in ipairs(charModels()) do if #targs>=8 then break end consider(m) end
 			if #targs==0 and typeof(getnilinstances)=="function" then
 				pcall(function() local c=0; for _,v in next, getnilinstances() do c+=1; if c>4000 or #targs>=8 then break end
 					if typeof(v)=="Instance" and v:IsA("Model") and (v:FindFirstChild("Hitbox") or v:FindFirstChild("HitBox")) then consider(v) end
@@ -4683,7 +4803,7 @@ task.spawn(function() while RUNNING do
 			-- ONLY swing + fire when there's actually something in range (this is the "stop attacking nothing" fix)
 			if #targs>0 then
 				pcall(clickMouse)
-				local sr=getSoundRemote(); if sr then pcall(function() sr:FireServer("PVP","Attacks/Primary",false,nil,1) end) end
+				fireSwing()
 				RunService.Heartbeat:Wait()
 				for _,m in ipairs(targs) do fireAttack(m, true) end
 			end
@@ -4703,7 +4823,7 @@ do local lastClickDmg=0; local mouse=LP:GetMouse()
 		while cur and cur~=WS do
 			if cur:IsA("Model") and cur~=mine then
 				local h=cur:FindFirstChildOfClass("Humanoid")
-				if h or cur:FindFirstChild("Hitbox") or cur:FindFirstChild("HitBox") or Players:GetPlayerFromCharacter(cur) then return cur end
+				if h or findHitboxContainer(cur) or Players:GetPlayerFromCharacter(cur) then return cur end
 			end
 			cur=cur.Parent
 		end
@@ -4721,7 +4841,7 @@ conn(UIS.InputBegan:Connect(function(input, gp)
 	local clicked=mouse.Target
 	local clickedModel=clicked and __gg.MH_combatModelFromPart(clicked)
 	task.spawn(function()
-		local sr=getSoundRemote(); if sr then pcall(function() sr:FireServer("PVP","Attacks/Primary",false,nil,1) end) end
+		fireSwing()
 		RunService.Heartbeat:Wait()                                  -- let the attack window open before the hit reports
 		local mine=getMyModel(); local n=0; local seen={}
 		-- clicked enemy FIRST, aiming the exact bone you clicked
@@ -4833,8 +4953,7 @@ local function restorePart(p) local o=hbTouched[p]; if o and p and p.Parent then
 local function expandModel(m)
 	if not m then return end
 	local grewAny=false
-	for _,n in ipairs({"Hitbox","HitBox","HitboxPart","Hit"}) do
-		local inst=m:FindFirstChild(n)
+	do local inst=findHitboxContainer(m)
 		if inst then
 			if inst:IsA("BasePart") then
 				if boneMatch(inst.Name) or CFG.HitboxBone=="All" or CFG.HitboxBone=="Body" then expandPart(inst); grewAny=true
@@ -4965,7 +5084,7 @@ conn(RunService.RenderStepped:Connect(function()
 end))
 -- SILENT AIM: silently fire the captured Attack remote at the locked target (no camera movement). This is what
 -- makes Silent Aim genuinely "silent" — your view never snaps, but the nearest dino takes hits.
-task.spawn(function() while RUNNING do if CFG.SilentAim and alive() then local t=aimTarget or nearestTarget(CFG.FarmPlayerRange*3, true); if t then local sr=getSoundRemote(); if sr then pcall(function() sr:FireServer("PVP","Attacks/Primary",false,nil,1) end) end; fireAttack(t, true) end; task.wait(1/math.max(1,CFG.DamageRate)) else task.wait(0.15) end end end)
+task.spawn(function() while RUNNING do if CFG.SilentAim and alive() then local t=aimTarget or nearestTarget(math.max(tonumber(CFG.DamageRange) or 120,(tonumber(CFG.HitboxSize) or 35)*0.5+16), true); if t then fireSwing(); RunService.Heartbeat:Wait(); fireAttack(t, true) end; task.wait(1/math.max(1,tonumber(CFG.DamageRate) or 4)) else task.wait(0.15) end end end)
 -- NO GRAB WEIGHT LIMIT — the strong version from the decompiled LIVEGrab module (3k-line build). The "above your
 -- weight limit!" check is CLIENT-side: CanBind() calls CharacterState.Grab:MeetsWeightLimit() and each grab ability
 -- has a WeightLimit (% of YOUR Weight). We patch MeetsWeightLimit -> always true AND set every grab ability's
@@ -6723,4 +6842,4 @@ end
 MS("5 DONE - all tabs built, menu ready")
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
-print("[Dream Hub · Prior Extinction v6.2] Loaded — reworked combat hitbox, single-controller INF Food, unified anti-snapback teleports")
+print("[Dream Hub · Prior Extinction v6.3 PE-v2] Loaded — unified protection, streaming hitboxes, captured combat packets, automatic food/stamina fixes")
