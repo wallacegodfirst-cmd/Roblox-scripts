@@ -4,6 +4,10 @@ print("[Dream Hub PE] script fetched OK - booting")   -- if you see THIS in F9 b
 local __gg = (typeof(getgenv)=="function") and getgenv() or _G
 if __gg.__PRIOR_EXT_HUB then pcall(__gg.__PRIOR_EXT_HUB) end
 __gg.__PRIOR_EXT_HUB = nil
+-- Captured replica/source ids are scoped to one server session. Reusing them after a re-execute or server hop
+-- makes INF Food replay dead ids forever and prevents its nearby-food bootstrap from running.
+__gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0
+__gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil
 -- EARLY visible proof-of-life (for console-less mobile executors): if you see this toast the script
 -- IS running -> press RightShift for the menu. If you DON'T see it, the executor failed to FETCH the
 -- script (blocked/cached HttpGet) -> use the retry loader.
@@ -404,9 +408,8 @@ task.spawn(function()
 		local c = pl and pl.Character; local tr = c and (c:FindFirstChild("HumanoidRootPart") or c.PrimaryPart or c:FindFirstChildWhichIsA("BasePart"))
 		local mr = myRoot(); if not (tr and mr) then return false end
 		savedPos = mr.CFrame
-		pcall(function() mr.AssemblyLinearVelocity = Vector3.zero end)
-		mr.CFrame = tr.CFrame * CFrame.new(0,0,-5)
-		return true
+		if __gg and __gg.MH_safeTeleport then return __gg.MH_safeTeleport(tr.CFrame*CFrame.new(0,0,-5),{settle=1.0}) end
+		pcall(function() mr.AssemblyLinearVelocity=Vector3.zero; mr.CFrame=tr.CFrame*CFrame.new(0,0,-5) end); return true
 	end
 	local function needPlr(rest) local who = tostring(rest or ""):match("^(%S+)") if not who then return nil, "Give a username." end local nm = resolveName(who) return findPlr(nm), nm end
 	local CMDS
@@ -548,7 +551,7 @@ task.spawn(function()
 			return tpToPlr(pl) and ("Teleported to "..pl.Name..".  ?back to return.") or "Couldn't reach them." end },
 		back = { "", "return to where you were before ?tp / ?rtp", function()
 			local mr = myRoot() if not (savedPos and mr) then return "No saved spot." end
-			pcall(function() mr.AssemblyLinearVelocity = Vector3.zero end) mr.CFrame = savedPos return "Back." end },
+			if __gg and __gg.MH_safeTeleport then __gg.MH_safeTeleport(savedPos,{settle=1.0}) else pcall(function() mr.AssemblyLinearVelocity=Vector3.zero; mr.CFrame=savedPos end) end return "Back." end },
 		view = { "user", "spectate a player", function(rest)
 			local pl = needPlr(rest) if not pl then return "They aren't in this server." end
 			local c = pl.Character; local h = c and c:FindFirstChildOfClass("Humanoid")
@@ -1170,9 +1173,11 @@ local function installHook()
 							local snap={n=a.n} for i=1,a.n do snap[i]=a[i] end
 							__gg.MH_lastEatCall=snap; __gg.MH_lastEatT=tick()
 							__gg.MH_biteCalls = __gg.MH_biteCalls or {}
-							local key=tostring(id).."|"..tostring(a[3])   -- dedupe by source id + buffer so we keep DIFFERENT foods
-							local dup=false; for _,c in ipairs(__gg.MH_biteCalls) do if c.key==key then dup=true; break end end
-							if not dup then snap.key=key; table.insert(__gg.MH_biteCalls, snap); if #__gg.MH_biteCalls>16 then table.remove(__gg.MH_biteCalls,1) end end
+							-- One current call per source. tostring(buffer) contains an allocation address, so using it
+							-- in the key made every bite look unique and the old loop replayed many stale duplicates.
+							local key=tostring(id); local replaced=false
+							for i,c in ipairs(__gg.MH_biteCalls) do if c.key==key then snap.key=key; __gg.MH_biteCalls[i]=snap; replaced=true; break end end
+							if not replaced then snap.key=key; table.insert(__gg.MH_biteCalls, snap); if #__gg.MH_biteCalls>8 then table.remove(__gg.MH_biteCalls,1) end end
 						end
 					else
 						noteReplicaId(id)  -- self action = our dino id
@@ -1502,7 +1507,7 @@ __gg.MH_spawnRescue = function()
 		end
 	end)
 end
-conn(LP.CharacterAdded:Connect(function() task.wait(1); if __gg.MH_spawnRescue then __gg.MH_spawnRescue() end end))
+conn(LP.CharacterAdded:Connect(function() __gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil; task.wait(1); if __gg.MH_spawnRescue then __gg.MH_spawnRescue() end end))
 task.spawn(function() task.wait(2); if __gg.MH_spawnRescue then __gg.MH_spawnRescue() end end)   -- also guard THIS spawn (you may already be falling)
 local CharacterState
 pcall(function() local cm=RS:FindFirstChild("Common"); local cs=cm and cm:FindFirstChild("CharacterState"); if cs then CharacterState=require(cs) end end)
@@ -1571,9 +1576,8 @@ local function fakeEat()
 	if UIS and UIS:IsKeyDown(Enum.KeyCode.E) then return end   -- CENTRAL GUARD: never cancel YOUR manual E-hold eat (any caller)
 	local rs=getReplicaSignal(); if not rs then return end
 	replicaFire("SetAction","Consuming",true)              -- dino: start eating
-	-- ID-FREE: fire the eat Bite to MANY source ids so the right one always lands, no matter the land:
-	--   (1) the LIVE-captured eat (real source id + real buffer the game last sent), (2) every per-land water/source
-	--   id, (3) every replica id the hook has seen. The captured buffer is preferred; falls back to the known buffer.
+	-- Replay only calls actually captured from a real bite. Guessing source ids (including the water ids) sends
+	-- invalid Bite payloads after map updates and can make the server ignore the entire food sequence.
 	local cap = __gg.MH_eat
 	local buf = (type(cap)=="table" and cap.buf~=nil) and cap.buf or __gg.MH_eatBuf or EAT_BUFFER
 	if type(buf)=="string" and buffer and buffer.fromstring then pcall(function() buf = buffer.fromstring(buf) end) end
@@ -1581,21 +1585,13 @@ local function fakeEat()
 	-- the "capture the remote when you eat, then spam it" path — it always lands because it IS the game's own call.
 	local ec = __gg.MH_lastEatCall
 	if type(ec)=="table" and ec.n and ec.n>=2 then
-		for _=1,3 do pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end) end
+		pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end)
 	end
-	if type(cap)=="table" and cap.id then pcall(function() rs:FireServer(cap.id, "Bite", cap.buf or buf) end) end
-	-- MULTI-ID REPLAY (eat once -> it does the rest): re-fire Bite to EVERY food id you've bitten this session,
-	-- FoodEatSpeed times each, so a single plant keeps the bar topped up across the whole map. Capped so it never bursts.
+	if type(cap)=="table" and cap.id and not ec then pcall(function() rs:FireServer(cap.id, "Bite", cap.buf or buf) end) end
+	-- Replay each known real source once. The dedicated controller below applies the configured rate;
+	-- fakeEat stays a cheap one-shot helper for spawn recovery and the auto-play bot.
 	local foodIds = __gg.MH_foodIds
-	if type(foodIds)=="table" and next(foodIds) then
-		local fired=0; local speed=math.clamp(tonumber(CFG.FoodEatSpeed) or 3, 1, 10)
-		for foodId in pairs(foodIds) do
-			for _=1,speed do pcall(function() rs:FireServer(foodId, "Bite", buf) end); fired+=1; task.wait(0.03); if fired>=12 then break end end
-			if fired>=12 then break end
-		end
-	end
-	for _,id in pairs(WATER_IDS) do pcall(function() rs:FireServer(id, "Bite", buf) end) end  -- every land's source id
-	replicaActionAll("Bite", buf)                          -- + every captured source id (use-many-ids)
+	if not ec and type(foodIds)=="table" then for foodId in pairs(foodIds) do pcall(function() rs:FireServer(foodId, "Bite", buf) end); break end end
 	-- RE-CHECK E right before ending the action: the loop above YIELDS (task.wait), so if you started holding E
 	-- during it, the entry guard already passed. Skip the Consuming=false/AnimationEnded finish so we never cut
 	-- off a manual hold-to-eat you began mid-fakeEat.
@@ -1728,7 +1724,10 @@ local function fireAttack(targetModel, skipSound, clickedPart)
 	-- hit — but KEEP the REAL bone name we resolved above (forcing a canonical name like "Skull" on a dino whose bone is
 	-- "Head" made the server REJECT the hit = no damage). Skip when you clicked a specific bone (the click wins).
 	if not clickedAim and want and want~="" and want~="Auto" then
-		group = want
+		-- The server accepts combat groups (Body/Head/Neck/Leg/Tail/Arm), not UI labels such as
+		-- "Spine" or "Hip". Keep the real bone name, but map the selected UI region to its
+		-- canonical server group or the hit is silently rejected.
+		group = (ATK_GROUPS[want] and ATK_GROUPS[want][1] and ATK_GROUPS[want][1].g) or boneGroupFor(boneName)
 		if not boneName or boneName=="" then boneName = (ATK_GROUPS[want] and ATK_GROUPS[want][1] and ATK_GROUPS[want][1].n) or want end
 	end
 	-- attacker's Jaw position (our own MeshModel bone) — server expects this in arg[5]
@@ -2627,10 +2626,9 @@ do local p=Pages["Auto Farm"]
 			if best then break end
 		end end
 		if best then
-			local cc=getMyModel(); local goal=CFrame.new(best.Position+Vector3.new(0,3,0))
-			pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else me.CFrame=goal end end)
-			pcall(function() local r=hrp(); if r then r.AssemblyLinearVelocity=Vector3.zero end end)
-			notify("Teleport","At the nearest gemstone ("..math.floor(bd).."m away).")
+			local goal=best.Position+Vector3.new(0,3,0)
+			local ok=__gg.MH_safeTeleport and __gg.MH_safeTeleport(goal,{saveReturn=true,settle=1.4})
+			if ok then notify("Teleport","At the nearest gemstone ("..math.floor(bd).."m away).") else notify("Teleport","Teleport system is not ready yet.") end
 		else notify("Teleport","No gemstone found nearby.") end
 	end, 4)
 	if not _G.PE_HIDE_LITE then   -- Auto Play Bot lives in the separate Lite hub; the wrapper hides it here
@@ -2845,7 +2843,7 @@ if __gg.PE_ADMIN and Pages["Admin"] then local p=Pages["Admin"]
 		pcall(function()
 			local mc=LP.Character; local mr=mc and (mc:FindFirstChild("HumanoidRootPart") or mc.PrimaryPart or mc:FindFirstChildWhichIsA("BasePart"))
 			local tc=pl.Character; local tr=tc and (tc:FindFirstChild("HumanoidRootPart") or tc.PrimaryPart or tc:FindFirstChildWhichIsA("BasePart"))
-			if mr and tr then mr.CFrame=tr.CFrame*CFrame.new(0,0,-4); okg=true end
+			if mr and tr and __gg.MH_safeTeleport then okg=__gg.MH_safeTeleport(tr.CFrame*CFrame.new(0,0,-4),{saveReturn=true,settle=1.0}) end
 		end)
 		if okg then notify("Admin","Teleported to "..pl.Name..".") return end
 		__gg.MH_Target=__gg.MH_Target or {}; __gg.MH_Target.plr=pl
@@ -2935,11 +2933,8 @@ do local p=Pages["Teleport"]
 	local function tpTo(pos)
 		if not pos then notify("Teleport","That biome isn't loaded near you yet — move closer or pick another."); return end
 		local target=pos+Vector3.new(0,6,0)
-		-- MICRO-STEP LEGIT MOVE (no send-back): one giant jump reads as impossible speed and the server rejects it.
-		-- The hop-mover walks the server there in 20-stud believable hops on the game's OWN move remote (3x per hop,
-		-- since the unreliable channel drops packets), moving you locally in step. ~400 studs/sec, sticks on arrival.
-		if __gg.MH_hopMove then __gg.MH_hopMove(target)
-		else local cc=char(); pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(CFrame.new(target)) else local r=hrp(); if r then r.CFrame=CFrame.new(target) end end end) end
+		local ok=__gg.MH_safeTeleport and __gg.MH_safeTeleport(target,{saveReturn=true,settle=1.4})
+		if not ok then notify("Teleport","Teleport system is not ready yet."); return end
 		-- ANTI-FALL on landing: the server can reset FallDamageImmunity, so we re-assert it + clear any fall status +
 		-- damp a hard drop for ~4s after the teleport. This stops the "I die once in a while" on teleport.
 		task.spawn(function() for _=1,40 do
@@ -2953,7 +2948,11 @@ do local p=Pages["Teleport"]
 	local _,d=mkSec(p,"Ecosystem Teleport",1)
 	mkDropdown(d,"Biome", biomeNames, function() return CFG.TpBiome~="" and CFG.TpBiome or "(scan)" end, function(opt) CFG.TpBiome=opt; saveCfg() end, 1)
 	mkBtn(d,"Teleport to Biome", function() tpTo(biomePos(CFG.TpBiome)) end, 2)
-	mkBtn(d,"Teleport to My Spawn / Origin", function() local r=hrp(); if r then tpTo(r.Position) end end, 3)
+	mkBtn(d,"Teleport Back to Origin", function()
+		local origin=__gg.MH_tpOrigin
+		if not origin then notify("Teleport","No origin saved yet — use a teleport first."); return end
+		if __gg.MH_safeTeleport and __gg.MH_safeTeleport(origin,{settle=1.4}) then __gg.MH_tpOrigin=nil; notify("Teleport","Returned to your saved origin.") end
+	end, 3)
 end
 do local p=Pages["Visuals"]
 	local _,e=mkSec(p,"ESP",1)
@@ -3393,29 +3392,16 @@ task.spawn(function() while RUNNING do
 					if foodKey then
 						mx = (maxs and (maxs[foodKey] or maxs.Food)) or (__gg.MH_maxFood) or 100
 						if cur and cur > 0 then __gg.MH_maxFood = math.max(__gg.MH_maxFood or 0, cur, mx); mx = __gg.MH_maxFood end
-						if cur and cur < mx*0.2 then   -- FORCE TO 20% so you can still eat manually (high forcing hid the prompt + blocked E)
+						if cur and cur < mx*0.2 and tick()-(__gg.MH_foodFloorT or 0)>0.75 then   -- throttle server reports; local HUD stays responsive below
+							__gg.MH_foodFloorT=tick()
 							pcall(function() replicaFire("SetProperty", foodKey, mx*0.2) end)
 							pcall(function() stats[foodKey] = mx*0.2 end)
 						end
 					end
 				end
 			end)
-			-- Bite spam (growth) — STRONGER: fires each captured Bite remote FoodEatSpeed times per pass (your
-			-- "INF Food grow speed" slider finally drives this, 1-10x), capped at 30 fires per pass so it can't lag.
-			if __gg.MH_lastEatCall then
-				local rs=getReplicaSignal()
-				if rs then
-					local list=__gg.MH_biteCalls; if type(list)~="table" or #list==0 then list={__gg.MH_lastEatCall} end
-					local spamCount=math.clamp(tonumber(CFG.FoodEatSpeed) or 5, 1, 10)
-					local fired=0
-					for _,ec in ipairs(list) do
-						if type(ec)=="table" and ec.n and ec.n>=2 then
-							for _=1,spamCount do pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end); fired=fired+1; if fired>=30 then break end end
-						end
-						if fired>=30 then break end
-					end
-				end
-			end
+			-- Bite replay is handled by the single rate-limited controller below. Keeping it out of this
+			-- floor loop prevents two independent tasks from multiplying the same remote traffic.
 		end
 		task.wait(0.1)
 	else task.wait(0.4) end
@@ -4260,62 +4246,51 @@ Instance.new("UICorner",yesBtn).CornerRadius=UDim.new(0,6)
 noBtn=Instance.new("TextButton"); noBtn.Size=UDim2.new(0.5,-12,0,34); noBtn.Position=UDim2.new(0.5,4,0,58); noBtn.BackgroundColor3=Color3.fromRGB(205,72,72); noBtn.Text="NO - next corpse"; noBtn.TextColor3=Color3.new(1,1,1); noBtn.TextSize=13; noBtn.Font=Enum.Font.GothamBold; noBtn.BorderSizePixel=0; noBtn.AutoButtonColor=true; noBtn.Parent=carnFrame
 Instance.new("UICorner",noBtn).CornerRadius=UDim.new(0,6)
 -- teleport onto a corpse part (noclip + hold so it can't rubber-band; eat prompt fired)
--- MICRO-STEP LEGIT MOVE: the server validates position DELTAS -- one giant CFrame jump reads as impossible
--- speed and gets rejected (that is the rubberband). So we walk the server there in 20-stud hops: every hop is
--- a believable move, fired on the game's OWN unreliable move remote 3x per hop (that channel DROPS packets --
--- the repeats make sure one lands), with the local write alongside so your screen keeps up. localWrite=false
--- sends the server path only (used by the corpse TP, which snaps you locally first and holds).
+-- Shared teleport transport. Every feature uses the same tokenized move + settle path so an older teleport can
+-- never keep pulling the character back after a newer one starts.
 local function MH_hopFire(goalCF)
 	pcall(function()
 		local re=RS:FindFirstChild("RemoteEvents"); re=re and re:FindFirstChild("ReplicaSignalUnreliable")
 		local id=myReplicaId or (seenIds and seenIds[1])
-		if re and id then for _=1,3 do re:FireServer(id, "CFrame", goalCF) end end
+		if re and id then for _=1,2 do re:FireServer(id, "CFrame", goalCF) end end
 	end)
 end
 __gg.MH_hopFire=MH_hopFire   -- shared: the INF-Stam speed drive reports its position through this so the server never snaps you back
--- INSTANT TP (the fossil farm asked for teleport, NOT glide): snap there NOW, then beat the rubber-band by
--- (a) feeding the server the goal on its own move remote for ~1.2s and (b) re-asserting the goal locally only
--- if the server shoves you more than 6 studs (so it never freezes you when you're already there).
-__gg.MH_snapTo=function(targetPos)
-	__gg.MH_rescueMute = tick()+12   -- teleporting on purpose — the spawn rescue stays out of it
-	local goal=CFrame.new(targetPos)
-	local cc=getMyModel()
-	pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end end)
-	local r=hrp(); if r then pcall(function() r.AssemblyLinearVelocity=Vector3.zero; r.AssemblyAngularVelocity=Vector3.zero end) end
+__gg.MH_safeTeleport=function(target, options)
+	options=options or {}
+	local pos = typeof(target)=="CFrame" and target.Position or (typeof(target)=="Vector3" and target) or (typeof(target)=="Instance" and target:IsA("BasePart") and target.Position)
+	if typeof(pos)~="Vector3" or pos.X~=pos.X or pos.Y~=pos.Y or pos.Z~=pos.Z or math.abs(pos.X)>1e7 or math.abs(pos.Y)>1e7 or math.abs(pos.Z)>1e7 then return false end
+	local r=hrp(); local cc=getMyModel(); if not r then return false end
+	if options.saveReturn and not __gg.MH_tpOrigin then __gg.MH_tpOrigin=r.CFrame end
+	__gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; local seq=__gg.MH_tpSeq
+	local goal=typeof(target)=="CFrame" and target or CFrame.new(pos)
+	local from=r.Position; local delta=(pos-from).Magnitude
+	__gg.MH_rescueMute=tick()+math.max(4,tonumber(options.settle) or 1.25)+2
+	if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
+	-- Send a short, bounded path first. The old 20-stud/400-hop task could run for 20 seconds and continue
+	-- sending obsolete positions after another teleport, which was the main send-back bug.
+	local hops=math.clamp(math.ceil(delta/90),1,48)
+	for i=1,hops do
+		if seq~=(__gg.MH_tpSeq or 0) then return false end
+		MH_hopFire(CFrame.new(from:Lerp(pos,i/hops)))
+		if i%8==0 then task.wait() end
+	end
+	pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else r.CFrame=goal end end)
+	pcall(function() r.AssemblyLinearVelocity=Vector3.zero; r.AssemblyAngularVelocity=Vector3.zero end)
 	task.spawn(function()
-		local t0=tick()
-		while tick()-t0<1.2 do
+		local untilT=tick()+math.clamp(tonumber(options.settle) or 1.25,0.2,3)
+		while RUNNING and seq==(__gg.MH_tpSeq or 0) and tick()<untilT do
 			MH_hopFire(goal)
 			local rr=hrp()
-			if rr and (rr.Position-targetPos).Magnitude>6 then pcall(function() rr.CFrame=goal; rr.AssemblyLinearVelocity=Vector3.zero end) end
-			task.wait(0.06)
+			if rr and (rr.Position-pos).Magnitude>(tonumber(options.tolerance) or 7) then pcall(function() rr.CFrame=goal; rr.AssemblyLinearVelocity=Vector3.zero; rr.AssemblyAngularVelocity=Vector3.zero end) end
+			task.wait(0.08)
 		end
 	end)
+	return true
 end
-__gg.MH_hopMove=function(targetPos, localWrite)
-	__gg.MH_rescueMute = tick()+12   -- teleporting on purpose — the spawn rescue stays out of it
-	task.spawn(function()
-		local r=hrp(); if not r then return end
-		local from=r.Position
-		local dist=(targetPos-from).Magnitude
-		local hops=math.clamp(math.ceil(dist/20),1,400)
-		for i=1,hops do
-			local cf=CFrame.new(from:Lerp(targetPos, i/hops))
-			MH_hopFire(cf)
-			if localWrite~=false then
-				-- NO-GLIDE: your character SNAPS straight to the destination on your screen; only the REMOTE path
-				-- walks the believable 20-stud hops for the server. (The old version lerped your real character
-				-- along the whole path = "it glides me".)
-				local cc=getMyModel()
-				local snap=CFrame.new(targetPos)
-				pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(snap) else local rr=hrp(); if rr then rr.CFrame=snap end end end)
-				local rr=hrp(); if rr then pcall(function() rr.AssemblyLinearVelocity=Vector3.zero end) end
-			end
-			task.wait(0.05)
-		end
-		for _=1,6 do MH_hopFire(CFrame.new(targetPos)); task.wait(0.08) end   -- settle: keep re-telling the server the final spot
-	end)
-end
+__gg.MH_cancelTeleport=function() __gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1 end
+__gg.MH_snapTo=function(targetPos) return __gg.MH_safeTeleport(targetPos,{settle=1.25}) end
+__gg.MH_hopMove=function(targetPos) return __gg.MH_safeTeleport(targetPos,{settle=1.1}) end
 local function tpToCorpse(part)
 	if not (part and part.Parent) or carnBusy then return end
 	carnBusy=true
@@ -4344,34 +4319,17 @@ local function tpToCorpse(part)
 	-- When the ray misses but the corpse is at a normal height, we just teleport to the corpse's own Y.
 	if not foundGround and np.Y < -400 then carnBusy=false; return false end
 	local cc=getMyModel(); local goal=CFrame.new(np.X, landY, np.Z)
-		-- LEGIT MOVE: send the server a believable 20-stud-hop path to the corpse (remote-only -- you snap there
-		-- locally below and the hold keeps you put while the server's copy walks over and accepts the position).
-		if __gg.MH_hopMove then __gg.MH_hopMove(goal.Position, false) end
 	local noclip={}; if cc then pcall(function() for _,dd in ipairs(cc:GetDescendants()) do if dd:IsA("BasePart") and dd.CanCollide then dd.CanCollide=false; noclip[#noclip+1]=dd end end end) end
-	pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else local r=hrp(); if r then r.CFrame=goal end end end)
-	local r=hrp(); if r then pcall(function() r.AssemblyLinearVelocity=Vector3.zero; r.AssemblyAngularVelocity=Vector3.zero end) end
-	local bp; pcall(function() if r then bp=Instance.new("BodyPosition"); bp.MaxForce=Vector3.new(9e9,9e9,9e9); bp.P=3e4; bp.D=3000; bp.Position=Vector3.new(np.X,landY,np.Z); bp.Parent=r end end)
-	-- ANTI-SNAPBACK (fix "teleport keeps sending me back"): the server rubber-bands you for a while after a hard set,
-	-- so we HOLD you at the goal with BOTH a BodyPosition force AND a per-frame CFrame re-assert for ~2s. Long enough
-	-- that the server accepts the new position instead of snapping you back, then it releases and you move freely.
-	if __gg.MH_corpseHoldGoal ~= nil then end
-	__gg.MH_corpseHoldGoal = goal   -- newest teleport wins if another fires mid-hold
-	task.spawn(function()
-		local t0=tick()
-		while tick()-t0<2.0 and carnBusy and __gg.MH_corpseHoldGoal==goal do   -- ~2s hold beats the rubber-band
-			local rr=hrp()
-			if rr then pcall(function() rr.CFrame=goal; rr.AssemblyLinearVelocity=Vector3.zero; rr.AssemblyAngularVelocity=Vector3.zero end) end
-			if bp and bp.Parent~=r then pcall(function() local nr=hrp(); if nr then bp.Parent=nr end end) end
-			RunService.Heartbeat:Wait()
-		end
-	end)
+	__gg.MH_corpseHoldGoal=goal
+	local moved=__gg.MH_safeTeleport and __gg.MH_safeTeleport(goal,{saveReturn=false,settle=1.8,tolerance=6})
+	if not moved then for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end; carnBusy=false; return false end
 	pcall(function() local m=part:FindFirstAncestorWhichIsA("Model"); local prompt=(m and m:FindFirstChildWhichIsA("ProximityPrompt",true)) or part:FindFirstChildWhichIsA("ProximityPrompt")
 		if prompt then local od=prompt.MaxActivationDistance; prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(od or 8, 30); prompt.Enabled=true
 			if fireprox then local oh=prompt.HoldDuration; prompt.HoldDuration=0; fireprox(prompt); prompt.HoldDuration=oh end
 			pcall(function() prompt.MaxActivationDistance=od end)   -- restore native range so your hold-to-eat still works
 		end end)
 	-- (removed the holdKey(E) — pressing/holding E every teleport is what "kept clicking" and locked your controls)
-	task.delay(2.1, function() for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end; pcall(function() if bp then bp:Destroy() end end); carnBusy=false end)
+	task.delay(1.9, function() for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end; if __gg.MH_corpseHoldGoal==goal then __gg.MH_corpseHoldGoal=nil end; carnBusy=false end)
 	return true
 end
 -- go to the NEXT corpse in the list, wrapping, SKIPPING void/out-of-map spots (tpToCorpse returns false for those)
@@ -4420,25 +4378,8 @@ __gg.MH_corpseBack = function()   -- "Teleport Back" button -> return to where y
 	-- running when you hit Teleport Back, it yanks you straight back to the corpse ("teleport back doesn't work").
 	__gg.MH_corpseHoldGoal = nil
 	carnBusy = false
-	local cc=getMyModel(); local r=hrp()
-	if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
-	local goal=CFrame.new(o)
-	local noclip={}; if cc then pcall(function() for _,dd in ipairs(cc:GetDescendants()) do if dd:IsA("BasePart") and dd.CanCollide then dd.CanCollide=false; noclip[#noclip+1]=dd end end end) end
-	pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) elseif r then r.CFrame=goal end end)
-	if r then pcall(function() r.AssemblyLinearVelocity=Vector3.zero; r.AssemblyAngularVelocity=Vector3.zero end) end
-	-- ANTI-SNAPBACK on the way home too: hold the origin with a BodyPosition + per-frame CFrame re-assert for ~1.6s so
-	-- the server accepts the return instead of rubber-banding you back to the corpse.
-	local bp; pcall(function() if r then bp=Instance.new("BodyPosition"); bp.MaxForce=Vector3.new(9e9,9e9,9e9); bp.P=3e4; bp.D=3000; bp.Position=o; bp.Parent=r end end)
-	task.spawn(function()
-		local t0=tick()
-		while tick()-t0<1.6 do
-			local rr=hrp()
-			if rr then pcall(function() rr.CFrame=goal; rr.AssemblyLinearVelocity=Vector3.zero; rr.AssemblyAngularVelocity=Vector3.zero end) end
-			RunService.Heartbeat:Wait()
-		end
-		pcall(function() if bp then bp:Destroy() end end)
-	end)
-	task.delay(1.7, function() for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end end)
+	local moved=__gg.MH_safeTeleport and __gg.MH_safeTeleport(CFrame.new(o),{settle=1.5,tolerance=6})
+	if not moved then notify("Corpse TP","Could not return — your character is not ready."); return end
 	pcall(function() carnGui.Enabled=false end)
 	notify("Corpse TP","Teleported back to where you were.")
 end
@@ -4607,7 +4548,7 @@ task.spawn(function() while RUNNING do
 		local eHeld = false; pcall(function() eHeld = UIS:IsKeyDown(Enum.KeyCode.E) end)
 		if not eHeld then
 			fakeEat()   -- replay your last captured bite (fills bar); harmless, presses no keys
-			local me=hrp(); local list=nearbyFood(1e9)   -- whole-map scan = eat from anywhere
+			local me=hrp(); local list=nearbyFood(24)   -- only prompts the game could legitimately activate nearby
 			local edible = _G.MH_edible                  -- diet gate (set once the diet helpers load); nil-safe
 			if me then for _,fd in ipairs(list) do
 				local m,r,prompt=fd[1],fd[2],fd.prompt
@@ -4641,19 +4582,24 @@ end end)
 -- interfere with your manual E-hold-to-eat. This is the whole INF Food after the first bite.
 task.spawn(function() while RUNNING do
 	if CFG.InfFood and alive() and __gg.MH_lastEatCall then
-		local rs=getReplicaSignal()
-		if rs then
-			-- Fire EVERY different Bite you have eaten this session ONCE per pass. More foods eaten = more Bite calls =
-			-- faster growth. (Was firing the whole list x3 per pass = ~200 remotes/sec = network lag / FPS drop.)
-			local list=__gg.MH_biteCalls
-			if type(list)=="table" and #list>0 then
-				for _,ec in ipairs(list) do if type(ec)=="table" and ec.n and ec.n>=2 then pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end) end end
-			else
-				local ec=__gg.MH_lastEatCall
-				if type(ec)=="table" and ec.n and ec.n>=2 then pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end) end
+		local eHeld=false; pcall(function() eHeld=UIS:IsKeyDown(Enum.KeyCode.E) end)
+		if eHeld then __gg.MH_lastE=tick() end
+		if not eHeld and tick()-(__gg.MH_lastE or 0)>1.25 then
+			local rs=getReplicaSignal()
+			if rs then
+				-- One controller owns all Bite replay. The speed slider is a bounded per-pass budget,
+				-- and a cursor rotates through sources instead of blasting every saved call every frame.
+				local list=__gg.MH_biteCalls
+				if type(list)~="table" or #list==0 then list={__gg.MH_lastEatCall} end
+				local budget=math.clamp(math.floor(tonumber(CFG.FoodEatSpeed) or 3),1,10)
+				for _=1,budget do
+					__gg.MH_foodCursor=((__gg.MH_foodCursor or 0)%#list)+1
+					local ec=list[__gg.MH_foodCursor]
+					if type(ec)=="table" and ec.n and ec.n>=2 then pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end) end
+				end
 			end
 		end
-		task.wait(0.3)
+		task.wait(0.25)
 	else task.wait(0.4) end
 end end)
 task.spawn(function() while RUNNING do
@@ -4750,23 +4696,37 @@ end end)
 -- Now, while HITBOX is on, a real M1 click (not on the menu) fires the SAME proven swing→window→hit sequence at every
 -- enemy inside the expanded reach, so clicking actually deals damage. Debounced so a click can't spam-report.
 do local lastClickDmg=0; local mouse=LP:GetMouse()
+	-- mouse.Target is usually nested several Models deep (Hitbox.Head.Head). Find the outer
+	-- character model instead of treating the nearest inner Model as the combat target.
+	__gg.MH_combatModelFromPart=function(part)
+		local mine=getMyModel(); local cur=part
+		while cur and cur~=WS do
+			if cur:IsA("Model") and cur~=mine then
+				local h=cur:FindFirstChildOfClass("Humanoid")
+				if h or cur:FindFirstChild("Hitbox") or cur:FindFirstChild("HitBox") or Players:GetPlayerFromCharacter(cur) then return cur end
+			end
+			cur=cur.Parent
+		end
+		return nil
+	end
 conn(UIS.InputBegan:Connect(function(input, gp)
 	if gp then return end                                            -- click landed on the GUI = ignore (don't attack)
 	if input.UserInputType~=Enum.UserInputType.MouseButton1 then return end
 	if not (CFG.HitboxExpand and alive()) then return end            -- only when Hitbox is on
 	if tick()-lastClickDmg < 0.12 then return end; lastClickDmg=tick()
 	local me=hrp(); if not me then return end
-	local rng=math.max(tonumber(CFG.DamageRange) or 120, tonumber(CFG.HitboxSize) or 50)
+	local rng=math.max(tonumber(CFG.DamageRange) or 120, (tonumber(CFG.HitboxSize) or 50)*0.5 + 8)
 	-- THE BONE YOU CLICKED: mouse.Target is the CanQuery Hitbox bone part under the cursor (the expander sets those
 	-- CanQuery=true). We hit that enemy on that exact bone first, then AoE the rest at their auto bone.
 	local clicked=mouse.Target
-	local clickedModel=clicked and clicked:FindFirstAncestorWhichIsA("Model")
+	local clickedModel=clicked and __gg.MH_combatModelFromPart(clicked)
 	task.spawn(function()
 		local sr=getSoundRemote(); if sr then pcall(function() sr:FireServer("PVP","Attacks/Primary",false,nil,1) end) end
 		RunService.Heartbeat:Wait()                                  -- let the attack window open before the hit reports
 		local mine=getMyModel(); local n=0; local seen={}
 		-- clicked enemy FIRST, aiming the exact bone you clicked
-		if clickedModel and clickedModel:IsA("Model") and clickedModel~=mine and getHitbox(clickedModel) then
+		if clickedModel and clickedModel:IsA("Model") and clickedModel~=mine and getHitbox(clickedModel)
+			and dist(me.Position, (getHitbox(clickedModel) or clicked).Position)<=rng then
 			seen[clickedModel]=true; fireAttack(clickedModel, true, clicked); n+=1
 		end
 		local function hit(m)
@@ -4835,6 +4795,7 @@ end
 -- HITBOX EXPANDER (enemy creatures + players ONLY — same targeting as the proven standalone test build:
 -- workspace.Characters children, skip YOUR model, both "HitBox"/"Hitbox" spellings, same property set)
 hbTouched={}
+hbSeen={}
 -- EXACT working-build property set (CanTouch=false, CanQuery=true, CanCollide=false, Massless=true). This is the
 -- combo that actually lands hits. We expand EVERY BasePart inside the enemy's Hitbox/HitBox container (the per-bone
 -- parts), filtered by the chosen bone (All/Head/Neck/Arm/Leg/Body). NEVER touches your own model.
@@ -4853,12 +4814,15 @@ end
 local function expandPart(p)
 	if not (p and p:IsA("BasePart")) then return end
 	if not hbTouched[p] then hbTouched[p]={p.Size,p.Transparency,p.CanCollide,p.Material,p.Massless,p.CanTouch,p.CanQuery,p.Color} end
+	hbSeen[p]=true
 	pcall(function()
 		p.Massless   = true
 		p.CanCollide = false
 		p.CanQuery   = true     -- raycast / M1 hit checks read it
 		p.CanTouch   = false    -- the working build uses FALSE (this is what made it land)
-		if p.Size.X ~= CFG.HitboxSize then p.Size = Vector3.new(CFG.HitboxSize, CFG.HitboxSize, CFG.HitboxSize) end
+		local size=math.clamp(tonumber(CFG.HitboxSize) or 35,4,300)
+		local wanted=Vector3.new(size,size,size)
+		if p.Size ~= wanted then p.Size=wanted end
 		if CFG.HitboxVisible then p.Transparency=math.clamp(1-((tonumber(CFG.HitboxOpacity) or 40)/100),0,1); p.Material=Enum.Material.ForceField; local c=CFG.HitboxColor or {}; p.Color=Color3.fromRGB(c.r or 255,c.g or 50,c.b or 50)   -- Opacity slider drives how much you see (0=invisible, 100=solid)
 		else p.Transparency=1 end
 	end)
@@ -4907,6 +4871,7 @@ end
 task.spawn(function() local cleared=true while RUNNING do
 	if CFG.HitboxExpand and alive() then
 		cleared=false
+		hbSeen={}
 		local mine=getMyModel()
 		local myR=hrp()
 		local function isMine(m)
@@ -4920,7 +4885,7 @@ task.spawn(function() local cleared=true while RUNNING do
 		-- fish/AI folder into big visible ForceField boxes every tick overloaded the renderer = crash. Now: at most 24
 		-- NEARBY enemies, and the giant AI folder is skipped.
 		local me=hrp(); local ecount=0; local MAXM=28
-		local reach=math.max(tonumber(CFG.DamageRange) or 120, tonumber(CFG.HitboxSize) or 50, 140)
+		local reach=math.max(tonumber(CFG.DamageRange) or 120, (tonumber(CFG.HitboxSize) or 50)*0.5 + 16, 140)
 		-- ALL DINOS: use the same full model list combat/targeting use (Characters + CharacterIgnore.LeftCharacters +
 		-- Sandbox/Dinos/Creatures/NPCs/Entities/Mobs/...). Nearest-first so the closest enemies always get expanded
 		-- even in a crowded server. getHitbox() is called on each (not just for distance) so it also triggers the
@@ -4941,13 +4906,14 @@ task.spawn(function() local cleared=true while RUNNING do
 				expandModel(pair[1]); ecount+=1
 			end
 		end
-		-- NEVER your own hitbox: if any of OUR parts ever made it into the touched table, restore them right now.
+		-- Restore models that moved out of range or stopped matching the selected bone. Without this cleanup,
+		-- old expanded parts stayed huge until the toggle was switched off and eventually caused lag.
 		for p in pairs(hbTouched) do
-			if p and p.Parent and ((mine and p:IsDescendantOf(mine)) or (LP.Character and p:IsDescendantOf(LP.Character)) or p:FindFirstAncestor(LP.Name)) then restorePart(p) end
+			if not (p and p.Parent) or not hbSeen[p] or (mine and p:IsDescendantOf(mine)) or (LP.Character and p:IsDescendantOf(LP.Character)) or p:FindFirstAncestor(LP.Name) then restorePart(p) end
 		end
 		task.wait(0.1)
 	else
-		if not cleared then for p in pairs(hbTouched) do restorePart(p) end cleared=true end
+		if not cleared then for p in pairs(hbTouched) do restorePart(p) end hbSeen={}; cleared=true end
 		task.wait(0.25)
 	end
 end end)
@@ -5248,8 +5214,7 @@ local function runFarm(enabledKey, kind, rangeKey)
 				if wasOn then
 					wasOn=false
 					-- TP back to where you were when you turned the farm on
-					if origin then pcall(function() local cc=getMyModel(); if cc and cc.PrimaryPart then cc:PivotTo(origin) else local r=hrp(); if r then r.CFrame=origin end end end); origin=nil
-						local r0=hrp(); if r0 then pcall(function() r0.AssemblyLinearVelocity=Vector3.zero end) end
+					if origin then if __gg.MH_safeTeleport then __gg.MH_safeTeleport(origin,{settle=1.3}) end; origin=nil
 					end
 				end
 				task.wait(0.4)
@@ -5940,7 +5905,9 @@ _G.MH_targetInfo = targetReadInfo
 -- teleport that already works for Auto Farm Fossil — so Target uses it verbatim now, and it "sticks" the same way.
 local function hardTeleportTo(pos, holdSecs)
 	if not pos then return false end
-	if __gg.MH_snapTo then __gg.MH_snapTo(pos)
+	if __gg.MH_safeTeleport then
+		if not __gg.MH_safeTeleport(pos,{saveReturn=true,settle=math.clamp(tonumber(holdSecs) or 1.2,0.2,3)}) then return false end
+	elseif __gg.MH_snapTo then __gg.MH_snapTo(pos)
 	else
 		-- fallback if the fossil snapper isn't loaded yet
 		if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
@@ -5964,20 +5931,20 @@ local function targetTeleport(holdSecs)
 	__gg.MH_rescueMute = tick()+3
 	if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
 	local function place(pos)
-		local cc=getMyModel(); local root=cc and (cc.PrimaryPart or cc:FindFirstChild("HumanoidRootPart")) or hrp()
-		if root then pcall(function() root.CFrame=CFrame.new(pos); root.AssemblyLinearVelocity=Vector3.zero end) end
+		if __gg.MH_safeTeleport then return __gg.MH_safeTeleport(pos,{saveReturn=true,settle=holdSecs or 1.0,tolerance=8}) end
+		local cc=getMyModel(); local root=cc and (cc.PrimaryPart or cc:FindFirstChild("HumanoidRootPart")) or hrp(); if root then pcall(function() root.CFrame=CFrame.new(pos); root.AssemblyLinearVelocity=Vector3.zero end); return true end
 	end
 	place(r0.Position + Vector3.new(0, 6, 0))   -- initial snap
+	local tpSeq=__gg.MH_tpSeq
 	task.spawn(function()
 		local t0=tick()
-		while tick()-t0 < (holdSecs or 1.0) do
+		while tick()-t0 < (holdSecs or 1.0) and (not tpSeq or tpSeq==__gg.MH_tpSeq) do
 			local rr = select(1, targetLivePart(T.plr))   -- their CURRENT part (they may be running)
 			if not rr then break end
 			local goal = rr.Position + Vector3.new(0, 6, 0)
 			if __gg.MH_hopFire then __gg.MH_hopFire(CFrame.new(goal)) end   -- tell the server (no local jitter)
 			local me=hrp()
-			if me and (me.Position-goal).Magnitude > 8 then place(goal)   -- only re-place if the server actually shoved you
-			end
+			if me and (me.Position-goal).Magnitude > 8 then pcall(function() me.CFrame=CFrame.new(goal); me.AssemblyLinearVelocity=Vector3.zero end) end
 			task.wait(0.08)
 		end
 	end)
@@ -5995,8 +5962,8 @@ local function targetAttackAndReturn()
 	if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
 	__gg.MH_rescueMute = tick()+3
 	local function pivotTo(pos)
-		local cc=getMyModel(); local root=cc and (cc.PrimaryPart or cc:FindFirstChild("HumanoidRootPart")) or hrp()
-		if root then pcall(function() root.CFrame=CFrame.new(pos); root.AssemblyLinearVelocity=Vector3.zero end) end
+		if __gg.MH_safeTeleport then return __gg.MH_safeTeleport(pos,{settle=0.22,tolerance=8}) end
+		local cc=getMyModel(); local root=cc and (cc.PrimaryPart or cc:FindFirstChild("HumanoidRootPart")) or hrp(); if root then pcall(function() root.CFrame=CFrame.new(pos); root.AssemblyLinearVelocity=Vector3.zero end); return true end
 	end
 	local myBack
 	do local cc=getMyModel(); local root=cc and (cc.PrimaryPart or cc:FindFirstChild("HumanoidRootPart")) or hrp(); if root then myBack=root.Position end end
@@ -6081,7 +6048,9 @@ task.spawn(function() while RUNNING do
 			end)
 			-- sit ABOVE + BEHIND them (out of their bite arc), not right on top where their attack lands on you
 			local cc=getMyModel(); local root = cc and (cc.PrimaryPart or cc:FindFirstChild("HumanoidRootPart")) or hrp()
-			if root then pcall(function() root.CFrame = r.CFrame * CFrame.new(0, 4, 6); root.AssemblyLinearVelocity=Vector3.zero end) end
+			if root then local goal=r.CFrame*CFrame.new(0,4,6); if __gg.MH_hopFire then __gg.MH_hopFire(goal) end
+				if (root.Position-goal.Position).Magnitude>8 then pcall(function() root.CFrame=goal; root.AssemblyLinearVelocity=Vector3.zero; root.AssemblyAngularVelocity=Vector3.zero end) end
+			end
 			if _G.MH_attack then pcall(function() _G.MH_attack(model) end) end
 			task.wait(1/math.max(1, tonumber(CFG.DamageRate) or 6))
 		else task.wait(0.3) end
@@ -6754,4 +6723,4 @@ end
 MS("5 DONE - all tabs built, menu ready")
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
-print("[Dream Hub · Prior Extinction v6.1] Loaded — enemy-only hitbox (never yours), fixed restore camera+controls, BodyVelocity walk-on-water/anti-drown, server-side INF stam, food ESP highlights corpses, teleport farm, anti-injury report-block")
+print("[Dream Hub · Prior Extinction v6.2] Loaded — reworked combat hitbox, single-controller INF Food, unified anti-snapback teleports")

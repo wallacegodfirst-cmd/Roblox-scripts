@@ -13,7 +13,7 @@
       through testing can break them.
 
       ── LOAD IT ────────────────────────────────────────────────────────────────────────────────
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/wallacegodfirst-cmd/Roblox-scripts/refs/heads/claude/improve-ai-system-tUhhn/DreamHub_JJS_Update_Plus.lua"))()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/wallacegodfirst-cmd/Roblox-scripts/refs/heads/codex/rework-hitbox-food-tps/DreamHub_JJS_Update_Plus.lua"))()
 
       This loader is hard-wired to PLUS. The FREE-tier equivalent is DreamHub_JJS_Update.lua, and your
       users are unaffected either way - they load DreamHub_JJS_Free.lua, which fetches the frozen build.
@@ -47,8 +47,8 @@ end
 -- ═══ THE ONLY REAL DIFFERENCE FROM THE FREE LOADER ═══
 -- DreamHub_JJS.lua is the DEV file. DreamHub_JJS_Free.lua points at DreamHub_JJS_Public.lua instead.
 local URLS = {
-	"https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/claude/improve-ai-system-tUhhn/DreamHub_JJS.lua",
-	"https://github.com/wallacegodfirst-cmd/roblox-scripts/raw/claude/improve-ai-system-tUhhn/DreamHub_JJS.lua",
+	"https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/codex/rework-hitbox-food-tps/DreamHub_JJS.lua",
+	"https://github.com/wallacegodfirst-cmd/roblox-scripts/raw/codex/rework-hitbox-food-tps/DreamHub_JJS.lua",
 }
 local StarterGui = game:GetService("StarterGui")
 local function toast(msg, dur)

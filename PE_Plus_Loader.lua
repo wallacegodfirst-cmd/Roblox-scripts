@@ -12,8 +12,8 @@ _G.PE_PREM = false  -- Premium features stay off in this build — use PE_Premiu
 -- TWO mirrors of the same file: if an executor proxy has poisoned its cache for one host,
 -- the other host path fetches clean.
 local URLS = {
-	"https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/claude/improve-ai-system-tUhhn/PriorExtinction_MoneyFreeHub.lua",
-	"https://github.com/wallacegodfirst-cmd/roblox-scripts/raw/claude/improve-ai-system-tUhhn/PriorExtinction_MoneyFreeHub.lua",
+	"https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/codex/rework-hitbox-food-tps/PriorExtinction_MoneyFreeHub.lua",
+	"https://github.com/wallacegodfirst-cmd/roblox-scripts/raw/codex/rework-hitbox-food-tps/PriorExtinction_MoneyFreeHub.lua",
 }
 local StarterGui = game:GetService("StarterGui")
 local function toast(msg, dur)
