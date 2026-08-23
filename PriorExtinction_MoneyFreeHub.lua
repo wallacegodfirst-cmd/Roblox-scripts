@@ -8,6 +8,7 @@ __gg.__PRIOR_EXT_HUB = nil
 -- makes INF Food replay dead ids forever and prevents its nearby-food bootstrap from running.
 __gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0
 __gg.MH_attackTemplate=nil; __gg.MH_soundTemplate=nil; __gg.MH_hbMade=nil; __gg.MH_hbBuildAt=nil
+__gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_foodPropCall=nil; __gg.MH_foodMaxByKey={}; __gg.MH_wellbeing=nil
 __gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil
 -- EARLY visible proof-of-life (for console-less mobile executors): if you see this toast the script
 -- IS running -> press RightShift for the menu. If you DON'T see it, the executor failed to FETCH the
@@ -1165,7 +1166,7 @@ local function installHook()
 					if sa.n>=2 and tostring(sa[1]):lower()=="pvp" and tostring(sa[2]):lower():find("attack",1,true) then
 						local snap={n=sa.n}; for i=1,sa.n do snap[i]=sa[i] end; __gg.MH_soundTemplate=snap
 					end
-				elseif self.Name=="ReplicaSignal" and not checkcaller() then
+				elseif (self.Name=="ReplicaSignal" or self.Name=="ReplicaSignalUnreliable") and not checkcaller() then
 				local a = table.pack(...)
 				local id, action = a[1], a[2]
 				if action=="Attack" and typeof(id)=="number" then
@@ -1182,7 +1183,7 @@ local function installHook()
 						-- fast, forever. We keep a LIST of the last several DIFFERENT bites, so the more different things you
 						-- eat, the more Bite calls the spam loop fires per pass = faster growth. Bite is the one that fills the bar.
 						if action=="Bite" then
-							local snap={n=a.n} for i=1,a.n do snap[i]=a[i] end
+							local snap={n=a.n,remote=self.Name} for i=1,a.n do snap[i]=a[i] end
 							__gg.MH_lastEatCall=snap; __gg.MH_lastEatT=tick()
 							__gg.MH_biteCalls = __gg.MH_biteCalls or {}
 							-- One current call per source. tostring(buffer) contains an allocation address, so using it
@@ -1210,6 +1211,21 @@ local function installHook()
 						-- Anti-Drown: the client REPORTS being underwater via the DrownY action; swallow it so
 						-- the server never applies drowning damage. No value to rewrite — just don't report it.
 						if action=="DrownY" and CFG.AntiDrown then return end
+						-- INF Food uses the same client-reported SetProperty channel as stamina. Preserve the
+						-- highest real value learned by the data controller and rewrite only genuine need fields;
+						-- rate/depletion fields are deliberately excluded so their scale is never corrupted.
+						if CFG.InfFood and action=="SetProperty" and typeof(a[3])=="string" then
+							local fk=a[3]; local fl=fk:lower()
+							local foodish=fl=="food" or fl=="hunger" or fl=="fullness" or fl=="satiation" or fl=="nutrition"
+							if foodish and not (fl:find("rate",1,true) or fl:find("drain",1,true) or fl:find("deplet",1,true) or fl:find("decay",1,true)) and typeof(a[4])=="number" then
+								local known=__gg.MH_foodMaxByKey and __gg.MH_foodMaxByKey[fk]
+								if a[4]>0 then known=math.max(known or 0,a[4]); __gg.MH_foodMaxByKey[fk]=known end
+								if known and known>0 then a[4]=known end
+								local snap={n=a.n,remote=self.Name}; for i=1,a.n do snap[i]=a[i] end; __gg.MH_foodPropCall=snap
+								return oldNC(self,table.unpack(a,1,a.n))
+							end
+						end
+						if CFG.InfFood and (action=="FoodDrain" or action=="HungerTick" or action=="FoodDepletion" or action=="MetabolismTick") then return end
 						-- (REMOVED: this used to swallow the Secondary/right-click RegisterAttack while INF Stam was on,
 						--  which meant your dino's SECOND ATTACK dealt NO DAMAGE. INF Stam already refills the bar, so
 						--  there is no reason to block the attack — M2 now passes through and hits normally.)
@@ -1238,12 +1254,12 @@ local function installHook()
 								if lp:find("stam",1,true) or lp=="energy" or lp=="sp" or lp=="endurance" or lp:find("endur",1,true) or lp:find("vigor",1,true) then
 								if typeof(a[4])=="number" then
 									-- track the highest seen value per property name (= the real max when bar is full)
-									__gg.MH_max = __gg.MH_max or {}
+									__gg.MH_max = __gg.MH_max or {}; __gg.MH_stamTargets=__gg.MH_stamTargets or {}
 									local pk = a[3]
-										if not __gg.MH_max[pk] then __gg.MH_max[pk] = 100 end
-									if a[4] > 0 and (not __gg.MH_max[pk] or a[4] > __gg.MH_max[pk]) then __gg.MH_max[pk] = a[4] end
-									a[4] = __gg.MH_max[pk] or 100   -- rewrite the drop to the tracked max
-										local snap={n=a.n} for i=1,a.n do snap[i]=a[i] end; snap[4]=__gg.MH_max[pk] or 100; __gg.MH_stamCall=snap   -- capture the exact full-stamina call to replay verbatim
+									local known=__gg.MH_stamTargets[pk] or __gg.MH_max[pk]
+									if a[4] > 0 then known=math.max(known or 0,a[4]); __gg.MH_max[pk]=known end
+									if known and known>0 then a[4]=known end -- never invent 100 for a species whose real scale differs
+									local snap={n=a.n,remote=self.Name} for i=1,a.n do snap[i]=a[i] end; __gg.MH_stamCall=snap
 								end
 								return oldNC(self, table.unpack(a, 1, a.n))   -- fire with max value (not swallowed)
 							end
@@ -1266,6 +1282,13 @@ local function installHook()
 								if typeof(a[4])=="number" then if a[4]>0 then __gg.MH_bloodMax=math.max(__gg.MH_bloodMax or 0,a[4]) end; a[4]=math.max(__gg.MH_bloodMax or a[4],a[4]) end
 								return oldNC(self,table.unpack(a,1,a.n))
 							end
+						end
+						-- If this client reports its own HP loss, protection rewrites it before it reaches the
+						-- server. Server-originated hits are still restored by the unified Heartbeat guard.
+						if action=="SetProperty" and typeof(a[3])=="string" and (a[3]:lower()=="health" or a[3]:lower()=="hp")
+							and (CFG.AntiBleed or CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso)
+							and typeof(a[4])=="number" and (__gg.MH_guardMax or 0)>0 then
+							a[4]=__gg.MH_guardMax; return oldNC(self,table.unpack(a,1,a.n))
 						end
 						-- ANTI-INJURY (report-block): injuries replicate the same way stamina does — the CLIENT reports
 						-- them to the server. While your antis are on, we SWALLOW any report that would tell the server
@@ -1595,6 +1618,56 @@ local CharacterState
 pcall(function() local cm=RS:FindFirstChild("Common"); local cs=cm and cm:FindFirstChild("CharacterState"); if cs then CharacterState=require(cs) end end)
 local function csReplica() return CharacterState and CharacterState.Replica end
 local function csStats() local r=csReplica(); if r and r.Data then return r.Data.Stats, r.Data.MaxStats end end
+-- Runtime need resolver. Food is not guaranteed to live at Data.Stats.Food on every species/build, so cache
+-- references to every real food/fullness field found in the current CharacterState tree. This is a bounded scan
+-- of data tables only (never workspace) and refreshes after respawn or a replica swap.
+MHNEED={refs={},at=0,root=nil,seenMax={}}
+function MHNEED.foodCapacity()
+	local r=csReplica(); if not (r and r.Data) then return nil end
+	local ok,cap=pcall(function()
+		local cd=require(RS.Shared.ConsumptionData); local fw=cd and cd.FoodWaterCapacity; if not fw then return nil end
+		local tags=r.Tags or {}; local data=r.Data
+		local species=tags.Species or tags.Character or tags.Type or data.Species or data.Character or data.Type
+		local diet=tags.Diet or data.Diet or (data.Stats and data.Stats.Diet)
+		local stage=(data.Growth and data.Growth.Stage) or data.Stage or "Adult"
+		local src=(fw.Dinosaurs and species and fw.Dinosaurs[species]) or (fw.Diets and diet and fw.Diets[diet])
+		local row=src and (src[stage] or src.Adult or src["Sub-Adult"])
+		return type(row)=="table" and tonumber(row.Food) or nil
+	end)
+	return ok and cap or nil
+end
+function MHNEED.foodRefs(force)
+	local r=csReplica(); local root=r and r.Data
+	if not root then MHNEED.refs={}; MHNEED.root=nil; return MHNEED.refs end
+	if not force and MHNEED.root==root and tick()-(MHNEED.at or 0)<0.45 then return MHNEED.refs end
+	MHNEED.root=root; MHNEED.at=tick(); local out,seen,count={},{},0
+	local cap=MHNEED.foodCapacity()
+	local function walk(tb,maxTb,path,depth)
+		if type(tb)~="table" or seen[tb] or depth>5 or count>700 then return end
+		seen[tb]=true
+		for k,v in pairs(tb) do
+			count+=1; if count>700 then break end
+			local ks=tostring(k); local kl=ks:lower()
+			if type(v)=="number" then
+				local foodish=kl=="food" or kl=="hunger" or kl=="fullness" or kl=="satiation" or kl=="nutrition"
+				if foodish and not (kl:find("max",1,true) or kl:find("rate",1,true) or kl:find("drain",1,true) or kl:find("deplet",1,true) or kl:find("decay",1,true)) then
+					local mx=(type(maxTb)=="table" and tonumber(maxTb[k])) or tonumber(tb["Max"..ks]) or tonumber(tb[ks.."Max"])
+					local id=path..ks; local old=MHNEED.seenMax[id]
+					if v>0 then old=math.max(old or 0,v); MHNEED.seenMax[id]=old end
+					if cap and cap>0 then old=math.max(old or 0,cap); MHNEED.seenMax[id]=old end
+					mx=(mx and mx>0 and mx) or old
+					if mx and mx>0 then out[#out+1]={tb=tb,key=k,max=mx,id=id}; __gg.MH_foodMaxByKey[ks]=math.max(__gg.MH_foodMaxByKey[ks] or 0,mx) end
+				end
+			elseif type(v)=="table" and getmetatable(v)==nil then
+				local nextMax=(type(maxTb)=="table" and maxTb[k]) or maxTb
+				walk(v,nextMax,path..ks..".",depth+1)
+			end
+		end
+	end
+	walk(root,root.MaxStats or root.Max,"",0)
+	if CharacterState then for _,k in ipairs({"Stats","State","Data","Vitals","Needs","Resources"}) do local tb=CharacterState[k]; if type(tb)=="table" then walk(tb,tb.MaxStats or tb.Max,"cs."..k..".",0) end end end
+	MHNEED.refs=out; return out
+end
 -- REPLICA ID FALLBACK (no-hook executors): the namecall hook normally sets myReplicaId from self-actions like the
 -- constantly-fired HeadAngles. If the executor lacks hookmetamethod, read our dino id from CharacterState.Replica
 -- as a fallback. Only sets it when not already captured (the hook value is the authoritative ReplicaSignal id).
@@ -1782,13 +1855,23 @@ local function fireAttack(targetModel, skipSound, clickedPart)
 		if p then group, boneName, targetPos = boneGroupFor(clickedPart.Name), clickedPart.Name, p; clickedAim=true end
 	end
 	local want = (CFG.HitboxBone and CFG.HitboxBone~="All" and CFG.HitboxBone~="") and CFG.HitboxBone or CFG.DamagePart
+	local chosenBone
+	-- Bone layouts do not change every attack. Reuse the last resolved live bone briefly instead of walking up to
+	-- 600 descendants for every target on every Always Damage tick. A weak-key cache also drops despawned dinos.
+	if not targetPos then
+		local ce=__gg.MH_attackBoneCache and __gg.MH_attackBoneCache[targetModel]
+		if ce and ce.want==want and tick()-(ce.at or 0)<1 and ce.part and ce.part.Parent and ce.part:IsDescendantOf(targetModel) then
+			local p=_bonePos(ce.part)
+			if p then chosenBone=ce.part; boneName=ce.part.Name; targetPos=p; group=(want and ATK_GROUPS[want] and ATK_GROUPS[want][1] and ATK_GROUPS[want][1].g) or boneGroupFor(boneName) end
+		end
+	end
 	local list = (want and want~="" and want~="Auto" and ATK_GROUPS[want]) or ATK_GROUPS.Auto
 	if not targetPos then for _,b in ipairs(list) do
 		local bn=_findIn(targetModel, b.n); local p=_bonePos(bn)
 		-- report the FOUND part's REAL name: fuzzy find of "Spine" can return "Spine.002", and the server checks
 		-- that the NAME matches the POSITION on the target's rig — a canonical name with the real part's position
 		-- is a mismatch it rejects. Real name + real position = the hit registers every time.
-		if p then group, boneName, targetPos = b.g, bn.Name, p; break end
+		if p then chosenBone=bn; group, boneName, targetPos = b.g, bn.Name, p; break end
 	end end
 	-- KEYWORD FALLBACK — makes "Always hit part = Leg/Head/…" work on EVERY dino: if the exact bone names above didn't
 	-- resolve on THIS dino's rig, search its parts/bones for ANY name in the selected region, reporting that real name
@@ -1798,23 +1881,24 @@ local function fireAttack(targetModel, skipSound, clickedPart)
 		if KW then local scanned=0
 			for _,d in ipairs(targetModel:GetDescendants()) do scanned+=1; if scanned>600 then break end
 				if d:IsA("BasePart") or d:IsA("Bone") then local dn=d.Name:lower()
-					for _,kw in ipairs(KW) do if dn:find(kw,1,true) then local p=_bonePos(d); if p then group=(ATK_GROUPS[want] and ATK_GROUPS[want][1] and ATK_GROUPS[want][1].g) or "Body"; boneName=d.Name; targetPos=p; break end end end
+					for _,kw in ipairs(KW) do if dn:find(kw,1,true) then local p=_bonePos(d); if p then chosenBone=d; group=(ATK_GROUPS[want] and ATK_GROUPS[want][1] and ATK_GROUPS[want][1].g) or "Body"; boneName=d.Name; targetPos=p; break end end end
 				end
 				if targetPos then break end
 			end
 		end
 	end
 	if not targetPos and list~=ATK_GROUPS.Auto then
-		for _,b in ipairs(ATK_GROUPS.Auto) do local bn=_findIn(targetModel,b.n); local p=_bonePos(bn); if p then group,boneName,targetPos=b.g,bn.Name,p; break end end
+		for _,b in ipairs(ATK_GROUPS.Auto) do local bn=_findIn(targetModel,b.n); local p=_bonePos(bn); if p then chosenBone=bn; group,boneName,targetPos=b.g,bn.Name,p; break end end
 	end
 	if not targetPos then
 		local hb=findHitboxContainer(targetModel)
 		if hb then
 			local part = (hb:IsA("BasePart") and hb) or hb:FindFirstChildWhichIsA("BasePart", true)   -- descend the container (Hitbox.Head.Head)
-			if part then group, boneName, targetPos = boneGroupFor(part.Name), part.Name, part.Position end
+			if part then chosenBone=part; group, boneName, targetPos = boneGroupFor(part.Name), part.Name, part.Position end
 		end
 	end
 	if not targetPos then return false end
+	if chosenBone and not clickedAim then __gg.MH_attackBoneCache[targetModel]={want=want,part=chosenBone,at=tick()} end
 	-- ALWAYS HIT the chosen part: report the GROUP as the selected region so "Always Damage = Neck" registers as a Neck
 	-- hit — but KEEP the REAL bone name we resolved above (forcing a canonical name like "Skull" on a dino whose bone is
 	-- "Head" made the server REJECT the hit = no damage). Skip when you clicked a specific bone (the click wins).
@@ -2082,6 +2166,8 @@ end
 -- you fight and eat) live under workspace.CharacterIgnore.LeftCharacters — NOT only workspace.Characters. Combat,
 -- targeting, the bot and the protectors all missed them before. This one list is the fix. Exposed globally.
 local function charModels()
+	local cc=__gg.MH_charCache
+	if cc and tick()-(cc.at or 0)<0.45 then return cc.list end
 	local out,seen={},{}
 	local function put(m) if m and m:IsA("Model") and not seen[m] then seen[m]=true; out[#out+1]=m end end
 	local function add(f, deep)
@@ -2097,6 +2183,7 @@ local function charModels()
 	if ci then add(ci:FindFirstChild("LeftCharacters"), true); add(ci, false) end
 	for _,nm in ipairs({"Sandbox","Dinos","Creatures","NPCs","Entities","Mobs","Animals","DynamicCharacters"}) do add(WS:FindFirstChild(nm), true) end
 	for _,pl in ipairs(Players:GetPlayers()) do if pl~=LP then put(pl.Character) end end
+	__gg.MH_charCache={at=tick(),list=out}
 	return out
 end
 _G.MH_charModels = charModels
@@ -2602,7 +2689,7 @@ do local p=Pages["Survival"]
 	-- (INF Food / INF Water / Carnivore Meat TP / Teleport Back moved to the Growth tab.) Stamina stays here.
 	local _,f=mkSec(p,"Stamina",1)
 	mkToggle(f,"INF Stamina","InfStam",1)
-	mkLabel(f,"NOTE:  INF Stamina is NOT working right now - do not use it. A fix is in progress.",1.5)
+	mkLabel(f,"Pins the real stamina pool and blocks the game's drain/exhaustion reports without changing movement speed.",1.5)
 	-- Force Run Speed: 0 = AUTO (learn your dino's real sprint). If it still feels slow, drag this UP to override —
 	-- it hard-sets your WalkSpeed to this every frame while INF Stam is on (WalkSpeed only, so no snapback).
 	mkSlider(f,"Force Run Speed (0 = auto)","StamRunSpeed",0,80,2,1)
@@ -3176,9 +3263,7 @@ conn(RunService.Heartbeat:Connect(function()
 				-- Pin to the REAL max only (never inflate past it — writing 1000 to a 50-max stat made the server
 				-- fight every write = the snapback/slowness). If max is unknown, leave it (the deep-walk handles it).
 				if CFG.InfStam   and stats.Stamina ~= nil and maxs and maxs.Stamina then stats.Stamina = maxs.Stamina end
-				-- INF Food does NOT pin the food bar (that pins it to max -> the game hides the eat prompt -> you
-				-- can't hold E to eat). Auto-eat below keeps you fed by replaying bites, so food stays high but the
-				-- prompt is always available. (Original herb method.)
+				-- INF Food is handled by MHNEED below so every species-specific food/fullness field uses its real max.
 				if CFG.InfWater  and stats.Water   ~= nil and maxs and maxs.Water   then stats.Water   = maxs.Water   end
 				if CFG.InfOxygen and stats.Oxygen  ~= nil and maxs and maxs.Oxygen  then stats.Oxygen  = maxs.Oxygen  end
 				if CFG.GodMode   and stats.Health  ~= nil and maxs and maxs.Health  then stats.Health  = maxs.Health  end
@@ -3199,7 +3284,7 @@ conn(RunService.Heartbeat:Connect(function()
 					if mx then for _,k in ipairs(keys) do if type(CharacterState[k])=="number" then CharacterState[k]=mx end end end
 				end
 				topPin(CFG.InfStam, {"Stamina","Stam","Energy","Endurance"}, {"MaxStamina","MaxStam","MaxEnergy"})
-				-- (food intentionally NOT pinned — see the note above; auto-eat keeps it up without hiding the eat prompt)
+				-- Food is handled by MHNEED, including top-level sandbox need tables.
 				topPin(CFG.InfWater, {"Water","Thirst","Hydration"}, {"MaxWater","MaxThirst","MaxHydration"})
 			end) end
 		end
@@ -3292,8 +3377,8 @@ end))
 -- your stamina as low:
 --   (A) Every frame, write stamina = its real max into EVERY place the client keeps it (Data.Stats, top-level
 --       CharacterState, and a deep scan of the replica) so the client's own speed math never sees a low number.
---   (B) Report "stamina = full" to the server through the GAME'S OWN method (Replica:FireServer("SetProperty",...),
---       exactly how the game reports "Cave") on every stamina key, fast, so the server agrees.
+--   (B) Rewrite and replay only the exact stamina SetProperty packet observed from this client, preserving whether
+--       the game used ReplicaSignal or ReplicaSignalUnreliable; no guessed property names or arbitrary scale.
 --   (C) Kill the DRAIN AT THE SOURCE via WELLBEING: the decompiled WellbeingData says stamina drains SLOWER the
 --       higher your Activity / Comfort / nutrition are, and buffered stats don't drain at all. We max those on the
 --       real Wellbeing replica and keep their buffer timers open, so the drain multiplier bottoms out — the bar
@@ -3302,7 +3387,8 @@ local STAM_KEYS = {"Stamina","Stam","Energy","Endurance","Vigor","SP"}
 task.spawn(function() while RUNNING do
 	if CFG.InfStam and alive() then
 		pcall(function()
-			-- (A) LOCAL DATA PIN — every place the client might read stamina from
+			-- Pin only fields that actually exist. Older builds sent six guessed SetProperty calls every 0.1s;
+			-- that traffic fought the movement controller and produced the reported slow movement.
 			local stats, maxs = csStats()
 			local function pinLocal(tbl, mtbl)
 				if type(tbl)~="table" then return end
@@ -3312,7 +3398,7 @@ task.spawn(function() while RUNNING do
 						__gg.MH_max=__gg.MH_max or {}
 						if cur>0 and (not __gg.MH_max[k] or cur>__gg.MH_max[k]) then __gg.MH_max[k]=cur end
 						local target=(mtbl and mtbl[k]) or (__gg.MH_max and __gg.MH_max[k])
-						if target then tbl[k]=target end
+						if target and target>0 then __gg.MH_stamTargets=__gg.MH_stamTargets or {}; __gg.MH_stamTargets[k]=target; tbl[k]=target end
 					end
 				end
 			end
@@ -3323,14 +3409,13 @@ task.spawn(function() while RUNNING do
 				pinLocal(r.Data.SavableStats and r.Data.SavableStats.Stats, nil)
 			end
 			if CharacterState then pinLocal(CharacterState, CharacterState) end
-			-- (B) SERVER REPORT — through the game's OWN Replica method, then the raw path as backup
-			for _,k in ipairs(STAM_KEYS) do
-				local v = (__gg.MH_max and __gg.MH_max[k]) or (maxs and (maxs[k])) or 100
-				pcall(function() csFireProp(k, v) end)
-			end
+			-- Replay only a SetProperty call observed from this client. Its replica id, action and property shape are
+			-- exact; if the game has not emitted one yet, the hook above simply rewrites the first real drain packet.
 			local sc=__gg.MH_stamCall
-			if type(sc)=="table" and sc.n and sc.n>=2 then
-				local rs=getReplicaSignal(); if rs then pcall(function() rs:FireServer(table.unpack(sc,1,sc.n)) end) end
+			if type(sc)=="table" and sc.n and sc.n>=4 and tick()-(__gg.MH_stamReplayAt or 0)>0.25 then
+				__gg.MH_stamReplayAt=tick()
+				local re=RS:FindFirstChild("RemoteEvents"); local rs=(re and sc.remote and re:FindFirstChild(sc.remote)) or getReplicaSignal()
+				if rs then pcall(function() rs:FireServer(table.unpack(sc,1,sc.n)) end) end
 			end
 		end)
 		task.wait(0.1)
@@ -3416,7 +3501,7 @@ conn(RunService.Stepped:Connect(function()
 					local kl=string.lower(tostring(k))
 					if kl:find("exhaust",1,true) or kl:find("tired",1,true) or kl:find("fatigu",1,true) or kl:find("winded",1,true) or kl:find("slow",1,true) or kl:find("deplet",1,true) or kl=="staminaempty" then
 						if v then tryset(mc,k,false) end
-					elseif kl=="canrun" or kl=="cansprint" or kl=="sprinting" or kl=="running" then
+					elseif kl=="canrun" or kl=="cansprint" then
 						if not v then tryset(mc,k,true) end
 					end
 				end
@@ -3452,47 +3537,37 @@ end
 conn(RunService.Stepped:Connect(stamPinNow))
 conn(RunService.Heartbeat:Connect(stamPinNow))
 
--- INF FOOD — immediate real-max stat report plus automatic diet-source discovery. Captured Bite packets are still
--- replayed for server growth, but the food bar itself no longer depends on capturing a food id first.
+-- INF FOOD — resolve the real need fields from the live CharacterState tree, derive species/diet capacity from
+-- Shared.ConsumptionData, and pin every matching reference immediately. No food id or first bite is required for
+-- the bar. Server traffic is replayed only after the game itself exposes the exact SetProperty call shape.
 task.spawn(function() while RUNNING do
 	if CFG.InfFood and alive() then
-		local eHeld=false; pcall(function() eHeld=UIS:IsKeyDown(Enum.KeyCode.E) end)
-		if eHeld then __gg.MH_lastE=tick() end
-		if not eHeld and tick()-(__gg.MH_lastE or 0)>5 then   -- 5s grace after E so a manual eat is never overwritten
-
-			pcall(function()
-				local stats, maxs = csStats()
-				local foodKey, mx, cur
-				if stats then
-					for _,k in ipairs({"Food","Hunger","Nutrition","Fullness","Satiation"}) do
-						if type(stats[k])=="number" then foodKey=k; cur=stats[k]; break end
-					end
-					if foodKey then
-						mx = (maxs and (maxs[foodKey] or maxs.Food)) or (__gg.MH_maxFood) or 100
-						if cur and cur > 0 then __gg.MH_maxFood = math.max(__gg.MH_maxFood or 0, cur, mx); mx = __gg.MH_maxFood end
-						if cur and cur < mx*0.995 and tick()-(__gg.MH_foodFloorT or 0)>0.35 then
-							__gg.MH_foodFloorT=tick()
-							pcall(function() csFireProp(foodKey, mx) end)
-							pcall(function() stats[foodKey] = mx end)
-						end
-					end
-				end
-			end)
-			-- Bite replay is handled by the single rate-limited controller below. Keeping it out of this
-			-- floor loop prevents two independent tasks from multiplying the same remote traffic.
-		end
+		pcall(function()
+			local refs=MHNEED.foodRefs()
+			for _,ref in ipairs(refs) do if ref.tb and type(ref.tb[ref.key])=="number" and ref.max and ref.max>0 then ref.tb[ref.key]=ref.max end end
+			local fc=__gg.MH_foodPropCall
+			if type(fc)=="table" and fc.n and fc.n>=4 and tick()-(__gg.MH_foodPropReplayAt or 0)>0.3 then
+				__gg.MH_foodPropReplayAt=tick()
+				local re=RS:FindFirstChild("RemoteEvents"); local rs=(re and fc.remote and re:FindFirstChild(fc.remote)) or getReplicaSignal()
+				if rs then pcall(function() rs:FireServer(table.unpack(fc,1,fc.n)) end) end
+			end
+		end)
 		task.wait(0.1)
 	else task.wait(0.4) end
 end end)
+conn(RunService.RenderStepped:Connect(function()
+	if not (CFG.InfFood and alive()) then return end
+	pcall(function() for _,ref in ipairs(MHNEED.foodRefs()) do if ref.tb and type(ref.tb[ref.key])=="number" and ref.max and ref.max>0 then ref.tb[ref.key]=ref.max end end end)
+end))
 
 -- ═══ E EAT ASSIST — the definitive "E doesn't work" fix ═══ When you PRESS E, the hub makes the eat land for
 -- you: it finds the nearest eat/consume ProximityPrompt within reach (meat chunks, corpses, plants — the game's
 -- MeatController tags meat with HintType="Corpse"), removes its line-of-sight requirement, and FIRES it directly.
 -- So even when the game's own prompt logic refuses (bar too high, prompt hidden, LOS blocked), your E still eats.
--- All hub food-writes also freeze for 5s after E so nothing overwrites what you just ate.
+-- The immediate pin remains active while eating so a real bite cannot be followed by a drain-frame flicker.
 conn(UIS.InputBegan:Connect(function(input, gp)
 	if input.KeyCode ~= Enum.KeyCode.E then return end
-	__gg.MH_lastE = tick()   -- freeze the food forcers (checked with a 5s grace below/above)
+	__gg.MH_lastE = tick()
 	if not alive() then return end
 	task.spawn(function() pcall(function()
 		local r=hrp(); if not r then return end
@@ -3557,18 +3632,45 @@ do
 	-- (Replica.Client.OnNew("Wellbeing", ...)) holding Data.SavableStats.Stats + Data.SavableStats.BufferTimers.
 	-- The old pin wrote to CharacterState.Replica.Data.SavableStats, which usually doesn't exist = the pin did
 	-- NOTHING. We now grab the actual Wellbeing replica through the game's own Replica package and pin THAT.
+	local function wbShape(x) return type(x)=="table" and x.Data and x.Data.SavableStats and type(x.Data.SavableStats.Stats)=="table" end
+	local function findWB(root)
+		local seen,count={},0
+		local function walk(x,depth)
+			if type(x)~="table" or seen[x] or depth>5 or count>1600 then return nil end
+			seen[x]=true; count+=1; if wbShape(x) then return x end
+			local found
+			pcall(function() for _,v in pairs(x) do if type(v)=="table" then found=walk(v,depth+1); if found then break end end end end)
+			return found
+		end
+		return walk(root,0)
+	end
+	local function resolveWB()
+		if wbShape(__gg.MH_wellbeing) then return __gg.MH_wellbeing end
+		local direct=findWB(CharacterState)
+		if direct then __gg.MH_wellbeing=direct; return direct end
+		if __gg.MH_replicaClient then direct=findWB(__gg.MH_replicaClient); if direct then __gg.MH_wellbeing=direct; return direct end end
+		-- OnNew may have fired before this hub loaded. A sparse, bounded GC search recovers that already-created
+		-- replica on executors that expose getgc; it stops permanently once the correct shape is found.
+		if typeof(getgc)=="function" and tick()-(__gg.MH_wbGcAt or 0)>3 then
+			__gg.MH_wbGcAt=tick()
+			pcall(function() local n=0; for _,v in next,getgc(true) do n+=1; if n>7000 then break end; if wbShape(v) then direct=v; break end end end)
+			if direct then __gg.MH_wellbeing=direct; return direct end
+		end
+		return nil
+	end
 	task.spawn(function()
 		pcall(function()
 			local pk = RS:WaitForChild("Packages", 20); pk = pk and pk:WaitForChild("Replica", 10)
-			local Client = pk and require(pk).Client
-			if Client and Client.OnNew then Client.OnNew("Wellbeing", function(rep) __gg.MH_wellbeing = rep end) end
+			local Client = pk and require(pk).Client; __gg.MH_replicaClient=Client
+			if Client and Client.OnNew and not __gg.MH_wbWatching then __gg.MH_wbWatching=true; Client.OnNew("Wellbeing", function(rep) __gg.MH_wellbeing = rep end) end
+			resolveWB()
 		end)
 	end)
 	task.spawn(function() while RUNNING do
 		if (CFG.InfStam or CFG.InfFood or CFG.GodMode) and alive() then
 			pcall(function()
 				-- 1) the REAL Wellbeing replica (decompile-verified home of these stats)
-				local rep = __gg.MH_wellbeing
+				local rep = resolveWB()
 				local ss = rep and rep.Data and rep.Data.SavableStats and rep.Data.SavableStats.Stats
 				if ss then
 					for _,k in ipairs(WB_MAX)  do if type(ss[k])=="number" then ss[k]=100 end end
@@ -3577,16 +3679,9 @@ do
 				-- BUFFER TIMERS: while a stat's buffer timer is up it doesn't drain — keep them all topped up,
 				-- so wellbeing (and through it the stamina-drain multiplier) never decays in the first place.
 				local bt = rep and rep.Data and rep.Data.SavableStats and rep.Data.SavableStats.BufferTimers
-				if bt then for k,v in pairs(bt) do if type(v)=="number" and v<30 then bt[k]=60 end end end
-				-- 2) report the pins to the server through the replica's own channel (same client-reported
-				-- SetProperty pattern the game itself uses, e.g. for "Cave"); unknown shapes are ignored = harmless
-				if rep and rep.FireServer then
-					for _,k in ipairs({"Comfort","Activity"}) do
-						pcall(function() rep:FireServer("SetProperty", k, 100) end)
-						pcall(function() rep:FireServer("SetProperty", "Stats", k, 100) end)
-					end
-				end
-				-- 3) legacy fallbacks (older builds mirrored these under CharacterState) — keep, they're cheap
+				if bt then for k,v in pairs(bt) do if type(v)=="number" and v<1200 then bt[k]=1200 end end end
+				-- The supplied Wellbeing class only observes OnSet; it does not show a valid client FireServer schema.
+				-- Therefore no guessed Wellbeing packets are emitted. Legacy mirrored local fields remain safe to pin.
 				local r=csReplica()
 				local ss2 = r and r.Data and r.Data.SavableStats and r.Data.SavableStats.Stats
 				if ss2 then
@@ -3596,8 +3691,6 @@ do
 				local stats=csStats()
 				if stats then for _,k in ipairs({"Comfort","Activity"}) do if type(stats[k])=="number" then stats[k]=100 end end end
 			end)
-			pcall(function() replicaFire("SetProperty","Comfort",100) end)
-			pcall(function() replicaFire("SetProperty","Activity",100) end)
 			task.wait(0.4)
 		else task.wait(0.6) end
 	end end)
@@ -3940,12 +4033,12 @@ end))
 -- THREE frame phases — RenderStepped (start), Stepped (after physics), Heartbeat (after replication). If the server
 -- replicates a drained value mid-frame, the Heartbeat write lands AFTER it, so our full value always wins = the bar
 -- never visibly drops even though Run replicates. Pins every known stamina key + clears exhaustion.
-do local STAM_PIN_KEYS = {"Stamina","Stam","Energy","Endurance","Vigor","Wellbeing"}
+do local STAM_PIN_KEYS = {"Stamina","Stam","Energy","Endurance","Vigor","SP"}
 	local function pinStamNow()
 		if not (CFG.InfStam and alive()) then return end
-		pcall(function() local s,m=csStats(); if s then for _,k in ipairs(STAM_PIN_KEYS) do if s[k]~=nil then s[k]=(m and m[k]) or math.max(tonumber(s[k]) or 0,100) end end
+		pcall(function() local s,m=csStats(); if s then for _,k in ipairs(STAM_PIN_KEYS) do if type(s[k])=="number" then local mx=(m and tonumber(m[k])) or (__gg.MH_stamTargets and __gg.MH_stamTargets[k]) or (__gg.MH_max and __gg.MH_max[k]); if mx and mx>0 then s[k]=mx end end end
 			for _,k in ipairs({"Exhaustion","Fatigue","Tired","Exhausted"}) do if s[k]~=nil then if type(s[k])=="boolean" then s[k]=false else s[k]=0 end end end end end)
-		pcall(function() if CharacterState then for _,k in ipairs(STAM_PIN_KEYS) do local v=CharacterState[k]; if type(v)=="number" then CharacterState[k]=math.max(v,100) end end end end)
+		pcall(function() if CharacterState then for _,k in ipairs(STAM_PIN_KEYS) do local v=CharacterState[k]; if type(v)=="number" then local mx=tonumber(CharacterState["Max"..k]) or (__gg.MH_stamTargets and __gg.MH_stamTargets[k]) or (__gg.MH_max and __gg.MH_max[k]); if mx and mx>0 then CharacterState[k]=mx end end end end end)
 	end
 	conn(RunService.Stepped:Connect(function() pinStamNow() end))
 	conn(RunService.Heartbeat:Connect(function() pinStamNow() end))
@@ -4718,7 +4811,10 @@ task.spawn(function() while RUNNING do
 				for _=1,budget do
 					__gg.MH_foodCursor=((__gg.MH_foodCursor or 0)%#list)+1
 					local ec=list[__gg.MH_foodCursor]
-					if type(ec)=="table" and ec.n and ec.n>=2 then pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end) end
+					if type(ec)=="table" and ec.n and ec.n>=2 then
+						local re=RS:FindFirstChild("RemoteEvents"); local exact=(re and ec.remote and re:FindFirstChild(ec.remote)) or rs
+						pcall(function() exact:FireServer(table.unpack(ec,1,ec.n)) end)
+					end
 				end
 			end
 		end
@@ -4786,7 +4882,7 @@ task.spawn(function() while RUNNING do
 		if me then
 			-- FIND TARGETS FIRST — collect every enemy inside DamageRange. If there's NOBODY in range we do NOTHING
 			-- (no click, no SoundRemote, no attack) so it never "auto-attacks nothing". Only when a target exists do we
-			-- swing once (click + SoundRemote), wait a frame for the server's attack window, then fire the hit reports.
+			-- swing once through the captured SoundRemote, wait a frame for the server's attack window, then fire hits.
 			local mine=getMyModel(); local targs={}; local seen={}
 			local function consider(m)
 				if #targs>=8 or not (m and m:IsA("Model") and m~=mine) or seen[m] then return end
@@ -4802,7 +4898,6 @@ task.spawn(function() while RUNNING do
 			end
 			-- ONLY swing + fire when there's actually something in range (this is the "stop attacking nothing" fix)
 			if #targs>0 then
-				pcall(clickMouse)
 				fireSwing()
 				RunService.Heartbeat:Wait()
 				for _,m in ipairs(targs) do fireAttack(m, true) end
@@ -6842,4 +6937,4 @@ end
 MS("5 DONE - all tabs built, menu ready")
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
-print("[Dream Hub · Prior Extinction v6.3 PE-v2] Loaded — unified protection, streaming hitboxes, captured combat packets, automatic food/stamina fixes")
+print("[Dream Hub · Prior Extinction v6.4 PE-v3] Loaded — exact need/stamina packets, wellbeing resolver, cached streaming combat")
