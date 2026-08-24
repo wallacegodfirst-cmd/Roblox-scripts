@@ -13,7 +13,7 @@
       through testing can break them.
 
       ── LOAD IT ────────────────────────────────────────────────────────────────────────────────
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/wallacegodfirst-cmd/Roblox-scripts/refs/heads/codex/rework-hitbox-food-tps/DreamHub_JJS_Update_Plus.lua"))()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/wallacegodfirst-cmd/Roblox-scripts/refs/heads/codex/jjs-runtime-rework-v2/DreamHub_JJS_Update_Plus.lua"))()
 
       This loader is hard-wired to PLUS. The FREE-tier equivalent is DreamHub_JJS_Update.lua, and your
       users are unaffected either way - they load DreamHub_JJS_Free.lua, which fetches the frozen build.
@@ -32,7 +32,7 @@ _G.JJS_PLUS = true
 -- Only the three UPDATE loaders set it - so anyone who saved the OLD one-liner that pointed straight
 -- at DreamHub_JJS.lua gets the dev file WITHOUT the unreleased features, instead of a free preview.
 _G.__DreamUpdateChannel = true
-_G.__DreamReportWebhook = _G.__DreamReportWebhook or ("https://discord.com/api/webhooks/1527849806108692500/".."Ryczyznv3EQVLJF_Y-AYsMqhK".."_fvBC5T3wu2d1uO5BBmSgMARN0_hST5vRRlzQZHkLyg")   -- bug reports land in your Discord
+_G.__DreamReportWebhook = nil
 
 -- ═══════════════════════════════════════════════════════════
 -- JUJUTSU SHENANIGANS BYPASS (ZERO-LAG)
@@ -47,8 +47,8 @@ end
 -- ═══ THE ONLY REAL DIFFERENCE FROM THE FREE LOADER ═══
 -- DreamHub_JJS.lua is the DEV file. DreamHub_JJS_Free.lua points at DreamHub_JJS_Public.lua instead.
 local URLS = {
-	"https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/codex/rework-hitbox-food-tps/DreamHub_JJS.lua",
-	"https://github.com/wallacegodfirst-cmd/roblox-scripts/raw/codex/rework-hitbox-food-tps/DreamHub_JJS.lua",
+	"https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/refs/heads/codex/jjs-runtime-rework-v2/DreamHub_JJS.lua",
+	"https://github.com/wallacegodfirst-cmd/roblox-scripts/raw/refs/heads/codex/jjs-runtime-rework-v2/DreamHub_JJS.lua",
 }
 local StarterGui = game:GetService("StarterGui")
 local function toast(msg, dur)

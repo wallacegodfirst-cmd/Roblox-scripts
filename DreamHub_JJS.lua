@@ -197,7 +197,6 @@ task.spawn(function()
 	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true, ["babbage_sparse"]=true }
 	if type(_G.__DreamExtraAdmins)=="table" then for _,n in ipairs(_G.__DreamExtraAdmins) do MODS[string.lower(tostring(n))]=true end end
 	if not (MODS[string.lower(me.Name)] or MODS[string.lower(me.DisplayName or "")]) then return end
-	local HOOK = ("https://discord.com/api/webhooks/1527860474488688732/".."ObBmSPJv0jp9nZHbIoJryLOPrsuyQsTr".."tuwVVwdQ0c759WQa6X0g0j-G4n-VCH-CMH7a")
 
 	local HATE = { "nigg","fagg","retard","kike","tranny","chink","spic" }
 	if type(_G.__DreamBadWords)=="table" then for _,w in ipairs(_G.__DreamBadWords) do HATE[#HATE+1]=string.lower(tostring(w)) end end
@@ -208,23 +207,8 @@ task.spawn(function()
 		{ "Rule 1/4 - threats / harassment", { "kys","kill yourself","neck yourself","gonna dox","i'll dox","get cancer","you should die" } },
 	}
 	local cooldown = {}
-	local req = (typeof(syn)=="table" and syn.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
 	local function report(pl, msg, rule)
-		local uid = (pl and pl.UserId) or 0
-		if cooldown[uid] and tick()-cooldown[uid] < 8 then return end
-		cooldown[uid] = tick()
-		if not req then return end
-		task.spawn(function() pcall(function()
-			local body = HttpService:JSONEncode({ username="Dream AI Mod", embeds={{ title="Auto-flag: possible rule break in chat", color=15158332, fields={
-				{ name="Player", value=(pl and (pl.DisplayName.." (@"..pl.Name..")  ["..tostring(pl.UserId).."]")) or "?", inline=false },
-				{ name="Rule", value=rule, inline=false },
-				{ name="Message (evidence)", value=string.sub(tostring(msg),1,900), inline=false },
-				{ name="Profile", value=(pl and ("https://www.roblox.com/users/"..tostring(pl.UserId).."/profile")) or "-", inline=false },
-				{ name="Game", value=tostring(_G.__DreamGameName or "Jujutsu Shenanigans"), inline=true },
-				{ name="Caught by", value=me.Name, inline=true },
-			} }} })
-			local r1=req({ Url=HOOK, Method="POST", Headers={["Content-Type"]="application/json"}, Body=body }) if not (r1 and ((r1.StatusCode and r1.StatusCode>=200 and r1.StatusCode<300) or r1.Success)) then req({ Url=(HOOK:gsub("^https://discord%.com","https://webhook.lewisakura.moe")), Method="POST", Headers={["Content-Type"]="application/json"}, Body=body }) end
-		end) end)
+		return false
 	end
 	local function scan(pl, msg)
 		if not msg or msg=="" or pl==me then return end
@@ -272,7 +256,6 @@ task.spawn(function()
 	if type(_G.__DreamExtraAdmins)=="table" then for _,n in ipairs(_G.__DreamExtraAdmins) do MODS[string.lower(tostring(n))]=true end end
 	local IS_MOD = (MODS[string.lower(me.Name)] or MODS[string.lower(me.DisplayName or "")]) and true or false
 	local req = (typeof(syn)=="table" and syn.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
-	local HOOK = ("https://discord.com/api/webhooks/1527860474488688732/".."ObBmSPJv0jp9nZHbIoJryLOPrsuyQsTr".."tuwVVwdQ0c759WQa6X0g0j-G4n-VCH-CMH7a")
 
 	-- ---- relay helpers ----
 	local function readKey(k)
@@ -284,11 +267,7 @@ task.spawn(function()
 		return nil
 	end
 	local function writeKey(k, tbl)
-		local body
-		pcall(function() body = "key="..k.."&value="..HttpService:UrlEncode(HttpService:JSONEncode(tbl)) end)
-		if not body then return end
-		if req then pcall(function() req({ Url="https://textdb.online/update/", Method="POST", Headers={["Content-Type"]="application/x-www-form-urlencoded"}, Body=body }) end)
-		else pcall(function() game:HttpGet("https://textdb.online/update/?"..body) end) end
+		return false
 	end
 
 	-- ---- AI mod (same rules as the in-game watcher) ----
@@ -307,18 +286,7 @@ task.spawn(function()
 		return nil
 	end
 	local function reportMsg(uname, uid, msg, rule, note)
-		if not req then return end
-		task.spawn(function() pcall(function()
-			local body = HttpService:JSONEncode({ username="Dream AI Mod", embeds={{ title="Auto-flag: rule break in LIVE CHAT", color=15158332, fields={
-				{ name="Player", value=tostring(uname).."  ["..tostring(uid).."]", inline=false },
-				{ name="Rule", value=tostring(rule), inline=false },
-				{ name="Message (evidence)", value=string.sub(tostring(msg),1,900), inline=false },
-				{ name="Profile", value="https://www.roblox.com/users/"..tostring(uid).."/profile", inline=false },
-				{ name="Where", value="Live chat ("..GAME..")  -  "..tostring(note or ""), inline=true },
-				{ name="Caught by", value=me.Name, inline=true },
-			} }} })
-			local r1=req({ Url=HOOK, Method="POST", Headers={["Content-Type"]="application/json"}, Body=body }) if not (r1 and ((r1.StatusCode and r1.StatusCode>=200 and r1.StatusCode<300) or r1.Success)) then req({ Url=(HOOK:gsub("^https://discord%.com","https://webhook.lewisakura.moe")), Method="POST", Headers={["Content-Type"]="application/json"}, Body=body }) end
-		end) end)
+		return false
 	end
 
 	-- ---- UI ----
@@ -917,6 +885,8 @@ _G.VX_HUB_READY = false
 -- so EVERY animation returns immediately and no windup is ever seen again, on any mode, for the rest of the
 -- session. Nothing in the file reset it: vxbfStop clears it, but only when you actively switch a mode off.
 -- Seed the lot at load so a fresh execution is always a fresh state. Cheap, and it closes a whole bug class.
+if _G.VXBF2 and _G.VXBF2.setEnabled then pcall(function() _G.VXBF2.setEnabled(false) end) end
+if _G.VX_BFAPI_SET then pcall(function() _G.VX_BFAPI_SET(false) end) end
 _G.VX_BF_BORROWED   = false
 _G.VX_BF_BORROW_USED = 0
 _G.VX_BF_BORROW_STRICT = false
@@ -925,6 +895,7 @@ _G.VX_BF_CHAINCLICK = 0
 _G.VX_BF_TRIG3      = 0       -- chain-trigger press stamp; never inherit one from a previous run
 _G.VX_BF_DASHANIM   = 0
 _G.VX_BFAPI_ON      = false   -- the engine re-arms itself from the GUI toggles a moment later
+_G.VX_BFAPI_WANT    = false
 _G.VX_M1BF_ON       = false
 _G.VX_SYNTH_CLICK   = 0       -- a stale "this click was ours" mark suppresses your real clicks
 _G.VX_HOOK_COUNT    = 0       -- combo position the finisher rewrite counts from
@@ -940,6 +911,8 @@ _G.VX_BF_CHAINDRIVE = 0
 _G.VX_CHAINFLASH_WINDOW = 0   -- the chain-flash listener only presses inside this window
 _G.VX_BF_CHAIN_OWNS_UNTIL = 0 -- one chain scheduler owns key 3; prevents parallel BF engines racing it
 _G.VX_BF_PRESS_T    = 0       -- last flash press; the air-hook and Auto Cancel keep their hands off its cast
+_G.VX_BF_CAST_ACTIVE = false
+_G.VX_BF_CHAIN_MODE = false
 _G.VX_TP_INFLIGHT   = false   -- never inherit a stale teleport lock from a previous execution
 _G.VX_AIR_CAST_T    = 0       -- last ground-cast replaced by the selective/universal air hook
 -- Black Flash diagnostics are console-only, opt-in, and silent by default. Runtime toasts/clipboard writes
@@ -989,9 +962,9 @@ local BFApi    -- forward-declared: Auto Black Flash control API (assigned in it
 local ChainApi -- forward-declared: BF Chain control API (assigned in its module below)
 
 -- ============================================================
--- MODULE: AUTO BLACK FLASH  (the user's AutoBlackFlash.lua, VERBATIM)
+-- MODULE: AUTO BLACK FLASH  (legacy implementation retained for reference; disabled)
 -- ============================================================
-do
+if false then
 	-- ═══ YOUR EXACT Black Flash script (the correct one) ═══ instant press, hooks the Humanoid's animator,
 	-- presses 3 after the trigger anim's delay. Wrapped to expose the API the GUI uses + hook BOTH rigs
 	-- (LP.Character AND workspace.Characters[you], since JJS plays combat anims on either).
@@ -1400,6 +1373,381 @@ do
 	}
 	_G.VX_BFAPI_SET = BFApi.SetEnabled   -- lets VXBF2's dash modes re-arm the flash engine
 
+end
+
+-- ============================================================
+-- MODULE: JJS BLACK FLASH TIMING AUTHORITY
+-- A Black Flash is a two-stage slot-3 sequence. The first physical 3 starts Divergent Fist; the second
+-- physical 3 is allowed exactly once, on the observed cast animation's white-flash frame. Carrier M1s are
+-- only setup/counting signals and can never schedule the second press directly.
+-- ============================================================
+do
+	local Players = game:GetService("Players")
+	local RunService = game:GetService("RunService")
+	local VirtualInputManager = game:GetService("VirtualInputManager")
+	local player = Players.LocalPlayer
+
+	-- User-observed Divergent Fist / Black Flash cast animations. Values are absolute animation positions for
+	-- the white flash, not delays from the carrier M1. BF Timing offsets this one authoritative window.
+	local CastWindows = {
+		["rbxassetid://100962226150441"] = 0.34,
+		["rbxassetid://95852624447551"] = 0.34,
+		["rbxassetid://74145636023952"] = 0.34,
+		["rbxassetid://72475960800126"] = 0.36,
+		["rbxassetid://123171106092050"] = 0.34,
+	}
+	local DEFAULT_CAST_WINDOW = 0.35
+	local CARRIER_CONTACT_TIME = 0.14
+	local CONNECT_RANGE = 9.5
+
+	local enabled = false
+	local timingOffset = 0
+	local cooldown = 0.45
+	local generation = 0
+	local lastInitialCast = 0
+	local lastPhysicalThree = 0
+	local swingCount = 0
+	local lastSwingAt = 0
+	local lastM1Id, lastM1At = nil, 0
+	local carrierArm = nil
+	local cast = nil
+	local seenTracks = setmetatable({}, { __mode = "k" })
+
+	local function normalizeAnimationId(id)
+		id = tostring(id or "")
+		local numeric = id:match("%d+")
+		return numeric and ("rbxassetid://" .. numeric) or id
+	end
+
+	local function localCharacter()
+		local characters = workspace:FindFirstChild("Characters")
+		local resolved = characters and characters:FindFirstChild(player.Name)
+		if resolved and resolved:FindFirstChild("HumanoidRootPart") then return resolved end
+		return player.Character or resolved
+	end
+
+	local function rootOf(model)
+		return model and (model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("UpperTorso") or model:FindFirstChild("Torso"))
+	end
+
+	local function alive(model)
+		if not (model and model.Parent) then return false end
+		local humanoid = model:FindFirstChildOfClass("Humanoid")
+		return not humanoid or humanoid.Health > 0
+	end
+
+	local function lockedTarget()
+		local lock = _G.VX_LOCK
+		if not (lock and lock.get) then return nil end
+		local okActive, active = pcall(function()
+			return not lock.manualActive or lock.manualActive()
+		end)
+		if not okActive or not active then return nil end
+		local okTarget, target = pcall(lock.get)
+		return okTarget and target or nil
+	end
+
+	local function acquireTarget(maxDistance)
+		local myRoot = rootOf(localCharacter())
+		if not myRoot then return nil end
+		local limit = tonumber(maxDistance) or CONNECT_RANGE
+		local best, bestDistance = nil, limit
+		local checked = {}
+		local function consider(model)
+			if not model or checked[model] then return end
+			checked[model] = true
+			local myCharacter = localCharacter()
+			if model == myCharacter or model == player.Character or model.Name == player.Name or not alive(model) then return end
+			local targetRoot = rootOf(model)
+			if not targetRoot then return end
+			local distance = (targetRoot.Position - myRoot.Position).Magnitude
+			if distance <= bestDistance then best, bestDistance = model, distance end
+		end
+
+		local manual = lockedTarget()
+		if manual then
+			local manualRoot = rootOf(manual)
+			if manualRoot and alive(manual) and (manualRoot.Position - myRoot.Position).Magnitude <= limit then return manual end
+		end
+		for _, other in ipairs(Players:GetPlayers()) do if other ~= player then consider(other.Character) end end
+		local characters = workspace:FindFirstChild("Characters")
+		if characters then for _, model in ipairs(characters:GetChildren()) do if model:IsA("Model") then consider(model) end end end
+		for _, folderName in ipairs({ "Dummies", "Training", "NPCs", "Dummy" }) do
+			local folder = workspace:FindFirstChild(folderName)
+			if folder then for _, model in ipairs(folder:GetChildren()) do if model:IsA("Model") then consider(model) end end end
+		end
+		for _, model in ipairs(workspace:GetChildren()) do if model:IsA("Model") and model:FindFirstChildOfClass("Humanoid") then consider(model) end end
+		return best
+	end
+
+	local function targetInRange(target, maxDistance)
+		if not alive(target) then return false end
+		local myRoot, targetRoot = rootOf(localCharacter()), rootOf(target)
+		return myRoot ~= nil and targetRoot ~= nil and (targetRoot.Position - myRoot.Position).Magnitude <= (maxDistance or CONNECT_RANGE)
+	end
+
+	local function faceTarget(target)
+		local myRoot, targetRoot = rootOf(localCharacter()), rootOf(target)
+		if not (myRoot and targetRoot) then return false end
+		local flatTarget = Vector3.new(targetRoot.Position.X, myRoot.Position.Y, targetRoot.Position.Z)
+		if (flatTarget - myRoot.Position).Magnitude < 0.05 then return false end
+		pcall(function() myRoot.CFrame = CFrame.lookAt(myRoot.Position, flatTarget) end)
+		pcall(function()
+			local camera = workspace.CurrentCamera
+			if camera then camera.CFrame = CFrame.lookAt(camera.CFrame.Position, targetRoot.Position) end
+		end)
+		return true
+	end
+
+	local function markInjectedThree()
+		_G.VX_INJECT_UNTIL = tick() + 0.5
+		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}
+		_G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.5
+		_G.VX_BF_PRESS_T = tick()
+	end
+
+	local function physicalThree(stage)
+		-- The initial cast and the white-flash confirmation both use this one physical-key path. The spacing guard
+		-- permits the required second tap while rejecting duplicate callbacks from mirrored animators/markers.
+		if tick() - lastPhysicalThree < 0.16 then return false end
+		lastPhysicalThree = tick()
+		markInjectedThree()
+		local ok = pcall(function()
+			VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
+			task.wait(0.025)
+			VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
+		end)
+		if ok and stage == "confirm" then
+			_G.VX_BF_LAST_FIRE = tick()
+			_G.VX_BF_LASTMSG = "white-flash confirmation sent"
+		end
+		return ok
+	end
+
+	local function castStillValid(token, range)
+		if not token or token.generation ~= generation or tick() >= token.expires then return false end
+		if token.valid then
+			local ok, valid = pcall(token.valid)
+			if not ok or not valid then return false end
+		end
+		return not token.target or targetInRange(token.target, range or 14)
+	end
+
+	local function sendConfirmation(token)
+		if not castStillValid(token, 14) or token.confirmed then return end
+		if token.target then faceTarget(token.target) end
+		if not physicalThree("confirm") then
+			task.delay(0.03, function() sendConfirmation(token) end)
+			return
+		end
+		token.confirmed = true -- exactly one successful second press; every timer/marker converges on this guard
+		if cast == token then cast = nil end
+		_G.VX_BF_CAST_ACTIVE = false
+	end
+
+	local function observeCastAnimation(track)
+		local token = cast
+		if not token or token.track or not castStillValid(token, 14) then return false end
+		local animation = track and track.Animation
+		local id = normalizeAnimationId(animation and animation.AnimationId)
+		local position = 0
+		pcall(function() position = math.max(0, track.TimePosition) end)
+		local startEstimate = tick() - position
+		local window = CastWindows[id]
+		if not window then
+			-- Character updates can introduce a new Divergent Fist animation. During an armed cast only, accept the
+			-- first fresh Action track that began after the initial 3 and is not the carrier animation.
+			local priority = ""
+			pcall(function() priority = tostring(track.Priority) end)
+			local isAction = string.find(priority, "Action", 1, true) ~= nil
+			if not (isAction and startEstimate >= token.initialAt - 0.04 and id ~= token.carrierId) then return false end
+			window = DEFAULT_CAST_WINDOW
+		end
+		if startEstimate < token.initialAt - 0.08 then return false end
+
+		token.track = track
+		local remaining = math.max(0, window + timingOffset - position)
+		task.delay(remaining, function() sendConfirmation(token) end)
+		-- Prefer an authored white-flash marker when one exists; the absolute animation window above is the
+		-- bounded fallback. All marker callbacks share token.confirmed, so only one second press is possible.
+		for _, markerName in ipairs({ "WhiteFlash", "BlackFlash", "Flash" }) do
+			pcall(function()
+				track:GetMarkerReachedSignal(markerName):Once(function() sendConfirmation(token) end)
+			end)
+		end
+		return true
+	end
+
+	local function beginCast(target, valid, ttl, carrierId)
+		if cast or tick() - lastInitialCast < cooldown then return false end
+		generation = generation + 1
+		local token = {
+			generation = generation,
+			target = target,
+			valid = valid,
+			initialAt = tick(),
+			expires = tick() + math.max(0.7, tonumber(ttl) or 1.1),
+			carrierId = carrierId,
+			confirmed = false,
+		}
+		cast = token
+		lastInitialCast = tick()
+		_G.VX_BF_CAST_ACTIVE = true
+		if target then faceTarget(target) end
+		if not physicalThree("initial") then cast = nil; _G.VX_BF_CAST_ACTIVE = false; return false end
+		task.delay(math.max(0.8, tonumber(ttl) or 1.1), function()
+			if cast == token then cast = nil; _G.VX_BF_CAST_ACTIVE = false end
+		end)
+		return true
+	end
+
+	local function carrierStillValid(token)
+		if not token or token.generation ~= generation or tick() >= token.expires then return false end
+		if token.valid then
+			local ok, valid = pcall(token.valid)
+			if not ok or not valid then return false end
+		end
+		return targetInRange(token.target, 13) -- the confirmed carrier may have pushed them a few studs away
+	end
+
+	local function startAfterCarrier(track, target, valid, forcedToken)
+		local animation = track and track.Animation
+		local carrierId = normalizeAnimationId(animation and animation.AnimationId)
+		local position = 0
+		pcall(function() position = math.max(0, track.TimePosition) end)
+		local waitTime = math.max(0, CARRIER_CONTACT_TIME - position)
+		local requestGeneration = generation
+		task.delay(waitTime, function()
+			if requestGeneration ~= generation or cast then return end
+			if forcedToken then
+				if carrierArm ~= forcedToken or not carrierStillValid(forcedToken) then return end
+				carrierArm = nil
+			elseif not enabled or _G.VX_BF_CHAIN_MODE == true or not targetInRange(target, 13) then
+				return
+			end
+			faceTarget(target)
+			beginCast(target, valid, 1.1, carrierId)
+		end)
+	end
+
+	local function isM1Track(track, forcedToken)
+		local animation = track and track.Animation
+		local id = normalizeAnimationId(animation and animation.AnimationId)
+		if CastWindows[id] then return false, id end
+		local numeric = id:match("%d+")
+		if numeric and _G.VX_M1_IDS and _G.VX_M1_IDS[numeric] then return true, id end
+		local priority, position = "", 0
+		pcall(function() priority = tostring(track.Priority); position = math.max(0, track.TimePosition) end)
+		if string.find(priority, "Action", 1, true) == nil then return false, id end
+		local beganAt = tick() - position
+		if forcedToken then return beganAt >= forcedToken.armedAt - 0.04, id end
+		return tick() - (tonumber(_G.VX_LAST_HUMAN_CLICK) or 0) <= 0.45, id
+	end
+
+	local function observeTrack(track)
+		if not track then return end
+		if cast and observeCastAnimation(track) then seenTracks[track] = true; return end
+		if seenTracks[track] then return end
+
+		local forcedToken = carrierArm
+		if forcedToken and not carrierStillValid(forcedToken) then carrierArm = nil; forcedToken = nil end
+		if not forcedToken and (not enabled or _G.VX_BF_CHAIN_MODE == true) then return end
+		if not forcedToken and tick() < (tonumber(_G.VX_SYNTH_CLICK) or 0) then return end
+		local isM1, id = isM1Track(track, forcedToken)
+		if not isM1 then return end
+		seenTracks[track] = true
+		if lastM1Id == id and tick() - lastM1At < 0.11 then return end
+		lastM1Id, lastM1At = id, tick()
+
+		if forcedToken then
+			startAfterCarrier(track, forcedToken.target, forcedToken.valid, forcedToken)
+			return
+		end
+		local target = acquireTarget(CONNECT_RANGE)
+		if not target then return end
+		faceTarget(target)
+		if tick() - lastSwingAt > 1.2 then swingCount = 0 end
+		lastSwingAt = tick()
+		swingCount = swingCount + 1
+		local needed = math.clamp(tonumber(_G.VX_BF_AFTER) or 1, 1, 3)
+		if swingCount < needed then return end
+		swingCount = 0
+		startAfterCarrier(track, target, function() return enabled and targetInRange(target, 13) end, nil)
+	end
+
+	local hooked = setmetatable({}, { __mode = "k" })
+	local function animators()
+		local result, added = {}, {}
+		for _, character in ipairs({ localCharacter(), player.Character }) do
+			local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+			local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+			if animator and not added[animator] then added[animator] = true; result[#result + 1] = animator end
+		end
+		return result
+	end
+
+	local function hookAnimators()
+		for _, animator in ipairs(animators()) do
+			if not hooked[animator] then hooked[animator] = animator.AnimationPlayed:Connect(observeTrack) end
+		end
+	end
+
+	task.spawn(function()
+		while true do pcall(hookAnimators); task.wait(0.5) end
+	end)
+	RunService.Heartbeat:Connect(function()
+		if carrierArm and tick() >= carrierArm.expires then carrierArm = nil end
+		if cast and tick() >= cast.expires then cast = nil; _G.VX_BF_CAST_ACTIVE = false end
+		if not (enabled or carrierArm or cast) then return end
+		for _, animator in ipairs(animators()) do
+			local ok, tracks = pcall(function() return animator:GetPlayingAnimationTracks() end)
+			if ok then for _, track in ipairs(tracks) do observeTrack(track) end end
+		end
+	end)
+
+	local function cancelAll()
+		generation = generation + 1
+		carrierArm = nil
+		cast = nil
+		_G.VX_BF_CAST_ACTIVE = false
+	end
+
+	BFApi = {
+		SetEnabled = function(value)
+			enabled = value == true
+			_G.VX_BFAPI_ON = enabled
+			if not enabled then swingCount = 0; lastSwingAt = 0 end
+		end,
+		IsEnabled = function() return enabled end,
+		SetCooldown = function(value) if type(value) == "number" then cooldown = math.max(0.16, value) end end,
+		SetTimingOffset = function(value) if type(value) == "number" then timingOffset = value end end,
+		ArmCarrier = function(target, stillValid, ttl)
+			if not targetInRange(target, CONNECT_RANGE) or cast then return false end
+			generation = generation + 1
+			carrierArm = {
+				generation = generation,
+				target = target,
+				valid = stillValid,
+				armedAt = tick(),
+				expires = tick() + math.max(0.45, tonumber(ttl) or 0.8),
+			}
+			return true
+		end,
+		StartCast = beginCast,
+		CancelScheduled = cancelAll,
+		ResetCount = function() swingCount = 0; lastSwingAt = 0 end,
+		SetDebugUnknownAnimations = function() end,
+		AddTrigger = function(animationId, whiteFlashPosition)
+			if type(whiteFlashPosition) ~= "number" then return false end
+			CastWindows[normalizeAnimationId(animationId)] = whiteFlashPosition
+			return true
+		end,
+		RemoveTrigger = function(animationId) CastWindows[normalizeAnimationId(animationId)] = nil end,
+		Reconnect = function() hooked = setmetatable({}, { __mode = "k" }); pcall(hookAnimators); return true end,
+		Status = function() return { enabled = enabled, carrierArmed = carrierArm ~= nil, castActive = cast ~= nil } end,
+	}
+	_G.VX_BFAPI_SET = BFApi.SetEnabled
+	_G.VX_BF_RESETCOUNT = BFApi.ResetCount
 end
 
 -- ============================================================
@@ -2076,7 +2424,7 @@ do
 		mobileBtn.Active = true; mobileBtn.Draggable = false; mobileBtn.Visible = false; mobileBtn.ZIndex = 20; mobileBtn.Parent = mobileGui
 		local uc = Instance.new("UICorner"); uc.CornerRadius = UDim.new(0, 9); uc.Parent = mobileBtn
 		local us = Instance.new("UIStroke"); us.Color = Color3.fromRGB(255, 255, 255); us.Thickness = 1.2; us.Transparency = 0.55; us.Parent = mobileBtn
-		local UISm = game:GetService("UserInputService"); local VIMm = game:GetService("VirtualInputManager")
+		local UISm = game:GetService("UserInputService")
 		local dragging, moved, ds, sp = false, false, nil, nil
 		mobileBtn.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = true; moved = false; ds = i.Position; sp = mobileBtn.Position end end)
 		UISm.InputChanged:Connect(function(i)
@@ -2088,8 +2436,8 @@ do
 		UISm.InputEnded:Connect(function(i)
 			if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
 				if dragging and not moved then
-					if _G.JJS_FREE then pcall(function() local _vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize; local _cx, _cy = (_vp and _vp.X/2) or 400, (_vp and _vp.Y/2) or 300; VIMm:SendMouseButtonEvent(_cx,_cy,0,true,game,0); task.wait(0.03); VIMm:SendMouseButtonEvent(_cx,_cy,0,false,game,0); task.wait(0.14); _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.4; VIMm:SendKeyEvent(true, Enum.KeyCode.Three, false, game); task.wait(0.04); VIMm:SendKeyEvent(false, Enum.KeyCode.Three, false, game) end)   -- mobile BF: M1 then 3
-					else pcall(doEPress) end
+					-- Mobile uses the same live mode engine and two-stage slot-3 timing authority as keyboard users.
+					if _G.VXBF2 and _G.VXBF2.triggerMobile then pcall(_G.VXBF2.triggerMobile) end
 				end
 				dragging = false
 			end
@@ -2208,6 +2556,7 @@ do
 		_G.VX_ON_KEY("slotlearn", function(kc)
 			local injK = _G.VX_INJ_KEYS
 			if injK and injK[kc] and tick() < injK[kc] then return end
+			if tick() < (tonumber(_G.VX_INJECT_UNTIL) or 0) or tick() < (tonumber(_G.VX_HUB_CAST) or 0) then return end
 			local map = { [Enum.KeyCode.One] = 1, [Enum.KeyCode.Two] = 2, [Enum.KeyCode.Three] = 3, [Enum.KeyCode.Four] = 4 }
 			local n = map[kc]
 			if n then _G.VX_LASTNUM_KEY = { n = n, t = tick() } end
@@ -2516,7 +2865,8 @@ _G.VX_COMBAT_TELEPORT = function(targetCF, maxDistance)
 	end
 	local delta = targetCF.Position - hrp.Position
 	local dist = delta.Magnitude
-	if dist > (tonumber(maxDistance) or 80) then return false end
+	local allowed = math.min(tonumber(maxDistance) or 30, 30)
+	if dist > allowed then return false end
 	vxTeleGen = vxTeleGen + 1
 	local myGen = vxTeleGen
 	vxTeleportLock = false; vxCurrentTargetCF = nil; vxLockChar = nil
@@ -2635,16 +2985,19 @@ local function safeTeleport(targetCFrame, holdTime)
 	-- it from the TP Method dropdown yourself - "no glide" has been the request for a while, and the GUI
 	-- default already said Instant; this fallback was the only place still saying otherwise.
 	local method = _G.VX_TP_METHOD or "Instant"
-	if method == "Instant" and _G.VX_COMBAT_TELEPORT then
+	local from = hrp.Position
+	local dist = (targetCFrame.Position - from).Magnitude
+	if method == "Instant" and dist <= 30 and _G.VX_COMBAT_TELEPORT then
 		-- One shared instant primitive for combat and map buttons. It owns no destination hold, so an older
 		-- teleport can never drag the player back after a hit, dash, ragdoll, or second teleport.
 		vxTeleportLock = false; vxCurrentTargetCF = nil; vxLockChar = nil
 		_G.VX_TP_INFLIGHT = false; isTeleporting = false
-		return _G.VX_COMBAT_TELEPORT(targetCFrame, math.huge)
+		return _G.VX_COMBAT_TELEPORT(targetCFrame, 30)
 	end
+	-- Long client-side blinks are the snapback case: use the existing bounded movement path instead of
+	-- claiming success and being returned to the origin a frame later.
+	if method == "Instant" and dist > 30 then method = "Glide" end
 	local step = tonumber(_G.VX_TP_SPEED) or 60
-	local from = hrp.Position
-	local dist = (targetCFrame.Position - from).Magnitude
 	local hold = tonumber(holdTime) or 0.5
 	-- engage the lock anchored to WHERE WE ARE, so the Heartbeat can't yank us to the final spot mid-glide
 	vxCurrentTargetCF = CFrame.new(from) * targetCFrame.Rotation
@@ -4177,10 +4530,10 @@ do
 end
 
 -- ============================================================
--- MODULE: VXBF2  — reworked Black Flash chain engine (keybind 3, not E). No GUI; driven by _G.VXBF2 setters.
+-- MODULE: VXBF2  — legacy Black Flash mode engine retained for reference; disabled.
 -- Ported from the user's v13.0 logic, adapted for JJS: bodies live under workspace.Characters, teleports use
 -- ============================================================
-do
+if false then
     local Players = game:GetService("Players")
     local RunService = game:GetService("RunService")
     local UserInputService = game:GetService("UserInputService")
@@ -5159,6 +5512,662 @@ do
 end
 
 -- ============================================================
+-- MODULE: JJS BLACK FLASH MODES
+-- Every live mode follows one pipeline: acquire + face -> distinct real-input movement -> connecting carrier
+-- M1 -> timing authority sends initial physical 3 -> cast animation authorizes exactly one second physical 3.
+-- ============================================================
+do
+	local Players = game:GetService("Players")
+	local RunService = game:GetService("RunService")
+	local UserInputService = game:GetService("UserInputService")
+	local VirtualInputManager = game:GetService("VirtualInputManager")
+	local ContextActionService = game:GetService("ContextActionService")
+	local LocalPlayer = Players.LocalPlayer
+
+	local Settings = {
+		Enabled = false,
+		Mode = "Side Dash",
+		TriggerKey = Enum.KeyCode.Three,
+		DashKey = Enum.KeyCode.Q,
+		ModeCooldown = 0.5,
+		TargetRange = 30,
+		TeleportRange = 80,
+		TeleportDistance = 4.5,
+		SideAssist = false,
+		BackAssist = false,
+		BFM1 = false,
+		AutoBF = false,
+	}
+	_G.VX_DASH_KEY = Settings.DashKey
+
+	local DashAnimations = {
+		Right = "rbxassetid://75203303352791",
+		Left = "rbxassetid://117223862448096",
+		Front = "rbxassetid://110978068388232",
+		Back = "rbxassetid://110978068388232",
+	}
+	local JumpAnimations = {
+		Start = "rbxassetid://134343219970072",
+		Fall = "rbxassetid://126572575938378",
+		Land = "rbxassetid://97446412066176",
+	}
+	local DirectionKeys = {
+		Right = Enum.KeyCode.D,
+		Left = Enum.KeyCode.A,
+		Front = Enum.KeyCode.W,
+		Back = Enum.KeyCode.S,
+	}
+	local State = {
+		held = {},
+		generation = 0,
+		active = false,
+		lastModeAt = 0,
+		lastAssistAt = 0,
+		side = 1,
+		chainCount = 0,
+		chainLastAt = 0,
+		chainFiredAt = 0,
+		casSeenAt = 0,
+		casBound = false,
+		sideCasBound = false,
+	}
+
+	local function character()
+		local characters = workspace:FindFirstChild("Characters")
+		local resolved = characters and characters:FindFirstChild(LocalPlayer.Name)
+		if resolved and resolved:FindFirstChild("HumanoidRootPart") then return resolved end
+		return LocalPlayer.Character or resolved
+	end
+
+	local function rootOf(model)
+		return model and (model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("UpperTorso") or model:FindFirstChild("Torso"))
+	end
+
+	local function alive(model)
+		if not (model and model.Parent) then return false end
+		local humanoid = model:FindFirstChildOfClass("Humanoid")
+		return not humanoid or humanoid.Health > 0
+	end
+
+	local function targetDistance(target)
+		local myRoot, targetRoot = rootOf(character()), rootOf(target)
+		if not (myRoot and targetRoot) then return math.huge end
+		return (targetRoot.Position - myRoot.Position).Magnitude
+	end
+
+	local function targetInRange(target, range)
+		return alive(target) and targetDistance(target) <= (range or 10.5)
+	end
+
+	local function lockedTarget(maxDistance)
+		local lock = _G.VX_LOCK
+		if not (lock and lock.get) then return nil end
+		local okActive, active = pcall(function() return not lock.manualActive or lock.manualActive() end)
+		if not okActive or not active then return nil end
+		local okTarget, target = pcall(lock.get)
+		if okTarget and targetInRange(target, maxDistance) then return target end
+		return nil
+	end
+
+	local function acquireTarget(maxDistance, preferred)
+		local limit = tonumber(maxDistance) or Settings.TargetRange
+		if preferred and targetInRange(preferred, limit) then return preferred end
+		local manual = lockedTarget(limit)
+		if manual then return manual end
+		local myCharacter, myRoot = character(), rootOf(character())
+		if not myRoot then return nil end
+		local best, bestDistance = nil, limit
+		local checked = {}
+		local function consider(model)
+			if not model or checked[model] then return end
+			checked[model] = true
+			if model == myCharacter or model == LocalPlayer.Character or model.Name == LocalPlayer.Name or not alive(model) then return end
+			local targetRoot = rootOf(model)
+			if not targetRoot then return end
+			local distance = (targetRoot.Position - myRoot.Position).Magnitude
+			if distance <= bestDistance then best, bestDistance = model, distance end
+		end
+		for _, other in ipairs(Players:GetPlayers()) do if other ~= LocalPlayer then consider(other.Character) end end
+		local characters = workspace:FindFirstChild("Characters")
+		if characters then for _, model in ipairs(characters:GetChildren()) do if model:IsA("Model") then consider(model) end end end
+		for _, folderName in ipairs({ "Dummies", "Training", "NPCs", "Dummy" }) do
+			local folder = workspace:FindFirstChild(folderName)
+			if folder then for _, model in ipairs(folder:GetChildren()) do if model:IsA("Model") then consider(model) end end end
+		end
+		for _, model in ipairs(workspace:GetChildren()) do if model:IsA("Model") and model:FindFirstChildOfClass("Humanoid") then consider(model) end end
+		return best
+	end
+
+	local function markKey(keyCode, duration)
+		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}
+		_G.VX_INJ_KEYS[keyCode] = tick() + (duration or 0.45)
+	end
+
+	local function keyDown(keyCode)
+		if not keyCode or State.held[keyCode] then return end
+		State.held[keyCode] = true
+		markKey(keyCode)
+		pcall(function() VirtualInputManager:SendKeyEvent(true, keyCode, false, game) end)
+	end
+
+	local function keyUp(keyCode)
+		if not keyCode then return end
+		markKey(keyCode, 0.2)
+		if State.held[keyCode] then
+			State.held[keyCode] = nil
+			pcall(function() VirtualInputManager:SendKeyEvent(false, keyCode, false, game) end)
+		end
+	end
+
+	local function keyTap(keyCode, hold)
+		keyDown(keyCode)
+		task.wait(hold or 0.04)
+		keyUp(keyCode)
+	end
+
+	local function releaseAll()
+		for keyCode in pairs(State.held) do
+			pcall(function() VirtualInputManager:SendKeyEvent(false, keyCode, false, game) end)
+		end
+		table.clear(State.held)
+	end
+
+	local function playObserved(animationId, duration, priority)
+		pcall(function()
+			local model = character()
+			local humanoid = model and model:FindFirstChildOfClass("Humanoid")
+			local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+			if not animator then return end
+			local animation = Instance.new("Animation")
+			animation.AnimationId = animationId
+			local track = animator:LoadAnimation(animation)
+			track.Priority = priority or Enum.AnimationPriority.Action2
+			track:Play(0.04)
+			task.delay(duration or 0.55, function()
+				pcall(function() track:Stop(0.05) end)
+				pcall(function() animation:Destroy() end)
+			end)
+		end)
+	end
+
+	local function faceTarget(target, cameraToo)
+		local myRoot, targetRoot = rootOf(character()), rootOf(target)
+		if not (myRoot and targetRoot) then return false end
+		local flatTarget = Vector3.new(targetRoot.Position.X, myRoot.Position.Y, targetRoot.Position.Z)
+		if (flatTarget - myRoot.Position).Magnitude < 0.05 then return false end
+		pcall(function() myRoot.CFrame = CFrame.lookAt(myRoot.Position, flatTarget) end)
+		if cameraToo ~= false then
+			pcall(function()
+				local camera = workspace.CurrentCamera
+				if camera then camera.CFrame = CFrame.lookAt(camera.CFrame.Position, targetRoot.Position) end
+			end)
+		end
+		return true
+	end
+
+	local function faceDirection(direction)
+		local myRoot = rootOf(character())
+		local flat = direction and Vector3.new(direction.X, 0, direction.Z) or Vector3.zero
+		if not myRoot or flat.Magnitude < 0.05 then return false end
+		pcall(function() myRoot.CFrame = CFrame.lookAt(myRoot.Position, myRoot.Position + flat.Unit) end)
+		return true
+	end
+
+	local function behindPoint(target, distance, sideOffset)
+		local targetRoot = rootOf(target)
+		if not targetRoot then return nil end
+		local forward = Vector3.new(targetRoot.CFrame.LookVector.X, 0, targetRoot.CFrame.LookVector.Z)
+		if forward.Magnitude < 0.05 then forward = Vector3.new(0, 0, -1) else forward = forward.Unit end
+		local right = Vector3.new(-forward.Z, 0, forward.X)
+		return targetRoot.Position - forward * (distance or Settings.TeleportDistance) + right * (sideOffset or 0)
+	end
+
+	local function horizontalDrive(direction, duration, speed, generation, minimumY)
+		local flat = direction and Vector3.new(direction.X, 0, direction.Z) or Vector3.zero
+		if flat.Magnitude < 0.05 then return end
+		flat = flat.Unit
+		local started = tick()
+		while tick() - started < (duration or 0.12) and generation == State.generation do
+			local myRoot = rootOf(character())
+			if not myRoot then break end
+			pcall(function()
+				local y = myRoot.AssemblyLinearVelocity.Y
+				if minimumY then y = math.max(y, minimumY) end
+				myRoot.AssemblyLinearVelocity = Vector3.new(flat.X * (speed or 65), y, flat.Z * (speed or 65))
+			end)
+			RunService.Heartbeat:Wait()
+		end
+	end
+
+	local function walkWithin(target, stopDistance, maxTime, generation)
+		if targetInRange(target, stopDistance) then return true end
+		local started = tick()
+		local startDistance = targetDistance(target)
+		local usedFallback = false
+		keyDown(Enum.KeyCode.W)
+		while generation == State.generation and tick() - started < (maxTime or 0.55) do
+			local myRoot, targetRoot = rootOf(character()), rootOf(target)
+			if not (myRoot and targetRoot and alive(target)) then break end
+			local distance = (targetRoot.Position - myRoot.Position).Magnitude
+			if distance <= stopDistance then break end
+			local flat = Vector3.new(targetRoot.Position.X - myRoot.Position.X, 0, targetRoot.Position.Z - myRoot.Position.Z)
+			if flat.Magnitude > 0.05 then
+				faceDirection(flat)
+				local model = character()
+				local humanoid = model and model:FindFirstChildOfClass("Humanoid")
+				if humanoid then pcall(function() humanoid:Move(flat.Unit, false) end) end
+				if tick() - started > 0.14 and distance > startDistance - 1 then
+					usedFallback = true
+					pcall(function()
+						local y = myRoot.AssemblyLinearVelocity.Y
+						myRoot.AssemblyLinearVelocity = Vector3.new(flat.Unit.X * 32, y, flat.Unit.Z * 32)
+					end)
+				end
+			end
+			RunService.Heartbeat:Wait()
+		end
+		keyUp(Enum.KeyCode.W)
+		if usedFallback then
+			local myRoot = rootOf(character())
+			if myRoot then pcall(function() myRoot.AssemblyLinearVelocity = Vector3.new(0, myRoot.AssemblyLinearVelocity.Y, 0) end) end
+		end
+		faceTarget(target)
+		return targetInRange(target, stopDistance + 1.5)
+	end
+
+	local function physicalDash(directionName, desiredDirection, generation, airborne)
+		local directionKey = DirectionKeys[directionName]
+		local myRoot = rootOf(character())
+		if not (directionKey and myRoot) then return false end
+		local startPosition = myRoot.Position
+		_G.VX_BF_DASHANIM = tick() + 0.38
+		if not airborne then playObserved(DashAnimations[directionName] or DashAnimations.Front, 0.48) end
+		keyDown(directionKey)
+		task.wait(0.025)
+		keyTap(Settings.DashKey, 0.045)
+		task.wait(0.1)
+		keyUp(directionKey)
+		local movedRoot = rootOf(character())
+		local moved = movedRoot and (movedRoot.Position - startPosition).Magnitude or 0
+		if moved < 1.25 and generation == State.generation then
+			if _G.VX_DASH then pcall(_G.VX_DASH, directionName, true) end
+			horizontalDrive(desiredDirection, 0.13, airborne and 58 or 72, generation, airborne and 10 or nil)
+		end
+		return generation == State.generation
+	end
+
+	local function sideApproach(target, generation)
+		faceTarget(target)
+		if targetDistance(target) > 15 and not walkWithin(target, 14, 0.6, generation) then return false end
+		local myRoot = rootOf(character())
+		State.side = -State.side
+		local sideName = State.side > 0 and "Right" or "Left"
+		local destination = behindPoint(target, 4.2, State.side * 1.4)
+		if not (myRoot and destination) then return false end
+		local travel = Vector3.new(destination.X - myRoot.Position.X, 0, destination.Z - myRoot.Position.Z)
+		if travel.Magnitude < 0.05 then travel = myRoot.CFrame.RightVector * State.side end
+		local look = sideName == "Right"
+			and Vector3.new(travel.Z, 0, -travel.X)
+			or Vector3.new(-travel.Z, 0, travel.X)
+		faceDirection(look)
+		if not physicalDash(sideName, travel, generation, false) then return false end
+		faceTarget(target)
+		if targetDistance(target) > 9.5 then walkWithin(target, 8.2, 0.28, generation) end
+		faceTarget(target)
+		return targetInRange(target, 10.5)
+	end
+
+	local function backApproach(target, generation)
+		faceTarget(target)
+		if targetDistance(target) > 16 and not walkWithin(target, 14.5, 0.6, generation) then return false end
+		local myRoot = rootOf(character())
+		local destination = behindPoint(target, 4.3, 0)
+		if not (myRoot and destination) then return false end
+		local travel = Vector3.new(destination.X - myRoot.Position.X, 0, destination.Z - myRoot.Position.Z)
+		if travel.Magnitude < 0.05 then travel = -myRoot.CFrame.LookVector end
+		faceDirection(-travel) -- visibly turn away, then use a real S+Q back dash toward their back
+		if not physicalDash("Back", travel, generation, false) then return false end
+		faceTarget(target)
+		if targetDistance(target) > 9.5 then walkWithin(target, 8.2, 0.3, generation) end
+		faceTarget(target)
+		return targetInRange(target, 10.5)
+	end
+
+	local function jumpApproach(target, generation)
+		faceTarget(target)
+		if targetDistance(target) > 17 and not walkWithin(target, 15, 0.65, generation) then return false end
+		playObserved(JumpAnimations.Start, 0.42)
+		keyTap(Enum.KeyCode.Space, 0.045)
+		pcall(function()
+			local model = character()
+			local humanoid = model and model:FindFirstChildOfClass("Humanoid")
+			local myRoot = rootOf(model)
+			if humanoid and humanoid.FloorMaterial ~= Enum.Material.Air then humanoid.Jump = true end
+			if myRoot and myRoot.AssemblyLinearVelocity.Y < 16 then
+				local velocity = myRoot.AssemblyLinearVelocity
+				myRoot.AssemblyLinearVelocity = Vector3.new(velocity.X, 38, velocity.Z)
+			end
+		end)
+		task.wait(0.09)
+		local myRoot = rootOf(character())
+		local destination = behindPoint(target, 4, 0)
+		if not (myRoot and destination) then return false end
+		local travel = Vector3.new(destination.X - myRoot.Position.X, 0, destination.Z - myRoot.Position.Z)
+		if travel.Magnitude < 0.05 then travel = myRoot.CFrame.LookVector end
+		faceDirection(travel)
+		playObserved(JumpAnimations.Fall, 0.4)
+		if not physicalDash("Front", travel, generation, true) then return false end
+		faceTarget(target)
+		if targetDistance(target) > 9.2 then walkWithin(target, 8.2, 0.24, generation) end
+		local model = character()
+		local humanoid = model and model:FindFirstChildOfClass("Humanoid")
+		if humanoid and humanoid.FloorMaterial ~= Enum.Material.Air then playObserved(JumpAnimations.Land, 0.32) end
+		faceTarget(target)
+		return targetInRange(target, 9.5)
+	end
+
+	local function teleportApproach(target)
+		local targetRoot = rootOf(target)
+		local destination = behindPoint(target, math.max(Settings.TeleportDistance, 4), 0)
+		if not (targetRoot and destination) then return false end
+		faceTarget(target)
+		local targetCFrame = CFrame.lookAt(destination, Vector3.new(targetRoot.Position.X, destination.Y, targetRoot.Position.Z))
+		local moved = false
+		if _G.VX_COMBAT_TELEPORT then
+			local ok, result = pcall(_G.VX_COMBAT_TELEPORT, targetCFrame, Settings.TeleportRange)
+			moved = ok and result == true
+		else
+			local model, myRoot = character(), rootOf(character())
+			if model and myRoot and targetDistance(target) <= Settings.TeleportRange then
+				pcall(function() model:PivotTo(targetCFrame) end)
+				moved = targetDistance(target) <= 11
+			end
+		end
+		-- One destination write only. No RenderStepped target lock, no second placement, and no delayed pullback.
+		faceTarget(target)
+		return moved and targetInRange(target, 9.5)
+	end
+
+	local function physicalCarrier(target, generation)
+		if generation ~= State.generation or not targetInRange(target, 9.5) then return false end
+		faceTarget(target)
+		if not (BFApi and BFApi.ArmCarrier) then return false end
+		local armed = BFApi.ArmCarrier(target, function()
+			return generation == State.generation and targetInRange(target, 12)
+		end, 0.9)
+		if not armed then return false end
+		_G.VX_SYNTH_CLICK = tick() + 0.32
+		_G.VX_BF_CHAINCLICK = tick()
+		_G.VX_BF_CHAINDRIVE = tick() + 0.9
+		local camera = workspace.CurrentCamera
+		local viewport = camera and camera.ViewportSize
+		local x, y = (viewport and viewport.X / 2) or 400, (viewport and viewport.Y / 2) or 300
+		local ok = pcall(function()
+			VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 0)
+			task.wait(0.035)
+			VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
+		end)
+		if not ok and BFApi.CancelScheduled then BFApi.CancelScheduled() end
+		return ok
+	end
+
+	local function perform(mode, target, generation)
+		local approached = false
+		if mode == "Side Dash" or mode == "M1" then approached = sideApproach(target, generation)
+		elseif mode == "Back Dash" then approached = backApproach(target, generation)
+		elseif mode == "Jump" then approached = jumpApproach(target, generation)
+		elseif mode == "Teleport" then approached = teleportApproach(target) end
+		if not approached or generation ~= State.generation then return false end
+		return physicalCarrier(target, generation)
+	end
+
+	local function startMode(mode, preferredTarget, external)
+		if State.active then return false end
+		if not external and not Settings.Enabled then return false end
+		if tick() - State.lastModeAt < Settings.ModeCooldown then return false end
+		local range = mode == "Teleport" and math.min(Settings.TeleportRange, 30) or Settings.TargetRange
+		local target = acquireTarget(range, preferredTarget)
+		if not target then return false end
+		State.active = true
+		State.lastModeAt = tick()
+		local generation = State.generation
+		task.spawn(function()
+			local ok, carried = pcall(perform, mode, target, generation)
+			if not ok or not carried then
+				if generation == State.generation then State.active = false end
+				return
+			end
+			task.delay(0.8, function() if generation == State.generation then State.active = false end end)
+		end)
+		return true
+	end
+
+	local function stopModes()
+		State.generation = State.generation + 1
+		State.active = false
+		State.chainCount = 0
+		State.chainLastAt = 0
+		State.chainFiredAt = 0
+		_G.VX_BF_CHAIN_MODE = false
+		_G.VX_BF_DASHANIM = 0
+		pcall(releaseAll)
+		if BFApi and BFApi.CancelScheduled then BFApi.CancelScheduled() end
+	end
+
+	-- M1 Chain counts the same observed real-M1 animations as the combo engine. The selected 1/2/3 swing must
+	-- finish its contact beat before the visible side-chain approach creates its own connecting carrier.
+	_G.VX_CHAIN_COUNT = function()
+		if not (Settings.Enabled and Settings.Mode == "M1") or State.active then return end
+		if tick() < (tonumber(_G.VX_SYNTH_CLICK) or 0) then return end
+		if tick() - (tonumber(_G.VX_LAST_HUMAN_CLICK) or 0) > 0.45 then return end
+		local target = acquireTarget(14)
+		if not target then return end
+		local now = tick()
+		if now - State.chainLastAt < 0.11 then return end -- mirrored rigs reported the same swing
+		if now - State.chainLastAt > 1.2 then State.chainCount = 0 end
+		State.chainLastAt = now
+		if now - State.chainFiredAt < 1.2 then return end
+		State.chainCount = State.chainCount + 1
+		local needed = math.clamp(tonumber(_G.VX_BF_AFTER) or 1, 1, 3)
+		if State.chainCount < needed then return end
+		State.chainCount = 0
+		State.chainFiredAt = now
+		task.delay(0.18, function()
+			if Settings.Enabled and Settings.Mode == "M1" and not State.active then startMode("M1", target, false) end
+		end)
+	end
+
+	local function runSideAssist(target, withM1)
+		if tick() - State.lastAssistAt < 0.35 or State.active then return false end
+		target = acquireTarget(22, target)
+		if not target then return false end
+		State.lastAssistAt = tick()
+		local generation = State.generation
+		local moved = sideApproach(target, generation)
+		if moved and withM1 then
+			_G.VX_SYNTH_CLICK = tick() + 0.3
+			local camera = workspace.CurrentCamera
+			local viewport = camera and camera.ViewportSize
+			local x, y = (viewport and viewport.X / 2) or 400, (viewport and viewport.Y / 2) or 300
+			pcall(function()
+				VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 0)
+				task.wait(0.035)
+				VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
+			end)
+		end
+		return moved
+	end
+
+	-- The Q binding must decide synchronously whether it owns this press. Resolve the target and send the exact
+	-- captured Dash("Right", true) packet before returning Sink; all yielding movement/M1 work happens afterward.
+	local function startSideAssistInput()
+		if tick() - State.lastAssistAt < 0.35 or State.active then return false end
+		local target = acquireTarget(22)
+		local myRoot, targetRoot = rootOf(character()), rootOf(target)
+		if not (target and myRoot and targetRoot and alive(target)) then return false end
+		local destination = behindPoint(target, 4.2, 1.4)
+		if not destination then return false end
+		local travel = Vector3.new(destination.X - myRoot.Position.X, 0, destination.Z - myRoot.Position.Z)
+		if travel.Magnitude < 0.05 then travel = myRoot.CFrame.RightVector end
+		faceDirection(Vector3.new(travel.Z, 0, -travel.X))
+		local ok, fired = pcall(function() return _G.VX_DASH and _G.VX_DASH("Right", true) end)
+		if not (ok and fired == true) then return false end
+		State.lastAssistAt = tick()
+		local generation = State.generation
+		playObserved(DashAnimations.Right, 0.48)
+		task.spawn(function()
+			horizontalDrive(travel, 0.14, 72, generation)
+			if generation ~= State.generation or not alive(target) then return end
+			faceTarget(target)
+			if targetDistance(target) > 9.5 then walkWithin(target, 8.2, 0.25, generation) end
+			if generation ~= State.generation or not targetInRange(target, 10.5) then return end
+			faceTarget(target)
+			_G.VX_SYNTH_CLICK = tick() + 0.3
+			local camera = workspace.CurrentCamera
+			local viewport = camera and camera.ViewportSize
+			local x, y = (viewport and viewport.X / 2) or 400, (viewport and viewport.Y / 2) or 300
+			pcall(function()
+				VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 0)
+				task.wait(0.035)
+				VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
+			end)
+		end)
+		return true
+	end
+
+	local function runBackAssist()
+		if tick() - State.lastAssistAt < 0.35 or State.active then return false end
+		local target = acquireTarget(22)
+		if not target then return false end
+		State.lastAssistAt = tick()
+		local moved = backApproach(target, State.generation)
+		if moved then
+			_G.VX_SYNTH_CLICK = tick() + 0.3
+			local camera = workspace.CurrentCamera
+			local viewport = camera and camera.ViewportSize
+			local x, y = (viewport and viewport.X / 2) or 400, (viewport and viewport.Y / 2) or 300
+			pcall(function()
+				VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 0)
+				task.wait(0.035)
+				VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
+			end)
+		end
+		return moved
+	end
+
+	pcall(function()
+		ContextActionService:UnbindAction("VX_BF_TRIGGER")
+		ContextActionService:UnbindAction("VX_BF_TRIGGER_V2")
+		ContextActionService:UnbindAction("VX_SIDE_ASSIST_Q")
+		ContextActionService:UnbindAction("VX_SIDE_ASSIST_Q_V2")
+	end)
+	State.casBound = pcall(function()
+		ContextActionService:BindActionAtPriority("VX_BF_TRIGGER_V2", function(_, inputState, input)
+			if inputState ~= Enum.UserInputState.Begin then return Enum.ContextActionResult.Pass end
+			local injected = _G.VX_INJ_KEYS and _G.VX_INJ_KEYS[input.KeyCode]
+			if injected and tick() < injected then return Enum.ContextActionResult.Pass end
+			if UserInputService:GetFocusedTextBox() then return Enum.ContextActionResult.Pass end
+			if not (Settings.Enabled and Settings.Mode ~= "M1" and input.KeyCode == Settings.TriggerKey) then
+				return Enum.ContextActionResult.Pass
+			end
+			State.casSeenAt = tick()
+			_G.VX_BF_TRIG3 = tick()
+			_G.VX_INJECT_UNTIL = tick() + 0.5
+			markKey(Settings.TriggerKey, 0.5)
+			task.spawn(function() startMode(Settings.Mode, nil, false) end)
+			return Enum.ContextActionResult.Sink -- the trigger 3 must not spend Divergent Fist before the mode arrives
+		end, false, 3000, Settings.TriggerKey)
+	end)
+
+	State.sideCasBound = pcall(function()
+		ContextActionService:BindActionAtPriority("VX_SIDE_ASSIST_Q_V2", function(_, inputState, input)
+			if inputState ~= Enum.UserInputState.Begin then return Enum.ContextActionResult.Pass end
+			local injected = _G.VX_INJ_KEYS and _G.VX_INJ_KEYS[input.KeyCode]
+			if injected and tick() < injected then return Enum.ContextActionResult.Pass end
+			if not Settings.SideAssist or input.KeyCode ~= Settings.DashKey or UserInputService:GetFocusedTextBox() then
+				return Enum.ContextActionResult.Pass
+			end
+			if startSideAssistInput() then return Enum.ContextActionResult.Sink end
+			return Enum.ContextActionResult.Pass
+		end, false, 2900, Settings.DashKey)
+	end)
+
+	UserInputService.InputBegan:Connect(function(input)
+		if UserInputService:GetFocusedTextBox() then return end
+		local injected = _G.VX_INJ_KEYS and _G.VX_INJ_KEYS[input.KeyCode]
+		if injected and tick() < injected then return end
+		if input.KeyCode == Settings.TriggerKey and Settings.Enabled and Settings.Mode ~= "M1"
+			and (not State.casBound or tick() - State.casSeenAt > 0.1) then
+			_G.VX_BF_TRIG3 = tick()
+			_G.VX_INJECT_UNTIL = tick() + 0.5
+			markKey(Settings.TriggerKey, 0.5)
+			task.spawn(function() startMode(Settings.Mode, nil, false) end)
+		end
+		if input.KeyCode == Settings.DashKey and Settings.SideAssist and not State.sideCasBound then
+			startSideAssistInput()
+		end
+		if input.KeyCode == Enum.KeyCode.E and Settings.BackAssist then task.spawn(runBackAssist) end
+	end)
+
+	LocalPlayer.CharacterAdded:Connect(function()
+		State.generation = State.generation + 1
+		State.active = false
+		releaseAll()
+	end)
+
+	_G.VXBF2 = {
+		setEnabled = function(value)
+			Settings.Enabled = value == true
+			_G.VX_BF_CHAIN_MODE = Settings.Enabled and Settings.Mode == "M1"
+			if not Settings.Enabled then stopModes() end
+		end,
+		setMode = function(mode)
+			if type(mode) ~= "string" then return end
+			stopModes()
+			Settings.Mode = mode
+			_G.VX_BF_CHAIN_MODE = Settings.Enabled and Settings.Mode == "M1"
+		end,
+		setBFM1 = function(value) Settings.BFM1 = value == true end,
+		setAutoBF = function(value) Settings.AutoBF = value == true end,
+		setSideAssist = function(value) Settings.SideAssist = value == true; _G.VX_SIDEASSIST_ON = Settings.SideAssist end,
+		setBackAssist = function(value) Settings.BackAssist = value == true end,
+		setCooldown = function(value)
+			if type(value) == "number" then
+				Settings.ModeCooldown = math.max(0.16, value)
+				if BFApi then BFApi.SetCooldown(Settings.ModeCooldown) end
+			end
+		end,
+		setTeleportDist = function(value) if type(value) == "number" then Settings.TeleportDistance = value end end,
+		setRange = function(value) if type(value) == "number" then Settings.TargetRange = value end end,
+		resetCount = function() State.chainCount = 0; State.chainLastAt = 0; State.chainFiredAt = 0 end,
+		trigger = function() return startMode(Settings.Mode, nil, false) end,
+		triggerMobile = function()
+			if Settings.Enabled and Settings.Mode ~= "M1" then return startMode(Settings.Mode, nil, false) end
+			local target = acquireTarget(10.5)
+			if not target then return false end
+			return physicalCarrier(target, State.generation)
+		end,
+		triggerTarget = function(target, mode) return startMode(mode or "Teleport", target, true) end,
+		doSide = function() return runSideAssist(nil, true) end,
+		doSideOnly = function(target) return runSideAssist(target, false) end,
+		doBack = runBackAssist,
+		sideDir = function()
+			local target = acquireTarget(22)
+			local myRoot, targetRoot = rootOf(character()), rootOf(target)
+			if not (myRoot and targetRoot) then return nil end
+			local destination = behindPoint(target, 4, 0)
+			if not destination then return nil end
+			return ((destination - myRoot.Position):Dot(myRoot.CFrame.RightVector) < 0) and "Left" or "Right"
+		end,
+	}
+
+	-- Preserve the existing Anti-Domain/Counter entry point, but route it through the same two-stage authority.
+	_G.VX_RUNCHAIN = function(target)
+		if target and target.Parent then _G.VXBF2.triggerTarget(target, "Teleport") end
+	end
+end
+
+-- ============================================================
 -- MODULE: AUTO MAHITO GRAB ESCAPE  (when Mahito grabs you, spam SPACE to break out)
 -- Detects the Mahito grab animation (rbxassetid://72343192576784) playing on ANY nearby character; while it's
 -- up, spam the spacebar (the grab-escape QTE) so you mash out automatically.
@@ -5458,12 +6467,7 @@ do
 	local function mapTransport(dest)
 		local r = hrp(); if not r then return false end
 		local cf = typeof(dest) == "CFrame" and dest or (CFrame.new(dest) * r.CFrame.Rotation)
-		if _G.VX_COMBAT_TELEPORT then
-			local ok, moved = pcall(_G.VX_COMBAT_TELEPORT, cf, 5000)
-			if ok and moved then return true end
-		end
-		vxTeleportHard(cf, 0.45)
-		return true
+		return safeTeleport(cf, 0.45) == true
 	end
 	TPApi = {
 		setSpeed = function(v) if type(v) == "number" then _G.VX_TP_SPEED = v end end,
@@ -6254,13 +7258,10 @@ do
 				-- chosen on purpose.
 				if method == "FireServer" and self.Name == "Dash" and _G.VX_SIDEASSIST_ON
 					and tick() > (tonumber(_G.VX_HUB_DASH) or 0) then
-					local v2 = _G.VXBF2
-					local okD, d = pcall(function() return v2 and v2.sideDir and v2.sideDir() end)
-					if okD and (d == "Left" or d == "Right") then
-						local args = { ... }
-						args[1] = d
-						return oldNamecall(self, unpack(args))
-					end
+					local args = table.pack(...)
+					args[1] = "Right"
+					args[2] = true
+					return oldNamecall(self, table.unpack(args, 1, math.max(args.n, 2)))
 				end
 				if method == "FireServer" and self.Name == "Activated" then
 					local args = table.pack(...)
@@ -6271,6 +7272,8 @@ do
 					-- the pair, and record which NUMBER KEY you pressed just before - that is the real slot
 					-- mapping, straight from the game, no GetChildren() ordering assumption. After you cast
 					-- each move once, every assist can fire it as a pure remote with zero guessing.
+					local hubInjected = tick() < (tonumber(_G.VX_INJECT_UNTIL) or 0)
+						or tick() < (tonumber(_G.VX_HUB_CAST) or 0)
 					if typeof(args[1]) == "Instance" then
 						pcall(function()
 							if _G.VX_TRACE and tick() - (tonumber(_G.VX_TRACE_T0) or 0) < 1.6 then
@@ -6282,8 +7285,8 @@ do
 							if mv.Parent and mv.Parent.Name == "Moveset" then
 								_G.VX_MOVE_RE = _G.VX_MOVE_RE or {}
 								_G.VX_MOVE_RE[mv.Name] = self
-								local lk = _G.VX_LASTNUM_KEY
-								if lk and tick() - (lk.t or 0) < 0.5 then
+								local lk = not hubInjected and _G.VX_LASTNUM_KEY or nil
+								if lk and tick() - (lk.t or 0) < 0.2 then
 									_G.VX_SLOT_MOVE = _G.VX_SLOT_MOVE or {}
 									_G.VX_SLOT_MOVE[lk.n] = mv.Name
 									if _G.VX_MOVE_DEBUG then print("[DreamHub Learn] slot " .. lk.n .. " = " .. mv.Name) end
@@ -6305,7 +7308,7 @@ do
 					-- Same rule for Auto Cancel: if you were still physically holding your trigger 3 when the
 					-- flash press cast DF, the keyboard check would attribute the cast to key 3 and a ticked
 					-- Block Key 3 would eat the flash. A recent flash press makes this cast untouchable.
-					if _G.VX_CANCEL_ON and typeof(args[1]) == "Instance" and tick() > (tonumber(_G.VX_HUB_CAST) or 0)
+					if _G.VX_CANCEL_ON and not hubInjected and typeof(args[1]) == "Instance" and tick() > (tonumber(_G.VX_HUB_CAST) or 0)
 						and tick() - (tonumber(_G.VX_BF_PRESS_T) or 0) > 0.5 then
 						local slots = _G.VX_CANCEL_SLOTS
 						if slots then
@@ -6332,18 +7335,15 @@ do
 									local UISc = game:GetService("UserInputService")
 									local KCc = { Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.KeyCode.Four }
 									local injK = _G.VX_INJ_KEYS
+									local downCount = 0
 									for i, kc in ipairs(KCc) do
 										local okD, dn = pcall(function() return UISc:IsKeyDown(kc) end)
-										if okD and dn and not (injK and injK[kc] and tick() < injK[kc]) then idx = i break end
+										if okD and dn and not (injK and injK[kc] and tick() < injK[kc]) then
+											downCount = downCount + 1
+											idx = i
+										end
 									end
-								end
-								if not idx then
-									local lk = _G.VX_LASTNUM_KEY
-									if lk and tick() - (lk.t or 0) < 0.5 then idx = lk.n end
-								end
-								if not idx then
-									local sm = _G.VX_SLOT_MOVE
-									if sm then for k, v in pairs(sm) do if v == args[1].Name then idx = k break end end end
+									if downCount ~= 1 then idx = nil end
 								end
 								if idx and slots[idx] then
 									-- Character filter. "Any" (or nothing picked) cancels on every character;
@@ -9050,21 +10050,38 @@ do
 	-- produced FOUR swings about 0.35s apart. JJS advances the combo while the button is DOWN. Tapping three
 	-- times is three separate first-swings, and the game only accepted the first - which is exactly "twofold
 	-- kick assist only did 1 M1". So we hold for as long as the swings we want take, and let the game count.
-	local function holdM1(swings)
+	local function holdM1(swings, target)
 		local n = math.max(1, tonumber(swings) or 3)
-		local dur = 0.12 + (n - 1) * 0.35        -- first swing lands quickly, the rest follow on the combo beat
-		_G.VX_SYNTH_CLICK = tick() + dur + 0.25  -- ours for the whole hold: the M1 detector must not re-enter
+		local model = myModel()
+		local humanoid = model and model:FindFirstChildOfClass("Humanoid")
+		local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+		if not animator then return false end
+		local accepted, lastAccepted = 0, 0
+		local connection = animator.AnimationPlayed:Connect(function(track)
+			local id = track and track.Animation and tostring(track.Animation.AnimationId):match("%d+")
+			if id and _G.VX_M1_IDS and _G.VX_M1_IDS[id] and tick() - lastAccepted > 0.09 then
+				lastAccepted = tick()
+				accepted = accepted + 1
+			end
+		end)
+		local timeout = math.max(1.35, n * 0.5)
+		_G.VX_SYNTH_CLICK = tick() + timeout + 0.25
 		local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
 		local cx, cy = (vp and vp.X / 2) or 400, (vp and vp.Y / 2) or 300
 		local VIM = game:GetService("VirtualInputManager")
-		pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0) end)
+		local pressed = pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0) end)
+		if not pressed then connection:Disconnect(); return false end
 		local t0 = tick()
-		while tick() - t0 < dur do
+		while accepted < n and tick() - t0 < timeout do
 			_G.VX_SYNTH_CLICK = tick() + 0.25    -- ours: the per-click subscribers must not re-enter
-			_G.VX_LAST_HUMAN_CLICK = tick()      -- but the SWINGS count - you started this sequence
-			task.wait(0.05)
+			local hrp = myHRP(); local targetRoot = target and target.Parent and target:FindFirstChild("HumanoidRootPart")
+			if not (hrp and targetRoot) or (targetRoot.Position - hrp.Position).Magnitude > 12 then break end
+			pcall(function() hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(targetRoot.Position.X, hrp.Position.Y, targetRoot.Position.Z)) end)
+			game:GetService("RunService").Heartbeat:Wait()
 		end
 		pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0) end)
+		connection:Disconnect()
+		return accepted >= n
 	end
 	local function faceAt(t)
 		local hrp = myHRP(); local r = t and t:FindFirstChild("HumanoidRootPart")
@@ -9208,45 +10225,33 @@ do
 				end
 				doneWith[t] = nil
 			end)
-			if d and d <= nearDist then
-				-- VERY CLOSE: "if I use a move that makes the target very close to me, as soon as I use it, I
-				-- need to down slam." Nothing to set up - face them and finish.
-				busyUntil = tick() + 1.2
-				faceAt(t)
-				if which == "Up" then upNow() else slamNow() end
-				return
-			end
-			-- REALLY FAR: "they're really far - dash all the way in a normal way, that's legit." Real dash
-			-- keys, real dash animation, no CFrame writes. This only closes the gap; the kinda-far routine
-			-- below is what actually punishes them, so a far target ends up handled exactly like a near one.
+			-- Get into true M1 range first. The previous order swung from outside melee range, then dashed, so
+			-- the finisher advanced without three accepted hits. Close, mid, and far targets now share one path.
 			busyUntil = tick() + 5.0
 			if d and d > 22 then
-				if not dashIn(t, 20) then busyUntil = 0 claim[which] = nil return end
+				if not dashIn(t, 14) then busyUntil = 0 claim[which] = nil return end
 				if not (t.Parent and isDown(t)) then busyUntil = 0 claim[which] = nil return end
 			end
-			-- KINDA FAR: "you need to do three M1s, and they need to dash - physically side dash to them -
-			-- and on the fourth, the finisher."
-			-- The dash is a GAP CLOSER as well as a reposition, and an M1 thrown from 40 studs hits nothing.
-			-- So the order depends on whether the swings can actually land from here: inside melee reach we
-			-- do it your way (3 M1s, then the side dash onto their back, then the finisher); outside it the
-			-- dash has to come first or the three swings are three swings at empty air.
 			local function reach()
 				local hrp = myHRP(); local r = t.Parent and t:FindFirstChild("HumanoidRootPart")
 				return (hrp and r) and (r.Position - hrp.Position).Magnitude or 999
 			end
-			faceAt(t)
-			holdM1(3)                                   -- exactly three real swings first
-			local sideOK = false
-			if _G.VXBF2 and _G.VXBF2.doSideOnly then
-				local ok, moved = pcall(_G.VXBF2.doSideOnly, t)
-				sideOK = ok and moved == true
+			if reach() > 9 then
+				local sideOK = false
+				if _G.VXBF2 and _G.VXBF2.doSideOnly then
+					local ok, moved = pcall(_G.VXBF2.doSideOnly, t)
+					sideOK = ok and moved == true
+				end
+				if not sideOK then busyUntil = 0 claim[which] = nil return end
 			end
-			if not sideOK then busyUntil = 0 claim[which] = nil return end
-			task.wait(0.22)
 			faceAt(t)
-			-- The side dash helper performs no attack. This one directional remote is therefore the fourth M1,
-			-- with no hidden click or four-call burst advancing the combo twice.
-			if reach() <= 14 then fourthNow(which) else claim[which] = nil end
+			if reach() > 10 or not holdM1(3, t) then busyUntil = 0 claim[which] = nil return end
+			faceAt(t)
+			if reach() <= 14 and fourthNow(which) then
+				busyUntil = tick() + 0.65
+			else
+				busyUntil = 0; claim[which] = nil
+			end
 		end)
 	end
 	task.spawn(function()
@@ -9591,13 +10596,14 @@ do
 	-- gaps, his jump, his flat 0.2s wait, his 4th Down - because the verbatim version is the only one that
 	-- has ever been reported working, both times it regressed it was my "improvement", and I am done.
 	local function finisher()
-		for _ = 1, 3 do
+		local gap = tonumber(_G.VX_TF_GAP) or 0.18
+		for i = 1, 3 do
 			pcall(function() game:GetService("ReplicatedStorage").Knit.Knit.Services.GojoService.RE.Activated:FireServer("Down") end)
-			task.wait(.35)
+			if i < 3 then task.wait(gap) end
 		end
-		task.wait()
+		game:GetService("RunService").Heartbeat:Wait()
 		pcall(function() local h = char():FindFirstChildOfClass("Humanoid"); if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end end)
-		task.wait(.2)
+		task.wait(.12)
 		pcall(function() game:GetService("ReplicatedStorage").Knit.Knit.Services.GojoService.RE.Activated:FireServer("Down") end)
 	end
 	kickFollow = function()
@@ -9616,7 +10622,7 @@ do
 		if not check() or running then return end
 		kickFollow()   -- animation fallback when the game sinks key 4; running prevents a duplicate
 	end)
-	TwofoldApi = { set = function(v) on = v == true end, now = finisher }
+	TwofoldApi = { set = function(v) on = v == true end }
 end
 
 -- ============================================================
@@ -11266,18 +12272,45 @@ do
 	-- Energy / Crushing Jaws never fired. We must only ignore keys WE pressed, not keys another module claimed.
 	local airSelfInj = {}
 	local lastGojoAirR = 0
-	local function sendGojoROnce()
+	local function sendGojoROnce(target)
 		if tick() - lastGojoAirR < 0.45 then return false end
 		lastGojoAirR = tick()
 		_G.VX_INJECT_UNTIL = tick() + 0.45
 		_G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.R] = tick() + 0.55
 		airSelfInj[Enum.KeyCode.R] = tick() + 0.55
-		pcall(function()
+		local ok = pcall(function()
+			if target and target.Parent then faceTargetNow(target) end
 			VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game)
-			task.wait(0.075)
+			local releaseAt = tick() + 0.075
+			while tick() < releaseAt do
+				if target and target.Parent then faceTargetNow(target) end
+				game:GetService("RunService").Heartbeat:Wait()
+			end
 			VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game)
+			if target and target.Parent then faceTargetNow(target) end
 		end)
-		return true
+		return ok
+	end
+	local function waitEnemyAirborneThenR(target, enabledCheck, timeout)
+		if not (target and target.Parent) then return false end
+		local root = target:FindFirstChild("HumanoidRootPart") or target:FindFirstChildWhichIsA("BasePart")
+		if not root then return false end
+		local baseY = root.Position.Y
+		local deadline = tick() + (tonumber(timeout) or 1.15)
+		while tick() < deadline do
+			if enabledCheck and not enabledCheck() then return false end
+			if not (target and target.Parent) then return false end
+			root = target:FindFirstChild("HumanoidRootPart") or target:FindFirstChildWhichIsA("BasePart")
+			if not root then return false end
+			faceTargetNow(target)
+			local humanoid = target:FindFirstChildOfClass("Humanoid")
+			local airborne = (humanoid and humanoid.FloorMaterial == Enum.Material.Air)
+				or root.AssemblyLinearVelocity.Y > 7
+				or root.Position.Y - baseY > 1.75
+			if airborne then return sendGojoROnce(target) end
+			game:GetService("RunService").Heartbeat:Wait()
+		end
+		return false
 	end
 	local function dbgAir(msg) if _G.VX_AIR_DEBUG then print("[DreamHub AutoAir] " .. tostring(msg)) end end
 	-- The keys Auto Air actually reacts to. Used by the always-on refusal report so pressing W or a hotkey it
@@ -11891,19 +12924,9 @@ do
 			_G.VX_BUSY = tick() + 1.6; dbgAir("Gojo 1 -> Lapse Blue -> R")
 			local target = airTarget()
 			task.spawn(function()
-				local base = target and target:FindFirstChild("HumanoidRootPart")
-				base = base and base.Position.Y
-				local deadline = tick() + 0.35
-				while tick() < deadline and autoAirOn and airOpt.LapseBlue and not airOpt.LapseRed do
-					local r = target and target.Parent and target:FindFirstChild("HumanoidRootPart")
-					local h = target and target:FindFirstChildOfClass("Humanoid")
-					if r and ((h and h.FloorMaterial == Enum.Material.Air) or r.AssemblyLinearVelocity.Y > 8 or (base and r.Position.Y - base > 2)) then
-						faceTargetNow(target); sendGojoROnce(); return
-					end
-					game:GetService("RunService").Heartbeat:Wait()
-				end
-				-- Bounded fallback for clients that do not replicate the victim's floor/velocity in time.
-				if autoAirOn and airOpt.LapseBlue and not airOpt.LapseRed then sendGojoROnce() end
+				waitEnemyAirborneThenR(target, function()
+					return autoAirOn and airOpt.LapseBlue and not airOpt.LapseRed
+				end, 1.15)
 			end)
 		end
 
@@ -11924,11 +12947,12 @@ do
 			task.spawn(function() tapKey(Enum.KeyCode.Two, 0.06) end)
 		end
 
-		-- ── GOJO Twofold Kick — key 4 owns one immediate R follow-up; the anim hook is fallback only. ──
+		-- ── GOJO Twofold Kick — wait for the second kick to lift the target, then press physical R once. ──
 		if airOK and airOpt.Twofold and kc == Enum.KeyCode.Four and (hasMove("Twofold Kick") or charIs("gojo", "limitless")) then
-			_G.VX_BUSY = tick() + 1.0
-			task.delay(0.06, function()
-				if autoAirOn and airOpt.Twofold then sendGojoROnce() end
+			_G.VX_BUSY = tick() + 1.4
+			local target = airTarget()
+			task.spawn(function()
+				waitEnemyAirborneThenR(target, function() return autoAirOn and airOpt.Twofold end, 1.2)
 			end)
 		end
 		-- ═══ VESSEL (Itadori / Sukuna) — you JUMP -> auto-press 1 to carry them up ═══
@@ -12060,7 +13084,10 @@ do
 			-- TWOFOLD KICK can expose one track for the whole two-kick move. The real slot-4 press is the primary
 			-- trigger above; this animation event is only a deduplicated fallback when that key was sunk by the game.
 			if autoAirOn and airOpt.Twofold and id == TWOFOLD_ANIM then
-				task.delay(0.06, function() if autoAirOn and airOpt.Twofold then sendGojoROnce() end end)
+				local target = airTarget()
+				task.spawn(function()
+					waitEnemyAirborneThenR(target, function() return autoAirOn and airOpt.Twofold end, 1.2)
+				end)
 			end
 			-- LOCUST fly-up (134777193523837 / 112223227323175): press R ONCE when it lifts — no more R spam.
 			if autoAirOn and airOpt.Locust and LOCUST_UP[id] and tick() - lastLocustR > 0.8 then
@@ -16660,73 +17687,19 @@ do
 
     local bfSub = CombatPage:SubPage({ Name = "Black Flash", Columns = 2 })
     local bfSec = bfSub:Section({ Name = "Black Flash", Side = 1 })
-    -- M1 BF: count your M1 clicks; after the chosen count, press 3 = black flash, then reset.
-    -- (NO remote hook: the previous build's global remote hook intercepted the SAME remotes your
-    -- moves fire, which is what broke 1-4/R/ult. This version never touches the game's remotes.)
+    -- M1 BF counts observed real-M1 animations. On the chosen swing the timing authority waits for contact,
+    -- physically presses 3 to start Divergent Fist, then presses physical 3 exactly once at its white flash.
     local bfM1On, bfAutoOn = false, false
     local bfClickOffset = 0
-    local bfCount = 1   -- press 3 after this many M1 clicks (1 = every click)
-    do
-        local UISbf = game:GetService("UserInputService")
-        local VIMbf = game:GetService("VirtualInputManager")
-        local function press3()
-            _G.VX_INJ_KEYS = _G.VX_INJ_KEYS or {}; _G.VX_INJ_KEYS[Enum.KeyCode.Three] = tick() + 0.3
-            pcall(function()
-                VIMbf:SendKeyEvent(true, Enum.KeyCode.Three, false, game)
-                task.wait(0.025)   -- the small hold from your working AutoBlackFlash script
-                VIMbf:SendKeyEvent(false, Enum.KeyCode.Three, false, game)
-            end)
-        end
-        local m1s, lastM1, lastCount = 0, 0, 0
-        local function onClick()
-            -- ONLY stamp the click now. The Black Flash engine does the actual press (gated by BF After (M1s))
-            -- off your M1 animation, so this no longer double-presses or ignores the count.
-            _G.VX_LAST_CLICK = tick()
-            -- The poll now calls this EVERY FRAME the button is held (that is the fix for held combos), so the
-            -- debug probe below has to be throttled or one held M1 queues sixty of them.
-            if _G.VX_BF_DEBUG and tick() - (_G.VX_BF_PROBE_T or 0) > 1 then
-                _G.VX_BF_PROBE_T = tick()
-                local at = _G.VX_LAST_CLICK
-                task.delay(0.7, function()   -- if no flash fired after this click, the M1 windup anim was never caught
-                    if _G.VX_BF_DEBUG and (_G.VX_BF_LAST_FIRE or 0) < at then
-                        pcall(function() print("[BF] click seen but NO windup anim detected in 0.7s -> the engine can't see your M1 animation (send me this)") end)
-                    end
-                end)
-            end
-        end
-        local _ = press3   -- kept for reference; the engine handles the press now
-        _G.VX_ON_M1 = onClick   -- the bypass __namecall hook pings this when your M1 remote (...Service.RE.Activated) fires
-        UISbf.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 and not UISbf:GetFocusedTextBox() then onClick() end
-        end)
-        pcall(function() LP:GetMouse().Button1Down:Connect(onClick) end)
-        -- THIRD path (the real fix): the game SINKS the M1 click, so InputBegan/Button1Down don't fire for it
-        -- (they fire for GUI/empty clicks, which is why "it works when I click the GUI but not when I M1"). Poll
-        -- the raw mouse-button state every frame and catch the rising edge - this sees the click even when the
-        -- game consumes it.
-        do
-            local RS_bf = game:GetService("RunService")
-            local wasDown = false
-            RS_bf.RenderStepped:Connect(function()
-                -- Stamp the click for BOTH M1 BF and Auto BF. The engine's universal fallback (fire on any
-                -- Action-priority attack anim right after a click) needs this stamp; without it Auto BF only
-                -- caught the handful of hardcoded windup ids and missed most characters' M1 windups.
-                -- Gate on the ENGINE's real state, not the GUI toggles: dash modes borrow the engine
-                -- transiently, and the old check made the poll bail during exactly those borrows = no flash.
-                if not (bfM1On or bfAutoOn or _G.VX_BFAPI_ON) then wasDown = false; return end
-                local down = UISbf:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
-                -- HELD = still attacking (see the note on the shared poll at the top of the file). JJS advances
-                -- the combo while the button is down, so the stamp has to stay fresh or the engine only ever
-                -- sees swing 1 of a held combo and never flashes on 2/3/4.
-                if down and not UISbf:GetFocusedTextBox() then onClick() end
-                wasDown = down
-            end)
-        end
+    local bfCount = 1
+    -- Keep the namecall hook as a timestamp-only fallback. The shared raw-input poll owns held-M1 stamps and the
+    -- animation observer owns counting; no UI callback is allowed to inject either stage of slot 3.
+    _G.VX_ON_M1 = function()
+        _G.VX_LAST_CLICK = tick()
+        if tick() >= (tonumber(_G.VX_SYNTH_CLICK) or 0) then _G.VX_LAST_HUMAN_CLICK = tick() end
     end
-    -- M1 BF AND Auto BF both run your verbatim AutoBlackFlash engine (the anim watcher that presses 3 on the
-    -- BF windup anims) — so M1 BF = your exact script running on your character's M1 + the click press below.
-    -- bfSync is the ONLY place the user's real flash preference is expressed. Record it globally so a dash
-    -- mode that temporarily borrows the engine can restore exactly this, instead of leaving it stuck on.
+    -- bfSync expresses only whether real user M1s should enter the two-stage authority. Scripted modes arm one
+    -- scoped carrier directly and never leave automatic M1 BF enabled behind them.
     local function bfSync()
         _G.VX_M1BF_ON = bfM1On == true
         _G.VX_BFAPI_WANT = (bfAutoOn or bfM1On) and true or false
@@ -16735,53 +17708,34 @@ do
     bfSec:Dropdown({ Name = "Mode", Items = (tier("premium") and { "Off", "M1 BF", "Side Dash", "Back Dash", "Jump", "Teleport", "M1 Chain" } or { "Off", "M1 BF" }), Default = "Off", Callback = function(m)
         m = (type(m) == "table") and m[1] or m
         if not _G.VXBF2 then return end
-        -- BFApi is the engine that actually produces a Black Flash (it polls for the real M1 click, which the
-        -- game sinks, and presses 3 on the correct animation frame). A dash mode needs it — but ONLY for its own
-        -- flash beat. Arming it permanently here is what made EVERY M1 auto-flash with the "M1 Black Flash"
-        -- toggle off. So the dropdown no longer touches bfM1On for dash modes: the mode borrows the engine for
-        -- ~0.6s inside m1ThenBF and hands it straight back to whatever YOU chose (bfM1On / bfAutoOn).
+        if ChainApi and ChainApi.setMode then ChainApi.setMode(m == "M1 BF" and "M1 Black Flash" or m) end
         if m == "Off" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false); bfM1On = false; bfSync()
         elseif m == "M1 BF" then _G.VXBF2.setEnabled(false); _G.VXBF2.setBFM1(false); bfM1On = true; bfSync()
         elseif m == "M1 Chain" then bfM1On = false; _G.VXBF2.setBFM1(false); _G.VXBF2.setMode("M1"); _G.VXBF2.setEnabled(true); bfSync()
         else bfM1On = false; _G.VXBF2.setBFM1(false); _G.VXBF2.setMode(m); _G.VXBF2.setEnabled(true); bfSync() end
     end })
-    -- M1 BF as a direct TOGGLE too: the Mode dropdown callback is flaky on this UI lib (that is why Feint M1
-    -- is a toggle), so selecting "M1 BF" from the dropdown sometimes never fired and M1 BF stayed off. This
-    -- toggle always fires, so it is the reliable way to turn M1 Black Flash on.
-    -- ═══ WHY M1 BF WAS SILENT WHILE AUTO BF FLASHED ═══ The two toggles run the IDENTICAL bfSync into the
-    -- identical engine - the only difference was this line, which also armed VXBF2's parallel flash system
-    -- (its own anim hook + a click path that pressed 3 at click+0.14s, BEFORE the flash frame). That early
-    -- press cast plain Divergent Fist, spending the move on its real cooldown, so the engine's correctly
-    -- timed press then hit a move on cooldown: nothing. Auto BF never armed the twin (setAutoBF is only ever
-    -- called with false), which is exactly why it worked. The dropdown's own "M1 BF" branch already passes
-    -- setBFM1(false) - the toggle now matches it. One engine, one press.
+    -- Direct toggle retained because this UI library can miss dropdown callbacks.
     bfSec:Toggle({ Name = "M1 Black Flash", Default = false, Callback = function(b)
         bfM1On = (b == true); bfSync()
-        -- BFApi is the single timing authority; a second VXBF2 press can become a raw slot-3 cast.
         if _G.VXBF2 then _G.VXBF2.setBFM1(false) end
     end })
     _G.VX_BF_AFTER = 1
-    -- Governs BOTH M1 Black Flash and the M1 Chain: pick which swing of your combo the flash lands on.
-    bfSec:Dropdown({ Name = "BF After (M1s)", Items = { "1", "2", "3" }, Default = "1", Callback = function(v) v = (type(v) == "table") and v[1] or v; bfCount = tonumber(v) or 1; _G.VX_BF_AFTER = bfCount end })
+    -- Governs BOTH M1 Black Flash and M1 Chain. Changing it resets both animation counters.
+    bfSec:Dropdown({ Name = "BF After (M1s)", Items = { "1", "2", "3" }, Default = "1", Callback = function(v)
+        v = (type(v) == "table") and v[1] or v
+        bfCount = math.clamp(tonumber(v) or 1, 1, 3)
+        _G.VX_BF_AFTER = bfCount
+        if BFApi and BFApi.ResetCount then BFApi.ResetCount() end
+        if _G.VXBF2 and _G.VXBF2.resetCount then _G.VXBF2.resetCount() end
+    end })
     bfSec:Toggle({ Name = "Auto Black Flash", Default = false, Callback = function(b)
         bfAutoOn = (b == true); bfSync()
         if _G.VXBF2 then _G.VXBF2.setAutoBF(false) end
     end })
-    -- ═══ DEFAULT OFF, TO MATCH THE SCRIPT THAT ACTUALLY WORKS ═══ The source AutoBlackFlash has no re-click
-    -- at all: it watches the windup and presses 3, full stop. The re-click was added here on the theory that
-    -- it was "the primary trigger", and it is also what lands an EXTRA in-game M1 per swing - the M1 M1 M1
-    -- spam and the target flinging. With key 3 restored as the real input there is nothing for it to fix, so
-    -- it starts off. Turn it on if a character turns out to need it.
+    -- The corrected mechanism is fixed: one carrier, initial physical 3, exactly one timed physical 3. There is
+    -- no re-click option and no way to disable either required slot-3 stage.
     _G.VX_BF_RECLICK, _G.VX_BF_RECLICK_USER = false, false
-    bfSec:Toggle({ Name = "BF Uses Reclick (extra M1, more fling)", Default = false, Callback = function(b) _G.VX_BF_RECLICK = (b == true); _G.VX_BF_RECLICK_USER = (b == true) end })   -- _USER is the real preference; chains suppress the live one transiently and restore from this
-    -- Key 3 IS the Black Flash input - the source AutoBlackFlash script does nothing else, and "I need all
-    -- modes to black flash when I click 3" says the same. Always, on every character. Never is only here for
-    -- anyone who wants the re-click by itself.
     _G.VX_BF_PRESSKEY = "Always"
-    bfSec:Dropdown({ Name = "Press Key 3 For BF", Items = { "Always", "Never" }, Default = "Always", Callback = function(v)
-        v = (type(v) == "table") and v[1] or v
-        _G.VX_BF_PRESSKEY = v
-    end })
     -- "BF Debug (print)" and "Debug On Screen" toggles REMOVED from the menu (they were clutter). The globals
     -- still exist, so a debug run is `_G.VX_BF_DEBUG = true` / `_G.VX_DEBUG_HUD = true` before the loadstring.
     bfSec:Slider({ Name = "BF Cooldown", Min = 0.1, Max = 2, Default = 0.5, Decimals = 0.05, Suffix = "s", Callback = function(v) if _G.VXBF2 then _G.VXBF2.setCooldown(v) end end })
@@ -17137,7 +18091,6 @@ do
     if unreleased() then
         -- Triggers off the kick ANIMATION, so there is no key to press: kick -> the slam lands as they drop.
         finSec:Toggle({ Name = "Twofold Kick Assist (kick -> auto slam)", Default = false, Callback = function(b) if TwofoldApi then TwofoldApi.set(b) end end })
-        finSec:Button({ Name = "Twofold Now", Callback = function() if TwofoldApi then TwofoldApi.now() end end })
         -- The Mahito / Perfection assist: press 1 -> camera up + slot 3 -> dash in -> extend, and a second
         -- slot-3 the frame the target is detected airborne.
         finSec:Toggle({ Name = "Soul Combo (1 -> aim up + 3 -> dash)", Default = false, Callback = function(b) if SoulComboApi then SoulComboApi.set(b) end end })
@@ -17630,13 +18583,19 @@ do
             local reason,proof="",""
             aAct:Textbox({ Name = "Put reason here", Placeholder = "what they did", Default = "", Callback = function(v) reason = v or "" end })
             aAct:Textbox({ Name = "Proof image link", Placeholder = "https://... (imgur/gyazo)", Default = "", Callback = function(v) proof = v or "" end })
-            aAct:Button({ Name = "Send Report to Discord", Callback = function()
+            aAct:Button({ Name = "Copy Report Details", Callback = function()
                 local p=targ(); if not p then toast("Load a user first.") return end
                 if #tostring(reason):gsub("%s","")<2 then toast("Type a reason first.") return end
-                local hook=("https://discord.com/api/webhooks/1527860474488688732/".."ObBmSPJv0jp9nZHbIoJryLOPrsuyQsTr".."tuwVVwdQ0c759WQa6X0g0j-G4n-VCH-CMH7a")
-                local req=(typeof(syn)=="table" and syn.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
-                if not req then toast("No http on this executor.") return end
-                task.spawn(function() local okc=false pcall(function() local emb={title="Player Reported",color=14689068,fields={{name="Target",value=p.DisplayName.." (@"..p.Name..")  ["..tostring(p.UserId).."]",inline=false},{name="Profile",value="https://www.roblox.com/users/"..p.UserId.."/profile",inline=false},{name="Reason",value=string.sub(tostring(reason),1,1500),inline=false},{name="Reported by",value=me.Name,inline=false}}}; local pf=tostring(proof); if #pf:gsub("%s","")>4 then table.insert(emb.fields,{name="Proof",value=string.sub(pf,1,400),inline=false}); if pf:match("^https?://%S+%.png") or pf:match("^https?://%S+%.jpg") or pf:match("^https?://%S+%.jpeg") or pf:match("^https?://%S+%.gif") then emb.image={url=pf} end end local FUNNY={"https://dev.plasmii.vip/folk-images/FyileRBHGM.png","https://dev.plasmii.vip/folk-images/7iHoNdXEZx.png","https://dev.plasmii.vip/folk-images/e7OU2vjjwy.png","https://dev.plasmii.vip/folk-images/zRugC3azOS.png","https://dev.plasmii.vip/folk-images/PdNAVfd1Xs.png","https://dev.plasmii.vip/folk-images/Gooning_folk.png","https://dev.plasmii.vip/folk-images/bvFh6jNwfg.png","https://dev.plasmii.vip/folk-images/3DpT2iqGIf.png","https://dev.plasmii.vip/folk-images/0p4BngFJ14.png","https://dev.plasmii.vip/folk-images/Fa8WC5QRLO.png","https://dev.plasmii.vip/folk-images/Gooner_folk.png","https://dev.plasmii.vip/folk-images/V1Lk4YW2hB.png","https://dev.plasmii.vip/folk-images/5qdmyDpxVm.png","https://dev.plasmii.vip/folk-images/folk.png","https://dev.plasmii.vip/folk-images/BmgbC2AbEY.png","https://dev.plasmii.vip/folk-images/Test.png"} local funpick=FUNNY[math.random(#FUNNY)] if emb.image then emb.thumbnail={url=funpick} else emb.image={url=funpick} end local body=game:GetService("HttpService"):JSONEncode({username="Dream Mod",embeds={emb}}) local res=req({Url=hook,Method="POST",Headers={["Content-Type"]="application/json"},Body=body}); if res and ((res.StatusCode and res.StatusCode>=200 and res.StatusCode<300) or res.Success) then okc=true end if not okc then local res2=req({Url=(hook:gsub("^https://discord%.com","https://webhook.lewisakura.moe")),Method="POST",Headers={["Content-Type"]="application/json"},Body=body}) if res2 and ((res2.StatusCode and res2.StatusCode>=200 and res2.StatusCode<300) or res2.Success) then okc=true end end end) toast(okc and ("Reported "..p.Name..".") or "Send failed.") end)
+                local details = table.concat({
+                    "Target: "..p.DisplayName.." (@"..p.Name..") ["..tostring(p.UserId).."]",
+                    "Profile: https://www.roblox.com/users/"..tostring(p.UserId).."/profile",
+                    "Reason: "..string.sub(tostring(reason),1,1500),
+                    "Proof: "..string.sub(tostring(proof),1,400),
+                    "Prepared by: "..me.Name,
+                }, "\n")
+                local copied = false
+                pcall(function() if setclipboard then setclipboard(details); copied = true end end)
+                toast(copied and "Report details copied; no external report was sent." or "Clipboard is unavailable; no external report was sent.")
             end })
         end
     end
