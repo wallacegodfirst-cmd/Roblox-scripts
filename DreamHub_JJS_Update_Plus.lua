@@ -34,21 +34,11 @@ _G.JJS_PLUS = true
 _G.__DreamUpdateChannel = true
 _G.__DreamReportWebhook = nil
 
--- ═══════════════════════════════════════════════════════════
--- JUJUTSU SHENANIGANS BYPASS (ZERO-LAG)
--- We do NOT hook __namecall (JJS 267-kicks for that). The main script destroys the anti-cheat remotes
--- and disables the anti/detect scripts, so a single PivotTo teleport sticks with no rubberband.
--- ═══════════════════════════════════════════════════════════
-if not _G.VX_AC_HOOKED then
-	_G.VX_AC_HOOKED = true
-	print("[JJS Bypass] Loaded: anti-cheat remotes destroyed by the hub; instant teleport.")
-end
-
 -- ═══ THE ONLY REAL DIFFERENCE FROM THE FREE LOADER ═══
 -- DreamHub_JJS.lua is the DEV file. DreamHub_JJS_Free.lua points at DreamHub_JJS_Public.lua instead.
 local URLS = {
-	"https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/refs/heads/codex/jjs-runtime-rework-v2/DreamHub_JJS.lua",
-	"https://github.com/wallacegodfirst-cmd/roblox-scripts/raw/refs/heads/codex/jjs-runtime-rework-v2/DreamHub_JJS.lua",
+	"https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/efb97abe42da5c9f918cfa7e8fbaae131cc04d2c/DreamHub_JJS.lua",
+	"https://github.com/wallacegodfirst-cmd/roblox-scripts/raw/efb97abe42da5c9f918cfa7e8fbaae131cc04d2c/DreamHub_JJS.lua",
 }
 local StarterGui = game:GetService("StarterGui")
 local function toast(msg, dur)
