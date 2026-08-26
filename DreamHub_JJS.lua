@@ -3,96 +3,11 @@
       Sources: friend's Auto Block engine, Autoblackflash.lua, ULTIMATE BACK-LOCK BF CHAIN.
       No emojis. Toggle the menu with RightShift. Press E to trigger the BF chain manually.   ]]
 
--- ═══════════════════════════════════════════════════════════
--- JUJUTSU SHENANIGANS BYPASS (ZERO-LAG)
--- We do NOT hook __namecall (JJS 267-kicks for that). Instead we take away the server's ability to reject a
--- teleport: destroy the anti-cheat RE/RF remotes (leaving harmless dummies so other scripts do not crash on
--- WaitForChild) and disable the anti/detect scripts once. With no channel to report a bad position, a single
--- PivotTo teleport just sticks — no per-frame stepping, no rubberband, no lag. See safeTeleport below.
--- ═══════════════════════════════════════════════════════════
-if not _G.VX_AC_HOOKED then
-	_G.VX_AC_HOOKED = true
-	print("[JJS Bypass] Loaded: anti-cheat remotes destroyed; instant teleport, no rubberband.")
-end
-
--- ── ISOLATED ANTI-CHEAT BYPASS (runs FIRST, before any hub code) ─────────────────────────────────────────
--- Destroy the anti-cheat RE/RF remotes with :Destroy() (not Parent=nil — the AC VM already cached the remote,
--- so re-parenting doesn't stop it; :Destroy() nukes its connections so FireServer silently fails). Leave a
--- same-named dummy so other scripts' WaitForChild doesn't freeze. Then disable the local anti/detect scripts.
-do
-	local Players = game:GetService("Players")
-	local LP = Players.LocalPlayer
-	local function destroyACRemotes()
-		local rs = game:GetService("ReplicatedStorage")
-		local knit = rs:FindFirstChild("Knit"); knit = (knit and knit:FindFirstChild("Knit")) or knit
-		if not knit then return end
-		for _, svc in ipairs(knit:GetDescendants()) do
-			if svc.Name:lower():find("anti") then
-				for _, folderName in ipairs({ "RE", "RF" }) do
-					local folder = svc:FindFirstChild(folderName)
-					if folder then
-						for _, v in ipairs(folder:GetChildren()) do
-							-- ═══ SETTLED BY TESTING, NOT THEORY ═══ AntiCheatService.RE.Teleport used to be kept,
-							-- on the reading that the client fires it to announce a sanctioned move (a capture does
-							-- show the client firing it with a server timestamp). In-game it went the other way:
-							-- "when I click kill AC remote it destroys it, meaning I can teleport". So it is the
-							-- server's REPORTER channel, and DESTROYING it is now the default.
-							-- Set _G.VX_KEEP_AC_TP = true to go back to keeping it.
-							local isACTeleport = (v.Name == "Teleport")
-							local skip = isACTeleport and (_G.VX_KEEP_AC_TP == true)
-							if (v:IsA("RemoteEvent") or v:IsA("RemoteFunction")) and not v:GetAttribute("VX_Dummy") and not skip then
-								local dummy = Instance.new(v.ClassName)
-								dummy.Name = v.Name
-								dummy:SetAttribute("VX_Dummy", true)   -- tag it so the re-run loop skips our own dummy (no churn)
-								dummy.Parent = folder
-								pcall(function() v:Destroy() end)
-							end
-						end
-					end
-				end
-			end
-		end
-	end
-	local function disableACScripts()
-		local function process(parent)
-			if not parent then return end
-			for _, v in ipairs(parent:GetDescendants()) do
-				if v:IsA("LocalScript") or v:IsA("ModuleScript") then
-					local name = v.Name:lower()
-					if name:find("anti") or name:find("cheat") or name:find("detect") or name:find("namecall") then
-						pcall(function() v.Disabled = true end)
-					end
-				end
-			end
-		end
-		pcall(process, LP:FindFirstChild("PlayerScripts"))
-		if LP.Character then pcall(process, LP.Character) end
-	end
-	_G.VX_DESTROY_AC = function() pcall(destroyACRemotes); pcall(disableACScripts) end
-	pcall(destroyACRemotes)
-	pcall(disableACScripts)
-	pcall(function()
-		LP.CharacterAdded:Connect(function()
-			task.wait(1)
-			pcall(destroyACRemotes)
-			pcall(disableACScripts)
-		end)
-	end)
-	-- KEEP RE-DESTROYING: Knit lazy-loads its services, so the load-time pass can run BEFORE AntiCheatService
-	-- has replicated in (then it finds nothing and the AC remote survives = you still get set back). Re-run for
-	-- a while so it catches the remote the moment Knit finishes loading it, and re-nukes any the game recreates.
-	-- The VX_Dummy tag makes this a no-op once everything is already destroyed, so there is no churn or lag.
-	task.spawn(function()
-		for _ = 1, 60 do            -- ~30s of coverage right after load (services can appear seconds late)
-			task.wait(0.5)
-			pcall(destroyACRemotes)
-		end
-		-- STOP after a short window. Re-destroying the AC remotes every 5s forever makes the server watch its
-		-- own remotes vanish and reappear on a loop - a detectable tampering pattern, and a kick risk in a
-		-- public server. Knit lazy-loads within seconds, so a brief watchdog covers the real need.
-		for _ = 1, 3 do task.wait(5); pcall(destroyACRemotes) end
-	end)
-end
+-- Do not destroy game remotes or disable game scripts. Those client-side mutations cannot remove server
+-- authority and they made unrelated abilities/teleports fail unpredictably after a reload. Callers keep a
+-- harmless compatibility function so older movement paths fail safely.
+_G.VX_AC_HOOKED = nil
+_G.VX_DESTROY_AC = function() return false end
 
 -- (LOADING SCREEN REMOVED per request — the hub builds straight away, no splash.)
 -- Dream Hub loading screen
@@ -1384,6 +1299,7 @@ end
 do
 	local Players = game:GetService("Players")
 	local RunService = game:GetService("RunService")
+	local UserInputService = game:GetService("UserInputService")
 	local VirtualInputManager = game:GetService("VirtualInputManager")
 	local player = Players.LocalPlayer
 
@@ -1396,9 +1312,17 @@ do
 		["rbxassetid://72475960800126"] = 0.36,
 		["rbxassetid://123171106092050"] = 0.34,
 	}
-	local DEFAULT_CAST_WINDOW = 0.35
 	local CARRIER_CONTACT_TIME = 0.14
 	local CONNECT_RANGE = 9.5
+	local LEARNED_CAST_WINDOW = 0.35
+	local ExcludedCarrierAnimations = {
+		["rbxassetid://75203303352791"] = true,
+		["rbxassetid://117223862448096"] = true,
+		["rbxassetid://110978068388232"] = true,
+		["rbxassetid://134343219970072"] = true,
+		["rbxassetid://126572575938378"] = true,
+		["rbxassetid://97446412066176"] = true,
+	}
 
 	local enabled = false
 	local timingOffset = 0
@@ -1411,7 +1335,8 @@ do
 	local lastM1Id, lastM1At = nil, 0
 	local carrierArm = nil
 	local cast = nil
-	local seenTracks = setmetatable({}, { __mode = "k" })
+	local seenPlays = setmetatable({}, { __mode = "k" })
+	local pendingM1Target, pendingM1At = nil, 0
 
 	local function normalizeAnimationId(id)
 		id = tostring(id or "")
@@ -1486,6 +1411,15 @@ do
 		return myRoot ~= nil and targetRoot ~= nil and (targetRoot.Position - myRoot.Position).Magnitude <= (maxDistance or CONNECT_RANGE)
 	end
 
+	local function targetInFront(target, maxDistance, minDot)
+		local myRoot, targetRoot = rootOf(localCharacter()), rootOf(target)
+		if not (myRoot and targetRoot) then return false end
+		local delta = targetRoot.Position - myRoot.Position
+		local flat = Vector3.new(delta.X, 0, delta.Z)
+		if flat.Magnitude > (maxDistance or CONNECT_RANGE) or flat.Magnitude < 0.05 then return false end
+		return myRoot.CFrame.LookVector:Dot(flat.Unit) >= (minDot or 0.2)
+	end
+
 	local function faceTarget(target)
 		local myRoot, targetRoot = rootOf(localCharacter()), rootOf(target)
 		if not (myRoot and targetRoot) then return false end
@@ -1555,13 +1489,16 @@ do
 		local startEstimate = tick() - position
 		local window = CastWindows[id]
 		if not window then
-			-- Character updates can introduce a new Divergent Fist animation. During an armed cast only, accept the
-			-- first fresh Action track that began after the initial 3 and is not the carrier animation.
-			local priority = ""
-			pcall(function() priority = tostring(track.Priority) end)
-			local isAction = string.find(priority, "Action", 1, true) ~= nil
-			if not (isAction and startEstimate >= token.initialAt - 0.04 and id ~= token.carrierId) then return false end
-			window = DEFAULT_CAST_WINDOW
+			-- A new animation id is accepted only when the game's own Activated call identified this exact cast as
+			-- Divergent Fist/Black Flash. This keeps updates working without treating an arbitrary Action track as DF.
+			local identityDeadline = tick() + 0.1
+			while tick() < identityDeadline and (tonumber(_G.VX_DF_CAST_T) or 0) < token.initialAt - 0.05 do
+				RunService.Heartbeat:Wait()
+			end
+			local castStamp = tonumber(_G.VX_DF_CAST_T) or 0
+			if castStamp < token.initialAt - 0.05 or math.abs(startEstimate - castStamp) > 0.22 then return false end
+			window = LEARNED_CAST_WINDOW
+			CastWindows[id] = window
 		end
 		if startEstimate < token.initialAt - 0.08 then return false end
 
@@ -1610,6 +1547,22 @@ do
 		return targetInRange(token.target, 13) -- the confirmed carrier may have pushed them a few studs away
 	end
 
+	local function carrierContactConfirmed(token)
+		if not (token and token.clickAt and carrierStillValid(token)) then return false end
+		local humanoid = token.target and token.target:FindFirstChildOfClass("Humanoid")
+		if humanoid and token.healthBefore and humanoid.Health < token.healthBefore - 0.01 then return true end
+		if token.reactionAt and token.reactionAt >= token.clickAt - 0.03 then return true end
+		local info = token.target and token.target:FindFirstChild("Info")
+		for _, name in ipairs({ "Stun", "Stunned", "HitStun", "Hitstun", "Knockback" }) do
+			local value = info and info:FindFirstChild(name)
+			if value and value:IsA("ValueBase") and value.Value ~= false and value.Value ~= 0 then return true end
+			if humanoid and humanoid:GetAttribute(name) then return true end
+		end
+		-- Some dummies expose no health/stun replication. Keep that compatibility fallback strict: true melee
+		-- range and a forward cone, after the contact frame, rather than the old 9.5-stud proximity-only test.
+		return tick() - token.clickAt >= CARRIER_CONTACT_TIME and targetInFront(token.target, 7.25, 0.35)
+	end
+
 	local function startAfterCarrier(track, target, valid, forcedToken)
 		local animation = track and track.Animation
 		local carrierId = normalizeAnimationId(animation and animation.AnimationId)
@@ -1620,9 +1573,21 @@ do
 		task.delay(waitTime, function()
 			if requestGeneration ~= generation or cast then return end
 			if forcedToken then
-				if carrierArm ~= forcedToken or not carrierStillValid(forcedToken) then return end
+				local contactDeadline = tick() + 0.16
+				while carrierArm == forcedToken and carrierStillValid(forcedToken)
+					and not carrierContactConfirmed(forcedToken) and tick() < contactDeadline do
+					RunService.Heartbeat:Wait()
+				end
+				if carrierArm ~= forcedToken or not carrierContactConfirmed(forcedToken) then
+					if carrierArm == forcedToken then
+						if forcedToken.reactionConnection then forcedToken.reactionConnection:Disconnect() end
+						carrierArm = nil
+					end
+					return
+				end
 				carrierArm = nil
-			elseif not enabled or _G.VX_BF_CHAIN_MODE == true or not targetInRange(target, 13) then
+				if forcedToken.reactionConnection then forcedToken.reactionConnection:Disconnect() end
+			elseif not enabled or _G.VX_BF_CHAIN_MODE == true or not targetInFront(target, 7.25, 0.3) then
 				return
 			end
 			faceTarget(target)
@@ -1633,29 +1598,44 @@ do
 	local function isM1Track(track, forcedToken)
 		local animation = track and track.Animation
 		local id = normalizeAnimationId(animation and animation.AnimationId)
-		if CastWindows[id] then return false, id end
+		if CastWindows[id] or ExcludedCarrierAnimations[id] then return false, id end
 		local numeric = id:match("%d+")
 		if numeric and _G.VX_M1_IDS and _G.VX_M1_IDS[numeric] then return true, id end
 		local priority, position = "", 0
 		pcall(function() priority = tostring(track.Priority); position = math.max(0, track.TimePosition) end)
 		if string.find(priority, "Action", 1, true) == nil then return false, id end
 		local beganAt = tick() - position
-		if forcedToken then return beganAt >= forcedToken.armedAt - 0.04, id end
+		if forcedToken then
+			if not forcedToken.clickAt then return false, id end
+			return beganAt >= forcedToken.clickAt - 0.025, id
+		end
 		return tick() - (tonumber(_G.VX_LAST_HUMAN_CLICK) or 0) <= 0.45, id
+	end
+
+	local function freshTrackPlay(track)
+		local position = 0
+		pcall(function() position = math.max(0, track.TimePosition) end)
+		local startedAt = tick() - position
+		local previous = seenPlays[track]
+		if previous and math.abs(previous - startedAt) < 0.075 then return false end
+		seenPlays[track] = startedAt
+		return true
 	end
 
 	local function observeTrack(track)
 		if not track then return end
-		if cast and observeCastAnimation(track) then seenTracks[track] = true; return end
-		if seenTracks[track] then return end
+		if not freshTrackPlay(track) then return end
+		if cast then observeCastAnimation(track); return end
 
 		local forcedToken = carrierArm
-		if forcedToken and not carrierStillValid(forcedToken) then carrierArm = nil; forcedToken = nil end
+		if forcedToken and not carrierStillValid(forcedToken) then
+			if forcedToken.reactionConnection then forcedToken.reactionConnection:Disconnect() end
+			carrierArm = nil; forcedToken = nil
+		end
 		if not forcedToken and (not enabled or _G.VX_BF_CHAIN_MODE == true) then return end
 		if not forcedToken and tick() < (tonumber(_G.VX_SYNTH_CLICK) or 0) then return end
 		local isM1, id = isM1Track(track, forcedToken)
 		if not isM1 then return end
-		seenTracks[track] = true
 		if lastM1Id == id and tick() - lastM1At < 0.11 then return end
 		lastM1Id, lastM1At = id, tick()
 
@@ -1663,7 +1643,8 @@ do
 			startAfterCarrier(track, forcedToken.target, forcedToken.valid, forcedToken)
 			return
 		end
-		local target = acquireTarget(CONNECT_RANGE)
+		local target = (tick() - pendingM1At <= 0.45 and targetInRange(pendingM1Target, CONNECT_RANGE))
+			and pendingM1Target or acquireTarget(CONNECT_RANGE)
 		if not target then return end
 		faceTarget(target)
 		if tick() - lastSwingAt > 1.2 then swingCount = 0 end
@@ -1692,11 +1673,25 @@ do
 		end
 	end
 
+	-- Face on the real click edge, before the game starts the M1 animation. Waiting for AnimationPlayed made
+	-- side/back carriers swing in the old direction and only turn after the hit box had already been created.
+	UserInputService.InputBegan:Connect(function(input)
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1 or not enabled or _G.VX_BF_CHAIN_MODE == true then return end
+		if UserInputService:GetFocusedTextBox() or tick() < (tonumber(_G.VX_SYNTH_CLICK) or 0) then return end
+		local target = acquireTarget(CONNECT_RANGE)
+		if not target then return end
+		pendingM1Target, pendingM1At = target, tick()
+		faceTarget(target)
+	end)
+
 	task.spawn(function()
 		while true do pcall(hookAnimators); task.wait(0.5) end
 	end)
 	RunService.Heartbeat:Connect(function()
-		if carrierArm and tick() >= carrierArm.expires then carrierArm = nil end
+		if carrierArm and tick() >= carrierArm.expires then
+			if carrierArm.reactionConnection then carrierArm.reactionConnection:Disconnect() end
+			carrierArm = nil
+		end
 		if cast and tick() >= cast.expires then cast = nil; _G.VX_BF_CAST_ACTIVE = false end
 		if not (enabled or carrierArm or cast) then return end
 		for _, animator in ipairs(animators()) do
@@ -1707,6 +1702,7 @@ do
 
 	local function cancelAll()
 		generation = generation + 1
+		if carrierArm and carrierArm.reactionConnection then carrierArm.reactionConnection:Disconnect() end
 		carrierArm = nil
 		cast = nil
 		_G.VX_BF_CAST_ACTIVE = false
@@ -1722,15 +1718,33 @@ do
 		SetCooldown = function(value) if type(value) == "number" then cooldown = math.max(0.16, value) end end,
 		SetTimingOffset = function(value) if type(value) == "number" then timingOffset = value end end,
 		ArmCarrier = function(target, stillValid, ttl)
-			if not targetInRange(target, CONNECT_RANGE) or cast then return false end
+			if not targetInFront(target, 8.25, 0.05) or cast then return false end
+			if carrierArm and carrierArm.reactionConnection then carrierArm.reactionConnection:Disconnect() end
 			generation = generation + 1
-			carrierArm = {
+			local token = {
 				generation = generation,
 				target = target,
 				valid = stillValid,
 				armedAt = tick(),
 				expires = tick() + math.max(0.45, tonumber(ttl) or 0.8),
 			}
+			local humanoid = target:FindFirstChildOfClass("Humanoid")
+			token.healthBefore = humanoid and humanoid.Health or nil
+			local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+			if animator then
+				token.reactionConnection = animator.AnimationPlayed:Connect(function(track)
+					if carrierArm ~= token or not token.clickAt then return end
+					local priority = ""
+					pcall(function() priority = tostring(track.Priority) end)
+					if string.find(priority, "Action", 1, true) then token.reactionAt = tick() end
+				end)
+			end
+			carrierArm = token
+			return true
+		end,
+		CarrierClicked = function()
+			if not carrierArm then return false end
+			carrierArm.clickAt = tick()
 			return true
 		end,
 		StartCast = beginCast,
@@ -1743,7 +1757,7 @@ do
 			return true
 		end,
 		RemoveTrigger = function(animationId) CastWindows[normalizeAnimationId(animationId)] = nil end,
-		Reconnect = function() hooked = setmetatable({}, { __mode = "k" }); pcall(hookAnimators); return true end,
+		Reconnect = function() hooked = setmetatable({}, { __mode = "k" }); seenPlays = setmetatable({}, { __mode = "k" }); pcall(hookAnimators); return true end,
 		Status = function() return { enabled = enabled, carrierArmed = carrierArm ~= nil, castActive = cast ~= nil } end,
 	}
 	_G.VX_BFAPI_SET = BFApi.SetEnabled
@@ -2853,7 +2867,7 @@ function vxHardWrite(char, hrp, cf)
 end
 -- Synchronous short-range mover for combat teleports. It never leaves a post-teleport position lock behind,
 -- so a later hit or ragdoll cannot pull the player back to the flash location.
-_G.VX_COMBAT_TELEPORT = function(targetCF, maxDistance)
+_G.VX_COMBAT_TELEPORT = function(targetCF, maxDistance, singleWrite)
 	if typeof(targetCF) ~= "CFrame" then return false end
 	local char = vxMyChar(); local hrp = char and char:FindFirstChild("HumanoidRootPart")
 	if not (char and hrp) then return false end
@@ -2871,16 +2885,14 @@ _G.VX_COMBAT_TELEPORT = function(targetCF, maxDistance)
 	local myGen = vxTeleGen
 	vxTeleportLock = false; vxCurrentTargetCF = nil; vxLockChar = nil
 	_G.VX_TP_INFLIGHT = true
-	if _G.VX_DESTROY_AC then pcall(_G.VX_DESTROY_AC) end
 	-- Combat teleports are literal blinks: one coherent PivotTo and one bounded next-frame correction. They do
 	-- not step through intermediate positions and never create the old destination lock that pulled players back.
-	vxACPass()
 	vxHardWrite(char, hrp, targetCF)
 	game:GetService("RunService").Heartbeat:Wait()
 	if myGen ~= vxTeleGen then _G.VX_TP_INFLIGHT = false; return false end
 	local c = vxMyChar(); local r = c and c:FindFirstChild("HumanoidRootPart")
-	if c and r and (r.Position - targetCF.Position).Magnitude > 4 then
-		vxACPass(); vxHardWrite(c, r, targetCF)
+	if not singleWrite and c and r and (r.Position - targetCF.Position).Magnitude > 4 then
+		vxHardWrite(c, r, targetCF)
 	end
 	_G.VX_TP_INFLIGHT = false
 	return r ~= nil and (r.Position - targetCF.Position).Magnitude <= 10
@@ -2969,15 +2981,7 @@ local function safeTeleport(targetCFrame, holdTime)
 	if not char then if _G.VX_TP_DEBUG then print("[DreamHub TP] character not loaded") end return false end
 	local hrp = char:FindFirstChild("HumanoidRootPart")
 	if not hrp then if _G.VX_TP_DEBUG then print("[DreamHub TP] no HumanoidRootPart") end return false end
-	for _, v in ipairs(char:GetDescendants()) do
-		if v:IsA("AlignPosition") or v:IsA("AlignOrientation") or v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("BodyGyro") or v:IsA("BodyAngularVelocity") or v:IsA("VectorForce") or v:IsA("LinearVelocity") then
-			pcall(function() v:Destroy() end)
-		end
-	end
 	isTeleporting = true
-	if _G.VX_DESTROY_AC then pcall(_G.VX_DESTROY_AC) end
-	vxACAck()
-	vxACPass()
 	vxTeleGen = vxTeleGen + 1
 	local myGen = vxTeleGen
 	vxLockChar = char            -- stamp the hold with the rig that owns it (a respawn voids it)        -- overlap guard: a newer teleport supersedes this one's hops + lock
@@ -2987,6 +2991,14 @@ local function safeTeleport(targetCFrame, holdTime)
 	local method = _G.VX_TP_METHOD or "Instant"
 	local from = hrp.Position
 	local dist = (targetCFrame.Position - from).Magnitude
+	if dist > 30 then
+		-- A client cannot guarantee a long server-authoritative teleport. Refuse instead of silently converting
+		-- it to a CFrame walker that can be corrected later or reported as a successful move before it finishes.
+		vxTeleportLock = false; vxCurrentTargetCF = nil; vxLockChar = nil
+		_G.VX_TP_INFLIGHT = false; isTeleporting = false
+		if _G.VX_TP_DEBUG then print("[DreamHub TP] destination is outside the safe 30-stud envelope") end
+		return false
+	end
 	if method == "Instant" and dist <= 30 and _G.VX_COMBAT_TELEPORT then
 		-- One shared instant primitive for combat and map buttons. It owns no destination hold, so an older
 		-- teleport can never drag the player back after a hit, dash, ragdoll, or second teleport.
@@ -2996,7 +3008,6 @@ local function safeTeleport(targetCFrame, holdTime)
 	end
 	-- Long client-side blinks are the snapback case: use the existing bounded movement path instead of
 	-- claiming success and being returned to the origin a frame later.
-	if method == "Instant" and dist > 30 then method = "Glide" end
 	local step = tonumber(_G.VX_TP_SPEED) or 60
 	local hold = tonumber(holdTime) or 0.5
 	-- engage the lock anchored to WHERE WE ARE, so the Heartbeat can't yank us to the final spot mid-glide
@@ -5672,24 +5683,6 @@ do
 		table.clear(State.held)
 	end
 
-	local function playObserved(animationId, duration, priority)
-		pcall(function()
-			local model = character()
-			local humanoid = model and model:FindFirstChildOfClass("Humanoid")
-			local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
-			if not animator then return end
-			local animation = Instance.new("Animation")
-			animation.AnimationId = animationId
-			local track = animator:LoadAnimation(animation)
-			track.Priority = priority or Enum.AnimationPriority.Action2
-			track:Play(0.04)
-			task.delay(duration or 0.55, function()
-				pcall(function() track:Stop(0.05) end)
-				pcall(function() animation:Destroy() end)
-			end)
-		end)
-	end
-
 	local function faceTarget(target, cameraToo)
 		local myRoot, targetRoot = rootOf(character()), rootOf(target)
 		if not (myRoot and targetRoot) then return false end
@@ -5722,28 +5715,10 @@ do
 		return targetRoot.Position - forward * (distance or Settings.TeleportDistance) + right * (sideOffset or 0)
 	end
 
-	local function horizontalDrive(direction, duration, speed, generation, minimumY)
-		local flat = direction and Vector3.new(direction.X, 0, direction.Z) or Vector3.zero
-		if flat.Magnitude < 0.05 then return end
-		flat = flat.Unit
-		local started = tick()
-		while tick() - started < (duration or 0.12) and generation == State.generation do
-			local myRoot = rootOf(character())
-			if not myRoot then break end
-			pcall(function()
-				local y = myRoot.AssemblyLinearVelocity.Y
-				if minimumY then y = math.max(y, minimumY) end
-				myRoot.AssemblyLinearVelocity = Vector3.new(flat.X * (speed or 65), y, flat.Z * (speed or 65))
-			end)
-			RunService.Heartbeat:Wait()
-		end
-	end
-
 	local function walkWithin(target, stopDistance, maxTime, generation)
 		if targetInRange(target, stopDistance) then return true end
 		local started = tick()
 		local startDistance = targetDistance(target)
-		local usedFallback = false
 		keyDown(Enum.KeyCode.W)
 		while generation == State.generation and tick() - started < (maxTime or 0.55) do
 			local myRoot, targetRoot = rootOf(character()), rootOf(target)
@@ -5756,21 +5731,10 @@ do
 				local model = character()
 				local humanoid = model and model:FindFirstChildOfClass("Humanoid")
 				if humanoid then pcall(function() humanoid:Move(flat.Unit, false) end) end
-				if tick() - started > 0.14 and distance > startDistance - 1 then
-					usedFallback = true
-					pcall(function()
-						local y = myRoot.AssemblyLinearVelocity.Y
-						myRoot.AssemblyLinearVelocity = Vector3.new(flat.Unit.X * 32, y, flat.Unit.Z * 32)
-					end)
-				end
 			end
 			RunService.Heartbeat:Wait()
 		end
 		keyUp(Enum.KeyCode.W)
-		if usedFallback then
-			local myRoot = rootOf(character())
-			if myRoot then pcall(function() myRoot.AssemblyLinearVelocity = Vector3.new(0, myRoot.AssemblyLinearVelocity.Y, 0) end) end
-		end
 		faceTarget(target)
 		return targetInRange(target, stopDistance + 1.5)
 	end
@@ -5781,19 +5745,18 @@ do
 		if not (directionKey and myRoot) then return false end
 		local startPosition = myRoot.Position
 		_G.VX_BF_DASHANIM = tick() + 0.38
-		if not airborne then playObserved(DashAnimations[directionName] or DashAnimations.Front, 0.48) end
 		keyDown(directionKey)
 		task.wait(0.025)
 		keyTap(Settings.DashKey, 0.045)
-		task.wait(0.1)
+		task.wait(0.08)
 		keyUp(directionKey)
-		local movedRoot = rootOf(character())
-		local moved = movedRoot and (movedRoot.Position - startPosition).Magnitude or 0
-		if moved < 1.25 and generation == State.generation then
-			if _G.VX_DASH then pcall(_G.VX_DASH, directionName, true) end
-			horizontalDrive(desiredDirection, 0.13, airborne and 58 or 72, generation, airborne and 10 or nil)
+		local deadline = tick() + 0.42
+		while generation == State.generation and tick() < deadline do
+			local movedRoot = rootOf(character())
+			if movedRoot and (movedRoot.Position - startPosition).Magnitude >= 1.25 then return true end
+			RunService.Heartbeat:Wait()
 		end
-		return generation == State.generation
+		return false
 	end
 
 	local function sideApproach(target, generation)
@@ -5802,15 +5765,11 @@ do
 		local myRoot = rootOf(character())
 		State.side = -State.side
 		local sideName = State.side > 0 and "Right" or "Left"
-		local destination = behindPoint(target, 4.2, State.side * 1.4)
-		if not (myRoot and destination) then return false end
-		local travel = Vector3.new(destination.X - myRoot.Position.X, 0, destination.Z - myRoot.Position.Z)
-		if travel.Magnitude < 0.05 then travel = myRoot.CFrame.RightVector * State.side end
-		local look = sideName == "Right"
-			and Vector3.new(travel.Z, 0, -travel.X)
-			or Vector3.new(-travel.Z, 0, travel.X)
-		faceDirection(look)
-		if not physicalDash(sideName, travel, generation, false) then return false end
+		if not myRoot then return false end
+		-- Stay faced at the target and let the game's own D/A + Q side dash draw the arc. A pre-played animation
+		-- plus authored velocity was only a visual slide and is the reason this did not look like a side dash.
+		faceTarget(target)
+		if not physicalDash(sideName, nil, generation, false) then return false end
 		faceTarget(target)
 		if targetDistance(target) > 9.5 then walkWithin(target, 8.2, 0.28, generation) end
 		faceTarget(target)
@@ -5836,17 +5795,12 @@ do
 	local function jumpApproach(target, generation)
 		faceTarget(target)
 		if targetDistance(target) > 17 and not walkWithin(target, 15, 0.65, generation) then return false end
-		playObserved(JumpAnimations.Start, 0.42)
 		keyTap(Enum.KeyCode.Space, 0.045)
 		pcall(function()
 			local model = character()
 			local humanoid = model and model:FindFirstChildOfClass("Humanoid")
 			local myRoot = rootOf(model)
 			if humanoid and humanoid.FloorMaterial ~= Enum.Material.Air then humanoid.Jump = true end
-			if myRoot and myRoot.AssemblyLinearVelocity.Y < 16 then
-				local velocity = myRoot.AssemblyLinearVelocity
-				myRoot.AssemblyLinearVelocity = Vector3.new(velocity.X, 38, velocity.Z)
-			end
 		end)
 		task.wait(0.09)
 		local myRoot = rootOf(character())
@@ -5855,13 +5809,17 @@ do
 		local travel = Vector3.new(destination.X - myRoot.Position.X, 0, destination.Z - myRoot.Position.Z)
 		if travel.Magnitude < 0.05 then travel = myRoot.CFrame.LookVector end
 		faceDirection(travel)
-		playObserved(JumpAnimations.Fall, 0.4)
 		if not physicalDash("Front", travel, generation, true) then return false end
 		faceTarget(target)
 		if targetDistance(target) > 9.2 then walkWithin(target, 8.2, 0.24, generation) end
 		local model = character()
 		local humanoid = model and model:FindFirstChildOfClass("Humanoid")
-		if humanoid and humanoid.FloorMaterial ~= Enum.Material.Air then playObserved(JumpAnimations.Land, 0.32) end
+		local landingDeadline = tick() + 0.9
+		while humanoid and humanoid.FloorMaterial == Enum.Material.Air and tick() < landingDeadline do
+			if generation ~= State.generation or not alive(target) then return false end
+			RunService.Heartbeat:Wait()
+		end
+		if humanoid and humanoid.FloorMaterial == Enum.Material.Air then return false end
 		faceTarget(target)
 		return targetInRange(target, 9.5)
 	end
@@ -5874,7 +5832,7 @@ do
 		local targetCFrame = CFrame.lookAt(destination, Vector3.new(targetRoot.Position.X, destination.Y, targetRoot.Position.Z))
 		local moved = false
 		if _G.VX_COMBAT_TELEPORT then
-			local ok, result = pcall(_G.VX_COMBAT_TELEPORT, targetCFrame, Settings.TeleportRange)
+			local ok, result = pcall(_G.VX_COMBAT_TELEPORT, targetCFrame, Settings.TeleportRange, true)
 			moved = ok and result == true
 		else
 			local model, myRoot = character(), rootOf(character())
@@ -5896,6 +5854,7 @@ do
 			return generation == State.generation and targetInRange(target, 12)
 		end, 0.9)
 		if not armed then return false end
+		if BFApi.CarrierClicked then BFApi.CarrierClicked() end
 		_G.VX_SYNTH_CLICK = tick() + 0.32
 		_G.VX_BF_CHAINCLICK = tick()
 		_G.VX_BF_CHAINDRIVE = tick() + 0.9
@@ -5937,7 +5896,15 @@ do
 				if generation == State.generation then State.active = false end
 				return
 			end
-			task.delay(0.8, function() if generation == State.generation then State.active = false end end)
+			-- Stay busy until the shared timing authority finishes or cancels the carrier/cast. A fixed 0.8-second
+			-- unlock could expire before a positive BF Timing offset sent the confirmation press.
+			local deadline = tick() + 2.4
+			while generation == State.generation and tick() < deadline do
+				local status = BFApi and BFApi.Status and BFApi.Status() or nil
+				if not status or (not status.carrierArmed and not status.castActive) then break end
+				RunService.Heartbeat:Wait()
+			end
+			if generation == State.generation then State.active = false end
 		end)
 		return true
 	end
@@ -5949,6 +5916,7 @@ do
 		State.chainLastAt = 0
 		State.chainFiredAt = 0
 		_G.VX_BF_CHAIN_MODE = false
+		_G.VX_BF_MODE_ACTIVE = false
 		_G.VX_BF_DASHANIM = 0
 		pcall(releaseAll)
 		if BFApi and BFApi.CancelScheduled then BFApi.CancelScheduled() end
@@ -5998,25 +5966,27 @@ do
 		return moved
 	end
 
-	-- The Q binding must decide synchronously whether it owns this press. Resolve the target and send the exact
-	-- captured Dash("Right", true) packet before returning Sink; all yielding movement/M1 work happens afterward.
+	-- Prepare the target before the game's own Q handler runs, then let that handler own animation and movement.
+	-- The namecall hook below changes only MovementService.RE.Dash to Dash("Right", true); this follow-up waits
+	-- for actual displacement before it sends the M1, so a rejected/cooldown dash never produces a stray swing.
 	local function startSideAssistInput()
 		if tick() - State.lastAssistAt < 0.35 or State.active then return false end
 		local target = acquireTarget(22)
 		local myRoot, targetRoot = rootOf(character()), rootOf(target)
 		if not (target and myRoot and targetRoot and alive(target)) then return false end
-		local destination = behindPoint(target, 4.2, 1.4)
-		if not destination then return false end
-		local travel = Vector3.new(destination.X - myRoot.Position.X, 0, destination.Z - myRoot.Position.Z)
-		if travel.Magnitude < 0.05 then travel = myRoot.CFrame.RightVector end
-		faceDirection(Vector3.new(travel.Z, 0, -travel.X))
-		local ok, fired = pcall(function() return _G.VX_DASH and _G.VX_DASH("Right", true) end)
-		if not (ok and fired == true) then return false end
+		local startPosition = myRoot.Position
+		faceTarget(target)
 		State.lastAssistAt = tick()
 		local generation = State.generation
-		playObserved(DashAnimations.Right, 0.48)
 		task.spawn(function()
-			horizontalDrive(travel, 0.14, 72, generation)
+			local moved = false
+			local deadline = tick() + 0.5
+			while generation == State.generation and tick() < deadline do
+				local root = rootOf(character())
+				if root and (root.Position - startPosition).Magnitude >= 1.25 then moved = true break end
+				RunService.Heartbeat:Wait()
+			end
+			if not moved then return end
 			if generation ~= State.generation or not alive(target) then return end
 			faceTarget(target)
 			if targetDistance(target) > 9.5 then walkWithin(target, 8.2, 0.25, generation) end
@@ -6087,7 +6057,7 @@ do
 			if not Settings.SideAssist or input.KeyCode ~= Settings.DashKey or UserInputService:GetFocusedTextBox() then
 				return Enum.ContextActionResult.Pass
 			end
-			if startSideAssistInput() then return Enum.ContextActionResult.Sink end
+			startSideAssistInput()
 			return Enum.ContextActionResult.Pass
 		end, false, 2900, Settings.DashKey)
 	end)
@@ -6119,6 +6089,7 @@ do
 		setEnabled = function(value)
 			Settings.Enabled = value == true
 			_G.VX_BF_CHAIN_MODE = Settings.Enabled and Settings.Mode == "M1"
+			_G.VX_BF_MODE_ACTIVE = Settings.Enabled and Settings.Mode ~= "M1"
 			if not Settings.Enabled then stopModes() end
 		end,
 		setMode = function(mode)
@@ -6126,6 +6097,7 @@ do
 			stopModes()
 			Settings.Mode = mode
 			_G.VX_BF_CHAIN_MODE = Settings.Enabled and Settings.Mode == "M1"
+			_G.VX_BF_MODE_ACTIVE = Settings.Enabled and Settings.Mode ~= "M1"
 		end,
 		setBFM1 = function(value) Settings.BFM1 = value == true end,
 		setAutoBF = function(value) Settings.AutoBF = value == true end,
@@ -6148,7 +6120,7 @@ do
 			return physicalCarrier(target, State.generation)
 		end,
 		triggerTarget = function(target, mode) return startMode(mode or "Teleport", target, true) end,
-		doSide = function() return runSideAssist(nil, true) end,
+		doSide = function(target) return runSideAssist(target, true) end,
 		doSideOnly = function(target) return runSideAssist(target, false) end,
 		doBack = runBackAssist,
 		sideDir = function()
@@ -7243,9 +7215,10 @@ do
 	-- have tested it and say it works, so it is in; if kicks come back, this is the first thing to switch off.
 	do
 		local ok = pcall(function()
-			if _G.VX_M1HOOK_ON and (tonumber(_G.VX_M1HOOK_VERSION) or 0) >= 2 then return end
+			if _G.VX_M1HOOK_ON and (tonumber(_G.VX_M1HOOK_VERSION) or 0) >= 3 then return end
 			local mt = getrawmetatable(game)
 			local oldNamecall = mt.__namecall
+			_G.VX_M1HOOK_BASE = _G.VX_M1HOOK_BASE or oldNamecall
 			if setreadonly then setreadonly(mt, false) end
 			mt.__namecall = (newcclosure or function(f) return f end)(function(self, ...)
 				local method = getnamecallmethod and getnamecallmethod() or nil
@@ -7256,7 +7229,14 @@ do
 				-- nearest target before the call goes through. Your dash, their back. Dashes the hub fires
 				-- itself are stamped VX_HUB_DASH and pass through untouched - their direction was already
 				-- chosen on purpose.
-				if method == "FireServer" and self.Name == "Dash" and _G.VX_SIDEASSIST_ON
+				local movementDash = false
+				if method == "FireServer" and self.Name == "Dash" then
+					pcall(function()
+						movementDash = self.Parent and self.Parent.Name == "RE"
+							and self.Parent.Parent and self.Parent.Parent.Name == "MovementService"
+					end)
+				end
+				if movementDash and _G.VX_SIDEASSIST_ON
 					and tick() > (tonumber(_G.VX_HUB_DASH) or 0) then
 					local args = table.pack(...)
 					args[1] = "Right"
@@ -7275,6 +7255,10 @@ do
 					local hubInjected = tick() < (tonumber(_G.VX_INJECT_UNTIL) or 0)
 						or tick() < (tonumber(_G.VX_HUB_CAST) or 0)
 					if typeof(args[1]) == "Instance" then
+						local moveIdentity = vxNorm(args[1].Name)
+						if moveIdentity == "divergentfist" or moveIdentity == "blackflash" then
+							_G.VX_DF_CAST_T = tick()
+						end
 						pcall(function()
 							if _G.VX_TRACE and tick() - (tonumber(_G.VX_TRACE_T0) or 0) < 1.6 then
 								_G.VX_TRACE("cast:" .. tostring(args[1].Name))
@@ -7346,6 +7330,10 @@ do
 									if downCount ~= 1 then idx = nil end
 								end
 								if idx and slots[idx] then
+									local learned = _G.VX_SLOT_MOVE and _G.VX_SLOT_MOVE[idx]
+									if not learned or vxNorm(learned) ~= vxNorm(args[1].Name) then idx = nil end
+								end
+								if idx and slots[idx] then
 									-- Character filter. "Any" (or nothing picked) cancels on every character;
 									-- otherwise only while you are actually playing the one you chose, so a
 									-- swap does not silently disable moves on your next character.
@@ -7405,6 +7393,8 @@ do
 						return                                  -- BLOCK the ground cast; ours replaces it
 					end
 					if args[1] == false then
+						_G.VX_M1_REMOTE_N = (tonumber(_G.VX_M1_REMOTE_N) or 0) + 1
+						_G.VX_M1_REMOTE_T = tick()
 						-- Read the MIRRORED globals, not the upvalues: _G.VX_M1HOOK_ON is sticky across
 						-- executions, so on a re-exec the still-installed closure belongs to the PREVIOUS
 						-- run and its upvalues are that run's dead flags - the new GUI's toggles would drive
@@ -7442,7 +7432,7 @@ do
 			end)
 			if setreadonly then setreadonly(mt, true) end
 			_G.VX_M1HOOK_ON = true
-			_G.VX_M1HOOK_VERSION = 2
+			_G.VX_M1HOOK_VERSION = 3
 		end)
 		if not ok then
 			warn("[M1COMBO] this executor does not allow the M1 rewrite hook - Auto Slam/Uppercut will use the remote path instead")
@@ -9699,6 +9689,24 @@ do
 		return nil
 	end
 	local function haveMoves() return slot3Name() ~= nil end
+	local function slot1Name()
+		local sm = _G.VX_SLOT_MOVE
+		if sm and sm[1] then return sm[1] end
+		for _, c in ipairs({ myModel(), LP.Character }) do
+			local moveset = c and c:FindFirstChild("Moveset")
+			if moveset then
+				for _, move in ipairs(moveset:GetChildren()) do
+					local slot = move:GetAttribute("Slot") or move:GetAttribute("Key") or move:GetAttribute("Index")
+					if tonumber(slot) == 1 then return move.Name end
+				end
+			end
+		end
+		return nil
+	end
+	local function intendedSoulForm()
+		local name = norm(slot1Name())
+		return name == "stockpile" or name == "idletransfiguration"
+	end
 	local function castSlot3Once()
 		_G.VX_SOUL_SLOT3_UNTIL = tick() + 0.6   -- other injected-key consumers must not claim this one cast
 		-- The runtime report was specific: aim-up and the hit worked, but slot 3 was never physically pressed.
@@ -9765,7 +9773,7 @@ do
 			if _G.VX_SOUL_DEBUG then print("[DreamHub Soul] aimed up and pressed slot 3 once") end
 			-- Dash to the target and extend.
 			task.wait(0.30)
-			if t and t.Parent and _G.VXBF2 and _G.VXBF2.doSide then pcall(_G.VXBF2.doSide) end
+			if t and t.Parent and _G.VXBF2 and _G.VXBF2.doSideOnly then pcall(_G.VXBF2.doSideOnly, t) end
 			task.wait(0.26)
 			pcall(function()
 				local r = t and t:FindFirstChild("HumanoidRootPart"); local hrp = myHRP()
@@ -9787,6 +9795,7 @@ do
 			if not on or kc ~= Enum.KeyCode.One then return end
 			local injK = _G.VX_INJ_KEYS
 			if injK and injK[kc] and tick() < injK[kc] then return end
+			if not intendedSoulForm() then return end
 			-- ═══ THIS GATE WAS THE "DOESN'T CLICK 3" ═══ haveMoves() is just "does Moveset have a 3rd
 			-- child", read by POSITION. If the Moveset has not populated yet, or the equipped form orders
 			-- its children differently, this returned false and the whole sequence - including the print
@@ -10057,11 +10066,24 @@ do
 		local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
 		if not animator then return false end
 		local accepted, lastAccepted = 0, 0
+		local candidateSerial, usedCandidate = 0, 0
+		local candidateAt, candidateTrack = 0, nil
+		local lastAcceptedTrack = nil
+		local lastRemoteN = tonumber(_G.VX_M1_REMOTE_N) or 0
+		local pendingRemoteN, pendingRemoteAt = lastRemoteN, 0
+		local movementIds = {
+			["75203303352791"] = true, ["117223862448096"] = true, ["110978068388232"] = true,
+			["134343219970072"] = true, ["126572575938378"] = true, ["97446412066176"] = true,
+		}
 		local connection = animator.AnimationPlayed:Connect(function(track)
 			local id = track and track.Animation and tostring(track.Animation.AnimationId):match("%d+")
-			if id and _G.VX_M1_IDS and _G.VX_M1_IDS[id] and tick() - lastAccepted > 0.09 then
-				lastAccepted = tick()
-				accepted = accepted + 1
+			local known = id and _G.VX_M1_IDS and _G.VX_M1_IDS[id]
+			local priority = ""
+			pcall(function() priority = tostring(track.Priority) end)
+			local actionFallback = id and not movementIds[id] and string.find(priority, "Action", 1, true) ~= nil
+			if known or actionFallback then
+				candidateSerial = candidateSerial + 1
+				candidateAt, candidateTrack = tick(), track
 			end
 		end)
 		local timeout = math.max(1.35, n * 0.5)
@@ -10077,11 +10099,35 @@ do
 			local hrp = myHRP(); local targetRoot = target and target.Parent and target:FindFirstChild("HumanoidRootPart")
 			if not (hrp and targetRoot) or (targetRoot.Position - hrp.Position).Magnitude > 12 then break end
 			pcall(function() hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(targetRoot.Position.X, hrp.Position.Y, targetRoot.Position.Z)) end)
+			local remoteN = tonumber(_G.VX_M1_REMOTE_N) or 0
+			local remoteAt = tonumber(_G.VX_M1_REMOTE_T) or 0
+			if remoteN > pendingRemoteN then pendingRemoteN, pendingRemoteAt = remoteN, remoteAt end
+			if pendingRemoteN > lastRemoteN then
+				if candidateSerial > usedCandidate and math.abs(pendingRemoteAt - candidateAt) <= 0.2
+					and tick() - lastAccepted > 0.09 then
+					lastRemoteN = pendingRemoteN
+					usedCandidate = candidateSerial
+					lastAccepted = tick()
+					lastAcceptedTrack = candidateTrack
+					accepted = accepted + 1
+				elseif tick() - pendingRemoteAt > 0.25 then
+					lastRemoteN = pendingRemoteN
+				end
+			end
 			game:GetService("RunService").Heartbeat:Wait()
 		end
 		pcall(function() VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0) end)
 		connection:Disconnect()
-		return accepted >= n
+		if accepted < n then return false end
+		-- Do not send the directional fourth on the same frame the third swing starts. Give its authored hit beat
+		-- a short bounded window to finish; this avoids replacing the third M1 before it can be accepted.
+		local settleDeadline = tick() + 0.18
+		while lastAcceptedTrack and tick() < settleDeadline do
+			local okPlaying, playing = pcall(function() return lastAcceptedTrack.IsPlaying end)
+			if not okPlaying or not playing then break end
+			game:GetService("RunService").Heartbeat:Wait()
+		end
+		return true
 	end
 	local function faceAt(t)
 		local hrp = myHRP(); local r = t and t:FindFirstChild("HumanoidRootPart")
@@ -10207,9 +10253,16 @@ do
 	-- 1.2s lockout is exactly 40 ticks of the 0.03s loop - an even number - so the flip's phase never shifts
 	-- and Up keeps winning forever. That is the whole of "upper cut assist works, down slam assist never does".
 	local doneWith = setmetatable({}, { __mode = "k" })
-	local function run(which)
+	local function run(which, preferredTarget)
 		if tick() < busyUntil then return end
-		local t, d = downedTarget()
+		local t, d
+		if preferredTarget and preferredTarget.Parent and isDown(preferredTarget) then
+			t = preferredTarget
+			local hrp, root = myHRP(), preferredTarget:FindFirstChild("HumanoidRootPart")
+			d = (hrp and root) and (root.Position - hrp.Position).Magnitude or nil
+		else
+			t, d = downedTarget()
+		end
 		if not t then return end
 		local claim = doneWith[t]; if not claim then claim = {}; doneWith[t] = claim end
 		if claim[which] then return end                -- THIS finisher already had its turn on this knockdown
@@ -10343,9 +10396,14 @@ do
 			while tick() < deadline do
 				if not best.Parent then return end
 				if isDown(best) then
-					busyUntil = tick() + 0.6
-					faceAt(best)
-					if downOn then slamNow() elseif upOn then upNow() end
+					local which
+					if downOn and upOn then
+						_G.VX_FA_FLIP = not _G.VX_FA_FLIP
+						which = _G.VX_FA_FLIP and "Up" or "Down"
+					else
+						which = downOn and "Down" or "Up"
+					end
+					run(which, best)
 					return
 				end
 				game:GetService("RunService").Heartbeat:Wait()
@@ -10549,6 +10607,9 @@ end
 do
 	local plrs = game:GetService("Players")
 	local lp = plrs.LocalPlayer
+	pcall(function() if TwofoldApi and TwofoldApi.set then TwofoldApi.set(false) end end)
+	_G.VX_TWOFOLD_GEN = (tonumber(_G.VX_TWOFOLD_GEN) or 0) + 1
+	local moduleGeneration = _G.VX_TWOFOLD_GEN
 	local on = false
 	-- ═══ IT WAS WATCHING THE WRONG BODY ═══ This returned lp.Character. In JJS the rig that actually plays
 	-- your animations lives at workspace.Characters[yourName]; lp.Character can be a stale or decoy rig - the
@@ -10564,32 +10625,8 @@ do
 		end
 		return plr.Character or plr.CharacterAdded:Wait()
 	end
-	local function check()
-		-- Both rigs, because which one is "yours" changes with the character swap and a miss here is the
-		-- whole feature. His single-rig read is otherwise untouched.
-		for _, rig in ipairs({ char(), lp.Character }) do
-			local ok, res = pcall(function()
-				local h = rig and rig:FindFirstChildOfClass("Humanoid")
-				local a = h and h:FindFirstChildOfClass("Animator")
-				if not a then return false end
-				for _, v in pairs(a:GetPlayingAnimationTracks()) do
-					if v.Animation.AnimationId:find("rbxassetid://104749") then return true end
-				end
-				return false
-			end)
-			if ok and res then return true end
-		end
-		return false
-	end
 	local running = false
 	local kickFollow
-	if _G.VX_ON_KEY then
-		_G.VX_ON_KEY("twofold_gapclose", function(kc)
-			if not on or kc ~= Enum.KeyCode.Four then return end
-			local inj = _G.VX_INJ_KEYS; if inj and inj[kc] and tick() < inj[kc] then return end
-			if kickFollow then kickFollow() end
-		end)
-	end
 	-- ═══ HIS SCRIPT, CHARACTER FOR CHARACTER ═══ You pasted it a third time, so a third time I deleted
 	-- everything of mine: the 0.22 gap experiment, the injected clicks, and last build's watch-the-target-
 	-- into-the-air gate before the 4th Down. What follows is the friend's finisher VERBATIM - his 0.35s
@@ -10607,7 +10644,7 @@ do
 		pcall(function() game:GetService("ReplicatedStorage").Knit.Knit.Services.GojoService.RE.Activated:FireServer("Down") end)
 	end
 	kickFollow = function()
-		if not on or running then return end
+		if moduleGeneration ~= _G.VX_TWOFOLD_GEN or not on or running then return end
 		running = true
 		task.delay(5, function() running = false end)
 		task.spawn(function()
@@ -10617,10 +10654,27 @@ do
 			running = false
 		end)
 	end
-	game:GetService("RunService").Heartbeat:Connect(function()
-		if not on then return end
-		if not check() or running then return end
-		kickFollow()   -- animation fallback when the game sinks key 4; running prevents a duplicate
+	local exactKickId = "104749346956269"
+	local hooked = setmetatable({}, { __mode = "k" })
+	local function hookAcceptedKick()
+		for _, rig in ipairs({ char(), lp.Character }) do
+			local humanoid = rig and rig:FindFirstChildOfClass("Humanoid")
+			local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+			if animator and not hooked[animator] then
+				hooked[animator] = animator.AnimationPlayed:Connect(function(track)
+					if moduleGeneration ~= _G.VX_TWOFOLD_GEN or not on then return end
+					local id = track and track.Animation and tostring(track.Animation.AnimationId):match("%d+")
+					if id == exactKickId then kickFollow() end
+				end)
+			end
+		end
+	end
+	task.spawn(function()
+		while moduleGeneration == _G.VX_TWOFOLD_GEN do
+			pcall(hookAcceptedKick)
+			task.wait(0.45)
+		end
+		for _, connection in pairs(hooked) do pcall(function() connection:Disconnect() end) end
 	end)
 	TwofoldApi = { set = function(v) on = v == true end }
 end
@@ -12208,6 +12262,17 @@ end
 -- MODULE: GOJO TP (R) + REVERSAL RED (3 -> R)
 -- ============================================================
 do
+	pcall(function() if _G.VX_AUTOAIR_CLEANUP then _G.VX_AUTOAIR_CLEANUP() end end)
+	pcall(function()
+		if AutoAirOptSet then
+			for _, key in ipairs({ "Vessel", "Twofold", "Hakari", "Megumi", "Rabbit", "Choso", "LapseBlue", "LapseRed", "GojoLast", "Locust" }) do
+				AutoAirOptSet(key, false)
+			end
+		end
+		if AutoAirApi_set then AutoAirApi_set(false) end
+	end)
+	_G.VX_AUTOAIR_GEN = (tonumber(_G.VX_AUTOAIR_GEN) or 0) + 1
+	local moduleGeneration = _G.VX_AUTOAIR_GEN
 	local Players = game:GetService("Players")
 	local UIS = game:GetService("UserInputService")
 	local VIM = game:GetService("VirtualInputManager")
@@ -12297,7 +12362,11 @@ do
 		if not root then return false end
 		local baseY = root.Position.Y
 		local deadline = tick() + (tonumber(timeout) or 1.15)
+		-- Let the game's own key handler dispatch the move before checking an already-airborne target. Without
+		-- this beat, R could be pressed before slot 1/4 was accepted.
+		game:GetService("RunService").Heartbeat:Wait()
 		while tick() < deadline do
+			if moduleGeneration ~= _G.VX_AUTOAIR_GEN then return false end
 			if enabledCheck and not enabledCheck() then return false end
 			if not (target and target.Parent) then return false end
 			root = target:FindFirstChild("HumanoidRootPart") or target:FindFirstChildWhichIsA("BasePart")
@@ -12322,7 +12391,7 @@ do
 	-- PER-CHARACTER Auto Air switches ("make the user pick which auto air it wants on"). All default OFF, matching
 	-- Combat page exposes one toggle each. A sequence only runs if BOTH the master Auto Air toggle and its own
 	-- switch are on AND you actually own the move.
-	local airOpt = { Vessel = false, Twofold = false, Hakari = false, Megumi = false, Rabbit = false, Choso = false, LapseBlue = false, LapseRed = false, Locust = false }
+	local airOpt = { Vessel = false, Twofold = false, Hakari = false, Megumi = false, Rabbit = false, Choso = false, LapseBlue = false, GojoLast = false, Locust = false }
 	-- ═══ NO MASTER SWITCH ═══ "remove the word auto air, and just put the things as it is, when I use each
 	-- one it does what it must do." Each sequence is its own toggle now, so switching one on arms the engine
 	-- by itself; switching the last one off stands it down again. Nothing is hidden behind a second switch
@@ -12367,11 +12436,13 @@ do
 	end
 	local lastThree = 0   -- you pressed 3 (Lapse Blue etc): R now means REVERSAL RED, so the mid-M1 auto-R must stand down
 	local function __airHandler(input, gpe)
+		if moduleGeneration ~= _G.VX_AUTOAIR_GEN then return end
 		-- DON'T bail on gpe: pressing 1/2/3/R to use a move sets gpe=true (the game bound the key), and those
 		-- are EXACTLY the presses Auto Air chains off. Only skip while you're TYPING in a textbox.
 		if UIS:GetFocusedTextBox() then return end
 		if input.KeyCode == Enum.KeyCode.Three and tick() < (tonumber(_G.VX_SOUL_SLOT3_UNTIL) or 0) then return end
 		if input.KeyCode == Enum.KeyCode.Three and tick() - (tonumber(_G.VX_BF_PRESS_T) or 0) < 0.55 then return end
+		if input.KeyCode == Enum.KeyCode.Three and _G.VX_BF_MODE_ACTIVE then return end
 		if input.KeyCode == Enum.KeyCode.Three then lastThree = tick() end
 		-- GOJO TP BACK: configurable. Mode "Q Dash" = TP behind the moment you press Q. Mode "After M1s" =
 		-- TP behind after your chosen number of Gojo M1s land (counted by anim below). Both fire GojoService TP.
@@ -12920,29 +12991,19 @@ do
 		end
 
 		-- ── GOJO — key 1 (Lapse Blue) -> press R during it ──
-		if airOK and airOpt.LapseBlue and not airOpt.LapseRed and kc == Enum.KeyCode.One and (hasMove("Lapse Blue") or charIs("gojo","limitless")) then
+		if airOK and airOpt.LapseBlue and kc == Enum.KeyCode.One and (hasMove("Lapse Blue") or charIs("gojo","limitless")) then
 			_G.VX_BUSY = tick() + 1.6; dbgAir("Gojo 1 -> Lapse Blue -> R")
 			local target = airTarget()
 			task.spawn(function()
 				waitEnemyAirborneThenR(target, function()
-					return autoAirOn and airOpt.LapseBlue and not airOpt.LapseRed
+					return autoAirOn and airOpt.LapseBlue
 				end, 1.15)
 			end)
 		end
 
-		-- ── GOJO — Lapse Blue -> Reversal Red on the same beat. Fires the two captured remotes directly (no R tap
-		--    here: GojoService.RightActivated IS what R does, and tapping it too would double-cast). ──
-		if airOK and airOpt.LapseRed and kc == Enum.KeyCode.One and (hasMove("Lapse Blue") or charIs("gojo","limitless")) then
-			_G.VX_BUSY = tick() + 1.6; dbgAir("Gojo 1 -> + Reversal Red")
-			task.delay(0.24, function()
-				if not (autoAirOn and airOpt.LapseRed) then return end
-				local mvr = moveObj("Reversal Red"); if mvr then fireMove("ReversalRedService", "Activated", nil, mvr) end
-				fireSvc("GojoService", "RightActivated", asPlayerCharacter(airTarget()))   -- this remote wants the PLAYER's .Character
-			end)
-		end
-		-- Gojo's R-linked last-move route requires slot 2 on the same beat. Scope it to the explicit LapseRed
-		-- option and a real Gojo R press so Rabbit, Locust and injected R follow-ups cannot trigger it.
-		if airOK and airOpt.LapseRed and kc == Enum.KeyCode.R and charIs("gojo", "limitless") then
+		-- Gojo's R-linked last move requires a real slot-2 press on the same beat. This is deliberately separate
+		-- from Lapse Blue so enabling it cannot disable the working 1 -> R route.
+		if airOK and airOpt.GojoLast and kc == Enum.KeyCode.R and charIs("gojo", "limitless") then
 			_G.VX_BUSY = tick() + 1.0
 			task.spawn(function() tapKey(Enum.KeyCode.Two, 0.06) end)
 		end
@@ -12952,7 +13013,10 @@ do
 			_G.VX_BUSY = tick() + 1.4
 			local target = airTarget()
 			task.spawn(function()
-				waitEnemyAirborneThenR(target, function() return autoAirOn and airOpt.Twofold end, 1.2)
+				local fired = waitEnemyAirborneThenR(target, function() return autoAirOn and airOpt.Twofold end, 1.0)
+				if not fired and moduleGeneration == _G.VX_AUTOAIR_GEN and autoAirOn and airOpt.Twofold then
+					sendGojoROnce(target)
+				end
 			end)
 		end
 		-- ═══ VESSEL (Itadori / Sukuna) — you JUMP -> auto-press 1 to carry them up ═══
@@ -12992,7 +13056,7 @@ do
 		__airLast[kc] = tick()
 		__airHandler({ KeyCode = kc, UserInputType = Enum.UserInputType.Keyboard }, false)
 	end
-	UIS.InputBegan:Connect(function(input, gpe) if input and input.KeyCode and input.KeyCode ~= Enum.KeyCode.Unknown then __airOnce(input.KeyCode) else __airHandler(input, gpe) end end)
+	local inputConnection = UIS.InputBegan:Connect(function(input, gpe) if input and input.KeyCode and input.KeyCode ~= Enum.KeyCode.Unknown then __airOnce(input.KeyCode) else __airHandler(input, gpe) end end)
 	if _G.VX_ON_KEY then _G.VX_ON_KEY("autoair", function(kc) __airOnce(kc) end) end
 	if _G.VX_M1_SUB then _G.VX_M1_SUB("autoair_m1tgt", function() local m = landedM1Target(); if m then lastM1Tgt = m end end) end   -- real M1s only come from the poll
 	-- AUTO AIR anim triggers: Twofold Kick (Gojo) kicks them UP -> click R (RightActivated at the target).
@@ -13086,7 +13150,10 @@ do
 			if autoAirOn and airOpt.Twofold and id == TWOFOLD_ANIM then
 				local target = airTarget()
 				task.spawn(function()
-					waitEnemyAirborneThenR(target, function() return autoAirOn and airOpt.Twofold end, 1.2)
+					local fired = waitEnemyAirborneThenR(target, function() return autoAirOn and airOpt.Twofold end, 1.0)
+					if not fired and moduleGeneration == _G.VX_AUTOAIR_GEN and autoAirOn and airOpt.Twofold then
+						sendGojoROnce(target)
+					end
 				end)
 			end
 			-- LOCUST fly-up (134777193523837 / 112223227323175): press R ONCE when it lifts — no more R spam.
@@ -13099,7 +13166,18 @@ do
 			end
 		end)
 	end
-	task.spawn(function() while true do if gojoOn or redOn or autoAirOn then pcall(hookSelfAnims) end task.wait(0.7) end end)
+	task.spawn(function()
+		while moduleGeneration == _G.VX_AUTOAIR_GEN do
+			if gojoOn or redOn or autoAirOn then pcall(hookSelfAnims) end
+			task.wait(0.7)
+		end
+	end)
+	_G.VX_AUTOAIR_CLEANUP = function()
+		autoAirOn, airUniversalOn, gojoOn, redOn = false, false, false, false
+		for key in pairs(airOpt) do airOpt[key] = false end
+		pcall(function() inputConnection:Disconnect() end)
+		for _, connection in pairs(hookedA) do pcall(function() connection:Disconnect() end) end
+	end
 	GojoTpApi = { set = function(v) gojoOn = v == true end }
 	ReversalRedApi = { set = function(v) redOn = v == true end }
 end
@@ -17751,7 +17829,6 @@ do
     bfSec:Toggle({ Name = "Feint Abilities", Default = false, Callback = function(b) if ChainApi and ChainApi.setFeintMoves then ChainApi.setFeintMoves(b) end end })
     -- Aim Assist moved to the Assistant tab (every "... Assist" now lives in one place).
     bfSec:Toggle({ Name = "Yuta Black Flash", Default = false, Callback = function(b) if YutaBFApi then YutaBFApi.setManual(b) end end })
-    bfSec:Slider({ Name = "Cooldown", Min = 0.1, Max = 1, Default = 0.45, Decimals = 0.01, Suffix = "s", Callback = function(v) if BFApi then BFApi.SetCooldown(v) end end })
     bfSec:Toggle({ Name = "Mobile BF Button", Default = false, Callback = function(b)   -- phone: floating tap button that fires the black flash for the current mode
         if ChainApi then ChainApi.setMobile(b) end
     end })
@@ -17916,7 +17993,7 @@ do
             { "Vessel",    "Vessel: 1 -> Cursed Strikes, jump -> 1" },
             { "Twofold",   "Gojo: R after the 2nd Twofold kick" },
             { "LapseBlue", "Gojo: 1 -> R (Lapse Blue)" },
-            { "LapseRed",  "Gojo: Lapse Blue -> Reversal Red" },
+            { "GojoLast",  "Gojo: R -> 2 (last move)" },
             { "Megumi",    "Megumi: 2 -> Nue+R" },
             { "Rabbit",    "Megumi Rabbit: R -> Rabbit+1" },
             { "Hakari",    "Hakari: 3 -> jump + Rough Energy" },
@@ -18249,12 +18326,6 @@ do
     -- speed was permanently pinned at 100 studs/s. Now they are wired up.
     quickSec:Dropdown({ Name = "TP Method", Items = { "Instant", "Anchor", "Auto", "Glide" }, Default = "Instant", Callback = function(v) if TPApi then TPApi.setMethod(v) end end })
     quickSec:Slider({ Name = "TP Speed (Glide)", Min = 30, Max = 200, Default = 90, Decimals = 1, Suffix = "st/s", Callback = function(v) _G.VX_TP_VEL = tonumber(v) or 90 end })   -- range matches the clamp; 90 is a believable dash, 260 read as ~16x walk speed and got reverted
-    -- Destroying AntiCheatService.RE.Teleport is now the DEFAULT, because that is what made teleport work in
-    -- testing. This toggle puts it back only if you ever want the old behaviour.
-    quickSec:Toggle({ Name = "Keep AC Teleport remote", Default = false, Callback = function(b)
-        _G.VX_KEEP_AC_TP = b and true or nil
-        if _G.VX_DESTROY_AC then pcall(_G.VX_DESTROY_AC) end   -- re-run the sweep so the change takes effect now
-    end })
     quickSec:Button({ Name = "Print TP Remote", Callback = function()
         local RS = game:GetService("ReplicatedStorage"); local found = 0
         for _, d in ipairs(RS:GetDescendants()) do
