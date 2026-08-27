@@ -9,11 +9,11 @@ _G.PE_PLUS = true
 _G.__DreamReportWebhook = nil
 _G.PE_PREM = false  -- Premium features stay off in this build — use PE_Premium_Loader.lua for the Premium tier.
 
--- TWO mirrors of the same file: if an executor proxy has poisoned its cache for one host,
--- the other host path fetches clean.
+-- Two fetch routes pinned to the same immutable reviewed runtime commit. The branch loader may be updated later,
+-- but this execution target cannot silently change underneath people already using it.
 local URLS = {
-	"https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/refs/heads/codex/pe-runtime-fixes-v4/PriorExtinction_MoneyFreeHub.lua",
-	"https://github.com/wallacegodfirst-cmd/roblox-scripts/raw/refs/heads/codex/pe-runtime-fixes-v4/PriorExtinction_MoneyFreeHub.lua",
+	"https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/6260722e31c5774ec809d22403377992bdcc0fa6/PriorExtinction_MoneyFreeHub.lua",
+	"https://github.com/wallacegodfirst-cmd/roblox-scripts/raw/6260722e31c5774ec809d22403377992bdcc0fa6/PriorExtinction_MoneyFreeHub.lua",
 }
 local StarterGui = game:GetService("StarterGui")
 local function toast(msg, dur)
@@ -22,9 +22,16 @@ local function toast(msg, dur)
 end
 toast("loader running - fetching Prior Ex Plus...")
 
--- the real script is ~290KB, starts with a --[[ comment, and contains our banner
+-- Reject truncated, HTML, obfuscated, or unrelated Lua. Multiple PE-specific sentinels make a coincidental banner
+-- match insufficient, while the immutable URL prevents a future branch update from replacing the reviewed runtime.
 local function valid(src)
-	return type(src)=="string" and #src>200000 and src:sub(1,2)=="--" and src:find("Dream Hub", 1, true) ~= nil
+	if type(src)~="string" or #src<200000 or #src>900000 or src:sub(1,15)~="--[[  Dream Hub" then return false end
+	local low=src:sub(1,4096):lower()
+	if low:find("<html",1,true) or low:find("<!doctype",1,true) or src:find("Luraph",1,true) or src:find("\0",1,true) then return false end
+	for _,marker in ipairs({"__PRIOR_EXT_HUB","MHNEED={","ReplicaSignalUnreliable","RegisterAttack","MH_safeTeleport","CharacterIgnore","MoneyHubPE"}) do
+		if not src:find(marker,1,true) then return false end
+	end
+	return true
 end
 local req = (typeof(syn)=="table" and syn.request) or (typeof(http)=="table" and http.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
 local function fetch(u)
@@ -63,7 +70,7 @@ if not src then
 	end
 	return
 end
-toast("download verified via "..how.." - starting Dream Hub...")
+toast("download structurally validated via "..how.." - starting Dream Hub...")
 local fn, err = loadstring(src)
 if not fn then toast("compile error (send this to support): "..tostring(err), 14) return end
 local ok, rerr = pcall(fn)
@@ -83,3 +90,4 @@ task.delay(6, function()
 	if found then toast("Dream Hub is up - press RightShift (or the on-screen button on mobile)", 8)
 	else toast("script ran but no menu detected - send this message to support", 10) end
 end)
+
