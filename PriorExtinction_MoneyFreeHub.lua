@@ -9,7 +9,7 @@ __gg.__PRIOR_EXT_HUB = nil
 __gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0
 __gg.MH_attackTemplate=nil; __gg.MH_registerTemplate=nil; __gg.MH_pendingRegister=nil; __gg.MH_attackSequence=nil; __gg.MH_soundTemplate=nil; __gg.MH_hbMade=nil; __gg.MH_hbBuildAt=nil
 __gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_verifiedReplicaId=nil; __gg.MH_wellbeing=nil
-__gg.MH_identityKey=nil; __gg.MH_dietCache=nil; __gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_healthPacket=nil; __gg.MH_guardLastHP=nil
+__gg.MH_identityKey=nil; __gg.MH_dietCache=nil; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_healthPacket=nil; __gg.MH_guardLastHP=nil
 __gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil; __gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
 -- Every captured packet below is valid only for one playable dinosaur. Character, species, or verified replica
 -- changes invalidate food-source ids, combat/sound templates, need reports, and protection high-water state together.
@@ -18,7 +18,7 @@ __gg.MH_clearDinoCaches=function(identityKey)
 	__gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0; __gg.MH_foodProbeCursor=0
 	__gg.MH_attackTemplate=nil; __gg.MH_registerTemplate=nil; __gg.MH_pendingRegister=nil; __gg.MH_attackSequence=nil; __gg.MH_soundTemplate=nil
 	__gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_hbBuildAt=nil
-	__gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_healthPacket=nil; __gg.MH_healthReportAt=nil
+	__gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_healthPacket=nil; __gg.MH_healthReportAt=nil
 	__gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_guardLastHP=nil; __gg.MH_guardMax=nil
 	__gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
 	if type(MHNEED)=="table" then MHNEED.refs={food={},stamina={}}; MHNEED.max={food=nil,stamina=nil}; MHNEED.maxSource={food=nil,stamina=nil}; MHNEED.hasPaired={food=false,stamina=false}; MHNEED.at=0; MHNEED.root=nil; MHNEED.character=nil; MHNEED.capRoot=nil; MHNEED.capacity=nil end
@@ -1264,7 +1264,13 @@ local function installHook()
 								end
 							end
 						end
-						if selfCall and CFG.InfFood and (action=="FoodDrain" or action=="HungerTick" or action=="FoodDepletion" or action=="MetabolismTick") then return end
+						if selfCall and CFG.InfFood then
+							local needAction=action:lower()
+							local foodNamed=needAction:find("food",1,true) or needAction:find("hunger",1,true) or needAction:find("starv",1,true)
+							local drainNamed=needAction:find("drain",1,true) or needAction:find("deplet",1,true) or needAction:find("reduce",1,true)
+								or needAction:find("cost",1,true) or needAction:find("penalty",1,true)
+							if (foodNamed and drainNamed) or action=="HungerTick" or action=="MetabolismTick" then return end
+						end
 						-- Infinite Stamina has no action or movement side channel. Run/Sprint/Trot, fatigue, velocity,
 						-- CFrame, and movement state pass through untouched; only the validated need packet above may refill it.
 						-- Keep the exact health packet shape for proportional protection reports. Rewriting happens only
@@ -1656,7 +1662,10 @@ function MHNEED.kindFor(name, context)
 	if n:find("max",1,true) or n:find("capacity",1,true) or n:find("limit",1,true) or n:find("rate",1,true)
 		or n:find("drain",1,true) or n:find("deplet",1,true) or n:find("decay",1,true) or n:find("regen",1,true)
 		or n:find("percent",1,true) or n:find("ratio",1,true) or n:find("fill",1,true) or n:find("alpha",1,true) then return nil end
-	local generic=n=="current" or n=="cur" or n=="value" or n=="amount" or n=="level"
+	-- PE's nested need layout uses Hunger.Delta / Hunger.Max (and some builds do the same for stamina).
+	-- Delta is only considered a current value when its parent context already identifies the need, so Growth.Delta
+	-- cannot be mistaken for food.
+	local generic=n=="current" or n=="cur" or n=="value" or n=="amount" or n=="level" or n=="delta"
 	local c=MHNEED.norm(context)
 	local food=n=="food" or n=="hunger" or n=="fullness" or n=="satiation"
 		or n=="currentfood" or n=="currenthunger" or n=="currentfullness" or n=="currentsatiation"
@@ -1690,7 +1699,7 @@ function MHNEED.pairedMax(tb, key, maxTb, kind, current)
 			local mx=valid(v); if mx then return mx end
 		end
 	end
-	if n=="current" or n=="cur" or n=="value" or n=="amount" or n=="level" then
+	if n=="current" or n=="cur" or n=="value" or n=="amount" or n=="level" or n=="delta" then
 		for _,mk in ipairs({"max","maximum","maxvalue","maximumvalue","capacity","limit","total"}) do local mx=valid(own[mk]); if mx then return mx end end
 	end
 	return nil
@@ -1754,7 +1763,7 @@ function MHNEED.refresh(force)
 			if type(v)=="number" then
 				local kind=MHNEED.kindFor(ks,path)
 				if kind then local mx=MHNEED.pairedMax(tb,k,maxTb,kind,v); addRef(kind,{mode="table",tb=tb,key=k,path=path.."."..ks},mx,pairPriority(kind,ks)) end
-			elseif type(v)=="table" and getmetatable(v)==nil then
+			elseif type(v)=="table" then
 				local nextMax
 				if type(maxTb)=="table" then nextMax=maxTb[k]; if type(nextMax)~="table" then nextMax=maxTb end end
 				if ks:lower()=="stats" and type(tb.MaxStats)=="table" then nextMax=tb.MaxStats end
@@ -1769,6 +1778,9 @@ function MHNEED.refresh(force)
 		if type(root.Stats)=="table" then walk(root.Stats,root.MaxStats or root.Max,"Replica.Data.Stats",0) end
 		if type(root.Needs)=="table" then walk(root.Needs,root.MaxNeeds or root.MaxStats or root.Max,"Replica.Data.Needs",0) end
 		if type(root.Vitals)=="table" then walk(root.Vitals,root.MaxVitals or root.MaxStats or root.Max,"Replica.Data.Vitals",0) end
+		for _,key in ipairs({"Food","Hunger","Fullness","Satiation","Stamina","Energy","Endurance"}) do
+			local tb=root[key]; if type(tb)=="table" then walk(tb,tb.MaxStats or tb.Max,"Replica.Data."..key,0) end
+		end
 		local sav=root.SavableStats
 		if type(sav)=="table" and type(sav.Stats)=="table" then walk(sav.Stats,sav.MaxStats or sav.Max,"Replica.Data.SavableStats.Stats",0) end
 		walk(root,root.MaxStats or root.Max,"Replica.Data",0)
@@ -1888,7 +1900,8 @@ function MHNEED.reportKnown(kind,force)
 	local property
 	for _,ref in ipairs(MHNEED.refs[kind] or {}) do
 		local path=tostring(ref.path or ""):lower(); local key=ref.key or (ref.inst and ref.inst.Name)
-		if type(key)=="string" and MHNEED.kindFor(key,ref.path)==kind and not path:find("max",1,true) and not path:find("capacity",1,true) then property=key; break end
+		local nk=MHNEED.norm(key); local generic=nk=="current" or nk=="cur" or nk=="value" or nk=="amount" or nk=="level" or nk=="delta"
+		if type(key)=="string" and not generic and MHNEED.kindFor(key,ref.path)==kind and not path:find("max",1,true) and not path:find("capacity",1,true) then property=key; break end
 	end
 	local rep=csReplica(); local id=MHNEED.replicaId()
 	if not (property and rep and id and rep.FireServer) then return false end
@@ -2942,7 +2955,7 @@ do local p=Pages["Survival"]
 	-- (INF Food / INF Water / Carnivore Meat TP / Teleport Back moved to the Growth tab.) Stamina stays here.
 	local _,f=mkSec(p,"Stamina",1)
 	mkToggle(f,"INF Stamina","InfStam",1)
-	mkLabel(f,"Pins the real stamina pool and blocks the game's drain/exhaustion reports without changing movement speed.",1.5)
+	mkLabel(f,"Pins stamina, clears exhaustion, and automatically uses the game's native Run state while you move.",1.5)
 	local _,pr=mkSec(p,"Protection",2)
 	-- Death Bug Fix = the spawn rescue (void/under-map/ocean spawns). It mutes ITSELF during any hub teleport
 	-- (map/biome/corpse/fossil TP) so it can never yank you around mid-teleport — and you can kill it here.
@@ -3576,8 +3589,9 @@ conn(RunService.RenderStepped:Connect(function()
 	end)
 end))
 
--- One authoritative ~10 Hz need controller. It never writes movement/action/fatigue state. Exact local references
--- are pinned only when a maximum resolves, and exact captured SetProperty packets are reported on their own throttle.
+-- One authoritative 20 Hz need controller. Exact local references are pinned continuously, while server reports use
+-- their own throttles. PE exposes both Stats.Hunger/Food and the nested Hunger.Delta/Max layout across builds, so the
+-- verified self replica receives both known property aliases; the server ignores the alias it does not use.
 task.spawn(function()
 	local wasOn={food=false,stamina=false}
 	while RUNNING do
@@ -3586,16 +3600,30 @@ task.spawn(function()
 				for _,row in ipairs({{"food",CFG.InfFood},{"stamina",CFG.InfStam}}) do
 					local kind,on=row[1],row[2]
 					if on then
-						MHNEED.pin(kind)
+						local mx=MHNEED.pin(kind)
 						if not MHNEED.report(kind,not wasOn[kind]) then MHNEED.reportKnown(kind,not wasOn[kind]) end
-						if kind=="food" and not wasOn.food then
-							local rep=csReplica(); if rep and rep.FireServer and rep.Data and rep.Data.Growth and rep.Data.Growth.Paused==true then pcall(function() rep:FireServer("SetGrowthPaused",false) end) end
+						if kind=="food" then
+							local now=tick()
+							-- This is the exact self-replica pattern used by the working standalone PE food controller.
+							-- Five reports per second is enough to beat depletion without Heartbeat-spamming the server.
+							if mx and (not wasOn.food or now-(__gg.MH_foodDirectAt or 0)>=0.2) then
+								__gg.MH_foodDirectAt=now
+								replicaFire("SetProperty","Hunger",mx)
+								replicaFire("SetProperty","Food",mx)
+							end
+							-- Growth can be paused again after a depletion/respawn update. Reassert only while the replicated
+							-- flag is actually paused and throttle the server request.
+							local rep=csReplica(); local growth=rep and rep.Data and rep.Data.Growth
+							if growth and growth.Paused==true and (not wasOn.food or now-(__gg.MH_growthResumeAt or 0)>=0.8) then
+								__gg.MH_growthResumeAt=now
+								pcall(function() growth.Paused=false; rep:FireServer("SetGrowthPaused",false) end)
+							end
 						end
 					end
 					wasOn[kind]=on
 				end
 			end)
-			task.wait(0.1)
+			task.wait(0.05)
 		else wasOn.food=false; wasOn.stamina=false; task.wait(0.4) end
 	end
 end)
@@ -3852,19 +3880,39 @@ local function startFly()
 		local hh=hum(); if hh then pcall(function() hh:ChangeState(Enum.HumanoidStateType.Physics) end) end
 	end)
 end
--- SPEED HACK ONLY drives the body by velocity. INF Stam does NOT touch your movement anymore — driving velocity
--- made the server snap you back AND counted as sprinting (which drained stamina, then exhausted = slow when you
--- toggled off). INF Stam now just suppresses the drain (hook + stat pin), so you move at NORMAL speed, stam full.
+-- SPEED HACK ONLY drives the body by velocity. INF Stamina uses the game's native Run action below instead of a
+-- forced BodyVelocity, which gives the normal maximum sprint without reviving the old snapback/glide bug.
 conn(RunService.Heartbeat:Connect(function() if CFG.SpeedHack and alive() and not CFG.Fly then local r=hrp(); if r then local spd=CFG.SpeedVal; local dir=Vector3.zero; local cf=workspace.CurrentCamera and workspace.CurrentCamera.CFrame or CFrame.new() if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end if dir.Magnitude<=0 then local hh=hum(); local md=hh and hh.MoveDirection; if md and md.Magnitude>0 then dir=md end end if dir.Magnitude>0 then dir=Vector3.new(dir.X,0,dir.Z).Unit*spd; r.AssemblyLinearVelocity=Vector3.new(dir.X,r.AssemblyLinearVelocity.Y,dir.Z) end end end end))
--- INF STAM IS PURE NOW (per client request): infinite stamina is DECOUPLED from any speed boost. We do NOT
--- swallow the "Run" report anymore, so the server keeps sprinting you at your real sprint speed on its own —
--- the old BodyVelocity speed-keeper is therefore unnecessary AND was the thing that glitched movement / "prevented
--- progress" when combined with the speed-up. INF Stam now only holds the bar full + suppresses the drain through
--- the consolidated authoritative need controller. This loop just makes sure any leftover keeper velocity is removed so nothing
--- ever drives your movement. If you want extra speed, use the separate Speed Hack toggle.
-conn(RunService.Heartbeat:Connect(function()
-	if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end
-end))
+-- INF STAM NATIVE AUTO-RUN: Run=true is the exact PE action observed when the player starts sprinting. Reassert it
+-- only while movement is present, clear a stale exhausted/fatigued state, and send Run=false once when movement or
+-- the toggle stops. No CFrame/velocity writes are made here.
+task.spawn(function()
+	local asserted=false; local clearAt=0
+	while RUNNING do
+		if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end
+		if CFG.InfStam and alive() and not CFG.Fly then
+			local r=hrp(); local moving=false
+			if r then local v=r.AssemblyLinearVelocity; moving=Vector3.new(v.X,0,v.Z).Magnitude>0.8 end
+			if not moving then
+				pcall(function() moving=UIS:IsKeyDown(Enum.KeyCode.W) or UIS:IsKeyDown(Enum.KeyCode.A) or UIS:IsKeyDown(Enum.KeyCode.S) or UIS:IsKeyDown(Enum.KeyCode.D) end)
+			end
+			if not moving then local h=hum(); local md=h and h.MoveDirection; moving=md and md.Magnitude>0.05 or false end
+			if moving then
+				if tick()-clearAt>=0.6 then clearAt=tick()
+					replicaFire("SetAction","Exhausted",false); replicaFire("SetAction","Fatigued",false)
+					local stats=csStats(); if type(stats)=="table" then for _,k in ipairs({"Exhausted","Exhaustion","Fatigued","Tired"}) do
+						if type(stats[k])=="boolean" then stats[k]=false elseif type(stats[k])=="number" then stats[k]=0 end
+					end end
+				end
+				replicaFire("SetAction","Run",true); asserted=true
+			elseif asserted then replicaFire("SetAction","Run",false); asserted=false end
+			task.wait(0.18)
+		else
+			if asserted then replicaFire("SetAction","Run",false); asserted=false end
+			task.wait(0.3)
+		end
+	end
+end)
 -- FLOAT: a Y-only BodyVelocity HOLDS you in the air — plain velocity writes don't hold a CFrame-driven PE dino
 -- (that's why Float "didn't work"). It only controls vertical, so you still walk normally. Space=rise, Ctrl=sink.
 -- No CFrame teleport = no 267. On enable it lifts you ~4 studs off the ground so you're floating, then hovers.
