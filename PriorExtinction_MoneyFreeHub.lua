@@ -9,7 +9,20 @@ __gg.__PRIOR_EXT_HUB = nil
 __gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0
 __gg.MH_attackTemplate=nil; __gg.MH_registerTemplate=nil; __gg.MH_pendingRegister=nil; __gg.MH_attackSequence=nil; __gg.MH_soundTemplate=nil; __gg.MH_hbMade=nil; __gg.MH_hbBuildAt=nil
 __gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_verifiedReplicaId=nil; __gg.MH_wellbeing=nil
-__gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil
+__gg.MH_identityKey=nil; __gg.MH_dietCache=nil; __gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_healthPacket=nil; __gg.MH_guardLastHP=nil
+__gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil; __gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
+-- Every captured packet below is valid only for one playable dinosaur. Character, species, or verified replica
+-- changes invalidate food-source ids, combat/sound templates, need reports, and protection high-water state together.
+__gg.MH_clearDinoCaches=function(identityKey)
+	__gg.MH_identityKey=identityKey; __gg.MH_dietCache=nil
+	__gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0; __gg.MH_foodProbeCursor=0
+	__gg.MH_attackTemplate=nil; __gg.MH_registerTemplate=nil; __gg.MH_pendingRegister=nil; __gg.MH_attackSequence=nil; __gg.MH_soundTemplate=nil
+	__gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_hbBuildAt=nil
+	__gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_healthPacket=nil; __gg.MH_healthReportAt=nil
+	__gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_guardLastHP=nil; __gg.MH_guardMax=nil
+	__gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
+	if type(MHNEED)=="table" then MHNEED.refs={food={},stamina={}}; MHNEED.max={food=nil,stamina=nil}; MHNEED.hasPaired={food=false,stamina=false}; MHNEED.at=0; MHNEED.root=nil; MHNEED.character=nil; MHNEED.capRoot=nil; MHNEED.capacity=nil end
+end
 -- EARLY visible proof-of-life (for console-less mobile executors): if you see this toast the script
 -- IS running -> press RightShift for the menu. If you DON'T see it, the executor failed to FETCH the
 -- script (blocked/cached HttpGet) -> use the retry loader.
@@ -884,6 +897,23 @@ for _,key in ipairs({
 	-- CFG default (true) across loads/respawns instead of being wiped.
 }) do CFG[key]=false end
 
+-- Teleport-capable features own independent cancellation generations. Infinite Food is intentionally absent: it
+-- cannot start, continue, or cancel corpse/Pro Food/fossil movement. Toggling a movement feature invalidates only
+-- that feature's pending work; switching it off also cancels the shared settle generation immediately.
+__gg.MH_tpFeatureGen={CarnMeatTP=0,ProFood=0,AutoFarmFossil=0,AutoFarmGem=0}
+__gg.MH_featureToggleChanged=function(key,value)
+	if key=="InfFood" then __gg.MH_foodGen=(__gg.MH_foodGen or 0)+1 end
+	local gens=__gg.MH_tpFeatureGen
+	if type(gens)=="table" and gens[key]~=nil then
+		gens[key]=(gens[key] or 0)+1
+		if not value then
+			__gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1
+			if key=="ProFood" then if __gg.MH_stopProFood then pcall(__gg.MH_stopProFood) end; if __gg.MH_cancelCorpseTP then pcall(__gg.MH_cancelCorpseTP) end end
+			if key=="CarnMeatTP" and __gg.MH_cancelCorpseTP then pcall(__gg.MH_cancelCorpseTP) end
+		end
+	end
+end
+
 -- ═══ CORE HELPERS ═══
 local RUNNING = true
 local CONNS = {}
@@ -1087,18 +1117,35 @@ seenSet = {}
 local function noteReplicaId(id)
 	if typeof(id)=="number" then myReplicaId=id end
 end
--- Injury-report gate (defined ONCE at module level, not per-namecall — a closure alloc on every FireServer was
--- churning GC and dropping FPS). True when THIS SetProperty/SetAction is an injury your active protectors block.
+-- Shared region matcher for both the outgoing injury gate and the local path-aware cleanup. A selected bone never
+-- authorizes a generic whole-body fracture clear unless the selection is explicitly "All".
+__gg.MH_protectBoneMatches=function(path)
+	local sel=CFG.ProtectBone or "All"; local p=tostring(path or ""):lower()
+	if sel=="All" then return true end
+	if sel=="Head" then return p:find("head",1,true) or p:find("jaw",1,true) or p:find("skull",1,true) or p:find("crani",1,true) end
+	if sel=="Neck" then return p:find("neck",1,true) or p:find("cervic",1,true) end
+	if sel=="Arm" then return p:find("arm",1,true) or p:find("hand",1,true) or p:find("claw",1,true) or p:find("humer",1,true) or p:find("wing",1,true) end
+	if sel=="Leg" then return p:find("leg",1,true) or p:find("foot",1,true) or p:find("limb",1,true) or p:find("femur",1,true) or p:find("tibia",1,true) or p:find("thigh",1,true) end
+	if sel=="Body" then return p:find("spine",1,true) or p:find("body",1,true) or p:find("hip",1,true) or p:find("torso",1,true) or p:find("rib",1,true) or p:find("chest",1,true) or p:find("tail",1,true) end
+	return false
+end
+-- Injury-report gate (defined ONCE at module level, not per-namecall). Region-specific toggles only block reports
+-- whose property/action path identifies that region; unrelated stun, ragdoll, grab, and movement state passes through.
 local function injHit(lp)
-	local anyPhys = CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso
-	if (CFG.AntiFracture or CFG.BoneProtect) and (lp:find("fractur",1,true) or lp:find("concuss",1,true)) then return true end
-	if CFG.AntiBleed and (lp:find("bleed",1,true) or lp:find("hemorrhage",1,true) or lp:find("wound",1,true)) then return true end
-	if anyPhys and (lp:find("brok",1,true) or lp:find("break",1,true) or lp:find("sever",1,true) or lp:find("dislocat",1,true) or lp:find("limp",1,true) or lp:find("fractur",1,true) or lp:find("crush",1,true) or lp:find("blunt",1,true) or lp:find("trauma",1,true)) then return true end
-	if CFG.AntiBreakHead and (lp:find("head",1,true) or lp:find("skull",1,true) or lp:find("crani",1,true) or lp:find("jaw",1,true) or lp:find("concuss",1,true)) then return true end
-	if CFG.AntiBreakNeck and (lp:find("neck",1,true) or lp:find("spine",1,true) or lp:find("cervic",1,true)) then return true end
-	if CFG.AntiBreakLeg  and (lp:find("leg",1,true) or lp:find("foot",1,true) or lp:find("limb",1,true) or lp:find("knee",1,true)) then return true end
+	lp=tostring(lp or ""):lower()
+	if CFG.AntiBleed and (lp:find("bleed",1,true) or lp:find("hemorrhage",1,true) or lp:find("wound",1,true) or lp:find("bloodloss",1,true)) then return true end
+	local injury=lp:find("brok",1,true) or lp:find("break",1,true) or lp:find("sever",1,true) or lp:find("dislocat",1,true)
+		or lp:find("limp",1,true) or lp:find("fractur",1,true) or lp:find("concuss",1,true) or lp:find("crush",1,true)
+		or lp:find("blunt",1,true) or lp:find("trauma",1,true)
+	if not injury then return false end
+	local head=lp:find("head",1,true) or lp:find("skull",1,true) or lp:find("crani",1,true) or lp:find("jaw",1,true) or lp:find("concuss",1,true)
+	if CFG.AntiFracture and head then return true end
+	if CFG.BoneProtect and __gg.MH_protectBoneMatches(lp) then return true end
+	if CFG.AntiBreakHead and head then return true end
+	if CFG.AntiBreakNeck and (lp:find("neck",1,true) or lp:find("cervic",1,true)) then return true end
+	if CFG.AntiBreakLeg and (lp:find("leg",1,true) or lp:find("foot",1,true) or lp:find("limb",1,true) or lp:find("knee",1,true) or lp:find("femur",1,true) or lp:find("tibia",1,true)) then return true end
 	if CFG.AntiBreakTail and lp:find("tail",1,true) then return true end
-	if CFG.AntiBreakTorso and (lp:find("torso",1,true) or lp:find("rib",1,true) or lp:find("chest",1,true) or lp:find("hip",1,true)) then return true end
+	if CFG.AntiBreakTorso and (lp:find("torso",1,true) or lp:find("rib",1,true) or lp:find("chest",1,true) or lp:find("hip",1,true) or lp:find("spine",1,true)) then return true end
 	return false
 end
 hookInstalled=false
@@ -1124,7 +1171,7 @@ local function installHook()
 					-- replaying what the game itself just sent is safer than permanently assuming one hard-coded layout.
 					local sa=table.pack(...)
 					if sa.n>=2 and tostring(sa[1]):lower()=="pvp" and tostring(sa[2]):lower():find("attack",1,true) then
-						local snap={n=sa.n}; for i=1,sa.n do snap[i]=sa[i] end; __gg.MH_soundTemplate=snap
+						local snap={n=sa.n,identity=__gg.MH_identityKey}; for i=1,sa.n do snap[i]=sa[i] end; __gg.MH_soundTemplate=snap
 					end
 				elseif (self.Name=="ReplicaSignal" or self.Name=="ReplicaSignalUnreliable") and not checkcaller() then
 				local a = table.pack(...)
@@ -1138,13 +1185,18 @@ local function installHook()
 				local selfCall=typeof(id)=="number" and __gg.MH_verifiedReplicaId~=nil and id==__gg.MH_verifiedReplicaId
 				if selfCall and myReplicaId~=id then noteReplicaId(id) end
 				if selfCall and action=="RegisterAttack" and self.Name=="ReplicaSignal" then
-					local snap={n=a.n,remote=self.Name,instance=self}; for i=1,a.n do snap[i]=a[i] end
+					local snap={n=a.n,remote=self.Name,instance=self,capturedAt=tick(),path=a[3],slot=a[4],identity=__gg.MH_identityKey}; for i=1,a.n do snap[i]=a[i] end
 					__gg.MH_registerTemplate=snap; __gg.MH_pendingRegister=snap
 				elseif selfCall and action=="Attack" and self.Name=="ReplicaSignal" then
-					local snap={n=a.n,remote=self.Name,instance=self}; for i=1,a.n do snap[i]=a[i] end
+					local snap={n=a.n,remote=self.Name,instance=self,capturedAt=tick(),identity=__gg.MH_identityKey}; for i=1,a.n do snap[i]=a[i] end
 					__gg.MH_attackTemplate=snap
 					local reg=__gg.MH_pendingRegister
-					if type(reg)=="table" and reg[1]==id and reg[2]=="RegisterAttack" then __gg.MH_attackSequence={register=reg,attack=snap} end
+					local compatible=type(reg)=="table" and reg[1]==id and reg[2]=="RegisterAttack" and tick()-(reg.capturedAt or 0)<=0.8
+					if compatible then for i=3,a.n do local v=a[i]
+						if type(v)=="string" and reg.path and v:find("Attacks/",1,true) and v~=reg.path then compatible=false; break end
+						if type(v)=="string" and reg.slot and v:match("^Attack%d+$") and v~=reg.slot then compatible=false; break end
+					end end
+					if compatible then __gg.MH_attackSequence={register=reg,attack=snap,identity=__gg.MH_identityKey} end
 					__gg.MH_pendingRegister=nil
 				end
 				-- Sip/Bite/Eat address a SOURCE replica, not our dinosaur. Keep those ids only in the source list.
@@ -1202,56 +1254,26 @@ local function installHook()
 							end
 						end
 						if selfCall and CFG.InfFood and (action=="FoodDrain" or action=="HungerTick" or action=="FoodDepletion" or action=="MetabolismTick") then return end
-						-- (REMOVED: this used to swallow the Secondary/right-click RegisterAttack while INF Stam was on,
-						--  which meant your dino's SECOND ATTACK dealt NO DAMAGE. INF Stam already refills the bar, so
-						--  there is no reason to block the attack — M2 now passes through and hits normally.)
-						-- ═══ INF STAM — Run/Sprint PASS THROUGH; never let the bar hit 0 (from the wiki) ═══ PE has
-						-- Walk/Trot/Run(Shift, slow drain)/Sprint(Tab, FAST drain), and you are ONLY forced to slow
-						-- WHEN STAMINA REACHES 0. So the fix is NOT to swallow the action (that dropped you to walk
-						-- speed = "makes me slow") — Run AND Sprint pass through so you get the game's real running
-						-- speed, and we keep the bar pinned to max (below + the refill loop) so it never reaches 0
-						-- and the game never forces you down. No movement-controller, CFrame, velocity, or WalkSpeed field is changed.
-						if selfCall and CFG.InfStam and action=="SetAction" and (a[3]=="Run" or a[3]=="Sprint" or a[3]=="Trot") and a[4]==true then
-							__gg.MH_wantRun = tick()
-							-- no swallow: the action replicates so you keep real run/sprint speed; the pins hold the bar
+						-- Infinite Stamina has no action or movement side channel. Run/Sprint/Trot, fatigue, velocity,
+						-- CFrame, and movement state pass through untouched; only the validated need packet above may refill it.
+						-- Keep the exact health packet shape for proportional protection reports. Rewriting happens only
+						-- against the last observed HP and only for physical protection; Anti Bleed never becomes god mode.
+						if selfCall and action=="SetProperty" and typeof(a[3])=="string" and (a[3]:lower()=="health" or a[3]:lower()=="hp") and typeof(a[4])=="number" then
+							local physical=CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso
+							local last=tonumber(__gg.MH_guardLastHP)
+							if physical and last and a[4]<last then local frac=math.clamp((tonumber(CFG.HeadDmgReduce) or 0)/100,0,1); a[4]=a[4]+(last-a[4])*frac end
+							local snap={n=a.n,remote=self.Name,instance=self,identity=__gg.MH_identityKey}; for i=1,a.n do snap[i]=a[i] end; __gg.MH_healthPacket=snap
+							return oldNC(self,table.unpack(a,1,a.n))
 						end
-						-- (stamina DRAIN report is blocked below so it never drops while you sprint.)
-						-- REWRITE stamina SetProperty to max so the server always sees a full bar.
-						-- Previously this swallowed the call entirely, which also blocked our own
-						-- refill fires at line ~1615 → server never got told stam was full = no drain fix.
-						if selfCall and CFG.InfStam and action=="SetProperty" and typeof(a[3])=="string" then local lp=a[3]:lower()
-							-- Fatigue/exertion are PENALTIES, not stamina pools. The old hook filled them to 100,
-							-- which immediately made some dinosaurs exhausted even while their stamina bar looked full.
-							if lp:find("fatigue",1,true) or lp:find("exertion",1,true) or lp:find("exhaust",1,true) or lp:find("tired",1,true) or lp:find("winded",1,true) then
-								if typeof(a[4])=="number" then a[4]=0 elseif a[4]==true then a[4]=false end
-								return oldNC(self, table.unpack(a,1,a.n))
-							end
-						end
-						-- Some stamina drains do NOT come through SetProperty — the client reports them with their own
-						-- action name (StaminaDrain / Exhaust / FatigueTick). Swallow those outright while INF Stam is on.
-						if selfCall and CFG.InfStam and (action=="StaminaDrain" or action=="Exhaust" or action=="FatigueTick") then return end
-						-- TIRED-FLAG REPORTS (the Shift/run "Tr…" family): if the client tries to TELL the server you're
-						-- tired/exhausted (SetAction/SetProperty "Tired"/"Exhausted"/"Fatigued" = true), swallow it — the
-						-- server never hears you got tired, so it never applies the slow. (Only TRUE reports are swallowed;
-						-- "no longer tired" passes through so you can never get stuck flagged.)
-						if selfCall and CFG.InfStam and (action=="SetAction" or action=="SetProperty") and typeof(a[3])=="string" then
-							local tl=a[3]:lower()
-							if (tl:find("tired",1,true) or tl:find("exhaust",1,true) or tl:find("fatigu",1,true)) and (a[4]==true or (typeof(a[4])=="number" and a[4]>0)) then return end
-						end
-						-- Blood-pool drain is distinct from the Bleeding flag on several species. Preserve the highest
-						-- genuine blood value seen and rewrite a client-reported drain to that value.
-						if selfCall and CFG.AntiBleed and action=="SetProperty" and typeof(a[3])=="string" then local bp=a[3]:lower()
+						-- Blood-pool drain is distinct from the Bleeding flag. Rewrite only to an authoritative maximum
+						-- already paired for this verified replica; a current value is never promoted to a maximum.
+						if selfCall and (CFG.AntiBleed or CFG.AutoHealBlood) and action=="SetProperty" and typeof(a[3])=="string" then local bp=a[3]:lower()
 							if bp=="blood" or bp=="bloodlevel" or bp=="bloodvolume" or bp=="bloodpool" then
-								if typeof(a[4])=="number" then if a[4]>0 then __gg.MH_bloodMax=math.max(__gg.MH_bloodMax or 0,a[4]) end; a[4]=math.max(__gg.MH_bloodMax or a[4],a[4]) end
+								local rid=MHNEED and MHNEED.replicaId and MHNEED.replicaId()
+								if __gg.MH_bloodReplica~=rid then __gg.MH_bloodReplica=rid; __gg.MH_bloodMax=nil end
+								if typeof(a[4])=="number" and type(__gg.MH_bloodMax)=="number" then a[4]=__gg.MH_bloodMax end
 								return oldNC(self,table.unpack(a,1,a.n))
 							end
-						end
-						-- If this client reports its own HP loss, protection rewrites it before it reaches the
-						-- server. Server-originated hits are still restored by the unified Heartbeat guard.
-						if selfCall and action=="SetProperty" and typeof(a[3])=="string" and (a[3]:lower()=="health" or a[3]:lower()=="hp")
-							and (CFG.AntiBleed or CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso)
-							and typeof(a[4])=="number" and (__gg.MH_guardMax or 0)>0 then
-							a[4]=__gg.MH_guardMax; return oldNC(self,table.unpack(a,1,a.n))
 						end
 						-- ANTI-INJURY (report-block): injuries replicate the same way stamina does — the CLIENT reports
 						-- them to the server. While your antis are on, we SWALLOW any report that would tell the server
@@ -1273,7 +1295,7 @@ local function installHook()
 							if action=="SetAction" and typeof(a[3])=="string" and a[4]==true then local lp=a[3]:lower()
 								if injHit(lp) then return end
 							end
-							if (CFG.AntiFracture or CFG.AntiBleed or CFG.BoneProtect) and (laG:find("fractur",1,true) or laG:find("bleed",1,true) or laG:find("injur",1,true)) then return end
+							if injHit(laG) then return end
 						end
 					end
 				end
@@ -1309,12 +1331,12 @@ local function progSerde(mode, x)
 		if type(x)~="table" or type(x[1])~="table" or type(x[1][2])~="string" then return nil end
 		local inner=x[1]; local data=(inner[3] and inner[3][1]) or {}
 		local bytes={}; for i=1,#inner[2] do bytes[i]=string.byte(inner[2],i) end
-		return { marker=inner[1], bytes=bytes, tag=x[2], data={Species=data.Species, Variant=data.Variant, Skin=data.Skin, Gender=data.Gender, Stage=data.GrowthStage or data.Stage} }
+		return { marker=inner[1], bytes=bytes, tag=x[2], data={Species=data.Species, Variant=data.Variant, Skin=data.Skin, Gender=data.Gender, GrowthStage=data.GrowthStage, Stage=data.Stage or data.GrowthStage} }
 	else
 		if type(x)~="table" or not x.bytes then return nil end
 		if SLOTS and SLOTS.check then local ok=SLOTS.check(x); if not ok then return nil end end
 		local bid=""; for _,b in ipairs(x.bytes) do bid=bid..string.char(b) end
-		return { { x.marker or "\001", bid, { { Species=x.data.Species, Variant=x.data.Variant, Skin=x.data.Skin, Gender=x.data.Gender } } }, x.tag or "H" }
+		return { { x.marker or "\001", bid, { { Species=x.data.Species, Variant=x.data.Variant, Skin=x.data.Skin, Gender=x.data.Gender, GrowthStage=x.data.GrowthStage or x.data.Stage, Stage=x.data.Stage } } }, x.tag or "H" }
 	end
 end
 -- Per-ACCOUNT file naming: every save file is tagged with the player's UserId, so different people using the same
@@ -1325,16 +1347,19 @@ function SLOTS.sum(rec)
 	local total=0
 	local function mix(s) s=tostring(s or ""); for i=1,#s do total=(total + string.byte(s,i)*(i+17))%2147483647 end end
 	for i,b in ipairs((rec and rec.bytes) or {}) do total=(total + (tonumber(b) or 0)*(i+31))%2147483647 end
-	local d=rec and rec.data or {}; mix(rec and rec.marker); mix(rec and rec.tag); mix(d.Species); mix(d.Variant); mix(d.Skin); mix(d.Gender); mix(d.Stage); mix(rec and rec.userId); mix(rec and rec.universeId)
+	local d=rec and rec.data or {}; mix(rec and rec.marker); mix(rec and rec.tag); mix(d.Species); mix(d.Variant); mix(d.Skin); mix(d.Gender); mix(d.GrowthStage); mix(d.Stage)
+	mix(rec and rec.schema); mix(rec and rec.userId); mix(rec and rec.universeId); mix(rec and rec.placeId); mix(rec and rec.savedAt)
 	return total
 end
 function SLOTS.check(rec)
 	if type(rec)~="table" or type(rec.bytes)~="table" or #rec.bytes<4 or #rec.bytes>256 or type(rec.data)~="table" then return false,"invalid structure" end
 	for _,b in ipairs(rec.bytes) do if type(b)~="number" or b<0 or b>255 or b%1~=0 then return false,"invalid bridge data" end end
-	if rec.userId and tonumber(rec.userId)~=LP.UserId then return false,"different account" end
-	if rec.universeId and tonumber(rec.universeId)~=game.GameId then return false,"different experience" end
+	if tonumber(rec.schema)~=2 then return false,"unsupported schema" end
+	if tonumber(rec.userId)~=LP.UserId then return false,"different account" end
+	if tonumber(rec.universeId)~=game.GameId then return false,"different experience" end
+	if tonumber(rec.placeId)~=game.PlaceId then return false,"different place" end
 	if type(rec.data.Species)~="string" or rec.data.Species=="" or #rec.data.Species>100 then return false,"missing species" end
-	if rec.checksum and tonumber(rec.checksum)~=SLOTS.sum(rec) then return false,"checksum mismatch" end
+	if type(rec.checksum)~="number" or rec.checksum~=SLOTS.sum(rec) then return false,"checksum mismatch" end
 	return true
 end
 function SLOTS.read(n)
@@ -1357,7 +1382,10 @@ function SLOTS.write(n,rec)
 	local ok=pcall(function()
 		writefile(tmp,encoded)
 		local test=HttpService:JSONDecode(readfile(tmp)); assert(SLOTS.check(test))
-		if isfile and isfile(path) then local old=readfile(path); if old and old~="" then writefile(path..".bak",old) end end
+		if isfile and isfile(path) then local old=readfile(path); if old and old~="" then
+			local oldOk,oldRec=pcall(function() return HttpService:JSONDecode(old) end)
+			if oldOk and SLOTS.check(oldRec) then writefile(path..".bak",old) end
+		end end
 		writefile(path,encoded)
 		local final=HttpService:JSONDecode(readfile(path)); assert(SLOTS.check(final))
 		if delfile and isfile and isfile(tmp) then delfile(tmp) end
@@ -1492,7 +1520,7 @@ local function fireSwing(sequence)
 	if not ok then return false end
 	-- Sound is ancillary and is replayed only when captured; no hard-coded sound packet is manufactured.
 	local sr=getSoundRemote(); local st=__gg.MH_soundTemplate
-	if sr and type(st)=="table" and st.n and st.n>=2 then pcall(function() sr:FireServer(table.unpack(st,1,st.n)) end) end
+	if sr and type(st)=="table" and st.n and st.n>=2 and (st.identity==nil or seq.identity==nil or st.identity==seq.identity) then pcall(function() sr:FireServer(table.unpack(st,1,st.n)) end) end
 	return true
 end
 -- ═══ SPAWN RESCUE — the "I spawn outside the map and die, EVERY time, even without the script" fix ═══
@@ -1583,7 +1611,9 @@ __gg.MH_spawnRescue = function()
 	end)
 end
 conn(LP.CharacterAdded:Connect(function()
-	myReplicaId=nil; __gg.MH_verifiedReplicaId=nil; __gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_registerTemplate=nil; __gg.MH_attackTemplate=nil; __gg.MH_pendingRegister=nil; __gg.MH_attackSequence=nil
+	myReplicaId=nil; __gg.MH_verifiedReplicaId=nil; if __gg.MH_clearDinoCaches then __gg.MH_clearDinoCaches(nil) end
+	if type(__gg.MH_tpFeatureGen)=="table" then for k,v in pairs(__gg.MH_tpFeatureGen) do __gg.MH_tpFeatureGen[k]=(v or 0)+1 end end
+	if __gg.MH_stopProFood then pcall(__gg.MH_stopProFood) end; if __gg.MH_cancelCorpseTP then pcall(__gg.MH_cancelCorpseTP) end
 	__gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil; task.wait(1); if __gg.MH_spawnRescue then __gg.MH_spawnRescue() end
 end))
 task.spawn(function() task.wait(2); if __gg.MH_spawnRescue then __gg.MH_spawnRescue() end end)   -- also guard THIS spawn (you may already be falling)
@@ -1595,13 +1625,18 @@ local function csStats() local r=csReplica(); if r and r.Data then return r.Data
 -- are observations, not capacities. Resolution order is (1) matching MaxStats/sibling pair, (2) ConsumptionData
 -- for food, then (3) a real HUD current/max denominator such as "3.8 / 15" or "316 / 319". HUD bars/text are not
 -- painted; only their numeric backing Value/attribute sources are eligible references.
-MHNEED={refs={food={},stamina={}},max={food=nil,stamina=nil},at=0,root=nil,character=nil,capRoot=nil,capacity=nil}
+MHNEED={refs={food={},stamina={}},max={food=nil,stamina=nil},hasPaired={food=false,stamina=false},at=0,root=nil,character=nil,capRoot=nil,capacity=nil}
 function MHNEED.replicaId()
 	local r=csReplica(); if not r then return nil end
 	-- The packet owner is verified only by the exact CharacterState.Replica.Id field. Data/source ids are unrelated.
 	local ok,id=pcall(function() return r.Id end)
 	if ok and typeof(id)=="number" then return id end
 	return nil
+end
+function MHNEED.identity()
+	local r=csReplica(); local root=r and r.Data; local tags=r and r.Tags
+	local species=(tags and (tags.Character or tags.Species or tags.Type)) or (root and (root.Character or root.Species or root.Type))
+	return tostring(MHNEED.replicaId() or "?").."|"..tostring(species or "?").."|"..tostring(LP.Character or "?")
 end
 function MHNEED.norm(name) return tostring(name or ""):lower():gsub("[^%w]","") end
 function MHNEED.kindFor(name, context)
@@ -1631,20 +1666,22 @@ function MHNEED.pairedMax(tb, key, maxTb, kind, current)
 	local own=index(tb); local parallel=index(maxTb); local n=MHNEED.norm(key)
 	local base=n:gsub("^current",""):gsub("^cur",""):gsub("current$",""):gsub("value$",""):gsub("amount$",""):gsub("level$","")
 	if base=="" or base=="value" or base=="amount" or base=="level" then base=kind end
-	local aliases=kind=="food" and {base,"food","hunger","fullness","satiation"} or {base,"stamina","stam","energy","endurance","vigor","sp"}
-	local best
-	local function take(v)
+	local function valid(v)
 		v=tonumber(v)
-		if v and v>0 and v<1e8 and (not current or v+1e-6>=current) then best=(not best or v>best) and v or best end
+		if v and v>0 and v<1e8 and (not current or v+1e-6>=current) then return v end
 	end
-	for _,a in ipairs(aliases) do
-		take(parallel[a]); take(own["max"..a]); take(own[a.."max"]); take(own["maximum"..a]); take(own[a.."maximum"])
-		take(own[a.."capacity"]); take(own["capacity"..a]); take(own[a.."limit"])
+	-- Exact property identity wins. MaxStats commonly mirrors the current key (Stamina -> MaxStats.Stamina), while
+	-- sibling layouts use MaxStamina/StaminaMax. Do not scan other aliases and choose the largest numeric value.
+	local names={n}; if base~=n then names[#names+1]=base end
+	for _,a in ipairs(names) do
+		for _,v in ipairs({parallel[a],own["max"..a],own[a.."max"],own["maximum"..a],own[a.."maximum"],own[a.."capacity"],own["capacity"..a],own[a.."limit"]}) do
+			local mx=valid(v); if mx then return mx end
+		end
 	end
 	if n=="current" or n=="cur" or n=="value" or n=="amount" or n=="level" then
-		for _,mk in ipairs({"max","maximum","maxvalue","maximumvalue","capacity","limit","total"}) do take(own[mk]) end
+		for _,mk in ipairs({"max","maximum","maxvalue","maximumvalue","capacity","limit","total"}) do local mx=valid(own[mk]); if mx then return mx end end
 	end
-	return best
+	return nil
 end
 function MHNEED.foodCapacity()
 	local r=csReplica(); local root=r and r.Data
@@ -1676,17 +1713,25 @@ function MHNEED.foodCapacity()
 end
 function MHNEED.refresh(force)
 	local r=csReplica(); local root=r and r.Data; local character=LP.Character
-	if not force and MHNEED.root==root and MHNEED.character==character and tick()-(MHNEED.at or 0)<0.35 then return end
+	local identity=MHNEED.identity()
+	if __gg.MH_identityKey==nil then __gg.MH_identityKey=identity elseif __gg.MH_identityKey~=identity and __gg.MH_clearDinoCaches then __gg.MH_clearDinoCaches(identity) end
+	if not force and MHNEED.root==root and MHNEED.character==character and tick()-(MHNEED.at or 0)<0.75 then return end
 	if MHNEED.root~=root or MHNEED.character~=character then MHNEED.capRoot=nil; MHNEED.capacity=nil end
 	MHNEED.root=root; MHNEED.character=character; MHNEED.at=tick()
-	local refs={food={},stamina={}}; local chosen={food=nil,stamina=nil}; local seen,count={},0
+	local refs={food={},stamina={}}; local chosen={food=nil,stamina=nil}; local hasPaired={food=false,stamina=false}; local seen,count={},0
 	local function candidate(kind,value,priority)
 		value=tonumber(value); if not (kind and value and value>0 and value<1e8) then return end
 		local old=chosen[kind]
-		if not old or priority>old.priority or (priority==old.priority and value>old.value) then chosen[kind]={value=value,priority=priority} end
+		if not old or priority>old.priority then chosen[kind]={value=value,priority=priority} end
 	end
 	local function addRef(kind,ref,mx,priority)
-		if not kind then return end; ref.max=mx; refs[kind][#refs[kind]+1]=ref; if mx then candidate(kind,mx,priority) end
+		if not kind then return end; ref.max=mx; refs[kind][#refs[kind]+1]=ref; if mx then hasPaired[kind]=true; candidate(kind,mx,priority) end
+	end
+	local function pairPriority(kind,key)
+		local n=MHNEED.norm(key)
+		if kind=="food" and (n=="food" or n=="currentfood" or n=="foodcurrent") then return 4 end
+		if kind=="stamina" and (n=="stamina" or n=="currentstamina" or n=="staminacurrent") then return 4 end
+		return 3
 	end
 	local function walk(tb,maxTb,path,depth)
 		if type(tb)~="table" or seen[tb] or depth>6 or count>1100 then return end
@@ -1696,7 +1741,7 @@ function MHNEED.refresh(force)
 			local ks=tostring(k)
 			if type(v)=="number" then
 				local kind=MHNEED.kindFor(ks,path)
-				if kind then local mx=MHNEED.pairedMax(tb,k,maxTb,kind,v); addRef(kind,{mode="table",tb=tb,key=k,path=path.."."..ks},mx,3) end
+				if kind then local mx=MHNEED.pairedMax(tb,k,maxTb,kind,v); addRef(kind,{mode="table",tb=tb,key=k,path=path.."."..ks},mx,pairPriority(kind,ks)) end
 			elseif type(v)=="table" and getmetatable(v)==nil then
 				local nextMax
 				if type(maxTb)=="table" then nextMax=maxTb[k]; if type(nextMax)~="table" then nextMax=maxTb end end
@@ -1709,7 +1754,9 @@ function MHNEED.refresh(force)
 	if root then walk(root,root.MaxStats or root.Max,"Replica.Data",0) end
 	if CharacterState then
 		for _,k in ipairs({"Stats","State","Data","Vitals","Needs","Resources"}) do local tb=CharacterState[k]; if type(tb)=="table" then walk(tb,tb.MaxStats or tb.Max,"CharacterState."..k,0) end end
-		local tops={}; for k,v in pairs(CharacterState) do if type(v)=="number" then tops[k]=v end end; walk(tops,CharacterState.MaxStats,"CharacterState",0)
+		for k,v in pairs(CharacterState) do if type(v)=="number" then local kind=MHNEED.kindFor(k,"CharacterState"); if kind then
+			local mx=MHNEED.pairedMax(CharacterState,k,CharacterState.MaxStats,kind,v); addRef(kind,{mode="table",tb=CharacterState,key=k,path="CharacterState."..tostring(k)},mx,pairPriority(kind,k))
+		end end end
 	end
 	local wb=__gg.MH_wellbeing; local wr=wb and wb.Data and wb.Data.SavableStats
 	if wr and type(wr.Stats)=="table" then walk(wr.Stats,wr.MaxStats or wr.Max,"Wellbeing.Stats",0) end
@@ -1743,7 +1790,7 @@ function MHNEED.refresh(force)
 			end
 		end
 	end
-	MHNEED.refs=refs; MHNEED.max.food=chosen.food and chosen.food.value or nil; MHNEED.max.stamina=chosen.stamina and chosen.stamina.value or nil
+	MHNEED.refs=refs; MHNEED.hasPaired=hasPaired; MHNEED.max.food=chosen.food and chosen.food.value or nil; MHNEED.max.stamina=hasPaired.stamina and chosen.stamina and chosen.stamina.value or nil
 end
 function MHNEED.maxFor(kind) MHNEED.refresh(); return MHNEED.max[kind] end
 function MHNEED.maxForProperty(kind,property)
@@ -1752,12 +1799,17 @@ function MHNEED.maxForProperty(kind,property)
 		local name=ref.key or (ref.inst and ref.inst.Name)
 		if MHNEED.norm(name)==want and ref.max and ref.max>0 then return ref.max end
 	end
+	-- The game can report an alias (for example Energy/CurrentStamina) while the paired local field is named
+	-- Stamina. Once the property and the resolved field both classify as the same need, the paired maximum is still
+	-- authoritative; requiring an identical spelling made valid stamina/food reports fail silently.
+	if MHNEED.kindFor(property,"")==kind and MHNEED.hasPaired and MHNEED.hasPaired[kind] then return MHNEED.max[kind] end
+	if kind=="stamina" then return nil end
 	return MHNEED.max[kind]
 end
 function MHNEED.pin(kind)
 	MHNEED.refresh(); local globalMax=MHNEED.max[kind]; local changed=false
 	for _,ref in ipairs(MHNEED.refs[kind] or {}) do
-		local target=ref.max or globalMax
+		local target=ref.max or ((kind~="stamina" and not MHNEED.hasPaired[kind]) and globalMax or nil)
 		if target and target>0 then
 			if ref.mode=="table" and ref.tb and type(ref.tb[ref.key])=="number" then if math.abs(ref.tb[ref.key]-target)>1e-6 then changed=true; ref.tb[ref.key]=target end
 			elseif ref.mode=="attr" and ref.inst and ref.inst.Parent then local v=ref.inst:GetAttribute(ref.key); if type(v)=="number" and math.abs(v-target)>1e-6 then changed=true; pcall(function() ref.inst:SetAttribute(ref.key,target) end) end
@@ -1775,6 +1827,12 @@ function MHNEED.report(kind, force)
 	local args={n=packet.n}; for i=1,packet.n do args[i]=packet[i] end; args[4]=mx; __gg.MH_needReportAt[kind]=now
 	return pcall(function() remote:FireServer(table.unpack(args,1,args.n)) end)
 end
+-- Character/species/verified-replica changes can occur without a CharacterAdded event. Watch only the cheap identity
+-- tuple and invalidate all diet, Bite, combat/sound, need, and blood caches before any old packet can be replayed.
+task.spawn(function() while RUNNING do task.wait(0.5); pcall(function()
+	local identity=MHNEED.identity()
+	if __gg.MH_identityKey==nil then __gg.MH_identityKey=identity elseif __gg.MH_identityKey~=identity then __gg.MH_clearDinoCaches(identity) end
+end) end end)
 -- REPLICA ID FALLBACK (no-hook executors): the namecall hook normally sets myReplicaId from self-actions like the
 -- constantly-fired HeadAngles. If the executor lacks hookmetamethod, read our dino id from CharacterState.Replica
 -- as a fallback. Only sets it when not already captured (the hook value is the authoritative ReplicaSignal id).
@@ -2058,10 +2116,11 @@ function MHCOMBAT.sequence(targets, clickedPart)
 	local sequence=__gg.MH_attackSequence
 	MHCOMBAT.busy=true
 	local ok,hits=pcall(function()
-		if not fireSwing(sequence) then return 0 end
-		RunService.Heartbeat:Wait()
 		local n=0
-		for i,m in ipairs(list) do if fireAttack(m,true,(i==1) and clickedPart or nil,sequence) then n+=1 end end
+		for i,m in ipairs(list) do
+			-- Preserve the observed one-to-one order: exact RegisterAttack, one frame, then one exact Attack packet.
+			if fireSwing(sequence) then RunService.Heartbeat:Wait(); if fireAttack(m,true,(i==1) and clickedPart or nil,sequence) then n+=1 end end
+		end
 		return n
 	end)
 	MHCOMBAT.busy=false
@@ -2374,21 +2433,17 @@ local function nearestTarget(range, anyCreature)
 		local h=m:FindFirstChildOfClass("Humanoid")
 		if (not h) or h.Health>0 then local r=getHitbox(m) or rootOf(m); if r then local d=dist(me.Position,r.Position); if d<bd then best,bestRoot,bd=m,r,d end end end
 	end end
-	-- SANDBOX fallback: in Sandbox/test places dinos aren't under workspace.Characters — they sit in other folders
-	-- or are nil-parented. Scan extra containers, then getnilinstances() for Models with a Hitbox. (Only runs when
-	-- nothing was found above, so normal play never pays for the nil-instance walk.)
-	if not best then
-		local function consider(m)
-			if not (m and m:IsA("Model") and m~=mine) then return end
-			local h = m:FindFirstChildOfClass("Humanoid"); if h and h.Health<=0 then return end
-			local r = getHitbox(m) or rootOf(m)
-			if r then local d=dist(me.Position, r.Position); if d<bd then best,bestRoot,bd = m, r, d end end
-		end
-		if not best and typeof(getnilinstances)=="function" then
-			pcall(function() local c=0; for _,v in next, getnilinstances() do c+=1; if c>4000 then break end
-				if typeof(v)=="Instance" and v:IsA("Model") and (v:FindFirstChild("Hitbox") or v:FindFirstChild("HitBox") or v:FindFirstChild("MeshModel")) then consider(v) end
-			end end)
-		end
+	-- Merge bounded nil-parented sandbox/newcomer candidates even when a normal target already exists.
+	local function consider(m)
+		if not (m and m:IsA("Model") and m~=mine) then return end
+		local h = m:FindFirstChildOfClass("Humanoid"); if h and h.Health<=0 then return end
+		local r = getHitbox(m) or rootOf(m)
+		if r then local d=dist(me.Position, r.Position); if d<bd then best,bestRoot,bd = m, r, d end end
+	end
+	if anyCreature and typeof(getnilinstances)=="function" then
+		pcall(function() local c=0; for _,v in next, getnilinstances() do c+=1; if c>2000 then break end
+			if typeof(v)=="Instance" and v:IsA("Model") and (v:FindFirstChild("Hitbox") or v:FindFirstChild("HitBox") or v:FindFirstChild("Physics") or v:FindFirstChild("MeshModel")) then consider(v) end
+		end end)
 	end
 	return best, bestRoot
 end
@@ -2508,7 +2563,7 @@ local function mkToggle(par, txt, key, ord)
 	local kn = C("Frame",{Parent=tr, Size=UDim2.fromOffset(14,14), Position=CFG[key] and UDim2.fromOffset(18,2) or UDim2.fromOffset(2,2), BackgroundColor3=Color3.new(1,1,1), BorderSizePixel=0}); corner(kn,999)
 	toggleRefs[key]={tr,kn}
 	tr.MouseButton1Click:Connect(function()
-		CFG[key]=not CFG[key]
+		CFG[key]=not CFG[key]; if __gg.MH_featureToggleChanged then __gg.MH_featureToggleChanged(key,CFG[key]) end
 		tw(tr,{BackgroundColor3=CFG[key] and T.On or T.Off}); tw(kn,{Position=CFG[key] and UDim2.fromOffset(18,2) or UDim2.fromOffset(2,2)})
 		saveCfg()
 	end)
@@ -2624,15 +2679,11 @@ local function detectDinoModel(model)
 end
 -- Deep stat pinner: walks the WHOLE CharacterState replica and forces matching numeric stats to max.
 STAT_GROUPS = {
-	{cfg="InfFood",   keys={"food","hunger","nutrition","fullness","satiation"}},   -- SEVEN STRONG: pin food to full
 	{cfg="InfWater",  keys={"water","thirst","hydrat","drink","liquid"}},
-	{cfg="InfStam",   keys={"stamina","stam","energy","endur"}},
 	{cfg="InfOxygen", keys={"oxygen","air","breath","o2","lung"}},
 }
 -- Drain meters that go UP as you suffer — when their feature is on, force them to ZERO, never max.
 STAT_ZERO = {
-	{cfg="InfStam",   keys={"exhaust","fatigue","tired"}},
-	{cfg="InfFood",   keys={"starv","hungry"}},
 	{cfg="InfWater",  keys={"dehydr","thirsty"}},
 	{cfg="InfOxygen", keys={"drown","suffoc"}},
 }
@@ -2662,12 +2713,8 @@ local function deepPinStats(tbl, maxTbl, depth)
 	end)
 	return ok
 end
--- HUD participation is data-source-only. MHNEED reads real denominators/backing values; it never paints a bar,
--- resizes GUI objects, or writes the literal 100 into a species whose actual pool may be 15 or 319.
-local function pinHud()
-	if CFG.InfFood then MHNEED.pin("food") end
-	if CFG.InfStam then MHNEED.pin("stamina") end
-end
+-- Food and stamina are excluded from this legacy walker. MHNEED is their only writer and fails closed without an
+-- authoritative current/max pair (or the documented ConsumptionData/HUD denominator fallback).
 -- (Instant Elder + stat dump removed per request.)
 
 -- ═══ FLUENT UI (primary) — clean library; auto-falls-back to the built-in window if it can't load ═══
@@ -2707,7 +2754,7 @@ if FWindow then
 	local ICONS = {Combat="swords", PvP="target", Movement="footprints", Survival="heart-pulse", Growth="sprout", ["Auto Farm"]="pickaxe", Target="crosshair", Teleport="map-pin", Visuals="eye", Skins="palette", Misc="wrench", Settings="settings", Info="info", Admin="shield", Rules="list"}
 	mkTab = function(name) local tb=FWindow:AddTab({Title=name, Icon=ICONS[name] or ""}); Pages[name]=tb; return tb end
 	mkSec = function(par, title) pcall(function() par:AddParagraph({Title=title, Content=""}) end); return par, par end
-	mkToggle = function(par, txt, key) pcall(function() local t=par:AddToggle(key,{Title=txt, Default=CFG[key] and true or false}); t:OnChanged(function() CFG[key]=Options[key].Value; saveCfg() end) end) end
+	mkToggle = function(par, txt, key) pcall(function() local t=par:AddToggle(key,{Title=txt, Default=CFG[key] and true or false}); t:OnChanged(function() local old=CFG[key]; CFG[key]=Options[key].Value; if old~=CFG[key] and __gg.MH_featureToggleChanged then __gg.MH_featureToggleChanged(key,CFG[key]) end; saveCfg() end) end) end
 	mkSlider = function(par, txt, key, mn, mx, _o, step) pcall(function() par:AddSlider(key,{Title=txt, Default=tonumber(CFG[key]) or mn, Min=mn, Max=mx, Rounding=((step and step>=1) and 0 or 2), Callback=function(v) CFG[key]=v; saveCfg() end}) end) end
 	mkBtn = function(par, txt, cb) pcall(function() par:AddButton({Title=txt, Callback=function() pcall(cb) end}) end) end
 	mkTextbox = function(par, lbl, key, _o, numeric) pcall(function() par:AddInput(key,{Title=lbl, Default=tostring(CFG[key] or ""), Numeric=numeric and true or false, Finished=false, Callback=function(v) if numeric then CFG[key]=tonumber(v) or CFG[key] else CFG[key]=v end saveCfg() end}) end) end   -- Finished=false: save as you TYPE ("Load without pressing Enter checked an empty string")
@@ -2737,7 +2784,8 @@ end
 -- UNIVERSAL toggle setter: flip a toggle's VALUE + its on/off VISUAL from code, for BOTH the built-in UI and Fluent
 -- (Fluent toggles are Fluent.Options[key]:SetValue(bool)). Used so "click Yes → Pro Food turns on" shows the switch move.
 __gg.MH_setToggle = function(key, val)
-	CFG[key] = val and true or false
+	local old=CFG[key]; CFG[key] = val and true or false
+	if old~=CFG[key] and __gg.MH_featureToggleChanged then __gg.MH_featureToggleChanged(key,CFG[key]) end
 	pcall(saveCfg)
 	pcall(function() local ref=toggleRefs[key]; if ref then ref[1].BackgroundColor3=CFG[key] and T.On or T.Off; ref[2].Position=CFG[key] and UDim2.fromOffset(18,2) or UDim2.fromOffset(2,2) end end)
 	pcall(function() if Fluent and Fluent.Options and Fluent.Options[key] and Fluent.Options[key].SetValue then Fluent.Options[key]:SetValue(CFG[key]) end end)
@@ -2841,7 +2889,7 @@ do local p=Pages["Survival"]
 	-- (spawn in as that dino first so it's captured). Pick a slot, then Restore or Delete it. Per-account (UserId).
 	local slotsDD = mkDropdown(pg, "Saved Slots", function()
 		local out={}
-		for n=1,40 do if isfile and (isfile(slotFile(n)) or isfile(slotFile(n)..".bak")) then local sp,st="Dino",nil; local r=SLOTS.read(n); if r and r.data then sp=r.data.Species or "Dino"; st=r.data.Stage end; out[#out+1]=n..": "..sp..(st and (" - "..tostring(st)) or "") end end
+		for n=1,40 do local r=SLOTS.read(n); if r and r.data then local sp=r.data.Species or "Dino"; local st=r.data.Stage or r.data.GrowthStage; out[#out+1]=n..": "..sp..(st and (" - "..tostring(st)) or "") end end
 		if #out==0 then out[1]="(none)" end
 		return out
 	end, function() return CFG.ProgSlotSel or "(none)" end, function(opt) CFG.ProgSlotSel=opt; saveCfg() end, 2)
@@ -2851,7 +2899,7 @@ do local p=Pages["Survival"]
 		local r=progSerde("rec",pp); if not r then notify("Progress","Couldn't save that."); return end
 		-- label with the current growth stage if we can detect it
 		pcall(function() local rr=csReplica(); if rr and rr.Data then r.data.Stage = rr.Data.GrowthStage or rr.Data.Stage or (rr.Data.Growth and rr.Data.Growth.Stage) end if not r.data.Stage then local mm=getMyModel(); if mm then r.data.Stage = mm:GetAttribute("Stage") or mm:GetAttribute("GrowthStage") end end end)
-		local n=1; while n<=40 and isfile and (isfile(slotFile(n)) or isfile(slotFile(n)..".bak")) do n=n+1 end
+		local n=1; while n<=40 do local existing=SLOTS.read(n); if not existing then break end; n+=1 end
 		if n>40 then notify("Progress","All 40 slots are full. Delete one first."); return end
 		local ok,why=SLOTS.write(n,r); if not ok then notify("Progress","Save failed: "..tostring(why)); return end
 		if slotsDD and slotsDD.refresh then slotsDD.refresh() end
@@ -2869,7 +2917,9 @@ do local p=Pages["Survival"]
 		if not (n and isfile and (isfile(slotFile(n)) or isfile(slotFile(n)..".bak"))) then notify("Progress","Pick a saved slot first."); return end
 		if __gg.MH_deleteArm~=n or tick()-(__gg.MH_deleteArmT or 0)>4 then __gg.MH_deleteArm=n; __gg.MH_deleteArmT=tick(); notify("Progress","Click Delete Selected again within 4 seconds to confirm."); return end
 		local f=slotFile(n)
-		if delfile then pcall(function() if isfile(f) then delfile(f) end; if isfile(f..".bak") then delfile(f..".bak") end; if isfile(f..".tmp") then delfile(f..".tmp") end end) elseif writefile then pcall(function() writefile(f,"") end) end
+		if delfile then pcall(function() if isfile(f) then delfile(f) end; if isfile(f..".bak") then delfile(f..".bak") end; if isfile(f..".tmp") then delfile(f..".tmp") end end) elseif writefile then
+			pcall(function() for _,path in ipairs({f,f..".bak",f..".tmp"}) do writefile(path,"") end end)
+		end
 		__gg.MH_deleteArm=nil; __gg.MH_deleteArmT=nil
 		CFG.ProgSlotSel="(none)"
 		if slotsDD and slotsDD.refresh then slotsDD.refresh() end
@@ -3302,8 +3352,18 @@ do local p=Pages["Misc"]
 	mkToggle(a,"Unlock Mouse + Camera","UnlockMouse",5)
 	mkToggle(a,"Safe Teleport","SafeTP",7)
 	local _,s=mkSec(p,"Server",2)
-	mkBtn(s,"Rejoin Server",function() pcall(function() TeleportSvc:Teleport(game.PlaceId,LP) end) end,1)
-	mkBtn(s,"Server Hop",function() pcall(function() TeleportSvc:Teleport(game.PlaceId,LP) end) end,2)
+	mkBtn(s,"Rejoin Server",function() pcall(function() TeleportSvc:TeleportToPlaceInstance(game.PlaceId,game.JobId,LP) end) end,1)
+	mkBtn(s,"Server Hop",function() task.spawn(function()
+		local moved=false
+		local ok=pcall(function()
+			local raw=game:HttpGetAsync("https://games.roblox.com/v1/games/"..tostring(game.PlaceId).."/servers/Public?sortOrder=Asc&limit=100")
+			local data=HttpService:JSONDecode(raw)
+			for _,srv in ipairs(data.data or {}) do if srv.id~=game.JobId and (tonumber(srv.playing) or 0)<(tonumber(srv.maxPlayers) or 100) then
+				moved=true; TeleportSvc:TeleportToPlaceInstance(game.PlaceId,srv.id,LP); return
+			end end
+		end)
+		if not ok or not moved then notify("Server","No different public server is available right now.") end
+	end) end,2)
 end
 do local p=Pages["Settings"]
 	local _,t=mkSec(p,"Theme & Quality",1)
@@ -3368,14 +3428,12 @@ conn(RunService.Heartbeat:Connect(function()
 		if CFG.AntiFall then pcall(function() CharacterState.FallDamageImmunity=true end) end
 		-- (Anti-Drown no longer forces IsInWater=false here — we READ it to detect underwater and surface you instead.)
 	end
-	if CFG.InfFood or CFG.InfWater or CFG.InfStam or CFG.InfOxygen or CFG.GodMode then
+	if CFG.InfWater or CFG.InfOxygen or CFG.GodMode then
 		local stats, maxs = csStats()
 		if stats then
 			pcall(function()
 				-- Pin to the REAL max only (never inflate past it — writing 1000 to a 50-max stat made the server
 				-- fight every write = the snapback/slowness). If max is unknown, leave it (the deep-walk handles it).
-				if CFG.InfStam   and stats.Stamina ~= nil and maxs and maxs.Stamina then stats.Stamina = maxs.Stamina end
-				-- INF Food is handled by MHNEED below so every species-specific food/fullness field uses its real max.
 				if CFG.InfWater  and stats.Water   ~= nil and maxs and maxs.Water   then stats.Water   = maxs.Water   end
 				if CFG.InfOxygen and stats.Oxygen  ~= nil and maxs and maxs.Oxygen  then stats.Oxygen  = maxs.Oxygen  end
 				if CFG.GodMode   and stats.Health  ~= nil and maxs and maxs.Health  then stats.Health  = maxs.Health  end
@@ -3383,7 +3441,7 @@ conn(RunService.Heartbeat:Connect(function()
 			end)
 		end
 		-- Deep walk so unknown key names are still caught.
-		if (CFG.InfFood or CFG.InfWater or CFG.InfStam or CFG.InfOxygen) and (tick()-FARM.lastDeepPin>0.12) then FARM.lastDeepPin=tick()
+		if (CFG.InfWater or CFG.InfOxygen) and (tick()-FARM.lastDeepPin>0.12) then FARM.lastDeepPin=tick()
 			pcall(function()
 				local r=csReplica()
 				if r and r.Data then deepPinStats(r.Data, r.Data.MaxStats or r.Data.Max, 0) end
@@ -3399,17 +3457,15 @@ conn(RunService.Heartbeat:Connect(function()
 				topPin(CFG.InfWater, {"Water","Thirst","Hydration"}, {"MaxWater","MaxThirst","MaxHydration"})
 			end) end
 		end
-		pcall(pinHud)
 	end
 end))
 
--- FAST STAT PIN. Food and stamina use MHNEED exclusively, so a depleted current value can never become a max.
+-- Legacy water/oxygen frame pin. Food, stamina, and protection health never enter this path.
 conn(RunService.RenderStepped:Connect(function()
-	if not (CFG.InfStam or CFG.InfOxygen or CFG.InfFood or CFG.InfWater or CFG.AntiFracture or CFG.AntiBleed or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso) then return end
+	if not (CFG.InfOxygen or CFG.InfWater) then return end
 	if not alive() then return end
 	pcall(function()
 		local stats, maxs = csStats()
-		-- Legacy non-need features retain their paired-max/high-water behavior. Food/stamina never enter this helper.
 		local function pin(keys) for _,k in ipairs(keys) do
 			if stats[k]~=nil then
 				local cur=tonumber(stats[k])
@@ -3418,20 +3474,9 @@ conn(RunService.RenderStepped:Connect(function()
 				if target then stats[k]=target end
 			end
 		end end
-		local function zero(keys) for _,k in ipairs(keys) do if stats[k]~=nil then if type(stats[k])=="boolean" then stats[k]=false else stats[k]=0 end end end end
 		if stats then
-			if CFG.InfStam then MHNEED.pin("stamina"); zero({"Exhaustion","Fatigue","Tired","Exhausted"}) end
-			if CFG.InfFood then MHNEED.pin("food") end
 			if CFG.InfOxygen then pin({"Oxygen","Air","Breath","O2","Lung"}) end
-			-- BONE PROTECTORS = HEALTH KEEP: the injury REPORT is swallowed in the hook, but the raw HP damage (your
-			-- 1k head hit) is dealt server-side and can't be refused — so while any bone protector is on we also PIN
-			-- your health + the Humanoid back to max, so a big bite is instantly refilled instead of dropping you.
-			if CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso then
-				pin({"Health","HP","Hitpoints"})
-				pcall(function() local h=hum(); if h and h.MaxHealth>0 then h.Health=h.MaxHealth end end)
-			end
 			if CFG.InfWater  then pin({"Water","Thirst","Hydration"}) end
-			-- (Anti bleed/fracture/break handled by the dedicated PATH-AWARE antiInjurySweep loop below — more thorough.)
 		end
 		if CharacterState then
 			if CFG.InfOxygen then for _,k in ipairs({"IsInWater","Submerged","InWater","Underwater","Swimming","Drowning"}) do pcall(function() if CharacterState[k]~=nil then CharacterState[k]=false end end) end end
@@ -3446,23 +3491,8 @@ conn(RunService.RenderStepped:Connect(function()
 	end)
 end))
 
--- Authoritative need controller. Local values are pinned in all frame phases, but no movement property is touched.
--- Network refill is replayed only from an exact SetProperty packet captured for CharacterState.Replica.Id.
-local function pinNeedsNow()
-	if not alive() then return end
-	pcall(function()
-		if CFG.InfFood then MHNEED.pin("food") end
-		if CFG.InfStam then
-			MHNEED.pin("stamina")
-			local stats=csStats()
-			if type(stats)=="table" then for _,k in ipairs({"Exhaustion","Fatigue","Tired","Exhausted"}) do
-				if stats[k]~=nil then stats[k]=type(stats[k])=="boolean" and false or 0 end
-			end end
-		end
-	end)
-end
-conn(RunService.Stepped:Connect(pinNeedsNow))
-conn(RunService.Heartbeat:Connect(pinNeedsNow))
+-- One authoritative ~10 Hz need controller. It never writes movement/action/fatigue state. Exact local references
+-- are pinned only when a maximum resolves, and exact captured SetProperty packets are reported on their own throttle.
 task.spawn(function()
 	local wasOn={food=false,stamina=false}
 	while RUNNING do
@@ -3470,7 +3500,7 @@ task.spawn(function()
 			pcall(function()
 				for _,row in ipairs({{"food",CFG.InfFood},{"stamina",CFG.InfStam}}) do
 					local kind,on=row[1],row[2]
-					if on then local _,changed=MHNEED.pin(kind); if changed or not wasOn[kind] then MHNEED.report(kind,not wasOn[kind]) end end
+					if on then MHNEED.pin(kind); MHNEED.report(kind,not wasOn[kind]) end
 					wasOn[kind]=on
 				end
 			end)
@@ -3524,12 +3554,12 @@ conn(UIS.InputBegan:Connect(function(input, gp)
 			if scanned>8000 then break end
 		end
 		if best then
-			pcall(function() best.RequiresLineOfSight = false end)
+			local ol=best.RequiresLineOfSight
 			if fireprox then
 				local oh=best.HoldDuration
-				pcall(function() best.HoldDuration=0 end)
+				pcall(function() best.RequiresLineOfSight=false; best.HoldDuration=0 end)
 				pcall(function() fireprox(best) end)
-				pcall(function() best.HoldDuration=oh end)
+				pcall(function() best.HoldDuration=oh; best.RequiresLineOfSight=ol end)
 			end
 		end
 	end) end)
@@ -3586,7 +3616,7 @@ do
 		end)
 	end)
 	task.spawn(function() while RUNNING do
-		if (CFG.InfStam or CFG.InfFood or CFG.GodMode) and alive() then
+		if (CFG.InfFood or CFG.GodMode) and alive() then
 			pcall(function()
 				-- 1) the REAL Wellbeing replica (decompile-verified home of these stats)
 				local rep = resolveWB(); local sav=rep and rep.Data and rep.Data.SavableStats
@@ -3602,80 +3632,16 @@ do
 	end end)
 end
 
--- ═══ AUTO HEAL BLOOD (no sleep needed) — in PE "blood damage" only recovers by sleeping/waiting. This keeps the
--- blood + health pool topped and clears the bleed/wound accumulators (the things that force the sleep), through the
--- SAME replica-stats path GodMode/INF-Food already use, plus the Humanoid + model attributes as a fallback.
-task.spawn(function() while RUNNING do
-	if CFG.AutoHealBlood and alive() then
-		pcall(function()
-			local stats, maxs = csStats()
-			if stats then
-				-- clear the bleed / wound / blood-loss accumulators that gate recovery
-				for _,k in ipairs({"Bleed","Bleeding","BleedDamage","Bloodloss","BloodLoss","Wound","Wounds","Hemorrhage","Injury"}) do
-					if stats[k]~=nil then if type(stats[k])=="boolean" then stats[k]=false else stats[k]=0 end end
-				end
-				-- refill the blood / health pool (what sleeping slowly restores) to its real max
-				for _,k in ipairs({"Blood","BloodLevel","BloodVolume","Health","HP","Vitality"}) do
-					if stats[k]~=nil and maxs and maxs[k] then stats[k]=maxs[k] end
-				end
-				-- clear tiredness so the game doesn't insist you sleep
-				for _,k in ipairs({"Tiredness","Tired","Sleep","Sleepiness","Rest","Exhaustion","Fatigue"}) do
-					if stats[k]~=nil then if type(stats[k])=="boolean" then stats[k]=false else stats[k]=0 end end
-				end
-			end
-		end)
-		pcall(function() local h=hum(); if h and h.MaxHealth>0 and h.Health<h.MaxHealth then h.Health=h.MaxHealth end end)
-		pcall(function() local m=getMyModel(); if m then for _,a in ipairs({"Bleed","Bleeding","BleedDamage","Bloodloss","Wound","Wounds","Blood"}) do
-			local v=m:GetAttribute(a); if type(v)=="number" then m:SetAttribute(a, (a=="Blood") and math.max(v,100) or 0) elseif type(v)=="boolean" then m:SetAttribute(a,false) end
-		end end end)
-		task.wait(0.5)
-	else task.wait(0.5) end
-end end)
-
--- ═══ ANTI-INJURY (path-aware): we don't know the exact bleed/break field names, so walk the WHOLE replica tree
--- (Replica.Data + CharacterState, depth 5) and clear anything that looks like an injury — matching the PATH, not
--- just the leaf key, so nested fields like Bones.Leg.Broken / Wounds.Bleeding are caught. Each toggle scopes which
--- injuries get cleared; a generic "Broken"/"Bleeding" with no body part in the path clears if ANY break anti is on.
+-- Path-aware injury cleanup. Only the selected protection region is eligible; unrelated movement/control state is
+-- never changed. Auto Heal Blood shares the bleed-only cleanup but does not imply health, sleep, or fatigue changes.
 local function antiInjurySweep(tb, path, depth)
 	if type(tb)~="table" or depth>5 then return end
 	for k,v in pairs(tb) do
 		local kp = path..tostring(k):lower().."."
 		local tv = type(v)
 		if tv=="boolean" or tv=="number" then
-			local clear=false
-			if CFG.AntiBleed and (kp:find("bleed",1,true) or kp:find("hemorrhage",1,true) or kp:find("bloodloss",1,true)) then clear=true end
-			if CFG.AntiFracture and (kp:find("fractur",1,true) or kp:find("concuss",1,true)) then clear=true end
-			-- ANTI HEAD now clears EVERY break (incl. the LEG break that slows Trike/Anky/Deino — the "Broke Leg" you
-			-- saw) so slow/tanky dinos stay un-slowed, not just un-head-fractured.
-			if (kp:find("brok",1,true) or kp:find("break",1,true) or kp:find("sever",1,true) or kp:find("dislocat",1,true) or kp:find("snap",1,true) or kp:find("crippl",1,true)) then
-				local anyBreak = CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso
-				-- Anti Head (AntiFracture) clears the break on ANY part; the specific AntiBreak* toggles still work too.
-				local part
-				if kp:find("head",1,true) or kp:find("jaw",1,true) or kp:find("skull",1,true) then part=CFG.AntiFracture or CFG.AntiBreakHead
-				elseif kp:find("neck",1,true) then part=CFG.AntiFracture or CFG.AntiBreakNeck
-				elseif kp:find("leg",1,true) or kp:find("foot",1,true) or kp:find("limb",1,true) or kp:find("femur",1,true) or kp:find("tibia",1,true) or kp:find("thigh",1,true) or kp:find("pubis",1,true) then part=CFG.AntiFracture or CFG.AntiBreakLeg
-				elseif kp:find("tail",1,true) then part=CFG.AntiFracture or CFG.AntiBreakTail
-				elseif kp:find("torso",1,true) or kp:find("spine",1,true) or kp:find("rib",1,true) or kp:find("body",1,true) then part=CFG.AntiFracture or CFG.AntiBreakTorso
-				else part=anyBreak end
-				if part then clear=true end
-				-- BONE PROTECTION: clear the break/fracture for the chosen bone (status-based, NOT hitbox-shrink).
-				if not clear and CFG.BoneProtect then
-					local sel=CFG.ProtectBone or "All"
-					if sel=="All" then clear=true
-					elseif sel=="Head" and (kp:find("head",1,true) or kp:find("jaw",1,true) or kp:find("skull",1,true)) then clear=true
-					elseif sel=="Neck" and kp:find("neck",1,true) then clear=true
-					elseif sel=="Arm" and (kp:find("arm",1,true) or kp:find("hand",1,true) or kp:find("claw",1,true) or kp:find("humerus",1,true)) then clear=true
-					elseif sel=="Leg" and (kp:find("leg",1,true) or kp:find("foot",1,true) or kp:find("femur",1,true) or kp:find("tibia",1,true) or kp:find("thigh",1,true)) then clear=true
-					elseif sel=="Body" and (kp:find("spine",1,true) or kp:find("body",1,true) or kp:find("hip",1,true) or kp:find("torso",1,true) or kp:find("rib",1,true) or kp:find("tail",1,true)) then clear=true end
-				end
-			end
-			if CFG.BoneProtect and (kp:find("fractur",1,true) or kp:find("concuss",1,true)) then clear=true end  -- anti-fractured-head etc.
-			-- IMPROVED PROTECTION: when ANY protection anti is on, also wipe the disable states that bypass it — stun,
-			-- daze, stagger, downed, ragdoll, knockout, grabbed/pinned — so you can't be locked/killed through it.
-			if not clear then
-				local anyProt = CFG.AntiBleed or CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso
-				if anyProt and (kp:find("stun",1,true) or kp:find("daze",1,true) or kp:find("stagger",1,true) or kp:find("downed",1,true) or kp:find("ragdoll",1,true) or kp:find("knockout",1,true) or kp:find("grabbed",1,true) or kp:find("pinned",1,true) or kp:find("frozen",1,true)) then clear=true end
-			end
+			local bleed=(kp:find("bleed",1,true) or kp:find("hemorrhage",1,true) or kp:find("wound",1,true) or kp:find("bloodloss",1,true))
+			local clear=((CFG.AntiBleed or CFG.AutoHealBlood) and bleed) or injHit(kp)
 			if clear then
 				if tv=="boolean" then if v then pcall(function() tb[k]=false end) end
 				else if v~=0 then pcall(function() tb[k]=0 end) end end
@@ -3685,212 +3651,91 @@ local function antiInjurySweep(tb, path, depth)
 		end
 	end
 end
--- ═══ ANTI HEAD / BONE PROTECTION — DAMAGE HEAL-BACK (the real "I still get damage" fix) ═══ PE damage is server-
--- side and report-based, so we can't change the hit number — but we can HEAL BACK part of every hit the instant it
--- lands. Each Heartbeat we read your HP; if it dropped, we restore HeadDmgReduce% of that drop (default 90%), so a
--- 1k head hit nets ~100. This is what actually stops you dying to head hits / bleed / breaks (not just the blur).
--- Tied to Anti Head (AntiFracture) OR Bone Protection so either toggle gives real damage reduction.
-conn(RunService.Heartbeat:Connect(function()
-	if true then return end -- superseded by the single protection controller below
-	if not ((CFG.AntiFracture or CFG.BoneProtect) and alive()) then __gg.MH_lastHP=nil; return end
-	pcall(function()
-		local h=hum(); local stats,maxs=csStats()
-		-- READ HP FROM EVERY SOURCE (so it works on EVERY dino — the tanky/slow ones like Trike/Anky/Deino store HP
-		-- differently, so a single-source read silently did nothing = "anti head doesn't work on slower dinos").
-		local hp, mx
-		if stats then for _,k in ipairs({"Health","HP","Hp","health","hp","Hitpoints","HitPoints"}) do if tonumber(stats[k]) then hp=tonumber(stats[k]); break end end end
-		if maxs then for _,k in ipairs({"Health","HP","MaxHealth","Hp","Hitpoints"}) do if tonumber(maxs[k]) then mx=tonumber(maxs[k]); break end end end
-		if not hp and h then hp=h.Health end
-		if not mx and h then mx=h.MaxHealth end
-		if not hp and CharacterState then pcall(function() hp=tonumber(CharacterState.Health) end) end
-		if not mx and CharacterState then pcall(function() mx=tonumber(CharacterState.MaxHealth) end) end
-		if (not hp or not mx) then local m=getMyModel(); if m then
-			if not hp then local v=m:GetAttribute("Health") or m:GetAttribute("HP"); if tonumber(v) then hp=tonumber(v) end end
-			if not mx then local v=m:GetAttribute("MaxHealth") or m:GetAttribute("MaxHP"); if tonumber(v) then mx=tonumber(v) end end
-		end end
-		if not hp or not mx or mx<=0 or mx>=1e7 then return end
-		local last = __gg.MH_lastHP or hp
-		if hp < last-0.05 then   -- ANY drop (incl. small bleed DoT ticks)
-			local frac = math.clamp((tonumber(CFG.HeadDmgReduce) or 90)/100, 0, 0.95)
-			local newHP = math.min(mx, hp + (last-hp)*frac)   -- heal back `frac` of the damage = take only (1-frac)
-			if stats then for _,k in ipairs({"Health","HP","Hp","health","hp","Hitpoints","HitPoints"}) do if stats[k]~=nil then stats[k]=newHP end end end
-			if h then pcall(function() h.Health=newHP; h:SetStateEnabled(Enum.HumanoidStateType.Dead,false) end) end
-			if CharacterState then for _,k in ipairs({"Health","HP"}) do if type(CharacterState[k])=="number" then CharacterState[k]=newHP end end end
-			pcall(function() local m=getMyModel(); if m then for _,k in ipairs({"Health","HP"}) do if m:GetAttribute(k)~=nil then m:SetAttribute(k,newHP) end end end end)
-			pcall(function() setReplicaProp("Health", newHP) end)
-			__gg.MH_lastHP = newHP
-		else __gg.MH_lastHP = math.min(hp, mx) end
-	end)
-end))
--- (REMOVED — the head-hitbox shrink: it made YOUR OWN attacks deal no damage. PE uses your own hitbox parts as
--- the bite ORIGIN, so CanQuery=false / shrinking them broke outgoing hits ("I can't hit / no damage"). Anti Head
--- protection = the report-swallow in the hook + the HP-restore below, which never touch your hitbox.)
--- ═══ ANTI HEAD / BONE PROTECTION — AGGRESSIVE DAMAGE BLOCK (ANTI 1K DAMAGE) ═══
--- Incoming damage is dealt SERVER-side (the attacker's client reports the bite; the server drops your HP), so we
--- can't refuse it. Instead: the instant HP drops, heal straight back to max, block the Dead state, and report full.
-conn(RunService.Heartbeat:Connect(function()
-	if true then return end -- superseded by the single protection controller below
-	if not ((CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso) and alive()) then __gg.MH_lastHP=nil; return end
-	pcall(function()
-		local h=hum(); local stats,maxs=csStats()
-		local hp, mx
-		if stats then for _,k in ipairs({"Health","HP","Hp","Hitpoints","HitPoints"}) do if tonumber(stats[k]) then hp=tonumber(stats[k]); break end end end
-		if maxs then for _,k in ipairs({"Health","HP","MaxHealth","Hitpoints"}) do if tonumber(maxs[k]) then mx=tonumber(maxs[k]); break end end end
-		if not hp and h then hp=h.Health end
-		if not mx and h then mx=h.MaxHealth end
-		if not hp and CharacterState then pcall(function() hp=tonumber(CharacterState.Health) end) end
-		if not mx and CharacterState then pcall(function() mx=tonumber(CharacterState.MaxHealth) end) end
-		if not hp or not mx or mx<=0 then return end
-		local last = __gg.MH_lastHP or hp
-		if hp < last - 5 then   -- took real damage (even a 1k headshot) → heal it straight back + block death
-			local newHP = mx
-			if stats then for _,k in ipairs({"Health","HP","Hp","Hitpoints","HitPoints"}) do if stats[k]~=nil then stats[k]=newHP end end end
-			if h then pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Dead, false) end); pcall(function() h.Health=newHP end) end
-			if CharacterState then for _,k in ipairs({"Health","HP"}) do if type(CharacterState[k])=="number" then CharacterState[k]=newHP end end end
-			pcall(function() local m=getMyModel(); if m then for _,k in ipairs({"Health","HP"}) do if m:GetAttribute(k)~=nil then m:SetAttribute(k,newHP) end end end end)
-			pcall(function() setReplicaProp("Health", newHP) end)
-			__gg.MH_lastHP = newHP
-		else __gg.MH_lastHP = math.min(hp, mx) end
-		if CharacterState and type(CharacterState.Fractures)=="table" then for k in pairs(CharacterState.Fractures) do CharacterState.Fractures[k]=false end end
-	end)
-end))
--- AGGRESSIVE BONE PROTECTION every FRAME: clear fractures + un-ragdoll/un-stun so a break never slows/stuns you.
-conn(RunService.RenderStepped:Connect(function()
-	if not ((CFG.BoneProtect or CFG.AntiFracture or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso) and alive()) then return end
-	pcall(function()
-		if CharacterState and type(CharacterState.Fractures)=="table" then for k in pairs(CharacterState.Fractures) do CharacterState.Fractures[k]=false end end
-		local h=hum()
-		if h then
-			if h.PlatformStand then h.PlatformStand=false end
-			local st=h:GetState()
-			if st==Enum.HumanoidStateType.Ragdoll or st==Enum.HumanoidStateType.FallingDown or st==Enum.HumanoidStateType.PlatformStanding then
-				pcall(function() h:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-			end
-		end
-	end)
-end))
--- Instant revive if the server ever forces the Dead state while a protector is on.
-conn(LP.CharacterAdded:Connect(function(char)
-	local h = char:WaitForChild("Humanoid", 5)
-	if h then h.StateChanged:Connect(function(_, new)
-		if new==Enum.HumanoidStateType.Dead and (CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead) then
-			pcall(function() h:ChangeState(Enum.HumanoidStateType.GettingUp); h.Health=h.MaxHealth end)
-		end
-	end) end
-end))
-task.spawn(function() while RUNNING do
-	if (CFG.AntiBleed or CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso) and alive() then
-		pcall(function() local r=csReplica(); if r and r.Data then antiInjurySweep(r.Data, "", 0) end end)
-		pcall(function() if CharacterState then for _,s in ipairs({"Stats","State","Data","Wounds","Bones","BodyParts","Status"}) do local t=CharacterState[s]; if type(t)=="table" then antiInjurySweep(t, s:lower()..".", 0) end end end end)
-		-- CharacterState.Fractures — the decompiled game gates running on `Run and not Fractures.Leg`, so a broken leg =
-		-- no run = the SLOW on Trike/Anky/Deino. Clear the whole table (+ the known head/leg keys) so Anti Head keeps
-		-- slow dinos un-slowed. Tied to Anti Head / Bone Protection.
-		if CFG.AntiFracture or CFG.BoneProtect then pcall(function() if CharacterState and type(CharacterState.Fractures)=="table" then
-			for k in pairs(CharacterState.Fractures) do CharacterState.Fractures[k]=false end
-			for _,fk in ipairs({"Head","Skull","Neck","Leg","Foot","Limb","Tail","Torso","Spine","Body"}) do CharacterState.Fractures[fk]=false end
-		end end) end
-		-- un-ragdoll: a knockdown must never stick while protection is on (dinos that DO have a Humanoid)
-		pcall(function() local h=hum(); if h then if h.PlatformStand then h.PlatformStand=false end
-			local st=h:GetState(); if st==Enum.HumanoidStateType.Ragdoll or st==Enum.HumanoidStateType.FallingDown then pcall(function() h:ChangeState(Enum.HumanoidStateType.GettingUp) end) end end end)
-		task.wait(0.08)
-	else task.wait(0.3) end
-end end)
--- ═══ BONE PROTECTION — SHRINK THE PROTECTED BONE'S HITBOX (your idea) ═══ PE resolves a bite by querying which of
--- YOUR Hitbox parts the attacker overlapped. So for the bone you pick (Protect Bone), we shrink YOUR OWN Hitbox.<bone>
--- part to near-zero + CanQuery/CanTouch = false → the attacker's hit-check finds NOTHING there → the hit resolves off
--- that bone (or misses) = no head/leg crit. Massless=true so shrinking it NEVER changes your body mass = you still MOVE
--- normally. Only touches the defensive Hitbox container parts, NEVER your steer body / RootPart, so your M1 is fine.
--- Everything is restored the instant Bone Protection is turned off.
-do local bpSaved={}
-	local function protMatch(nm)
-		local sel=CFG.ProtectBone or "All"; local n=tostring(nm):lower()
-		if sel=="All" then return true end
-		if sel=="Head" then return n:find("head",1,true) or n:find("jaw",1,true) or n:find("skull",1,true) or n:find("neck",1,true) end
-		if sel=="Neck" then return n:find("neck",1,true) end
-		if sel=="Arm"  then return n:find("arm",1,true) or n:find("hand",1,true) or n:find("claw",1,true) or n:find("humerus",1,true) end
-		if sel=="Leg"  then return n:find("leg",1,true) or n:find("foot",1,true) or n:find("femur",1,true) or n:find("tibia",1,true) or n:find("thigh",1,true) end
-		if sel=="Body" then return n:find("spine",1,true) or n:find("body",1,true) or n:find("hip",1,true) or n:find("torso",1,true) or n:find("tail",1,true) end
-		return false
-	end
-	task.spawn(function() while RUNNING do task.wait(0.15)
-		local m=getMyModel()
-		if false and CFG.BoneProtect and alive() and m then -- local hitbox shrinking cannot protect against another client's server hit and broke outgoing attacks
-			for _,cn in ipairs({"Hitbox","HitBox","HitboxPart","Hit"}) do local hb=m:FindFirstChild(cn)
-				if hb then local parts = hb:IsA("BasePart") and {hb} or hb:GetDescendants()
-					for _,d in ipairs(parts) do if d:IsA("BasePart") and protMatch(d.Name) then
-						if bpSaved[d]==nil then bpSaved[d]={d.Size,d.CanQuery,d.CanTouch,d.Massless} end
-						pcall(function() d.Massless=true; if d.Size.X>0.06 then d.Size=Vector3.new(0.05,0.05,0.05) end; d.CanQuery=false; d.CanTouch=false end)
-					elseif d:IsA("BasePart") and bpSaved[d] and not protMatch(d.Name) then   -- bone switched away → restore
-						local v=bpSaved[d]; pcall(function() if d.Parent then d.Size=v[1]; d.CanQuery=v[2]; d.CanTouch=v[3]; d.Massless=v[4] end end); bpSaved[d]=nil
-					end end
-				end
-			end
-		elseif next(bpSaved) then
-			for d,v in pairs(bpSaved) do pcall(function() if d and d.Parent then d.Size=v[1]; d.CanQuery=v[2]; d.CanTouch=v[3]; d.Massless=v[4] end end); bpSaved[d]=nil end
-		end
-	end end)
-end
--- ═══ UNIFIED DAMAGE / BLEED / BONE GUARD ═══ The previous build ran two HP healers through the same MH_lastHP
--- variable, so the first loop consumed the damage event before the stronger loop saw it. One controller now owns
--- damage restoration, blood restoration, injury cleanup and server-side clear reports. It never edits our hitbox,
--- preserving the jaw/head parts outgoing attacks need.
+-- One protection controller owns proportional damage reduction, bleed/blood repair, and scoped injury cleanup. It
+-- never changes Dead, ragdoll, PlatformStand, movement state, or guessed server properties/actions.
 do
-	local statusProps={
-		{"bleed","Bleed"},{"bleed","Bleeding"},{"bleed","BleedRate"},{"bleed","BleedDamage"},{"bleed","BloodLoss"},{"bleed","Hemorrhage"},{"bleed","Wound"},{"bleed","Wounds"},
-		{"head","HeadDamage"},{"head","HeadInjury"},{"head","HeadFracture"},{"head","SkullFracture"},{"head","Concussion"},{"head","JawBreak"},
-		{"bone","Fracture"},{"bone","BrokenBone"},{"bone","BoneDamage"},{"bone","LimbDamage"},{"bone","Trauma"}
-	}
-	local cursor,lastSweep,deadHeld=0,0,false
-	local function enabled(kind)
-		if kind=="bleed" then return CFG.AntiBleed end
-		if kind=="head" then return CFG.AntiFracture or CFG.AntiBreakHead or (CFG.BoneProtect and (CFG.ProtectBone=="All" or CFG.ProtectBone=="Head")) end
-		return CFG.BoneProtect or CFG.AntiFracture or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso
+	local healthKeys={"Health","HP","Hp","health","hp","Hitpoints","HitPoints"}
+	local bloodKeys={"Blood","BloodLevel","BloodVolume","BloodPool"}
+	local bleedKeys={"Bleed","Bleeding","BleedRate","BleedDamage","Bloodloss","BloodLoss","Hemorrhage","Wound","Wounds"}
+	local function physicalOn()
+		return CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso
 	end
-	local function fullHealth()
-		local h=hum(); local stats,maxs=csStats(); local hp,mx
-		if stats then for _,k in ipairs({"Health","HP","Hp","health","hp","Hitpoints","HitPoints"}) do local v=tonumber(stats[k]); if v then hp=hp and math.min(hp,v) or v end end end
-		if maxs then for _,k in ipairs({"Health","HP","MaxHealth","MaxHP","Hitpoints","HitPoints"}) do local v=tonumber(maxs[k]); if v and v>0 then mx=math.max(mx or 0,v) end end end
-		if h then if h.Health>=0 then hp=hp and math.min(hp,h.Health) or h.Health end; if h.MaxHealth>0 then mx=math.max(mx or 0,h.MaxHealth) end end
-		if CharacterState then for _,k in ipairs({"Health","HP"}) do local v=tonumber(CharacterState[k]); if v then hp=hp and math.min(hp,v) or v end end; for _,k in ipairs({"MaxHealth","MaxHP"}) do local v=tonumber(CharacterState[k]); if v and v>0 then mx=math.max(mx or 0,v) end end end
-		__gg.MH_guardMax=math.max(__gg.MH_guardMax or 0,mx or 0,hp or 0)
-		mx=(mx and mx>0 and mx) or __gg.MH_guardMax
-		if not (hp and mx and mx>0 and mx<1e8) or hp>=mx-0.01 then return end
-		if stats then for _,k in ipairs({"Health","HP","Hp","health","hp","Hitpoints","HitPoints"}) do if stats[k]~=nil then stats[k]=mx end end end
-		if h then pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Dead,false); h.Health=mx end) end
-		if CharacterState then for _,k in ipairs({"Health","HP"}) do if type(CharacterState[k])=="number" then CharacterState[k]=mx end end end
-		pcall(function() local m=getMyModel(); if m then for _,k in ipairs({"Health","HP"}) do if m:GetAttribute(k)~=nil then m:SetAttribute(k,mx) end end end end)
-		pcall(function() setReplicaProp("Health",mx) end)
-	end
-	conn(RunService.Heartbeat:Connect(function()
-		local any=CFG.AntiBleed or CFG.AntiFracture or CFG.BoneProtect or CFG.AntiBreakHead or CFG.AntiBreakNeck or CFG.AntiBreakLeg or CFG.AntiBreakTail or CFG.AntiBreakTorso
-		if not (any and alive()) then
-			__gg.MH_guardMax=nil
-			if deadHeld then pcall(function() local h=hum(); if h then h:SetStateEnabled(Enum.HumanoidStateType.Dead,true) end end); deadHeld=false end
-			return
+	local function exactMax(stats,maxs,key)
+		local candidates={
+			type(maxs)=="table" and maxs[key], type(stats)=="table" and stats["Max"..key],
+			type(stats)=="table" and stats[key.."Max"], type(stats)=="table" and stats["Maximum"..key]
+		}
+		if type(CharacterState)=="table" then
+			candidates[#candidates+1]=CharacterState["Max"..key]
+			candidates[#candidates+1]=CharacterState[key.."Max"]
+			if type(CharacterState.MaxStats)=="table" then candidates[#candidates+1]=CharacterState.MaxStats[key] end
 		end
+		for _,v in ipairs(candidates) do v=tonumber(v); if v and v>0 and v<1e8 then return v end end
+		return nil
+	end
+	local function healthPair()
+		local stats,maxs=csStats()
+		if type(stats)=="table" then for _,k in ipairs(healthKeys) do local hp=tonumber(stats[k]); local mx=hp and exactMax(stats,maxs,k); if hp and mx then return hp,mx,stats end end end
+		local h=hum(); if h and tonumber(h.Health) and tonumber(h.MaxHealth) and h.MaxHealth>0 and h.MaxHealth<1e8 then return h.Health,h.MaxHealth,stats end
+		if type(CharacterState)=="table" then for _,k in ipairs({"Health","HP"}) do
+			local hp=tonumber(CharacterState[k]); local mx=hp and tonumber(CharacterState["Max"..k]); if hp and mx and mx>0 and mx<1e8 then return hp,mx,stats end
+		end end
+		return nil,nil,stats
+	end
+	local function writeHealth(value,stats)
+		if type(stats)=="table" then for _,k in ipairs(healthKeys) do if type(stats[k])=="number" then stats[k]=value end end end
+		local h=hum(); if h and h.MaxHealth>0 then pcall(function() h.Health=math.min(value,h.MaxHealth) end) end
+		if type(CharacterState)=="table" then for _,k in ipairs({"Health","HP"}) do if type(CharacterState[k])=="number" then CharacterState[k]=value end end end
+		local model=getMyModel(); if model then for _,k in ipairs({"Health","HP"}) do if type(model:GetAttribute(k))=="number" then pcall(function() model:SetAttribute(k,value) end) end end end
+	end
+	local function reportHealth(value)
+		local now=tick(); if now-(__gg.MH_healthReportAt or 0)<0.15 then return end
+		local packet=__gg.MH_healthPacket; local rid=MHNEED and MHNEED.replicaId and MHNEED.replicaId()
+		if type(packet)~="table" or not packet.instance or not packet.instance.Parent or packet[1]~=rid or packet[2]~="SetProperty" then return end
+		if packet.identity and packet.identity~=__gg.MH_identityKey then return end
+		local prop=tostring(packet[3] or ""):lower(); if prop~="health" and prop~="hp" then return end
+		local args={}; for i=1,packet.n do args[i]=packet[i] end; args[4]=value
+		local ok=pcall(function() packet.instance:FireServer(table.unpack(args,1,packet.n)) end)
+		if ok then __gg.MH_healthReportAt=now end
+	end
+	local function repairBlood(stats,maxs)
+		local rid=MHNEED and MHNEED.replicaId and MHNEED.replicaId()
+		if typeof(rid)~="number" then __gg.MH_bloodReplica=nil; __gg.MH_bloodMax=nil; return end
+		if __gg.MH_bloodReplica~=rid then __gg.MH_bloodReplica=rid; __gg.MH_bloodMax=nil end
+		if type(stats)~="table" then return end
+		for _,k in ipairs(bleedKeys) do if type(stats[k])=="boolean" then stats[k]=false elseif type(stats[k])=="number" then stats[k]=0 end end
+		for _,k in ipairs(bloodKeys) do if type(stats[k])=="number" then
+			local mx=exactMax(stats,maxs,k)
+			if mx then __gg.MH_bloodMax=mx; stats[k]=mx; return end
+		end end
+		__gg.MH_bloodMax=nil
+	end
+	task.spawn(function() while RUNNING do task.wait(0.1)
+		if not alive() then __gg.MH_guardLastHP=nil; __gg.MH_bloodMax=nil; continue end
 		pcall(function()
-			fullHealth()
-			if CFG.AntiBleed then
-				local stats,maxs=csStats()
-				if stats then for _,k in ipairs({"Bleed","Bleeding","BleedRate","BleedDamage","BloodLoss","Hemorrhage","Wound","Wounds"}) do if stats[k]~=nil then stats[k]=(type(stats[k])=="boolean") and false or 0 end end
-					for _,k in ipairs({"Blood","BloodLevel","BloodVolume"}) do if type(stats[k])=="number" then
-						local stateMax=CharacterState and (CharacterState["Max"..k] or (CharacterState.MaxStats and CharacterState.MaxStats[k]))
-						local m=(maxs and maxs[k]) or (type(stateMax)=="number" and stateMax) or math.max(__gg.MH_bloodMax or 0,stats[k])
-						__gg.MH_bloodMax=math.max(__gg.MH_bloodMax or 0,m); stats[k]=__gg.MH_bloodMax
-					end end
+			local stats,maxs=csStats()
+			if CFG.AntiBleed or CFG.AutoHealBlood then repairBlood(stats,maxs) end
+			if physicalOn() then
+				local hp,mx,hstats=healthPair(); local last=tonumber(__gg.MH_guardLastHP)
+				if hp and mx and last and hp<last-0.01 then
+					local fraction=math.clamp((tonumber(CFG.HeadDmgReduce) or 0)/100,0,1)
+					local adjusted=math.min(mx,hp+(last-hp)*fraction)
+					if adjusted>hp then writeHealth(adjusted,hstats); reportHealth(adjusted) end
+					__gg.MH_guardLastHP=adjusted
+				else __gg.MH_guardLastHP=hp end
+			else __gg.MH_guardLastHP=nil end
+			local anyInjury=CFG.AntiBleed or CFG.AutoHealBlood or physicalOn()
+			if anyInjury then
+				local r=csReplica(); if r and r.Data then antiInjurySweep(r.Data,"",0) end
+				if type(CharacterState)=="table" then
+					for _,s in ipairs({"Stats","State","Data","Wounds","Bones","BodyParts","Status"}) do local t=CharacterState[s]; if type(t)=="table" then antiInjurySweep(t,s:lower()..".",0) end end
+					if type(CharacterState.Fractures)=="table" then for k,v in pairs(CharacterState.Fractures) do if injHit("fractures."..tostring(k)) then
+						if type(v)=="boolean" then CharacterState.Fractures[k]=false elseif type(v)=="number" then CharacterState.Fractures[k]=0 end
+					end end end
 				end
 			end
-			if tick()-lastSweep>0.08 then
-				lastSweep=tick()
-				local r=csReplica(); if r and r.Data then antiInjurySweep(r.Data,"",0) end
-				if CharacterState then for _,s in ipairs({"Stats","State","Data","Wounds","Bones","BodyParts","Status"}) do local t=CharacterState[s]; if type(t)=="table" then antiInjurySweep(t,s:lower()..".",0) end end end
-				-- Rotate exact server property/action clears instead of blasting every guessed key every frame.
-				for _=1,#statusProps do cursor=(cursor%#statusProps)+1; local e=statusProps[cursor]; if enabled(e[1]) then csFireProp(e[2],0); replicaFire("SetAction",e[2],false); break end end
-			end
-			if CharacterState and type(CharacterState.Fractures)=="table" and (CFG.BoneProtect or CFG.AntiFracture) then for k in pairs(CharacterState.Fractures) do CharacterState.Fractures[k]=false end end
-			local h=hum(); if h then h:SetStateEnabled(Enum.HumanoidStateType.Dead,false); deadHeld=true; if h.PlatformStand then h.PlatformStand=false end end
 		end)
-	end))
+	end end)
 end
 FLY={}  -- bv/bg/conn (one table instead of 3 locals — Luau 200-local-cap mgmt)
 MB={up=false, down=false}  -- mobile fly up/down state, set by the on-screen touch buttons
@@ -4053,7 +3898,6 @@ task.spawn(function() while RUNNING do task.wait(0.05) if CFG.TurnHack and alive
 conn(RunService.Heartbeat:Connect(function() if CFG.TurnHack and alive() then local r=hrp(); if r then local look=Cam.CFrame.LookVector; local flat=Vector3.new(look.X,0,look.Z); if flat.Magnitude>0.05 then local cur=r.CFrame.LookVector; local curFlat=Vector3.new(cur.X,0,cur.Z); if curFlat.Magnitude>0.05 then curFlat=curFlat.Unit; local des=flat.Unit; local cross=curFlat:Cross(des).Y; local dot=math.clamp(curFlat:Dot(des),-1,1); local ang=math.acos(dot)*((cross<0) and -1 or 1); local v=r.AssemblyAngularVelocity; r.AssemblyAngularVelocity=Vector3.new(v.X, ang*CFG.TurnSpeed*0.3, v.Z) end end end end end))
 task.spawn(function() while RUNNING do task.wait(0.25); if not alive() then continue end
 	if CFG.GodMode then local h=hum(); if h then pcall(function() h.MaxHealth=math.huge; h.Health=math.huge; h:SetStateEnabled(Enum.HumanoidStateType.Dead,false) end) end pinStat({"health","hp"},{"Health","HP","MaxHealth"},1e9); setReplicaProp("Health",1e9); setReplicaProp("MaxHealth",1e9); setReplicaProp("Invincible",true); setReplicaProp("Godmode",true) end
-	if CFG.InfStam then pcall(function() MHNEED.pin("stamina") end); clearStatus({},{"exhaust","tired","fatigue"}) end
 	if CFG.InfOxygen then pinStat({"oxygen","air","breath","o2"},{"Oxygen","Air","Breath"},100); setReplicaProp("Oxygen",1000); for _,pp in ipairs({"Submerged","InWater","Underwater","Swimming","Drowning"}) do setReplicaProp(pp,false) end replicaAction("SetAction","Drowning",false)
 			-- EXIT-SWIM: your captured swim toggles SET swimming (which drains O2); fire the inverse to leave the water state so oxygen can refill (best-effort, names guessed).
 			replicaAction("SetProperty","State","Idle"); replicaAction("SetProperty","State","Walking"); replicaAction("Mode","Walk"); replicaAction("Mode","Land"); replicaAction("SetProperty","Swimming",false); replicaAction("SetProperty","Jumping",false)
@@ -4130,7 +3974,7 @@ local function isRedMeshMeat(p)
 		if mdl==getMyModel() or Players:GetPlayerFromCharacter(mdl) then return false end
 		if mdl:FindFirstChildOfClass("Humanoid") or mdl:FindFirstChild("MeshModel") or mdl:FindFirstChild("TurningAnimation") then
 			-- a rigged creature — only meat if the model is a marked corpse
-			local dead=false; pcall(function() dead=(mdl:GetAttribute("DinoType") or mdl:GetAttribute("HintType") or mdl:GetAttribute("CreatedAt"))~=nil or isMeatName(mdl.Name) end)
+			local dead=false; pcall(function() dead=(mdl:GetAttribute("DinoType") or mdl:GetAttribute("HintType"))~=nil or isMeatName(mdl.Name) end)
 			if not dead then return false end
 		end
 	end
@@ -4181,7 +4025,7 @@ local function isDownedBody(m)
 	if nm:find("footprint",1,true) or nm:find("print",1,true) or nm:find("track",1,true) or nm:find("trail",1,true)
 		or nm:find("scent",1,true) or nm:find("mark",1,true) or nm:find("step",1,true) or isPlantName(nm) then return false end
 	-- corpse markers or corpse name = definitely a body
-	local marked=false; pcall(function() marked=(m:GetAttribute("DinoType") or m:GetAttribute("HintType") or m:GetAttribute("CreatedAt"))~=nil end)
+	local marked=false; pcall(function() marked=(m:GetAttribute("DinoType") or m:GetAttribute("HintType"))~=nil end)
 	if marked or isMeatName(m.Name) then return true end
 	-- dead humanoid = a body
 	local h=m:FindFirstChildOfClass("Humanoid"); if h and h.Health<=0 then return true end
@@ -4350,21 +4194,29 @@ yesBtn=Instance.new("TextButton"); yesBtn.Size=UDim2.new(0.5,-12,0,34); yesBtn.P
 Instance.new("UICorner",yesBtn).CornerRadius=UDim.new(0,6)
 noBtn=Instance.new("TextButton"); noBtn.Size=UDim2.new(0.5,-12,0,34); noBtn.Position=UDim2.new(0.5,4,0,58); noBtn.BackgroundColor3=Color3.fromRGB(205,72,72); noBtn.Text="NO - next corpse"; noBtn.TextColor3=Color3.new(1,1,1); noBtn.TextSize=13; noBtn.Font=Enum.Font.GothamBold; noBtn.BorderSizePixel=0; noBtn.AutoButtonColor=true; noBtn.Parent=carnFrame
 Instance.new("UICorner",noBtn).CornerRadius=UDim.new(0,6)
--- teleport onto a corpse part (noclip + hold so it can't rubber-band; eat prompt fired)
--- Shared teleport transport. Every feature uses the same tokenized move + settle path so an older teleport can
--- never keep pulling the character back after a newer one starts.
+-- Shared teleport transport. SafeTP selects a paced, streamed path; BypassTP controls whether the verified local
+-- replica's ordinary CFrame update is mirrored to the server. No other replica id or movement state is touched.
 local function MH_hopFire(goalCF)
-	pcall(function()
+	if not CFG.BypassTP then return false end
+	local sent=false; local ok=pcall(function()
 		local re=RS:FindFirstChild("RemoteEvents"); re=re and re:FindFirstChild("ReplicaSignalUnreliable")
 		local id=MHNEED and MHNEED.replicaId and MHNEED.replicaId()
-		if re and id then for _=1,2 do re:FireServer(id, "CFrame", goalCF) end end
+		if re and id then re:FireServer(id,"CFrame",goalCF); sent=true end
 	end)
+	return ok and sent
 end
-__gg.MH_hopFire=MH_hopFire   -- shared: the INF-Stam speed drive reports its position through this so the server never snaps you back
+__gg.MH_hopFire=MH_hopFire
 __gg.MH_safeTeleport=function(target, options)
 	options=options or {}
 	local pos = typeof(target)=="CFrame" and target.Position or (typeof(target)=="Vector3" and target) or (typeof(target)=="Instance" and target:IsA("BasePart") and target.Position)
 	if typeof(pos)~="Vector3" or pos.X~=pos.X or pos.Y~=pos.Y or pos.Z~=pos.Z or math.abs(pos.X)>1e7 or math.abs(pos.Y)>1e7 or math.abs(pos.Z)>1e7 then return false end
+	if tick()<(__gg.MH_spawnGrace or 0) and not options.allowDuringSpawn then return false end
+	local feature=options.feature; local token=options.token
+	local function featureValid()
+		if not feature then return true end
+		return CFG[feature]==true and type(__gg.MH_tpFeatureGen)=="table" and __gg.MH_tpFeatureGen[feature]==token
+	end
+	if not featureValid() then return false end
 	local r=hrp(); local cc=getMyModel(); if not r then return false end
 	if options.saveReturn and not __gg.MH_tpOrigin then __gg.MH_tpOrigin=r.CFrame end
 	__gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; local seq=__gg.MH_tpSeq
@@ -4372,32 +4224,36 @@ __gg.MH_safeTeleport=function(target, options)
 	local from=r.Position; local delta=(pos-from).Magnitude
 	__gg.MH_rescueMute=tick()+math.max(4,tonumber(options.settle) or 1.25)+2
 	if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
-	-- Send a short, bounded path first. The old 20-stud/400-hop task could run for 20 seconds and continue
-	-- sending obsolete positions after another teleport, which was the main send-back bug.
-	local hops=math.clamp(math.ceil(delta/90),1,48)
+	local safe=CFG.SafeTP==true; local synced=CFG.BypassTP==true
+	if safe then pcall(function() LP:RequestStreamAroundAsync(pos,2) end) end
+	local hops=safe and math.clamp(math.ceil(delta/120),1,24) or 1
 	for i=1,hops do
-		if seq~=(__gg.MH_tpSeq or 0) then return false end
-		MH_hopFire(CFrame.new(from:Lerp(pos,i/hops)))
-		if i%8==0 then task.wait() end
+		if seq~=(__gg.MH_tpSeq or 0) or not featureValid() then return false end
+		local step=CFrame.new(from:Lerp(pos,i/hops)); if synced then MH_hopFire(step) end
+		if safe and i<hops then pcall(function() local rr=hrp(); if rr then rr.CFrame=step; rr.AssemblyLinearVelocity=Vector3.zero; rr.AssemblyAngularVelocity=Vector3.zero end end); task.wait(0.05) end
 	end
-	pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else r.CFrame=goal end end)
+	local moved=pcall(function() if cc and cc.PrimaryPart then cc:PivotTo(goal) else r.CFrame=goal end end)
+	if not moved then return false end
 	pcall(function() r.AssemblyLinearVelocity=Vector3.zero; r.AssemblyAngularVelocity=Vector3.zero end)
 	task.spawn(function()
 		local untilT=tick()+math.clamp(tonumber(options.settle) or 1.25,0.2,3)
-		while RUNNING and seq==(__gg.MH_tpSeq or 0) and tick()<untilT do
-			MH_hopFire(goal)
+		while RUNNING and seq==(__gg.MH_tpSeq or 0) and featureValid() and tick()<untilT do
 			local rr=hrp()
-			if rr and (rr.Position-pos).Magnitude>(tonumber(options.tolerance) or 7) then pcall(function() rr.CFrame=goal; rr.AssemblyLinearVelocity=Vector3.zero; rr.AssemblyAngularVelocity=Vector3.zero end) end
-			task.wait(0.08)
+			if rr and (rr.Position-pos).Magnitude>(tonumber(options.tolerance) or 7) then
+				if synced then MH_hopFire(goal) end
+				pcall(function() rr.CFrame=goal; rr.AssemblyLinearVelocity=Vector3.zero; rr.AssemblyAngularVelocity=Vector3.zero end)
+			end
+			task.wait(0.1)
 		end
 	end)
-	return true
+	local rr=hrp(); return rr~=nil and (rr.Position-pos).Magnitude<=(tonumber(options.tolerance) or 7)
 end
 __gg.MH_cancelTeleport=function() __gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1 end
-__gg.MH_snapTo=function(targetPos) return __gg.MH_safeTeleport(targetPos,{settle=1.25}) end
-__gg.MH_hopMove=function(targetPos) return __gg.MH_safeTeleport(targetPos,{settle=1.1}) end
-local function tpToCorpse(part)
-	if not (part and part.Parent) or carnBusy then return end
+__gg.MH_snapTo=function(targetPos,options) options=options or {}; if options.settle==nil then options.settle=1.25 end; return __gg.MH_safeTeleport(targetPos,options) end
+__gg.MH_hopMove=function(targetPos,options) options=options or {}; if options.settle==nil then options.settle=1.1 end; return __gg.MH_safeTeleport(targetPos,options) end
+local function tpToCorpse(part,feature,token)
+	local function featureValid() return feature and CFG[feature]==true and type(__gg.MH_tpFeatureGen)=="table" and __gg.MH_tpFeatureGen[feature]==token end
+	if not featureValid() or not (part and part.Parent) or carnBusy then return false end
 	carnBusy=true
 	if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
 	local np=part.Position
@@ -4408,13 +4264,11 @@ local function tpToCorpse(part)
 	local landY=np.Y+3
 	local foundGround=false
 	pcall(function()
-		local rp=RaycastParams.new(); rp.FilterType=Enum.RaycastFilterType.Exclude
-		rp.FilterDescendantsInstances={
-			getMyModel(), part, part.Parent,
-			WS:FindFirstChild("Characters"), WS:FindFirstChild("DinosaurRagdolls"),
-			WS:FindFirstChild("Bonepiles"), WS:FindFirstChild("Food"),
-			ci and ci:FindFirstChild("CorpseSpawns"), ci and ci:FindFirstChild("LeftCharacters"),
-		}
+		local rp=RaycastParams.new(); rp.FilterType=Enum.RaycastFilterType.Exclude; local filter={}
+		local function add(inst) if inst then filter[#filter+1]=inst end end
+		add(getMyModel()); add(part); add(part.Parent); add(WS:FindFirstChild("Characters")); add(WS:FindFirstChild("DinosaurRagdolls")); add(WS:FindFirstChild("Bonepiles")); add(WS:FindFirstChild("Food"))
+		add(ci and ci:FindFirstChild("CorpseSpawns")); add(ci and ci:FindFirstChild("LeftCharacters"))
+		rp.FilterDescendantsInstances=filter
 		rp.RespectCanCollide=true; rp.IgnoreWater=false
 		local res=WS:Raycast(np+Vector3.new(0,60,0), Vector3.new(0,-6000,0), rp)
 		if res then landY=res.Position.Y+3; foundGround=true end
@@ -4426,12 +4280,14 @@ local function tpToCorpse(part)
 	local cc=getMyModel(); local goal=CFrame.new(np.X, landY, np.Z)
 	local noclip={}; if cc then pcall(function() for _,dd in ipairs(cc:GetDescendants()) do if dd:IsA("BasePart") and dd.CanCollide then dd.CanCollide=false; noclip[#noclip+1]=dd end end end) end
 	__gg.MH_corpseHoldGoal=goal
-	local moved=__gg.MH_safeTeleport and __gg.MH_safeTeleport(goal,{saveReturn=false,settle=1.8,tolerance=6})
+	local moved=__gg.MH_safeTeleport and __gg.MH_safeTeleport(goal,{saveReturn=false,settle=1.8,tolerance=6,feature=feature,token=token})
 	if not moved then for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end; carnBusy=false; return false end
+	if not featureValid() then for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end; carnBusy=false; return false end
 	pcall(function() local m=part:FindFirstAncestorWhichIsA("Model"); local prompt=(m and m:FindFirstChildWhichIsA("ProximityPrompt",true)) or part:FindFirstChildWhichIsA("ProximityPrompt")
-		if prompt then local od=prompt.MaxActivationDistance; prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(od or 8, 30); prompt.Enabled=true
-			if fireprox then local oh=prompt.HoldDuration; prompt.HoldDuration=0; fireprox(prompt); prompt.HoldDuration=oh end
-			pcall(function() prompt.MaxActivationDistance=od end)   -- restore native range so your hold-to-eat still works
+		if prompt then local od,oh,ol,oe=prompt.MaxActivationDistance,prompt.HoldDuration,prompt.RequiresLineOfSight,prompt.Enabled
+			pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(od or 8,30); prompt.HoldDuration=0; prompt.Enabled=true end)
+			if fireprox and featureValid() then pcall(function() fireprox(prompt) end) end
+			pcall(function() prompt.MaxActivationDistance=od; prompt.HoldDuration=oh; prompt.RequiresLineOfSight=ol; prompt.Enabled=oe end)
 		end end)
 	-- (removed the holdKey(E) — pressing/holding E every teleport is what "kept clicking" and locked your controls)
 	task.delay(1.9, function() for _,dd in ipairs(noclip) do pcall(function() dd.CanCollide=true end) end; if __gg.MH_corpseHoldGoal==goal then __gg.MH_corpseHoldGoal=nil end; carnBusy=false end)
@@ -4439,7 +4295,9 @@ local function tpToCorpse(part)
 end
 -- go to the NEXT corpse in the list, wrapping, SKIPPING void/out-of-map spots (tpToCorpse returns false for those)
 -- until one actually lands you in the map; then ask YES/NO.
-local function doNextCorpse()
+local function doNextCorpse(token)
+	local function active() return CFG.CarnMeatTP==true and type(__gg.MH_tpFeatureGen)=="table" and __gg.MH_tpFeatureGen.CarnMeatTP==token end
+	if not active() then return false end
 	-- CORPSE-TP AND PRO FOOD MUST NOT MIX: if Pro Food is running, its circle velocity-drive fights this teleport's
 	-- anti-snapback hold — you "go fast then get sent back". Clicking a corpse (Carnivore Meat TP / Next) always
 	-- turns Pro Food OFF; Pro Food is only ever the Growth-tab toggle you flip yourself.
@@ -4449,18 +4307,22 @@ local function doNextCorpse()
 	-- A deliberate next-corpse press cancels the old hold and always gets a fresh try.
 	carnBusy=false; __gg.MH_corpseHoldGoal=nil
 	corpseList=collectCorpses()   -- LIVE: re-scan the folder every press so the count is always current
-	if #corpseList==0 then pcall(function() carnGui.Enabled=false end); notify("Corpse TP","No corpse / meat / bone found on the map right now."); return end
+	if not active() then return false end
+	if #corpseList==0 then pcall(function() carnGui.Enabled=false end); notify("Corpse TP","No corpse / meat / bone found on the map right now."); return false end
 	if not carnOrigin then local r=hrp(); if r then carnOrigin=r.Position end end   -- remember where you were (for Teleport Back)
 	local tries=0; local ok=false
 	repeat
+		if not active() then carnBusy=false; return false end
 		corpseIdx = corpseIdx % #corpseList + 1; tries=tries+1
 		local part=corpseList[corpseIdx]
-		if part and part.Parent then ok = (tpToCorpse(part)==true) end   -- false = void/out-of-map → try the next one
+		if part and part.Parent then ok = (tpToCorpse(part,"CarnMeatTP",token)==true) end   -- false = void/out-of-map → try the next one
 		if not ok then carnBusy=false end   -- a failed try must not leave the lock set for the next corpse in the loop
 	until ok or tries>#corpseList
 	-- Only after EVERY corpse number has been tried and none landed do we say so.
-	if not ok then corpseList={}; pcall(function() carnGui.Enabled=false end); notify("Corpse TP","Tried all "..tostring(tries).." corpse spots — none are in the map right now. Rescanning next press."); return end
+	if not ok then corpseList={}; pcall(function() carnGui.Enabled=false end); if active() then notify("Corpse TP","Tried all "..tostring(tries).." corpse spots — none are in the map right now. Rescanning next press.") end; return false end
+	if not active() then return false end
 	pcall(function() carnLabel.Text="Teleported to corpse "..corpseIdx.." / "..#corpseList.." - did it work?"; carnGui.Enabled=true end)
+	return true
 end
 yesBtn.MouseButton1Click:Connect(function()   -- YES = stay at this corpse (and stop the TP-cycle popup)
 	pcall(function() carnGui.Enabled=false end)
@@ -4476,7 +4338,8 @@ yesBtn.MouseButton1Click:Connect(function()   -- YES = stay at this corpse (and 
 		end)
 	end
 end)
-noBtn.MouseButton1Click:Connect(function() task.spawn(doNextCorpse) end)                        -- try a different one
+noBtn.MouseButton1Click:Connect(function() if CFG.CarnMeatTP then local token=__gg.MH_tpFeatureGen and __gg.MH_tpFeatureGen.CarnMeatTP; task.spawn(function() doNextCorpse(token) end) end end) -- try a different one
+__gg.MH_cancelCorpseTP=function() carnBusy=false; __gg.MH_corpseHoldGoal=nil; pcall(function() carnGui.Enabled=false end) end
 __gg.MH_corpseBack = function()   -- "Teleport Back" button -> return to where you were
 	local o=carnOrigin; if not o then notify("Corpse TP","No saved spot yet - use Carnivore Meat TP first."); return end
 	-- KILL the corpse-TP hold first: tpToCorpse pins you at the corpse for ~2s via MH_corpseHoldGoal. If it's still
@@ -4491,7 +4354,7 @@ end
 -- TRIGGER: turning Carnivore Meat TP ON starts the cycle (teleport to a corpse + ask). Turning it OFF hides the popup.
 task.spawn(function() local was=false while RUNNING do
 	if CFG.CarnMeatTP and alive() and tick()-carnSpawnT>5 and tick()>=(__gg.MH_spawnGrace or 0) then   -- also wait out the spawn grace so it can't TP you into the void on load
-		if not was then was=true; if CFG.ProFood then if __gg.MH_setToggle then __gg.MH_setToggle("ProFood",false) else CFG.ProFood=false end end; carnOrigin=nil; corpseList=collectCorpses(); corpseIdx=0; task.spawn(doNextCorpse) end
+		if not was then was=true; if CFG.ProFood then if __gg.MH_setToggle then __gg.MH_setToggle("ProFood",false) else CFG.ProFood=false end end; carnOrigin=nil; corpseList=collectCorpses(); corpseIdx=0; local token=__gg.MH_tpFeatureGen and __gg.MH_tpFeatureGen.CarnMeatTP; task.spawn(function() doNextCorpse(token) end) end
 	else if was then was=false; pcall(function() carnGui.Enabled=false end) end end
 	task.wait(0.3)
 end end)
@@ -4577,7 +4440,7 @@ do
 		local m,part,prompt = fd[1],fd[2],fd.prompt
 		if not prompt and m then prompt=m:FindFirstChildWhichIsA("ProximityPrompt",true) end
 		if not prompt and part then local mm=part:FindFirstAncestorWhichIsA("Model"); prompt=mm and mm:FindFirstChildWhichIsA("ProximityPrompt",true) end
-		if prompt then pcall(function() local od,oh=prompt.MaxActivationDistance,prompt.HoldDuration; prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(od or 8,30); prompt.HoldDuration=0; if fireprox then fireprox(prompt) end; prompt.MaxActivationDistance=od; prompt.HoldDuration=oh end) end   -- restore so YOUR hold-to-eat still works
+		if prompt then pcall(function() local od,oh,ol=prompt.MaxActivationDistance,prompt.HoldDuration,prompt.RequiresLineOfSight; prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(od or 8,30); prompt.HoldDuration=0; if fireprox then fireprox(prompt) end; prompt.MaxActivationDistance=od; prompt.HoldDuration=oh; prompt.RequiresLineOfSight=ol end) end   -- restore so YOUR hold-to-eat still works
 		-- NO E key presses (user: the E spam blocked their own E for the herb). We fire the prompt + Bite remotes
 		-- ONLY, so the food bar fills without the script ever touching E — you press E yourself, once, freely.
 		pcall(fakeEat)
@@ -4588,13 +4451,13 @@ do
 		if not part then return end
 		local m=part:FindFirstAncestorWhichIsA("Model")
 		local prompt=(m and m:FindFirstChildWhichIsA("ProximityPrompt",true)) or part:FindFirstChildWhichIsA("ProximityPrompt")
-		if prompt then pcall(function() local od,oh=prompt.MaxActivationDistance,prompt.HoldDuration; prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(od or 8,40); prompt.HoldDuration=0; if fireprox then fireprox(prompt) end; prompt.MaxActivationDistance=od; prompt.HoldDuration=oh end) end   -- restore so YOUR hold-to-eat still works
+		if prompt then pcall(function() local od,oh,ol=prompt.MaxActivationDistance,prompt.HoldDuration,prompt.RequiresLineOfSight; prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(od or 8,40); prompt.HoldDuration=0; if fireprox then fireprox(prompt) end; prompt.MaxActivationDistance=od; prompt.HoldDuration=oh; prompt.RequiresLineOfSight=ol end) end   -- restore so YOUR hold-to-eat still works
 		pcall(fakeEat)   -- captured Bite remotes — fills the bar without pressing E
 	end
 	-- FULL → walk in a CIRCLE. REWORKED (was: W+D key holds — those only walked you diagonally in a straight line,
 	-- and the fake key-holds could STICK after you turned Pro Food off, so you kept "circling" forever): now the
-	-- circle is a rotating-heading velocity drive (the same proven write INF Stam / Speed Hack use) at a slow walk
-	-- speed, reported to the server on its own move remote so it never snaps. Stopping is now a hard stop —
+	-- circle is a Pro-Food-only rotating-heading velocity drive at a slow walk. It is never shared with Infinite Food
+	-- or Infinite Stamina. Stopping is a hard stop —
 	-- stopCircle() zeroes the drive, releases any legacy keys, and runs the moment Pro Food turns off or you eat.
 	local PWK = {W=Enum.KeyCode.W, A=Enum.KeyCode.A, S=Enum.KeyCode.S, D=Enum.KeyCode.D}
 	PRO.held = PRO.held or {}
@@ -4602,14 +4465,13 @@ do
 		for k,kc in pairs(PWK) do PRO.held[k]=false; pcall(function() VIM:SendKeyEvent(false, kc, false, game) end) end
 	end
 	local function stopCircle()
-		if not PRO.circling then return end
 		PRO.circling=false
 		releaseWASD()
 		local r=hrp(); if r then pcall(function() r.AssemblyLinearVelocity=Vector3.new(0, r.AssemblyLinearVelocity.Y, 0) end) end
 	end
+	__gg.MH_stopProFood=stopCircle
 	local function circle()   -- one STEP of the circle walk; call it repeatedly while food is full
 		if not PRO.circling then PRO.circling=true; releaseWASD() end
-		pcall(function() replicaAction("SetAction","Run",false) end); pcall(function() replicaAction("SetAction","Trot",false) end)
 		local r=hrp(); if not r then return end
 		local now=tick(); local dt=math.clamp(now-(PRO.stepT or now), 0, 0.6); PRO.stepT=now
 		PRO.ang=((PRO.ang or 0) + dt*0.8) % (2*math.pi)   -- ~8s per lap; walk speed 8 → ≈10-stud circle
@@ -4619,7 +4481,10 @@ do
 	end
 	task.spawn(function() while RUNNING do
 		if CFG.ProFood and alive() and tick()>=(__gg.MH_spawnGrace or 0) then
-			if reachedAge() then stopCircle(); CFG.ProFood=false; if __gg.MH_setToggle then __gg.MH_setToggle("ProFood",false) end; pcall(function() notify("Pro Food","Reached "..tostring(CFG.ProFoodStopAge).." — growth stopped.") end)
+			local token=__gg.MH_tpFeatureGen and __gg.MH_tpFeatureGen.ProFood
+			local function active() return CFG.ProFood==true and type(__gg.MH_tpFeatureGen)=="table" and __gg.MH_tpFeatureGen.ProFood==token end
+			if PRO.token~=token then stopCircle(); PRO.cur=nil; PRO.token=token end
+			if reachedAge() then stopCircle(); if __gg.MH_setToggle then __gg.MH_setToggle("ProFood",false) else CFG.ProFood=false; if __gg.MH_featureToggleChanged then __gg.MH_featureToggleChanged("ProFood",false) end end; pcall(function() notify("Pro Food","Reached "..tostring(CFG.ProFoodStopAge).." — growth stopped.") end)
 			else
 				local ff = foodFrac(); local r = hrp()
 				if ff and ff>=0.96 then
@@ -4636,12 +4501,12 @@ do
 					if fd and fd[2] then
 						stopCircle()
 						PRO.cur=fd[2]; PRO.lastFood=ff; PRO.foodT=tick()
-						if r and (fd[2].Position - r.Position).Magnitude > 14 and __gg.MH_tpToCorpse then pcall(function() __gg.MH_tpToCorpse(fd[2]) end); task.wait(0.9) end
-						eatAt(fd[2]); task.wait(0.4)
+						if r and (fd[2].Position - r.Position).Magnitude > 14 and __gg.MH_tpToCorpse then pcall(function() __gg.MH_tpToCorpse(fd[2],"ProFood",token) end); task.wait(0.9) end
+						if active() then eatAt(fd[2]); task.wait(0.4) end
 					else circle(); task.wait(0.1) end   -- nothing to eat anywhere → keep circling (still grows)
 				end
 			end
-		else PRO.cur=nil; stopCircle(); task.wait(0.2) end   -- Pro Food OFF → hard-stop the circle NOW (keys + velocity)
+		else PRO.cur=nil; PRO.token=nil; stopCircle(); task.wait(0.2) end   -- Pro Food OFF → hard-stop the circle NOW (keys + velocity)
 	end end)
 end
 task.spawn(function() while RUNNING do
@@ -4649,6 +4514,7 @@ task.spawn(function() while RUNNING do
 	-- below takes over — so INF Food stops firing prompts entirely, which is what was interfering with your manual
 	-- E-hold. This block discovers and probes a correct food source automatically until a genuine Bite is captured.
 	if CFG.InfFood and alive() and not __gg.MH_lastEatCall then
+		local token=__gg.MH_foodGen
 		-- Get the first correct-diet bite so we can capture the Bite remote (herbivore→plants, carnivore→meat).
 		local eHeld = false; pcall(function() eHeld = UIS:IsKeyDown(Enum.KeyCode.E) end)
 		if not eHeld then
@@ -4658,6 +4524,7 @@ task.spawn(function() while RUNNING do
 			local me=hrp(); local list=nearbyFood(math.huge)
 			local edible = _G.MH_edible                  -- diet gate (set once the diet helpers load); nil-safe
 			if me and edible and #list>0 then for step=1,#list do
+				if not CFG.InfFood or token~=__gg.MH_foodGen then break end
 				__gg.MH_foodProbeCursor=((__gg.MH_foodProbeCursor or 0)%#list)+1
 				local fd=list[__gg.MH_foodProbeCursor]
 				local m,r,prompt=fd[1],fd[2],fd.prompt
@@ -4672,6 +4539,8 @@ task.spawn(function() while RUNNING do
 					pcall(function() stillHold = UIS:IsKeyDown(Enum.KeyCode.E)
 						or (prompt.KeyboardKeyCode and prompt.KeyboardKeyCode~=Enum.KeyCode.Unknown and UIS:IsKeyDown(prompt.KeyboardKeyCode)) end)
 					if not stillHold then
+						task.wait()
+						if not CFG.InfFood or token~=__gg.MH_foodGen then break end
 						local oh=prompt.HoldDuration; local od=prompt.MaxActivationDistance; local ol=prompt.RequiresLineOfSight
 						pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.huge; prompt.HoldDuration=0 end)
 						if fireprox then pcall(function() fireprox(prompt) end) end   -- remote eat: fire from anywhere, no key press
@@ -4690,6 +4559,7 @@ end end)
 -- interfere with your manual E-hold-to-eat. This is the whole INF Food after the first bite.
 task.spawn(function() while RUNNING do
 	if CFG.InfFood and alive() and __gg.MH_lastEatCall then
+		local token=__gg.MH_foodGen
 		local eHeld=false; pcall(function() eHeld=UIS:IsKeyDown(Enum.KeyCode.E) end)
 		if eHeld then __gg.MH_lastE=tick() end
 		if not eHeld and tick()-(__gg.MH_lastE or 0)>1.25 then
@@ -4701,6 +4571,7 @@ task.spawn(function() while RUNNING do
 				if type(list)~="table" or #list==0 then list={__gg.MH_lastEatCall} end
 				local budget=math.clamp(math.floor(tonumber(CFG.FoodEatSpeed) or 3),1,10)
 				for _=1,budget do
+					if not CFG.InfFood or token~=__gg.MH_foodGen then break end
 					__gg.MH_foodCursor=((__gg.MH_foodCursor or 0)%#list)+1
 					local ec=list[__gg.MH_foodCursor]
 					if type(ec)=="table" and ec.n and ec.n>=2 then
@@ -4724,7 +4595,7 @@ end end)
 -- Anti Fractured Head: keep head angles neutral (clears the fracture distortion) when no aim/turn feature is steering it.
 task.spawn(function() while RUNNING do task.wait(0.5) if CFG.AntiFracture and alive() and not CFG.InfOxygen and not (CFG.TurnHack or CFG.Aimbot or CFG.SilentAim or CFG.LockOn) then pcall(function() setHeadAngles(0,0) end) end end end)
 task.spawn(function() while RUNNING do task.wait(0.3); if not alive() then continue end
-	if CFG.AntiFracture then clearStatus({"fracture","fractured","headinjury","concussion","hairfracture","skull"},{"fracture","fractured","headinjury","concussion","brokenhead","hairfracture","skull"}); for _,e in ipairs(Lighting:GetDescendants()) do if e:IsA("BlurEffect") then pcall(function() e.Enabled=false; e.Size=0 end) end end pcall(function() local cam=WS.CurrentCamera; if cam then for _,e in ipairs(cam:GetDescendants()) do if e:IsA("BlurEffect") then e.Enabled=false; e.Size=0 end end end end); local pg=LP:FindFirstChild("PlayerGui"); if pg then for _,gg in ipairs(pg:GetDescendants()) do if (gg:IsA("Frame") or gg:IsA("ImageLabel") or gg:IsA("CanvasGroup")) then local n=gg.Name:lower(); if n:find("blur") or n:find("fracture") or n:find("concus") or n:find("daze") or n:find("vision") or n:find("injur") then pcall(function() gg.Visible=false end) end end end end end
+	if CFG.AntiFracture then clearStatus({"headfracture","headinjury","concussion","hairfracture","skullfracture"},{"headfracture","headinjury","concussion","brokenhead","hairfracture","skullfracture"}); for _,e in ipairs(Lighting:GetDescendants()) do if e:IsA("BlurEffect") then pcall(function() e.Enabled=false; e.Size=0 end) end end pcall(function() local cam=WS.CurrentCamera; if cam then for _,e in ipairs(cam:GetDescendants()) do if e:IsA("BlurEffect") then e.Enabled=false; e.Size=0 end end end end); local pg=LP:FindFirstChild("PlayerGui"); if pg then for _,gg in ipairs(pg:GetDescendants()) do if (gg:IsA("Frame") or gg:IsA("ImageLabel") or gg:IsA("CanvasGroup")) then local n=gg.Name:lower(); if n:find("headfracture",1,true) or n:find("concus",1,true) or n:find("skull",1,true) then pcall(function() gg.Visible=false end) end end end end end
 	if CFG.AntiBleed then clearStatus({"bleed","bleeding","hemorrhage","wound"},{"bleed","bleeding","hemorrhage","wound"}) end
 	if CFG.AntiFall then clearStatus({"fall","falldamage","falldmg"},{"Falling","FallDamage","FallDmg"}); if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end end
 	if CFG.AntiBreakHead then clearStatus({"skull","concuss","hairfrac"},{"HeadBreak","HeadFracture","SkullBreak","JawBreak"}) end
@@ -4783,7 +4654,7 @@ task.spawn(function() while RUNNING do
 				local hb=getHitbox(m); if hb and dist(me.Position,hb.Position)<=(tonumber(CFG.DamageRange) or 120) then targs[#targs+1]=m end
 			end
 			for _,m in ipairs(charModels()) do if #targs>=8 then break end consider(m) end
-			if #targs==0 and typeof(getnilinstances)=="function" then
+			if #targs<8 and typeof(getnilinstances)=="function" then
 				pcall(function() local c=0; for _,v in next, getnilinstances() do c+=1; if c>4000 or #targs>=8 then break end
 					if typeof(v)=="Instance" and v:IsA("Model") and (v:FindFirstChild("Hitbox") or v:FindFirstChild("HitBox") or v:FindFirstChild("Physics") or v:FindFirstChild("MeshModel")) then consider(v) end
 				end end)
@@ -4877,20 +4748,12 @@ if not _G.PE_HIDE_LITE then
 	local afkAnchor
 	conn(RunService.Heartbeat:Connect(function()
 		if not (CFG.AfkEat and alive()) then afkAnchor=nil; return end
-		-- KEEP-ALIVE while lifted: the death was fall damage + the meters draining while you hang up high. Turn on
-		-- the anti-death set so nothing can kill you AFK: Anti-Fall (no fall damage), and INF Food/Water/Stam/Oxygen
-		-- + Auto-Heal so every meter stays full. We also zero fall reports and pin health each frame.
-		CFG.InfFood=true; CFG.InfWater=true; CFG.InfStam=true; CFG.InfOxygen=true
-		CFG.AntiFall=true; CFG.AutoHealBlood=true
+		-- AFK Eat owns only this explicit lift. Need and protection toggles stay user-owned, so enabling or disabling
+		-- Infinite Food/Stamina can never enter this movement path.
 		local r=hrp(); if not r then return end
 		if not afkAnchor then afkAnchor = r.Position + Vector3.new(0, 300, 0) end   -- lift once (gentler 300 studs)
 		pcall(function() r.CFrame = CFrame.new(afkAnchor); r.AssemblyLinearVelocity = Vector3.new(0,0,0); r.AssemblyAngularVelocity = Vector3.new(0,0,0) end)
-		-- hard health pin + fall-immunity flag so the server never applies the drop damage
-		pcall(function()
-			local h=hum(); if h then h.Health=h.MaxHealth end
-			local stats,maxs=csStats(); if stats and maxs then for _,k in ipairs({"Health","HP"}) do if stats[k]~=nil and maxs[k] then stats[k]=maxs[k] end end end
-			if CharacterState then CharacterState.FallDamageImmunity=true end
-		end)
+		if CFG.AntiFall and CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
 	end))
 end
 
@@ -4958,33 +4821,47 @@ end
 -- filtered by the selected bone. ENEMIES ONLY (never our own model — that would block our own clicks/movement).
 local function expandModel(m)
 	if not m then return end
-	local grewAny=false; local boneCount=0
+	local grewAny=false; local bones={}; local boneSeen={}
+	local function bonePriority(b)
+		local n=b.Name:lower()
+		if n:find("head",1,true) or n:find("skull",1,true) or n:find("jaw",1,true) then return 1 end
+		if n:find("neck",1,true) then return 2 end
+		if n:find("spine",1,true) or n:find("chest",1,true) then return 3 end
+		if n:find("hip",1,true) or n:find("pelvis",1,true) or n:find("body",1,true) or n:find("torso",1,true) then return 4 end
+		if n:find("leg",1,true) or n:find("femur",1,true) or n:find("tibia",1,true) or n:find("foot",1,true) then return 5 end
+		if n:find("arm",1,true) or n:find("hand",1,true) or n:find("claw",1,true) then return 6 end
+		if n:find("tail",1,true) then return 7 end
+		return 20
+	end
 	local function grow(d)
 		if d:IsA("BasePart") then
 			if boneMatch(d.Name) then expandPart(d); grewAny=true elseif hbTouched[d] then restorePart(d) end
-		elseif d:IsA("Bone") and boneMatch(d.Name) and boneCount<16 then
-			if HBX.expandBone(d,m) then grewAny=true; boneCount+=1 end
-		end
+		elseif d:IsA("Bone") and boneMatch(d.Name) and not boneSeen[d] then boneSeen[d]=true; bones[#bones+1]=d end
+	end
+	local function flushBones()
+		table.sort(bones,function(a,b) local pa,pb=bonePriority(a),bonePriority(b); if pa==pb then return a.Name<b.Name end; return pa<pb end)
+		for i=1,math.min(#bones,16) do if HBX.expandBone(bones[i],m) then grewAny=true end end
 	end
 	do local inst=findHitboxContainer(m)
 		if inst then
-			local hasBones=inst:IsA("Bone") or inst:FindFirstChildWhichIsA("Bone",true)~=nil
-			if not hasBones then grow(inst) end
+			grow(inst)
 			for _,d in ipairs(inst:GetDescendants()) do grow(d) end
+			flushBones()
 		end
 	end
 	-- FALLBACK — WORKS ON EVERY DINO: some dinos have no "Hitbox" container (or an oddly-named one), so nothing grew
 	-- above. Grow the model's OWN parts too — the MeshModel bones' render parts, the HumanoidRootPart, and any direct
 	-- BasePart — filtered by the selected bone. This is why "hitbox didn't work on some dinos": they had no Hitbox box.
 	if not grewAny then
-		local hrp2=m:FindFirstChild("HumanoidRootPart"); if hrp2 and hrp2:IsA("BasePart") and (CFG.HitboxBone=="All" or CFG.HitboxBone=="Body") then expandPart(hrp2) end
+		local hrp2=m:FindFirstChild("HumanoidRootPart"); if hrp2 and hrp2:IsA("BasePart") and (CFG.HitboxBone=="All" or CFG.HitboxBone=="Body") then expandPart(hrp2); grewAny=true end
 		local cnt=0
 		for _,d in ipairs(m:GetDescendants()) do
 			cnt+=1; if cnt>400 then break end
 			if d:IsA("BasePart") and d~=hrp2 and boneMatch(d.Name) then expandPart(d); grewAny=true
 			elseif d:IsA("BasePart") and hbTouched[d] and not boneMatch(d.Name) then restorePart(d) end
-			if d:IsA("Bone") and boneMatch(d.Name) and boneCount<16 then if HBX.expandBone(d,m) then grewAny=true; boneCount+=1 end end
+			if d:IsA("Bone") and boneMatch(d.Name) and not boneSeen[d] then boneSeen[d]=true; bones[#bones+1]=d end
 		end
+		flushBones()
 	end
 end
 -- (Bone Protection NO LONGER shrinks your hitbox — that broke your M1. It now clears the chosen bone's break/
@@ -5049,7 +4926,8 @@ task.spawn(function()
 	while RUNNING do
 		task.wait(0.15)
 		if (CFG.Aimbot or CFG.SilentAim or CFG.LockOn) and alive() then
-			local me=hrp(); local mine=getMyModel(); local rng=CFG.FarmPlayerRange*3
+			local me=hrp(); local mine=getMyModel(); local rng=math.max(tonumber(CFG.DamageRange) or 120,(tonumber(CFG.HitboxSize) or 35)*0.5+16)
+			local choice=tostring(CFG.HitboxBone or "All").."|"..tostring(CFG.AimPart or "Hitbox")
 			local keep=false
 			-- LOCK ON / AUTO TARGET: STICK to the enemy you're already fighting if it's still valid + roughly in front
 			-- (within 60°). So it focuses ONE enemy — the one you're facing — instead of flickering between many.
@@ -5073,8 +4951,9 @@ task.spawn(function()
 				for _,m in ipairs(charModels()) do consider(m) end   -- includes CharacterIgnore.LeftCharacters (where dinos live)
 				aimTarget=best; aimRoot=bestRoot; aimPart=best and getAimPart(best) or nil
 			end
-			if aimTarget and (not aimPart or not aimPart.Parent) then aimPart=getAimPart(aimTarget) end
-		else aimTarget, aimRoot, aimPart = nil, nil, nil end
+			if aimTarget and (__gg.MH_aimChoice~=choice or not aimPart or not aimPart.Parent) then aimPart=getAimPart(aimTarget) end
+			__gg.MH_aimChoice=choice
+		else aimTarget, aimRoot, aimPart = nil, nil, nil; __gg.MH_aimChoice=nil end
 	end
 end)
 conn(RunService.RenderStepped:Connect(function()
@@ -5231,25 +5110,26 @@ local function getNodes(kind, range)
 	FARM.nodeCache[kind]={t=tick(), list=list, range=range}
 	return list
 end
--- AUTO FARM — TELEPORT MODE (default, you asked for it back): saves your ORIGIN when you toggle it ON, TPs onto
--- the nearest un-collected node, fires its prompt (the executor simulates the FULL hold), waits for the node to
--- vanish, then moves to the next — ONE node at a time = no lag. Toggle OFF and you TP straight back to your
--- origin. Fall immunity is forced the whole time. Heads up: CFrame teleports CAN trip the anti-cheat (267) — if
--- you get kicked, turn "Teleport Farm" OFF to use the stand-still mode (fires prompts remotely, zero movement).
+-- AUTO FARM — TELEPORT MODE: each farm owns a cancellation generation and moves only while its own exact toggle
+-- remains enabled. Toggle-off or character change cancels movement immediately and never performs an automatic
+-- return teleport. Fall immunity is forced while the explicitly selected farm is active.
 -- LAG FIXES in both modes: the dig-remote search runs ONCE ever (re-walking ReplicatedStorage every pass when the
 -- remote doesn't exist was the big farm lag), node list cached 2s, hard scan caps.
 local function runFarm(enabledKey, kind, rangeKey)
 	task.spawn(function()
 		local pending={}
-		local origin, wasOn = nil, false
+		local wasOn,featureToken = false,nil
+		local function featureActive() return CFG[enabledKey]==true and type(__gg.MH_tpFeatureGen)=="table" and __gg.MH_tpFeatureGen[enabledKey]==featureToken end
 		while RUNNING do
 			if CFG[enabledKey] and alive() then
-				if not wasOn then wasOn=true; local r0=hrp(); origin=r0 and r0.CFrame end
+				local currentToken=__gg.MH_tpFeatureGen and __gg.MH_tpFeatureGen[enabledKey]
+				if not wasOn or featureToken~=currentToken then wasOn=true; featureToken=currentToken end
 				for part,holder in pairs(pending) do if not (part and part.Parent) then FARM.count[kind]=(FARM.count[kind] or 0)+1; pending[part]=nil end end
 				if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
 				-- dig remote: search ONCE (negative-cached) — this was the lag.
 				if not FARM.digSearched then FARM.digSearched=true; FARM.dig=findRemote({"collectfossil","collectgem","startcollection","excavat","harvest"}) end
 				local list=getNodes(kind, 1e9)
+				if not featureActive() then continue end
 				if CFG.FarmTeleport then
 					-- pick the nearest un-tried node, TP to it, collect it, wait for it to vanish
 					local nd
@@ -5259,24 +5139,25 @@ local function runFarm(enabledKey, kind, rangeKey)
 					end
 					if nd then
 						local holder,part=nd[1],nd[2]
+						if not featureActive() then continue end
 						FARM.tried[part]=tick()
 						do
 							-- FOSSILS = INSTANT TELEPORT (you asked: "it needs to teleport, not glide"). MH_snapTo snaps you
 							-- straight onto the node and beats the rubber-band by feeding the server the goal on its own move
 							-- remote + re-asserting only if you get shoved — no slow walk between fossils. GEMS keep the glide
 							-- (their 12s channel doesn't care about a slower approach, and it's proven to stick).
-							local goalPos=part.Position+Vector3.new(0,1.5,0)
+							local goalPos=part.Position+Vector3.new(0,1.5,0); local moved=false
 							if kind=="fossil" and __gg.MH_snapTo then
-								__gg.MH_snapTo(goalPos)
+								moved=__gg.MH_snapTo(goalPos,{feature=enabledKey,token=featureToken,settle=1.25})==true
 								task.wait(0.1)
 							elseif __gg.MH_hopMove then
-								__gg.MH_hopMove(goalPos, true)
+								moved=__gg.MH_hopMove(goalPos,{feature=enabledKey,token=featureToken,settle=1.1})==true
 								local t0=tick()
-								while tick()-t0<2.2 do local r=hrp(); if r and (r.Position-goalPos).Magnitude<8 then break end; task.wait(0.05) end
-							else
-								pcall(function() local cc=getMyModel(); if cc and cc.PrimaryPart then cc:PivotTo(CFrame.new(goalPos)) else local r=hrp(); if r then r.CFrame=CFrame.new(goalPos) end end end)
+								while featureActive() and tick()-t0<2.2 do local r=hrp(); if r and (r.Position-goalPos).Magnitude<8 then break end; task.wait(0.05) end
 							end
+							if not moved then task.wait(0.2); continue end
 						end
+						if not featureActive() then continue end
 						local r0=hrp(); if r0 then pcall(function() r0.AssemblyLinearVelocity=Vector3.zero; r0.AssemblyAngularVelocity=Vector3.zero end) end
 						task.wait(0.15)
 						local prompt=part:FindFirstChildWhichIsA("ProximityPrompt")
@@ -5298,10 +5179,10 @@ local function runFarm(enabledKey, kind, rangeKey)
 						if not eManual then pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game) end) end
 						if FARM.dig and FARM.dig.Parent then pcall(function() fireRemoteMulti(FARM.dig, holder) end) end
 						local t0=tick()
-						while CFG[enabledKey] and tick()-t0<hold+2 and holder.Parent and part.Parent and not done do task.wait(0.15) end
+						while featureActive() and tick()-t0<hold+2 and holder.Parent and part.Parent and not done do task.wait(0.15) end
 						if not eManual then pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game) end) end
 						if tconn then pcall(function() tconn:Disconnect() end) end
-						if prompt and fireprox then pcall(function() fireprox(prompt) end) end   -- backup: complete it now
+						if prompt and fireprox and featureActive() then pcall(function() fireprox(prompt) end) end   -- backup: complete it now
 						if prompt then pcall(function() prompt.MaxActivationDistance=od; prompt.RequiresLineOfSight=ol; prompt.KeyboardKeyCode=okc; prompt.Enabled=oen end) end   -- restore native prompt state
 						pcall(function() if bp then bp:Destroy() end end)
 						if done or not (part and part.Parent) then FARM.count[kind]=(FARM.count[kind] or 0)+1; FARM.tried[part]=nil; pending[part]=nil end   -- clear pending too, or the vanish-sweep counts this node AGAIN (double count)
@@ -5313,7 +5194,7 @@ local function runFarm(enabledKey, kind, rangeKey)
 					-- STAND-STILL mode (zero movement = the anti-cheat never sees you move): fire prompts remotely, 6/pass.
 					local n=0
 					for _,nd in ipairs(list) do
-						if not CFG[enabledKey] then break end
+						if not featureActive() then break end
 						local holder,part=nd[1],nd[2]
 						if part and part.Parent then
 							local t=FARM.tried[part]
@@ -5337,10 +5218,7 @@ local function runFarm(enabledKey, kind, rangeKey)
 				end
 			else
 				if wasOn then
-					wasOn=false
-					-- TP back to where you were when you turned the farm on
-					if origin then if __gg.MH_safeTeleport then __gg.MH_safeTeleport(origin,{settle=1.3}) end; origin=nil
-					end
+					wasOn=false; featureToken=nil
 				end
 				task.wait(0.4)
 			end
@@ -5431,7 +5309,8 @@ local function speciesDiet(species)
 		if type(cats)=="table" then
 			local carn,herb=false,false
 			for c in pairs(cats) do local lc=tostring(c):lower()
-				if lc:find("meat",1,true) or lc:find("organ",1,true) or lc:find("fish",1,true) or lc:find("bone",1,true) or lc:find("egg",1,true) or lc:find("insect",1,true) then carn=true else herb=true end
+				if lc:find("meat",1,true) or lc:find("organ",1,true) or lc:find("fish",1,true) or lc:find("bone",1,true) or lc:find("egg",1,true) or lc:find("insect",1,true) then carn=true
+				elseif lc:find("plant",1,true) or lc:find("veget",1,true) or lc:find("fruit",1,true) or lc:find("berry",1,true) or lc:find("leaf",1,true) or lc:find("fern",1,true) or lc:find("grass",1,true) or lc:find("herb",1,true) or lc:find("seed",1,true) or lc:find("root",1,true) or lc:find("flower",1,true) or lc:find("bark",1,true) then herb=true end
 			end
 			out=(carn and herb and "Omnivore") or (carn and "Carnivore") or (herb and "Herbivore") or nil
 		end
@@ -5439,31 +5318,37 @@ local function speciesDiet(species)
 	_spDietCache[species]=out or false
 	return out
 end
--- OUR OWN diet (cached): the game's GetDiet module first, our species' Diet.Categories second, Omnivore last.
-local _myDietCache
+-- OUR OWN diet is keyed by verified replica + species. Unknown remains unknown, so automatic food probing waits
+-- instead of treating a not-yet-streamed dinosaur as an omnivore and capturing a wrong-source Bite packet.
 local function myDiet()
-	if _myDietCache then return _myDietCache end
 	local species
 	pcall(function()
 		if CharacterState and CharacterState.Replica and CharacterState.Replica.Tags then species=CharacterState.Replica.Tags.Character end
 		if not species then local cc=getMyModel(); species=cc and (cc:GetAttribute("Type") or cc:GetAttribute("Character")) end
 	end)
+	local key=tostring(MHNEED.replicaId() or "?").."|"..tostring(species or "?")
+	local cached=__gg.MH_dietCache; if type(cached)=="table" and cached.key==key then return cached.diet end
+	local diet
 	pcall(function()
 		local gd=require(RS.Modules.Diet.GetDiet)
 		if gd and species then local d=gd(species)
 			if type(d)=="string" then local lc=d:lower()
-				if lc:find("herb",1,true) then _myDietCache="Herbivore" elseif lc:find("carn",1,true) then _myDietCache="Carnivore" elseif lc:find("omni",1,true) then _myDietCache="Omnivore" end
+				if lc:find("herb",1,true) then diet="Herbivore" elseif lc:find("carn",1,true) then diet="Carnivore" elseif lc:find("omni",1,true) then diet="Omnivore" end
 			end
 		end
 	end)
-	if not _myDietCache and species then _myDietCache=speciesDiet(tostring(species)) end
-	return _myDietCache or "Omnivore"
+	if not diet and species then diet=speciesDiet(tostring(species)) end
+	if diet then __gg.MH_dietCache={key=key,diet=diet} end
+	return diet
 end
 -- classify a food item: corpse/meat vs plant (name + PE's corpse markers + the prompt's "Investigate" action)
 local function isCorpseFood(m, prompt)
 	local nm=tostring(m and m.Name or ""):lower()
 	if nm:find("corpse") or nm:find("carcass") or nm:find("remains") or nm:find("carrion") or nm:find("dead") or nm:find("meat") then return true end
-	if m and m.GetAttribute then local ok,a=pcall(function() return m:GetAttribute("DinoType") or m:GetAttribute("HintType") or m:GetAttribute("CreatedAt") end); if ok and a then return true end end
+	if m and m.GetAttribute then local ok,dinoType,hint=pcall(function() return m:GetAttribute("DinoType"),m:GetAttribute("HintType") end); if ok then
+		if type(dinoType)=="string" and dinoType~="" then return true end
+		local hv=tostring(hint or ""):lower(); if hv:find("corpse",1,true) or hv:find("carcass",1,true) or hv:find("meat",1,true) or hv:find("carrion",1,true) then return true end
+	end end
 	if prompt then local at=(prompt.ActionText or ""):lower(); if at:find("investigate") or at:find("examine") then return true end end
 	return false
 end
@@ -5471,7 +5356,8 @@ end
 local function edibleFor(diet, corpse)
 	if diet=="Herbivore" then return not corpse
 	elseif diet=="Carnivore" then return corpse and true or false
-	else return true end
+	elseif diet=="Omnivore" then return true end
+	return false
 end
 -- Exposed for the INF Food loop (defined earlier in the file): true only if THIS food matches your dino's diet.
 -- Resolved at call time, so the loop that references _G.MH_edible always gets the real gate once this line runs.
@@ -5660,8 +5546,7 @@ task.spawn(function()
 		if CFG.AutoPlayBot and alive() then
 			-- one-time on-enable setup
 			if BOT.prevF==nil then
-				BOT.prevF,BOT.prevW,BOT.prevS = CFG.InfFood,CFG.InfWater,CFG.InfStam
-				CFG.InfFood=true; CFG.InfWater=true; CFG.InfStam=true   -- meter insurance while the bot plays
+				BOT.prevF=true -- setup sentinel only; the bot never changes user-owned need toggles
 				local r=hrp(); BOT.home=r and r.Position or nil
 				BOT.dietSaid=false
 				botSay("Bot ON — home set here. I'll eat, drink, flee, heal and roam for you.")
@@ -5767,9 +5652,8 @@ task.spawn(function()
 			end
 			task.wait(0.35)
 		else
-			-- bot off / dead → clean shutdown: wake up, stop moving, restore the user's own INF toggles
+			-- bot off / dead → clean shutdown: wake up and stop moving
 			if BOT.prevF~=nil then
-				CFG.InfFood,CFG.InfWater,CFG.InfStam = BOT.prevF,BOT.prevW,BOT.prevS
 				BOT.prevF,BOT.prevW,BOT.prevS = nil,nil,nil
 				BOT.sleeping=false; BOT.goal=nil; BOT.state="idle"; BOT.lastState=""; BOT.threat=nil; BOT.home=nil
 				pcall(function() replicaAction("SetAction","Sleep",false) end)
@@ -6024,56 +5908,24 @@ local function targetReadInfo()
 	return info
 end
 _G.MH_targetInfo = targetReadInfo
--- Teleport to the current target. Resolves position LIVE from any part — never needs a pre-loaded profile.
--- HARD TELEPORT = THE EXACT FOSSIL-FARM METHOD (MH_snapTo): PivotTo the goal, zero velocity, then for ~1.2s feed
--- the server the goal on its OWN move remote and re-assert locally only if it shoves you >6 studs. This is the
--- teleport that already works for Auto Farm Fossil — so Target uses it verbatim now, and it "sticks" the same way.
+-- Teleport to the current target through the central path so safety, spawn grace, synchronization and success
+-- reporting are identical to every other explicit teleport feature.
 local function hardTeleportTo(pos, holdSecs)
-	if not pos then return false end
-	if __gg.MH_safeTeleport then
-		if not __gg.MH_safeTeleport(pos,{saveReturn=true,settle=math.clamp(tonumber(holdSecs) or 1.2,0.2,3)}) then return false end
-	elseif __gg.MH_snapTo then __gg.MH_snapTo(pos)
-	else
-		-- fallback if the fossil snapper isn't loaded yet
-		if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
-		local cc=getMyModel(); local root = cc and (cc.PrimaryPart or cc:FindFirstChild("HumanoidRootPart")) or hrp()
-		if root then pcall(function() root.CFrame=CFrame.new(pos); root.AssemblyLinearVelocity=Vector3.zero end) end
-	end
-	if holdSecs then task.wait(holdSecs) end
-	return true
+	if not (pos and __gg.MH_safeTeleport) then return false end
+	local settled=math.clamp(tonumber(holdSecs) or 1.2,0.2,3)
+	local ok=__gg.MH_safeTeleport(pos,{saveReturn=true,settle=settled,tolerance=7})==true
+	if ok and holdSecs then task.wait(settled) end
+	return ok
 end
 __gg.MH_hardTeleportTo = hardTeleportTo
 
--- TELEPORT TO A (MOVING) PLAYER: lands ON them and STAYS locked even as they run — the fossil snapper aimed at a
--- FIXED point, so for a moving player it dragged you to where they WERE (the "weird" + "doesn't TP to them"). This
--- re-resolves their LIVE position every tick during a short settle and feeds the server THAT, so you land on them
--- and follow. One local write per tick (only if you're >8 studs off) = far less jitter than the old 0.06s slam.
 local function targetTeleport(holdSecs)
 	local T = __gg.MH_Target; if not T.plr then return false end
 	local r0, model = targetLivePart(T.plr)
 	if model then T.model = model end
 	if not r0 then return false end
 	__gg.MH_rescueMute = tick()+3
-	if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
-	local function place(pos)
-		if __gg.MH_safeTeleport then return __gg.MH_safeTeleport(pos,{saveReturn=true,settle=holdSecs or 1.0,tolerance=8}) end
-		local cc=getMyModel(); local root=cc and (cc.PrimaryPart or cc:FindFirstChild("HumanoidRootPart")) or hrp(); if root then pcall(function() root.CFrame=CFrame.new(pos); root.AssemblyLinearVelocity=Vector3.zero end); return true end
-	end
-	place(r0.Position + Vector3.new(0, 6, 0))   -- initial snap
-	local tpSeq=__gg.MH_tpSeq
-	task.spawn(function()
-		local t0=tick()
-		while tick()-t0 < (holdSecs or 1.0) and (not tpSeq or tpSeq==__gg.MH_tpSeq) do
-			local rr = select(1, targetLivePart(T.plr))   -- their CURRENT part (they may be running)
-			if not rr then break end
-			local goal = rr.Position + Vector3.new(0, 6, 0)
-			if __gg.MH_hopFire then __gg.MH_hopFire(CFrame.new(goal)) end   -- tell the server (no local jitter)
-			local me=hrp()
-			if me and (me.Position-goal).Magnitude > 8 then pcall(function() me.CFrame=CFrame.new(goal); me.AssemblyLinearVelocity=Vector3.zero end) end
-			task.wait(0.08)
-		end
-	end)
-	return true
+	return __gg.MH_safeTeleport and __gg.MH_safeTeleport(r0.Position+Vector3.new(0,6,0),{saveReturn=true,settle=holdSecs or 1.0,tolerance=8})==true
 end
 __gg.MH_targetTeleport = targetTeleport
 
@@ -6084,20 +5936,21 @@ local function targetAttackAndReturn()
 	local r, model = targetLivePart(T.plr)
 	if model then T.model = model end
 	if not (r and model and model.Parent) then return false, "not loaded" end
-	if CharacterState then pcall(function() CharacterState.FallDamageImmunity=true end) end
 	__gg.MH_rescueMute = tick()+3
 	local function pivotTo(pos)
-		if __gg.MH_safeTeleport then return __gg.MH_safeTeleport(pos,{settle=0.22,tolerance=8}) end
-		local cc=getMyModel(); local root=cc and (cc.PrimaryPart or cc:FindFirstChild("HumanoidRootPart")) or hrp(); if root then pcall(function() root.CFrame=CFrame.new(pos); root.AssemblyLinearVelocity=Vector3.zero end); return true end
+		return __gg.MH_safeTeleport and __gg.MH_safeTeleport(pos,{settle=0.22,tolerance=8})==true
 	end
 	local myBack
-	do local cc=getMyModel(); local root=cc and (cc.PrimaryPart or cc:FindFirstChild("HumanoidRootPart")) or hrp(); if root then myBack=root.Position end end
-	pivotTo(r.Position + Vector3.new(0, 5, 0))   -- onto them
+	do local root=hrp(); if root then myBack=root.CFrame end end
+	if not myBack then return false,"no local root" end
+	if not pivotTo(r.Position + Vector3.new(0, 5, 0)) then return false,"teleport failed" end
 	task.wait(0.06)
-	if _G.MH_attack then pcall(function() _G.MH_attack(model) end) end
+	local attacked=false
+	if _G.MH_attack then local ok,result=pcall(function() return _G.MH_attack(model) end); attacked=ok and result~=false end
 	task.wait(0.1)
-	if myBack then pivotTo(myBack) end            -- back to your spot
-	return true
+	local returned=pivotTo(myBack)
+	if not returned then return false,"return failed" end
+	return attacked,attacked and nil or "attack unavailable"
 end
 __gg.MH_targetAttackReturn = targetAttackAndReturn
 -- Spectate camera — REWORKED ("viewing don't work"): just setting Cam.CameraSubject did nothing because PE's own
@@ -6537,13 +6390,12 @@ task.spawn(function()
 	end
 	local bHop=mkB("Server Hop",20,150,Color3.fromRGB(235,70,70)); local bJoin=mkB("Rejoin",180,90,Color3.fromRGB(240,190,70)); local bStay=mkB("Stay",280,80,Color3.fromRGB(238,240,244),Color3.fromRGB(70,76,88))
 	local function hop()
-		local ok=pcall(function()
+		local moved=false; local ok=pcall(function()
 			local res=game:HttpGetAsync("https://games.roblox.com/v1/games/"..tostring(game.PlaceId).."/servers/Public?sortOrder=Asc&limit=100")
 			local data=HttpService:JSONDecode(res)
-			for _,srv in ipairs(data.data or {}) do if srv.id~=game.JobId and (tonumber(srv.playing) or 0)<(tonumber(srv.maxPlayers) or 100) then TeleportSvc:TeleportToPlaceInstance(game.PlaceId, srv.id, LP); return true end end
-			error("no server")
+			for _,srv in ipairs(data.data or {}) do if srv.id~=game.JobId and (tonumber(srv.playing) or 0)<(tonumber(srv.maxPlayers) or 100) then moved=true; TeleportSvc:TeleportToPlaceInstance(game.PlaceId, srv.id, LP); return end end
 		end)
-		if not ok then pcall(function() TeleportSvc:Teleport(game.PlaceId, LP) end) end
+		if not ok or not moved then pcall(function() notify("Server","No different public server is available right now.") end) end
 	end
 	local function warnStaff(name, tag)
 		if STF.stayed or STF.shown then return end; STF.shown=true
@@ -6552,7 +6404,7 @@ task.spawn(function()
 		pcall(function() notify("Staff Detected", tostring(name).." ("..t..") is in the server.") end)
 	end
 	bHop.MouseButton1Click:Connect(function() sg.Enabled=false; hop() end)
-	bJoin.MouseButton1Click:Connect(function() sg.Enabled=false; pcall(function() TeleportSvc:Teleport(game.PlaceId, LP) end) end)
+	bJoin.MouseButton1Click:Connect(function() sg.Enabled=false; pcall(function() TeleportSvc:TeleportToPlaceInstance(game.PlaceId,game.JobId,LP) end) end)
 	bStay.MouseButton1Click:Connect(function() sg.Enabled=false; STF.shown=false; STF.stayed=true end)
 	pcall(function()   -- CHAT TAGS: watch every TextChannel for a staff tag in the message prefix/metadata
 		local TCS=game:GetService("TextChatService")
@@ -6578,7 +6430,7 @@ task.spawn(function()
 end)
 
 -- INPUT (UI key + feature keybinds)
-local function toggleKey(key) CFG[key]=not CFG[key]; local ref=toggleRefs[key]; if ref then tw(ref[1],{BackgroundColor3=CFG[key] and T.On or T.Off}); tw(ref[2],{Position=CFG[key] and UDim2.fromOffset(18,2) or UDim2.fromOffset(2,2)}) end saveCfg() end
+local function toggleKey(key) CFG[key]=not CFG[key]; if __gg.MH_featureToggleChanged then __gg.MH_featureToggleChanged(key,CFG[key]) end; local ref=toggleRefs[key]; if ref then tw(ref[1],{BackgroundColor3=CFG[key] and T.On or T.Off}); tw(ref[2],{Position=CFG[key] and UDim2.fromOffset(18,2) or UDim2.fromOffset(2,2)}) end saveCfg() end
 conn(UIS.InputBegan:Connect(function(input, gp)
 	if capturing then return end
 	if tick()-bindGuard < 0.25 then return end
@@ -6587,6 +6439,8 @@ conn(UIS.InputBegan:Connect(function(input, gp)
 	local uiKey = CFG.Keybinds["UIKey"] or CFG.UIKey or "RightShift"
 	if kn==uiKey then SG.Enabled=not SG.Enabled; if SG.Enabled and not USE_FLUENT then task.defer(clampWindow) end; return end  -- SG.Enabled mirrors menu-open for the aim/autoclick guards (Fluent handles its own RightShift minimize)
 	if gp then return end
+	-- A duplicated saved binding must never make INF Food toggle a teleport farm/corpse feature in the same keypress.
+	if CFG.Keybinds.InfFood==kn then toggleKey("InfFood"); return end
 	for cfgKey, boundName in pairs(CFG.Keybinds) do
 		if boundName==kn and cfgKey~="UIKey" and cfgKey~="AimKey" then
 			if type(CFG[cfgKey])=="boolean" then toggleKey(cfgKey) end
@@ -6675,7 +6529,7 @@ conn(LP.CharacterAdded:Connect(function()
 	end)
 	task.wait(1); saving=false; SKN.saBack={}; pcall(function() CharacterState=CharacterState or (require(RS:WaitForChild("Common",5):WaitForChild("CharacterState",5))) end); if CFG.Fly then startFly() end pcall(function() local r=hrp(); if r then r.Anchored=false end end)
 	-- ON SPAWN: fill food + water right away (fire the real eat/Sip sequences in a burst so you spawn topped up).
-	task.spawn(function() task.wait(1.5); for _=1,10 do if not RUNNING then break end if CFG.InfFood and alive() then fakeEat() end if CFG.InfWater and alive() then fakeDrink() end task.wait(0.18) end end)
+	task.spawn(function() local foodToken=__gg.MH_foodGen; task.wait(1.5); for _=1,10 do if not RUNNING then break end if CFG.InfFood and foodToken==__gg.MH_foodGen and alive() then fakeEat() end if CFG.InfWater and alive() then fakeDrink() end task.wait(0.18) end end)
 end))
 local lastSkinDino=nil
 task.spawn(function() while RUNNING do task.wait(2)
@@ -6849,3 +6703,4 @@ MS("5 DONE - all tabs built, menu ready")
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
 print("[Dream Hub · Prior Extinction v6.4 PE-v3] Loaded — exact need/stamina packets, wellbeing resolver, cached streaming combat")
+
