@@ -8,7 +8,7 @@ __gg.__PRIOR_EXT_HUB = nil
 -- makes INF Food replay dead ids forever and prevents its nearby-food bootstrap from running.
 __gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0
 __gg.MH_attackTemplate=nil; __gg.MH_registerTemplate=nil; __gg.MH_pendingRegister=nil; __gg.MH_attackSequence=nil; __gg.MH_soundTemplate=nil; __gg.MH_hbMade=nil; __gg.MH_hbBuildAt=nil
-__gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_verifiedReplicaId=nil; __gg.MH_wellbeing=nil
+__gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_verifiedReplicaId=nil; __gg.MH_wellbeing=nil
 __gg.MH_identityKey=nil; __gg.MH_dietCache=nil; __gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_healthPacket=nil; __gg.MH_guardLastHP=nil
 __gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil; __gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
 -- Every captured packet below is valid only for one playable dinosaur. Character, species, or verified replica
@@ -18,10 +18,10 @@ __gg.MH_clearDinoCaches=function(identityKey)
 	__gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0; __gg.MH_foodProbeCursor=0
 	__gg.MH_attackTemplate=nil; __gg.MH_registerTemplate=nil; __gg.MH_pendingRegister=nil; __gg.MH_attackSequence=nil; __gg.MH_soundTemplate=nil
 	__gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_hbBuildAt=nil
-	__gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_healthPacket=nil; __gg.MH_healthReportAt=nil
+	__gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_healthPacket=nil; __gg.MH_healthReportAt=nil
 	__gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_guardLastHP=nil; __gg.MH_guardMax=nil
 	__gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
-	if type(MHNEED)=="table" then MHNEED.refs={food={},stamina={}}; MHNEED.max={food=nil,stamina=nil}; MHNEED.hasPaired={food=false,stamina=false}; MHNEED.at=0; MHNEED.root=nil; MHNEED.character=nil; MHNEED.capRoot=nil; MHNEED.capacity=nil end
+	if type(MHNEED)=="table" then MHNEED.refs={food={},stamina={}}; MHNEED.max={food=nil,stamina=nil}; MHNEED.maxSource={food=nil,stamina=nil}; MHNEED.hasPaired={food=false,stamina=false}; MHNEED.at=0; MHNEED.root=nil; MHNEED.character=nil; MHNEED.capRoot=nil; MHNEED.capacity=nil end
 end
 -- EARLY visible proof-of-life (for console-less mobile executors): if you see this toast the script
 -- IS running -> press RightShift for the menu. If you DON'T see it, the executor failed to FETCH the
@@ -811,6 +811,18 @@ local hookmeta    = hookmetamethod
 local getnamecall = getnamecallmethod
 local setclip     = setclipboard
 local checkcaller = checkcaller or function() return false end
+-- Prompt activation shared by food paths. Prefer the executor helper when available; otherwise use Roblox's native
+-- hold API. Every property is restored immediately so INF Food cannot leave eating/fossil prompts modified.
+__gg.MH_activatePrompt=function(prompt,maxDistance)
+	if not (prompt and prompt:IsA("ProximityPrompt") and prompt.Parent) then return false end
+	local od,oh,ol,oe=prompt.MaxActivationDistance,prompt.HoldDuration,prompt.RequiresLineOfSight,prompt.Enabled
+	local fired=false
+	pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(tonumber(od) or 8,tonumber(maxDistance) or 30); prompt.HoldDuration=0; prompt.Enabled=true end)
+	if fireprox then fired=pcall(function() fireprox(prompt) end)
+	else fired=pcall(function() prompt:InputHoldBegin(); task.wait(); prompt:InputHoldEnd() end) end
+	pcall(function() prompt.MaxActivationDistance=od; prompt.HoldDuration=oh; prompt.RequiresLineOfSight=ol; prompt.Enabled=oe end)
+	return fired
+end
 local function safeParentGui(gui)
 	pcall(function()
 		if typeof(gethui)=="function" then gui.Parent = gethui()
@@ -828,7 +840,7 @@ local CFG = {
 	BotFlee=true, BotFleeRange=240, BotRoam=true, BotRoamRadius=350, BotEatAt=80, BotDrinkAt=80, BotSleepHeal=true, BotSpeed=18, BotAnnounce=true,
 	BoneProtect=false, ProtectBone="All",
 	TurnHack=false, TurnSpeed=30,
-	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, RunSpeed=15, StamDrive=true, StamRunSpeed=0, DeathFix=true, Noclip=false, Invis=false,
+	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, DeathFix=true, Noclip=false, Invis=false,
 	InfJump=false, BypassTP=true,
 	InfFood=false, InfWater=false, InfStam=false, InfOxygen=false,
 	AntiDrown=true, AntiDrownRise=14, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false, HeadDmgReduce=100,
@@ -848,7 +860,7 @@ local CFG = {
 	AntiBreakHead=true, AntiBreakNeck=true, AntiBreakLeg=true, AntiBreakTail=true, AntiBreakTorso=true, NoClouds=false, Float=false,
 	GodMode=false, AutoFarmGem=false, GemRange=1000000,
 	FarmReach=200, FarmTeleport=true, FarmSpeed=55, TpBiome="(scan)",
-	InfStamRun=true, AutoEatFood=true, FoodEatRange=120, FoodEatSpeed=3,
+	AutoEatFood=true, FoodEatRange=120, FoodEatSpeed=3,
 	AlwaysDamage=false, DamageRange=120, DamageRate=4, DamagePart="Auto", NoGrabLimit=false,
 }
 
@@ -861,15 +873,10 @@ local function loadCfg()
 	if not (isfile and readfile and isfile(FILE)) then return end
 	pcall(function()
 		local data = HttpService:JSONDecode(readfile(FILE))
-		for k,v in pairs(data) do CFG[k]=v end
+		for k,v in pairs(data) do if CFG[k]~=nil then CFG[k]=v end end
 	end)
 end
 loadCfg()
--- MIGRATE + CLAMP the INF-Stam run speed on load: 16 was STILL above what the server tolerates ("16 speed makes
--- u snap back"), so the safe band is 12-15. Default is 15: Speed-Finder testing measured ~15.7 sustained (21.9
--- bursts) with ZERO snapbacks now that the drive reports through the game's own move remote — the band top is
--- simply the best speed. Any saved value outside 12-15 (old 16-90 configs included) is reset to 15.
-do local rs = tonumber(CFG.RunSpeed) or 15; CFG.RunSpeed = (rs >= 10 and rs <= 15) and rs or 15 end
 MS("1 config ok")
 CFG.Keybinds = CFG.Keybinds or {}
 CFG.Keybinds.UIKey = CFG.Keybinds.UIKey or CFG.UIKey
@@ -1202,7 +1209,11 @@ local function installHook()
 				-- Sip/Bite/Eat address a SOURCE replica, not our dinosaur. Keep those ids only in the source list.
 				if typeof(id)=="number" then
 					if action=="Sip" or action=="Bite" or action=="Eat" or action=="Consume" then
-						if not seenSet[id] then seenSet[id]=true; seenIds[#seenIds+1]=id end if action=="Bite" and a.n>=3 then __gg.MH_eat={id=id,buf=a[3]}; __gg.MH_foodIds=__gg.MH_foodIds or {}; if id~=myReplicaId then __gg.MH_foodIds[id]=true; __gg.MH_eatBuf=a[3] end end   -- collect EVERY food id you bite (multi-id) so INF Food replays them all
+						if not seenSet[id] then
+							seenSet[id]=true; seenIds[#seenIds+1]=id
+							if #seenIds>64 then local oldId=table.remove(seenIds,1); seenSet[oldId]=nil end
+						end
+						if action=="Bite" and a.n>=3 then __gg.MH_eat={id=id,buf=a[3]}; __gg.MH_foodIds=__gg.MH_foodIds or {}; if id~=myReplicaId then __gg.MH_foodIds[id]=true; __gg.MH_eatBuf=a[3] end end
 						-- BITE-ONLY CAPTURE (for the INF Food spam loop): record the ENTIRE Bite call verbatim — the exact
 						-- id + "Bite" + every argument the game sent when YOU bit food — so we can replay it byte-for-byte,
 						-- fast, forever. We keep a LIST of the last several DIFFERENT bites, so the more different things you
@@ -1215,7 +1226,7 @@ local function installHook()
 							-- in the key made every bite look unique and the old loop replayed many stale duplicates.
 							local key=tostring(id); local replaced=false
 							for i,c in ipairs(__gg.MH_biteCalls) do if c.key==key then snap.key=key; __gg.MH_biteCalls[i]=snap; replaced=true; break end end
-							if not replaced then snap.key=key; table.insert(__gg.MH_biteCalls, snap); if #__gg.MH_biteCalls>8 then table.remove(__gg.MH_biteCalls,1) end end
+							if not replaced then snap.key=key; table.insert(__gg.MH_biteCalls, snap); if #__gg.MH_biteCalls>3 then table.remove(__gg.MH_biteCalls,1) end end
 						end
 					elseif selfCall then
 						noteReplicaId(id)
@@ -1621,11 +1632,12 @@ local CharacterState
 pcall(function() local cm=RS:FindFirstChild("Common"); local cs=cm and cm:FindFirstChild("CharacterState"); if cs then CharacterState=require(cs) end end)
 local function csReplica() return CharacterState and CharacterState.Replica end
 local function csStats() local r=csReplica(); if r and r.Data then return r.Data.Stats, r.Data.MaxStats end end
--- Authoritative runtime need resolver. A current value is NEVER promoted to a maximum: 3.8 food and 316 stamina
--- are observations, not capacities. Resolution order is (1) matching MaxStats/sibling pair, (2) ConsumptionData
--- for food, then (3) a real HUD current/max denominator such as "3.8 / 15" or "316 / 319". HUD bars/text are not
--- painted; only their numeric backing Value/attribute sources are eligible references.
-MHNEED={refs={food={},stamina={}},max={food=nil,stamina=nil},hasPaired={food=false,stamina=false},at=0,root=nil,character=nil,capRoot=nil,capacity=nil}
+-- Runtime need resolver. Food always requires a real capacity. Stamina may use the highest value observed on this
+-- exact dinosaur as a LOCAL-only fallback when neither MaxStats nor the HUD denominator is discoverable; that keeps
+-- client exhaustion from slowing movement without manufacturing a larger server value. Resolution order is
+-- (1) matching MaxStats/sibling pair, (2) ConsumptionData for food, (3) a real HUD current/max denominator such as
+-- "3.8 / 15" or "316 / 319", then (4) stamina's per-dinosaur observed high-water fallback.
+MHNEED={refs={food={},stamina={}},max={food=nil,stamina=nil},maxSource={food=nil,stamina=nil},hasPaired={food=false,stamina=false},at=0,root=nil,character=nil,capRoot=nil,capacity=nil}
 function MHNEED.replicaId()
 	local r=csReplica(); if not r then return nil end
 	-- The packet owner is verified only by the exact CharacterState.Replica.Id field. Data/source ids are unrelated.
@@ -1718,14 +1730,14 @@ function MHNEED.refresh(force)
 	if not force and MHNEED.root==root and MHNEED.character==character and tick()-(MHNEED.at or 0)<0.75 then return end
 	if MHNEED.root~=root or MHNEED.character~=character then MHNEED.capRoot=nil; MHNEED.capacity=nil end
 	MHNEED.root=root; MHNEED.character=character; MHNEED.at=tick()
-	local refs={food={},stamina={}}; local chosen={food=nil,stamina=nil}; local hasPaired={food=false,stamina=false}; local seen,count={},0
-	local function candidate(kind,value,priority)
+	local refs={food={},stamina={}}; local chosen={food=nil,stamina=nil}; local hasPaired={food=false,stamina=false}; local hudPairs={}; local seen,count={},0
+	local function candidate(kind,value,priority,source)
 		value=tonumber(value); if not (kind and value and value>0 and value<1e8) then return end
 		local old=chosen[kind]
-		if not old or priority>old.priority then chosen[kind]={value=value,priority=priority} end
+		if not old or priority>old.priority then chosen[kind]={value=value,priority=priority,source=source} end
 	end
 	local function addRef(kind,ref,mx,priority)
-		if not kind then return end; ref.max=mx; refs[kind][#refs[kind]+1]=ref; if mx then hasPaired[kind]=true; candidate(kind,mx,priority) end
+		if not kind then return end; ref.max=mx; refs[kind][#refs[kind]+1]=ref; if mx then hasPaired[kind]=true; candidate(kind,mx,priority,"paired") end
 	end
 	local function pairPriority(kind,key)
 		local n=MHNEED.norm(key)
@@ -1734,10 +1746,10 @@ function MHNEED.refresh(force)
 		return 3
 	end
 	local function walk(tb,maxTb,path,depth)
-		if type(tb)~="table" or seen[tb] or depth>6 or count>1100 then return end
+		if type(tb)~="table" or seen[tb] or depth>8 or count>4000 then return end
 		seen[tb]=true
 		for k,v in pairs(tb) do
-			count+=1; if count>1100 then break end
+			count+=1; if count>4000 then break end
 			local ks=tostring(k)
 			if type(v)=="number" then
 				local kind=MHNEED.kindFor(ks,path)
@@ -1751,7 +1763,16 @@ function MHNEED.refresh(force)
 			end
 		end
 	end
-	if root then walk(root,root.MaxStats or root.Max,"Replica.Data",0) end
+	if root then
+		-- Known need tables are scanned first so a large replica cannot exhaust the generic walk budget before Food or
+		-- Stamina is reached. The generic walk still handles future layouts and species-specific nesting.
+		if type(root.Stats)=="table" then walk(root.Stats,root.MaxStats or root.Max,"Replica.Data.Stats",0) end
+		if type(root.Needs)=="table" then walk(root.Needs,root.MaxNeeds or root.MaxStats or root.Max,"Replica.Data.Needs",0) end
+		if type(root.Vitals)=="table" then walk(root.Vitals,root.MaxVitals or root.MaxStats or root.Max,"Replica.Data.Vitals",0) end
+		local sav=root.SavableStats
+		if type(sav)=="table" and type(sav.Stats)=="table" then walk(sav.Stats,sav.MaxStats or sav.Max,"Replica.Data.SavableStats.Stats",0) end
+		walk(root,root.MaxStats or root.Max,"Replica.Data",0)
+	end
 	if CharacterState then
 		for _,k in ipairs({"Stats","State","Data","Vitals","Needs","Resources"}) do local tb=CharacterState[k]; if type(tb)=="table" then walk(tb,tb.MaxStats or tb.Max,"CharacterState."..k,0) end end
 		for k,v in pairs(CharacterState) do if type(v)=="number" then local kind=MHNEED.kindFor(k,"CharacterState"); if kind then
@@ -1761,7 +1782,7 @@ function MHNEED.refresh(force)
 	local wb=__gg.MH_wellbeing; local wr=wb and wb.Data and wb.Data.SavableStats
 	if wr and type(wr.Stats)=="table" then walk(wr.Stats,wr.MaxStats or wr.Max,"Wellbeing.Stats",0) end
 	-- ConsumptionData is a fallback only when no matching data-table pair exists.
-	if not chosen.food then candidate("food",MHNEED.foodCapacity(),2) end
+	if not chosen.food then candidate("food",MHNEED.foodCapacity(),2,"capacity") end
 	-- HUD denominator/data-source fallback. Do not mutate text, bar Size, or fill/ratio properties.
 	local pg=LP:FindFirstChild("PlayerGui"); local hud=pg and (pg:FindFirstChild("MainHUD") or pg)
 	local sf=hud and (hud:FindFirstChild("StatsFrame",true) or hud)
@@ -1773,7 +1794,9 @@ function MHNEED.refresh(force)
 			if inst:IsA("TextLabel") or inst:IsA("TextButton") then
 				local text=tostring(inst.Text or ""):gsub(",",""); local cur,mx=text:match("([%d%.]+)%s*/%s*([%d%.]+)")
 				cur=tonumber(cur); mx=tonumber(mx); local kind=MHNEED.kindFor(inst.Name,context) or MHNEED.kindFor("current",context)
-				if kind and cur and mx and mx>1 and cur<=mx and not text:find("%",1,true) then candidate(kind,mx,1) end
+				if cur and mx and mx>0 and cur<=mx and not text:find("%",1,true) then
+					if kind then candidate(kind,mx,1,"hud") else hudPairs[#hudPairs+1]={current=cur,max=mx} end
+				end
 			end
 			local attrs=inst:GetAttributes()
 			for k,v in pairs(attrs) do if type(v)=="number" then local kind=MHNEED.kindFor(k,context); if kind then local mx=MHNEED.pairedMax(attrs,k,nil,kind,v); addRef(kind,{mode="attr",inst=inst,key=k},mx,1) end end end
@@ -1790,7 +1813,34 @@ function MHNEED.refresh(force)
 			end
 		end
 	end
-	MHNEED.refs=refs; MHNEED.hasPaired=hasPaired; MHNEED.max.food=chosen.food and chosen.food.value or nil; MHNEED.max.stamina=hasPaired.stamina and chosen.stamina and chosen.stamina.value or nil
+	-- Icon-only HUD rows do not necessarily contain "Food" or "Stamina" in their instance names. Match an otherwise
+	-- anonymous "current / max" row to the exact current value found in the live replica. When multiple rows have the
+	-- same numerator (for example 10/10 and food 10/15), the larger denominator is the useful capacity.
+	local function refValue(ref)
+		if ref.mode=="table" and ref.tb then return tonumber(ref.tb[ref.key]) end
+		if ref.mode=="attr" and ref.inst and ref.inst.Parent then local ok,v=pcall(function() return ref.inst:GetAttribute(ref.key) end); if ok then return tonumber(v) end end
+		if ref.mode=="value" and ref.inst and ref.inst.Parent then local ok,v=pcall(function() return ref.inst.Value end); if ok then return tonumber(v) end end
+	end
+	for _,kind in ipairs({"food","stamina"}) do
+		local hudMax
+		for _,ref in ipairs(refs[kind]) do local value=refValue(ref); if value then
+			for _,pair in ipairs(hudPairs) do local tolerance=math.max(0.02,math.abs(value)*0.002)
+				if math.abs(pair.current-value)<=tolerance and (not hudMax or pair.max>hudMax) then hudMax=pair.max end
+			end
+		end end
+		if hudMax then candidate(kind,hudMax,1,"hud") end
+	end
+	-- Last-resort stamina pin: retain only the highest value actually observed for this dinosaur. It is deliberately
+	-- lower priority than every true maximum and is never eligible for reportKnown/namecall server rewrites.
+	for _,ref in ipairs(refs.stamina) do local value=refValue(ref); if value and value>0 and value<1e8 then
+		__gg.MH_needHighWater.stamina=math.max(tonumber(__gg.MH_needHighWater.stamina) or 0,value)
+	end end
+	if not chosen.stamina and (__gg.MH_needHighWater.stamina or 0)>0 then candidate("stamina",__gg.MH_needHighWater.stamina,0,"highwater") end
+	MHNEED.refs=refs; MHNEED.hasPaired=hasPaired
+	for _,kind in ipairs({"food","stamina"}) do
+		MHNEED.max[kind]=chosen[kind] and chosen[kind].value or nil
+		MHNEED.maxSource[kind]=chosen[kind] and chosen[kind].source or nil
+	end
 end
 function MHNEED.maxFor(kind) MHNEED.refresh(); return MHNEED.max[kind] end
 function MHNEED.maxForProperty(kind,property)
@@ -1802,14 +1852,16 @@ function MHNEED.maxForProperty(kind,property)
 	-- The game can report an alias (for example Energy/CurrentStamina) while the paired local field is named
 	-- Stamina. Once the property and the resolved field both classify as the same need, the paired maximum is still
 	-- authoritative; requiring an identical spelling made valid stamina/food reports fail silently.
-	if MHNEED.kindFor(property,"")==kind and MHNEED.hasPaired and MHNEED.hasPaired[kind] then return MHNEED.max[kind] end
-	if kind=="stamina" then return nil end
-	return MHNEED.max[kind]
+	local source=MHNEED.maxSource and MHNEED.maxSource[kind]
+	if MHNEED.kindFor(property,"")==kind and (source=="paired" or source=="hud" or (kind=="food" and source=="capacity")) then return MHNEED.max[kind] end
+	return nil
 end
 function MHNEED.pin(kind)
 	MHNEED.refresh(); local globalMax=MHNEED.max[kind]; local changed=false
+	local source=MHNEED.maxSource and MHNEED.maxSource[kind]
+	local trustedGlobal=globalMax and (source=="paired" or source=="hud" or (kind=="food" and source=="capacity") or (kind=="stamina" and source=="highwater"))
 	for _,ref in ipairs(MHNEED.refs[kind] or {}) do
-		local target=ref.max or ((kind~="stamina" and not MHNEED.hasPaired[kind]) and globalMax or nil)
+		local target=ref.max or (trustedGlobal and globalMax or nil)
 		if target and target>0 then
 			if ref.mode=="table" and ref.tb and type(ref.tb[ref.key])=="number" then if math.abs(ref.tb[ref.key]-target)>1e-6 then changed=true; ref.tb[ref.key]=target end
 			elseif ref.mode=="attr" and ref.inst and ref.inst.Parent then local v=ref.inst:GetAttribute(ref.key); if type(v)=="number" and math.abs(v-target)>1e-6 then changed=true; pcall(function() ref.inst:SetAttribute(ref.key,target) end) end
@@ -1820,12 +1872,30 @@ function MHNEED.pin(kind)
 end
 function MHNEED.report(kind, force)
 	local packet=__gg.MH_needPackets and __gg.MH_needPackets[kind]; local mx=packet and MHNEED.maxForProperty(kind,packet[3]); local id=MHNEED.replicaId()
-	if not (type(packet)=="table" and packet.n and packet.n>=4 and mx and id and packet[1]==id) then return false end
+	-- Proactive reports require a paired data maximum. HUD/capacity fallbacks may pin local state and may rewrite a
+	-- genuine outgoing need report, but they never manufacture a new server report on their own.
+	if not (MHNEED.maxSource and MHNEED.maxSource[kind]=="paired" and type(packet)=="table" and packet.n and packet.n>=4 and mx and id and packet[1]==id) then return false end
 	local now=tick(); local last=__gg.MH_needReportAt[kind] or 0; if not force and now-last<0.9 then return false end
 	local re=RS:FindFirstChild("RemoteEvents"); local remote=(packet.instance and packet.instance.Parent and packet.instance) or (re and packet.remote and re:FindFirstChild(packet.remote))
 	if not remote then return false end
 	local args={n=packet.n}; for i=1,packet.n do args[i]=packet[i] end; args[4]=mx; __gg.MH_needReportAt[kind]=now
 	return pcall(function() remote:FireServer(table.unpack(args,1,args.n)) end)
+end
+function MHNEED.reportKnown(kind,force)
+	MHNEED.refresh(); local mx=MHNEED.max[kind]; local source=MHNEED.maxSource and MHNEED.maxSource[kind]
+	if not (mx and (source=="paired" or source=="hud" or (kind=="food" and source=="capacity"))) then return false end
+	-- Use only a current property name found on this dinosaur. MaxStats/capacity fields are never reported as current.
+	local property
+	for _,ref in ipairs(MHNEED.refs[kind] or {}) do
+		local path=tostring(ref.path or ""):lower(); local key=ref.key or (ref.inst and ref.inst.Name)
+		if type(key)=="string" and MHNEED.kindFor(key,ref.path)==kind and not path:find("max",1,true) and not path:find("capacity",1,true) then property=key; break end
+	end
+	local rep=csReplica(); local id=MHNEED.replicaId()
+	if not (property and rep and id and rep.FireServer) then return false end
+	local stamp=kind..":known"; local now=tick(); local last=__gg.MH_needReportAt[stamp] or 0
+	if not force and now-last<0.9 then return false end
+	__gg.MH_needReportAt[stamp]=now
+	return pcall(function() rep:FireServer("SetProperty",property,mx) end)
 end
 -- Character/species/verified-replica changes can occur without a CharacterAdded event. Watch only the cheap identity
 -- tuple and invalidate all diet, Bite, combat/sound, need, and blood caches before any old packet can be replayed.
@@ -2356,15 +2426,30 @@ end
 local function charModels()
 	local cc=__gg.MH_charCache
 	if cc and tick()-(cc.at or 0)<0.45 then return cc.list end
-	local out,seen={},{}
+	local out,seen,walked={},{},{}
 	local function put(m) if m and m:IsA("Model") and not seen[m] then seen[m]=true; out[#out+1]=m end end
+	local function creature(m)
+		return m and m:IsA("Model") and (m:FindFirstChild("MeshModel") or m:FindFirstChild("Physics")
+			or m:FindFirstChild("TurningAnimation") or m:FindFirstChildOfClass("Humanoid")
+			or m:FindFirstChild("Hitbox") or m:FindFirstChild("HitBox"))
+	end
 	local function add(f, deep)
-		if not f then return end
-		for _,m in ipairs(f:GetChildren()) do if m:IsA("Model") then put(m) end end
-		if deep then local scanned=0; for _,m in ipairs(f:GetDescendants()) do
-			scanned+=1; if scanned>1800 then break end
-			if m:IsA("Model") and (m:FindFirstChild("MeshModel") or m:FindFirstChild("Physics") or m:FindFirstChild("TurningAnimation") or m:FindFirstChildOfClass("Humanoid") or m:FindFirstChild("Hitbox") or m:FindFirstChild("HitBox")) then put(m) end
-		end end
+		if not f or walked[f] then return end
+		if not deep then walked[f]=true; for _,m in ipairs(f:GetChildren()) do if m:IsA("Model") then put(m) end end; return end
+		-- Walk container hierarchy, not every bone/part. Once a creature's direct rig marker is found, admit it and
+		-- stop descending into that rig. This has no object-count cutoff, so a late-joined dinosaur cannot land behind
+		-- an arbitrary 1,800-descendant budget, while crowded rigs remain cheap to discover.
+		local queue={f}; local head=1
+		while head<=#queue do
+			local node=queue[head]; head+=1
+			if not walked[node] then
+				walked[node]=true
+				for _,child in ipairs(node:GetChildren()) do
+					if child:IsA("Model") and creature(child) then put(child)
+					elseif child:IsA("Folder") or child:IsA("Model") then queue[#queue+1]=child end
+				end
+			end
+		end
 	end
 	add(WS:FindFirstChild("Characters"), true)
 	local ci=WS:FindFirstChild("CharacterIgnore")
@@ -3500,7 +3585,13 @@ task.spawn(function()
 			pcall(function()
 				for _,row in ipairs({{"food",CFG.InfFood},{"stamina",CFG.InfStam}}) do
 					local kind,on=row[1],row[2]
-					if on then MHNEED.pin(kind); MHNEED.report(kind,not wasOn[kind]) end
+					if on then
+						MHNEED.pin(kind)
+						if not MHNEED.report(kind,not wasOn[kind]) then MHNEED.reportKnown(kind,not wasOn[kind]) end
+						if kind=="food" and not wasOn.food then
+							local rep=csReplica(); if rep and rep.FireServer and rep.Data and rep.Data.Growth and rep.Data.Growth.Paused==true then pcall(function() rep:FireServer("SetGrowthPaused",false) end) end
+						end
+					end
 					wasOn[kind]=on
 				end
 			end)
@@ -3554,13 +3645,7 @@ conn(UIS.InputBegan:Connect(function(input, gp)
 			if scanned>8000 then break end
 		end
 		if best then
-			local ol=best.RequiresLineOfSight
-			if fireprox then
-				local oh=best.HoldDuration
-				pcall(function() best.RequiresLineOfSight=false; best.HoldDuration=0 end)
-				pcall(function() fireprox(best) end)
-				pcall(function() best.HoldDuration=oh; best.RequiresLineOfSight=ol end)
-			end
+			pcall(function() __gg.MH_activatePrompt(best,24) end)
 		end
 	end) end)
 end))
@@ -3913,34 +3998,63 @@ end end)
 -- the client pin. The food scan is THROTTLED + capped (so it can't lag you like a per-frame workspace scan would).
 local function nearbyFood(range)
 	if tick()-FARM.food.t < 3 and (FARM.food.range or 0)>=range then return FARM.food.list end
-	local me=hrp(); local out={}; local seen={}
+	local me=hrp(); local out={}; local seen={}; local visited={}
 	if me then
-		local cnt=0
 		-- edible-plant / herb name list (this game's flora) so INF Food eats ANY plant type around you, not just corpses
 		local PLKW={"plant","sapling","tree","fern","berry","berries","pine","needle","leaf","leaves","frond","conifer","cycad","mushroom","fungus","grass","moss","bush","shrub","flower","seed","cone","horsetail","redwood","ginkgo","sequoia","equisetum","woodwardia","blechn","gleichenia","osmunda","zingiber","dicksonia","williamsonia","dryophyll","sabalit","marmarthia","coniopteris","wielandiella","hermanophyton","anthill","herb","foliage","trunk","paleoaster","palaeoaster","araucaria","agathis","athrotaxite","brachyphyllum","elatide","platanites","cycadeoidea"}
 		local function isPlantN(n) for _,k in ipairs(PLKW) do if n:find(k,1,true) then return true end end return false end
-		-- 1) prompts: corpses (investigate/eat/consume) AND plants (graze/forage/feed/pick/harvest/eat). Fire ANY of them.
-		for _,d in ipairs(WS:GetDescendants()) do
-			cnt+=1; if cnt>6000 then break end
+		local function inspect(d, trustedFoodPool)
+			if visited[d] then return end
+			visited[d]=true
+			-- Prompts: corpses (investigate/eat/consume) AND plants (graze/forage/feed/pick/harvest/eat).
+			-- A prompt inside a dedicated Food/Plant/Meat pool is accepted even when its localized ActionText is unknown.
 			if d:IsA("ProximityPrompt") then
 				local at=(d.ActionText or ""):lower(); local nm=(d.Name or ""):lower(); local ot=(d.ObjectText or ""):lower()
-				if at:find("investigate") or at:find("eat") or at:find("consume") or at:find("graze") or at:find("forage")
+				if trustedFoodPool or at:find("investigate") or at:find("eat") or at:find("consume") or at:find("graze") or at:find("forage")
 				 or at:find("feed") or at:find("pick") or at:find("harvest") or at:find("herb") or at:find("plant")
 				 or nm:find("investigate") or nm:find("eat") or nm:find("food") or isPlantN(ot) then
 					local p=d.Parent
-					local part=(p and p:IsA("BasePart") and p) or (p and p:FindFirstChildWhichIsA("BasePart"))
-					local m=(p and p:IsA("Model")) and p or (part and part:FindFirstAncestorWhichIsA("Model")) or p
+					local part=(p and p:IsA("BasePart") and p)
+						or (p and p:IsA("Attachment") and p.Parent and p.Parent:IsA("BasePart") and p.Parent)
+						or (p and p:FindFirstChildWhichIsA("BasePart",true))
+						or (p and p:FindFirstAncestorWhichIsA("BasePart"))
+					local m=(p and p:IsA("Model") and p) or (p and p:FindFirstAncestorWhichIsA("Model"))
+						or (part and part:FindFirstAncestorWhichIsA("Model")) or p
 					if m and part and not seen[m] then local dd=dist(me.Position,part.Position); if dd<=range then seen[m]=true; out[#out+1]={m,part,dd, prompt=d} end end
 				end
 			elseif d:IsA("Model") and d~=getMyModel() and not Players:GetPlayerFromCharacter(d) and not seen[d] then
 				local n=d.Name:lower()
-				if isFoodName(n) or n:find("corpse") or n:find("carcass") or n:find("remains") or isPlantN(n) then
+				if trustedFoodPool or isFoodName(n) or n:find("corpse") or n:find("carcass") or n:find("remains") or isPlantN(n) then
 					-- a plant model only counts as food if it actually has an eat prompt (skip decorative scenery)
 					local pr=d:FindFirstChildWhichIsA("ProximityPrompt",true)
-					local r=rootOf(d); if r and (pr or isFoodName(n) or n:find("corpse")) then local dd=dist(me.Position,r.Position); if dd<=range then seen[d]=true; out[#out+1]={d,r,dd, prompt=pr} end end
+					local r=rootOf(d); if r and (pr or trustedFoodPool or isFoodName(n) or n:find("corpse")) then local dd=dist(me.Position,r.Position); if dd<=range then seen[d]=true; out[#out+1]={d,r,dd, prompt=pr} end end
 				end
 			end
 		end
+		-- Breadth-first, budgeted scans avoid WS:GetDescendants() constructing the entire live map before the old
+		-- 6,000-item break. Dedicated runtime food pools are searched first, so late-map meat/plants are not starved.
+		local function scan(root,budget,trustedFoodPool)
+			if not root then return end
+			local queue={root}; local head=1; local count=0
+			while head<=#queue and count<budget do
+				local d=queue[head]; head+=1; count+=1
+				inspect(d,trustedFoodPool)
+				local ok,children=pcall(function() return d:GetChildren() end)
+				if ok then for _,child in ipairs(children) do if not visited[child] then queue[#queue+1]=child end end end
+			end
+		end
+		local ci=WS:FindFirstChild("CharacterIgnore")
+		local dedicated={
+			{ci and ci:FindFirstChild("SpawnedMeat"),true}, {ci and ci:FindFirstChild("CorpseSpawns"),true},
+			{WS:FindFirstChild("Food"),true}, {WS:FindFirstChild("FoodSpawns"),true}, {WS:FindFirstChild("Edibles"),true},
+			{WS:FindFirstChild("Plants"),true}, {WS:FindFirstChild("Flora"),true}, {WS:FindFirstChild("Vegetation"),true},
+			{ci and ci:FindFirstChild("LeftCharacters"),false},
+		}
+		for _,entry in ipairs(dedicated) do scan(entry[1],5000,entry[2]) end
+		-- Map layouts vary by server/version. Search likely world containers only when dedicated pools did not give a
+		-- useful set, then perform one larger bounded workspace fallback as a last resort.
+		if #out<24 then scan(WS:FindFirstChild("Biomes"),12000,false); scan(WS:FindFirstChild("Map"),12000,false) end
+		if #out==0 then scan(ci,12000,false); scan(WS,26000,false) end
 		table.sort(out,function(a,b) return a[3]<b[3] end)
 	end
 	FARM.food={t=tick(), list=out, range=range}
@@ -4440,7 +4554,7 @@ do
 		local m,part,prompt = fd[1],fd[2],fd.prompt
 		if not prompt and m then prompt=m:FindFirstChildWhichIsA("ProximityPrompt",true) end
 		if not prompt and part then local mm=part:FindFirstAncestorWhichIsA("Model"); prompt=mm and mm:FindFirstChildWhichIsA("ProximityPrompt",true) end
-		if prompt then pcall(function() local od,oh,ol=prompt.MaxActivationDistance,prompt.HoldDuration,prompt.RequiresLineOfSight; prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(od or 8,30); prompt.HoldDuration=0; if fireprox then fireprox(prompt) end; prompt.MaxActivationDistance=od; prompt.HoldDuration=oh; prompt.RequiresLineOfSight=ol end) end   -- restore so YOUR hold-to-eat still works
+		if prompt then pcall(function() __gg.MH_activatePrompt(prompt,30) end) end
 		-- NO E key presses (user: the E spam blocked their own E for the herb). We fire the prompt + Bite remotes
 		-- ONLY, so the food bar fills without the script ever touching E — you press E yourself, once, freely.
 		pcall(fakeEat)
@@ -4451,7 +4565,7 @@ do
 		if not part then return end
 		local m=part:FindFirstAncestorWhichIsA("Model")
 		local prompt=(m and m:FindFirstChildWhichIsA("ProximityPrompt",true)) or part:FindFirstChildWhichIsA("ProximityPrompt")
-		if prompt then pcall(function() local od,oh,ol=prompt.MaxActivationDistance,prompt.HoldDuration,prompt.RequiresLineOfSight; prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(od or 8,40); prompt.HoldDuration=0; if fireprox then fireprox(prompt) end; prompt.MaxActivationDistance=od; prompt.HoldDuration=oh; prompt.RequiresLineOfSight=ol end) end   -- restore so YOUR hold-to-eat still works
+		if prompt then pcall(function() __gg.MH_activatePrompt(prompt,40) end) end
 		pcall(fakeEat)   -- captured Bite remotes — fills the bar without pressing E
 	end
 	-- FULL → walk in a CIRCLE. REWORKED (was: W+D key holds — those only walked you diagonally in a straight line,
@@ -4541,10 +4655,7 @@ task.spawn(function() while RUNNING do
 					if not stillHold then
 						task.wait()
 						if not CFG.InfFood or token~=__gg.MH_foodGen then break end
-						local oh=prompt.HoldDuration; local od=prompt.MaxActivationDistance; local ol=prompt.RequiresLineOfSight
-						pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.huge; prompt.HoldDuration=0 end)
-						if fireprox then pcall(function() fireprox(prompt) end) end   -- remote eat: fire from anywhere, no key press
-						pcall(function() prompt.HoldDuration=oh; prompt.MaxActivationDistance=od; prompt.RequiresLineOfSight=ol end)   -- restore so your hold-to-eat still works
+						pcall(function() __gg.MH_activatePrompt(prompt,math.huge) end)
 					end
 					break
 				end
@@ -4866,7 +4977,7 @@ local function expandModel(m)
 end
 -- (Bone Protection NO LONGER shrinks your hitbox — that broke your M1. It now clears the chosen bone's break/
 -- fracture STATUS via the antiInjurySweep loop above. The expander below only touches ENEMY hitboxes.)
--- Re-apply enemy hitbox expansion every 0.1s so the server can't revert. ENEMIES ONLY — the own-model check is
+-- Re-apply enemy hitbox expansion continuously. ENEMIES ONLY — the own-model check is
 -- now BULLETPROOF ("I still see my hitbox" fix): name match (the test build's check), LP.Character, the Player
 -- object, AND the model your own body part actually lives in (covers sandbox dinos that aren't named after you).
 -- On top of that, any of YOUR parts that ever got touched are restored on the spot, every tick.
@@ -4883,37 +4994,33 @@ task.spawn(function() local cleared=true while RUNNING do
 			if myR and myR:IsDescendantOf(m) then return true end
 			return false
 		end
-		-- CAP + NEARBY-ONLY (crash fix for weaker executors like Wave): expanding EVERY model incl the whole SpawnedAI
-		-- fish/AI folder into big visible ForceField boxes every tick overloaded the renderer = crash. Now: at most 24
-		-- NEARBY enemies, and the giant AI folder is skipped.
-		local me=hrp(); local ecount=0; local MAXM=28
-		local reach=math.max(tonumber(CFG.DamageRange) or 120, (tonumber(CFG.HitboxSize) or 50)*0.5 + 16, 140)
-		-- ALL DINOS: use the same full model list combat/targeting use (Characters + CharacterIgnore.LeftCharacters +
-		-- Sandbox/Dinos/Creatures/NPCs/Entities/Mobs/...). Nearest-first so the closest enemies always get expanded
-		-- even in a crowded server. getHitbox() is called on each (not just for distance) so it also triggers the
-		-- game's OWN CreateHitbox builder for dinos that have no Hitbox child yet — that's what fixes "doesn't work
-		-- on some dinos": next tick expandModel finds the freshly-built hitbox.
+		-- ALL STREAMED DINOS: use the same full model list combat/targeting use (Characters,
+		-- CharacterIgnore.LeftCharacters, sandbox/NPC containers, and late joiners). The old 28-model/140-stud gate is
+		-- why some visible dinosaurs never showed a hitbox. We process every admitted creature nearest-first and yield
+		-- between batches so a crowded server does not freeze for one long frame.
+		local me=hrp()
 		local models = (_G.MH_charModels and _G.MH_charModels()) or {}
 		if me then
-			local near={}
+			local all={}
 			for _,m in ipairs(models) do
 				if m:IsA("Model") and not isMine(m) then
-					local r=getHitbox(m) or rootOf(m)
-					if r then local d=dist(me.Position, r.Position); if d<=reach then near[#near+1]={m,d} end end
+					-- Ignore container Models that merely contain many dinosaurs; require this model's own rig marker.
+					local creature=m:FindFirstChild("MeshModel") or m:FindFirstChild("Physics") or m:FindFirstChild("TurningAnimation")
+						or m:FindFirstChildOfClass("Humanoid") or m:FindFirstChild("Hitbox") or m:FindFirstChild("HitBox") or Players:GetPlayerFromCharacter(m)
+					if creature then local r=getHitbox(m) or rootOf(m); if r then all[#all+1]={m,dist(me.Position,r.Position)} end end
 				end
 			end
-			table.sort(near, function(a,b) return a[2]<b[2] end)
-			for _,pair in ipairs(near) do
-				if ecount>=MAXM then break end
-				expandModel(pair[1]); ecount+=1
+			table.sort(all, function(a,b) return a[2]<b[2] end)
+			for i,pair in ipairs(all) do
+				expandModel(pair[1])
+				if i%10==0 then task.wait() end
 			end
 		end
-		-- Restore models that moved out of range or stopped matching the selected bone. Without this cleanup,
-		-- old expanded parts stayed huge until the toggle was switched off and eventually caused lag.
+		-- Restore despawned models or parts that stopped matching the selected bone.
 		for p in pairs(hbTouched) do
 			if not (p and p.Parent) or not hbSeen[p] or (mine and p:IsDescendantOf(mine)) or (LP.Character and p:IsDescendantOf(LP.Character)) or p:FindFirstAncestor(LP.Name) then restorePart(p) end
 		end
-		task.wait(0.1)
+		task.wait(0.15)
 	else
 		if not cleared then for p in pairs(hbTouched) do restorePart(p) end hbSeen={}; cleared=true end
 		task.wait(0.25)
@@ -6439,8 +6546,10 @@ conn(UIS.InputBegan:Connect(function(input, gp)
 	local uiKey = CFG.Keybinds["UIKey"] or CFG.UIKey or "RightShift"
 	if kn==uiKey then SG.Enabled=not SG.Enabled; if SG.Enabled and not USE_FLUENT then task.defer(clampWindow) end; return end  -- SG.Enabled mirrors menu-open for the aim/autoclick guards (Fluent handles its own RightShift minimize)
 	if gp then return end
-	-- A duplicated saved binding must never make INF Food toggle a teleport farm/corpse feature in the same keypress.
+	-- A duplicated saved binding must never make a survival toggle also enable speed/farm/teleport behavior. Old
+	-- config files can contain collisions, so Food and Stamina each own their keypress exclusively.
 	if CFG.Keybinds.InfFood==kn then toggleKey("InfFood"); return end
+	if CFG.Keybinds.InfStam==kn then toggleKey("InfStam"); return end
 	for cfgKey, boundName in pairs(CFG.Keybinds) do
 		if boundName==kn and cfgKey~="UIKey" and cfgKey~="AimKey" then
 			if type(CFG[cfgKey])=="boolean" then toggleKey(cfgKey) end
