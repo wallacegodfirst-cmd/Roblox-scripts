@@ -9,7 +9,7 @@ __gg.__PRIOR_EXT_HUB = nil
 __gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0
 __gg.MH_attackTemplate=nil; __gg.MH_registerTemplate=nil; __gg.MH_pendingRegister=nil; __gg.MH_attackSequence=nil; __gg.MH_soundTemplate=nil; __gg.MH_hbMade=nil; __gg.MH_hbBuildAt=nil
 __gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_verifiedReplicaId=nil; __gg.MH_wellbeing=nil
-__gg.MH_identityKey=nil; __gg.MH_dietCache=nil; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0
+__gg.MH_identityKey=nil; __gg.MH_dietCache=nil; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0; __gg.MH_foodCycleBusy=false; __gg.MH_foodPhase="idle"; __gg.MH_foodPromptName="none"
 __gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_healthPacket=nil; __gg.MH_guardLastHP=nil
 __gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil; __gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
 -- Every captured packet below is valid only for one playable dinosaur. Character, species, or verified replica
@@ -19,7 +19,7 @@ __gg.MH_clearDinoCaches=function(identityKey)
 	__gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0; __gg.MH_foodProbeCursor=0
 	__gg.MH_attackTemplate=nil; __gg.MH_registerTemplate=nil; __gg.MH_pendingRegister=nil; __gg.MH_attackSequence=nil; __gg.MH_soundTemplate=nil
 	__gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_hbBuildAt=nil
-	__gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0
+	__gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0; __gg.MH_foodCycleBusy=false; __gg.MH_foodPhase="idle"; __gg.MH_foodPromptName="none"
 	__gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_healthPacket=nil; __gg.MH_healthReportAt=nil
 	__gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_guardLastHP=nil; __gg.MH_guardMax=nil
 	__gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
@@ -844,7 +844,7 @@ local CFG = {
 	TurnHack=false, TurnSpeed=30,
 	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, DeathFix=true, Noclip=false, Invis=false,
 	InfJump=false, BypassTP=true,
-	InfFood=false, InfWater=false, InfStam=false, InfStamSpeed=45, InfOxygen=false,
+	InfFood=false, InfFoodDiet="Auto", InfWater=false, InfStam=false, InfStamSpeed=15, InfOxygen=false,
 	AntiDrown=true, AntiDrownRise=14, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false, HeadDmgReduce=100,
 	SaveDino=false, SaveHP=30, NoSleep=true, AutoHealBlood=false, AfkEat=false, BotPvP=true,
 	AutoFarmPlayer=false, FarmPlayerRange=120, AutoFarmFossil=false, FarmFossilRange=1000000, FossilSlow=1.2,
@@ -879,7 +879,11 @@ local function loadCfg()
 	end)
 end
 loadCfg()
-CFG.InfStamSpeed=math.clamp(tonumber(CFG.InfStamSpeed) or 45,15,120)
+-- Historical live PE speed-finder runs held about 15.7 studs/s without snapback; 16+ was corrected by the server.
+-- Reset old experimental 45/120 saves into that proven band instead of preserving a value that feels slow because
+-- the server continually rubber-bands it.
+do local speed=tonumber(CFG.InfStamSpeed) or 15; CFG.InfStamSpeed=(speed>=12 and speed<=15) and speed or 15 end
+if CFG.InfFoodDiet~="Herbivore" and CFG.InfFoodDiet~="Carnivore" then CFG.InfFoodDiet="Auto" end
 MS("1 config ok")
 CFG.Keybinds = CFG.Keybinds or {}
 CFG.Keybinds.UIKey = CFG.Keybinds.UIKey or CFG.UIKey
@@ -2070,38 +2074,68 @@ function __gg.MH_fireFoodReplicas(rs,buf,budget)
 	end
 	local preferredBudget=(#(state.preferred or {})>0) and math.max(1,math.ceil(budget*0.6)) or 0
 	cycle(state.preferred,"prefCursor",preferredBudget); cycle(state.fallback,"fallbackCursor",budget-sent)
-	__gg.MH_foodBitesSent=(__gg.MH_foodBitesSent or 0)+sent
 	return sent
 end
-local function fakeEat()
-	if UIS and UIS:IsKeyDown(Enum.KeyCode.E) then return end   -- CENTRAL GUARD: never cancel YOUR manual E-hold eat (any caller)
-	local rs=getReplicaSignal(); if not rs then return end
-	replicaFire("SetAction","Consuming",true)              -- dino: start eating
-	local cap = __gg.MH_eat
-	local buf = (type(cap)=="table" and cap.buf~=nil) and cap.buf or __gg.MH_eatBuf or EAT_BUFFER
-	if type(buf)=="string" and buffer and buffer.fromstring then pcall(function() buf = buffer.fromstring(buf) end) end
-	-- VERBATIM REPLAY (strongest): if we captured your exact eat call, replay it byte-for-byte a few times. This is
-	-- the "capture the remote when you eat, then spam it" path — it always lands because it IS the game's own call.
-	local ec = __gg.MH_lastEatCall
-	local sent=0
-	if type(ec)=="table" and ec.n and ec.n>=2 then local ok=pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end); if ok then sent+=1 end end
-	if type(cap)=="table" and cap.id and not ec then pcall(function() rs:FireServer(cap.id, "Bite", cap.buf or buf) end) end
-	-- Retain genuine hook-captured sources, then actively cycle the live Replica registry. The fallback list deliberately
-	-- probes non-character replicas too: unknown Bite actions are ignored by replicas without a consumable listener,
-	-- while newly streamed food sources work immediately without hard-coded per-server ids.
-	local foodIds = __gg.MH_foodIds
-	if type(foodIds)=="table" then for foodId in pairs(foodIds) do if sent>=3 then break end; local ok=pcall(function() rs:FireServer(foodId,"Bite",buf) end); if ok then sent+=1 end end end
-	sent+=__gg.MH_fireFoodReplicas(rs,buf,math.max(4,(tonumber(CFG.FoodEatSpeed) or 3)*2))
-	-- Captured map ids are a final bootstrap only when Replica internals are unavailable. They came from the supplied
-	-- genuine Bite/Sip traces and avoid requiring a manual first bite on older executor/package combinations.
-	local state=__gg.MH_foodReplicaState
-	if sent==0 and (not state or not state.registry) then for land,id in pairs(WATER_IDS) do if WS:FindFirstChild(land) then pcall(function() rs:FireServer(id,"Bite",buf) end); break end end end
-	-- RE-CHECK E right before ending the action: the loop above YIELDS (task.wait), so if you started holding E
-	-- during it, the entry guard already passed. Skip the Consuming=false/AnimationEnded finish so we never cut
-	-- off a manual hold-to-eat you began mid-fakeEat.
-	if UIS and UIS:IsKeyDown(Enum.KeyCode.E) then return end
-	replicaFire("SetAction","Consuming",false)             -- dino: stop consuming
-	replicaFire("AnimationEnded","Eat")                    -- dino: finish (food gained)
+local function fakeEat(prompt,foodToken)
+	if __gg.MH_foodCycleBusy then return 0 end
+	if UIS and UIS:IsKeyDown(Enum.KeyCode.E) then return 0 end   -- never cancel a manual E-hold
+	local rs=getReplicaSignal(); if not rs then return 0 end
+	__gg.MH_foodCycleBusy=true
+	local sent=0; local eDown=false; local promptState
+	pcall(function()
+		local function enabled()
+			return RUNNING and alive() and (foodToken==nil or (CFG.InfFood and foodToken==__gg.MH_foodGen))
+		end
+		__gg.MH_foodPhase="starting"
+		replicaFire("SetAction","Consuming",true)
+		-- Keep the chosen diet-correct prompt active for one controlled E hold. This gives the game's own client enough
+		-- time to create the current server/dinosaur's exact Bite packet instead of ending Consuming immediately.
+		task.wait(0.12)
+		if prompt and prompt.Parent and enabled() then
+			__gg.MH_foodPromptName=tostring(prompt.ObjectText~="" and prompt.ObjectText or prompt.ActionText~="" and prompt.ActionText or prompt.Name)
+			__gg.MH_foodPhase="holding E"
+			promptState={prompt.MaxActivationDistance,prompt.HoldDuration,prompt.RequiresLineOfSight,prompt.Enabled}
+			pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.huge; prompt.HoldDuration=0; prompt.Enabled=true end)
+			if fireprox then pcall(function() fireprox(prompt) end) else pcall(function() prompt:InputHoldBegin() end) end
+			__gg.MH_foodSyntheticE=true
+			pcall(function() VIM:SendKeyEvent(true,Enum.KeyCode.E,false,game); eDown=true end)
+		end
+		task.wait(0.5)
+		if enabled() then
+			__gg.MH_foodPhase="biting"
+			-- Resolve the buffer AFTER the prompt, so a packet captured from this exact server/dinosaur wins over the
+			-- legacy fallback bytes on the very first automatic cycle.
+			local cap=__gg.MH_eat
+			local buf=(type(cap)=="table" and cap.buf~=nil) and cap.buf or __gg.MH_eatBuf or EAT_BUFFER
+			if type(buf)=="string" and buffer and buffer.fromstring then pcall(function() buf=buffer.fromstring(buf) end) end
+			local ec=__gg.MH_lastEatCall
+			if type(ec)=="table" and ec.n and ec.n>=2 then local ok=pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end); if ok then sent+=1 end end
+			if type(cap)=="table" and cap.id and not ec then local ok=pcall(function() rs:FireServer(cap.id,"Bite",cap.buf or buf) end); if ok then sent+=1 end end
+			local foodIds=__gg.MH_foodIds
+			if type(foodIds)=="table" then for foodId in pairs(foodIds) do if sent>=4 then break end; local ok=pcall(function() rs:FireServer(foodId,"Bite",buf) end); if ok then sent+=1 end end end
+			-- Rotate live source replicas so newly streamed plants/meat are eligible without a manual first bite.
+			sent+=__gg.MH_fireFoodReplicas(rs,buf,math.max(3,math.min(10,(tonumber(CFG.FoodEatSpeed) or 3)+2)))
+			-- Keep the supplied per-map source capture as an additional bootstrap. It is deliberately one attempt per
+			-- chew cycle, not the old all-map burst.
+			for land,id in pairs(WATER_IDS) do if WS:FindFirstChild(land) then local ok=pcall(function() rs:FireServer(id,"Bite",buf) end); if ok then sent+=1 end; break end end
+			__gg.MH_foodBitesSent=(__gg.MH_foodBitesSent or 0)+sent
+			task.wait(0.18)
+		end
+	end)
+	-- Guaranteed cleanup: release only the E press owned by this cycle and restore the prompt exactly as it was.
+	if eDown then pcall(function() VIM:SendKeyEvent(false,Enum.KeyCode.E,false,game) end) end
+	__gg.MH_foodSyntheticE=false
+	if promptState and prompt and prompt.Parent then pcall(function()
+		if not fireprox then prompt:InputHoldEnd() end
+		prompt.MaxActivationDistance=promptState[1]; prompt.HoldDuration=promptState[2]; prompt.RequiresLineOfSight=promptState[3]; prompt.Enabled=promptState[4]
+	end) end
+	local nowManual=false; pcall(function() nowManual=UIS:IsKeyDown(Enum.KeyCode.E) end)
+	if not nowManual then
+		__gg.MH_foodPhase="finishing"
+		replicaFire("SetAction","Consuming",false)
+		replicaFire("AnimationEnded","Eat")
+	end
+	__gg.MH_foodCycleBusy=false; __gg.MH_foodPhase="idle"
 	return sent
 end
 -- ═══ ATTACK (the REAL captured bite-damage call — fires server-side damage) ═══
@@ -3061,8 +3095,8 @@ do local p=Pages["Survival"]
 	-- (INF Food / INF Water / Carnivore Meat TP / Teleport Back moved to the Growth tab.) Stamina stays here.
 	local _,f=mkSec(p,"Stamina",1)
 	mkToggle(f,"INF Stamina","InfStam",1)
-	mkSlider(f,"INF Stamina speed","InfStamSpeed",15,120,45,2)
-	mkLabel(f,"Pins stamina, holds native sprint, and adds a controllable speed drive while you move.",1.5)
+	mkSlider(f,"INF Stamina speed","InfStamSpeed",12,15,2,0.1)
+	mkLabel(f,"Pins stamina, holds native sprint, and uses PE's stable 12-15 movement band.",1.5)
 	local _,pr=mkSec(p,"Protection",2)
 	-- Death Bug Fix = the spawn rescue (void/under-map/ocean spawns). It mutes ITSELF during any hub teleport
 	-- (map/biome/corpse/fossil TP) so it can never yank you around mid-teleport — and you can kill it here.
@@ -3140,11 +3174,12 @@ do local p=Pages["Growth"]
 		mkDropdown(g,"Stop at age", function() return {"Off","Juvenile","Teen","Adolescent","Sub Adult","Adult","Elder"} end, function() return CFG.ProFoodStopAge~="" and CFG.ProFoodStopAge or "Off" end, function(opt) CFG.ProFoodStopAge=opt; saveCfg() end, 2)
 		local _,fw=mkSec(p,"Food & Water",2)
 		mkToggle(fw,"INF Food","InfFood",1)
-		mkLabel(fw,"Automatically discovers live plant/meat source replicas and repeatedly feeds your dinosaur. No first bite or food ID required.")
-		mkSlider(fw,"INF Food grow speed","FoodEatSpeed",1,10,3,1)
-		mkToggle(fw,"INF Water","InfWater",4)
-		mkToggle(fw,"Carnivore Meat TP","CarnMeatTP",5)
-		mkBtn(fw,"Teleport Back",function() if __gg.MH_corpseBack then __gg.MH_corpseBack() end end,6)
+		mkDropdown(fw,"My food type",function() return {"Auto","Herbivore","Carnivore"} end,function() return CFG.InfFoodDiet or "Auto" end,function(opt) CFG.InfFoodDiet=opt; __gg.MH_foodProbeCursor=0; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; saveCfg() end,2)
+		mkLabel(fw,"Pick Herbivore for green plants or Carnivore for meat/corpses. INF Food performs one controlled E hold per bite cycle.")
+		mkSlider(fw,"INF Food grow speed","FoodEatSpeed",1,10,4,1)
+		mkToggle(fw,"INF Water","InfWater",5)
+		mkToggle(fw,"Carnivore Meat TP","CarnMeatTP",6)
+		mkBtn(fw,"Teleport Back",function() if __gg.MH_corpseBack then __gg.MH_corpseBack() end end,7)
 	end
 	local _,pg=mkSec(p,"Progress",3)
 	mkBtn(pg,"Progress Restore",function() progressRestore() end,1)
@@ -3737,6 +3772,7 @@ end)
 -- The immediate pin remains active while eating so a real bite cannot be followed by a drain-frame flicker.
 conn(UIS.InputBegan:Connect(function(input, gp)
 	if input.KeyCode ~= Enum.KeyCode.E then return end
+	if __gg.MH_foodSyntheticE then return end
 	__gg.MH_lastE = tick()
 	if not alive() then return end
 	task.spawn(function() pcall(function()
@@ -3991,8 +4027,10 @@ conn(RunService.Heartbeat:Connect(function() if CFG.SpeedHack and alive() and no
 task.spawn(function()
 	local asserted=false; local clearAt=0; local runAt=0; local syncAt=0
 	local function releaseRun()
-		if __gg.MH_stamShiftHeld then pcall(function() VIM:SendKeyEvent(false,Enum.KeyCode.LeftShift,false,game) end); __gg.MH_stamShiftHeld=false end
-		if asserted then replicaFire("SetAction","Run",false); asserted=false end
+		-- Never synthesize Shift-up: that cancelled the player's real held Shift and caused run-then-stop even after
+		-- INF Stamina was disabled. Clear only the Run action this controller asserted, and only if Shift is not held.
+		__gg.MH_stamShiftHeld=false
+		if asserted then local playerShift=false; pcall(function() playerShift=UIS:IsKeyDown(Enum.KeyCode.LeftShift) end); if not playerShift then replicaFire("SetAction","Run",false) end; asserted=false end
 	end
 	local function wantedDirection(root)
 		local dir=Vector3.zero; local cam=workspace.CurrentCamera; local cf=cam and cam.CFrame or CFrame.new()
@@ -4012,7 +4050,6 @@ task.spawn(function()
 		if CFG.InfStam and alive() and not CFG.Fly then
 			local r=hrp(); local dir=wantedDirection(r); local moving=dir.Magnitude>0
 			if moving then
-				if not __gg.MH_stamShiftHeld then local already=false; pcall(function() already=UIS:IsKeyDown(Enum.KeyCode.LeftShift) end); if not already then pcall(function() VIM:SendKeyEvent(true,Enum.KeyCode.LeftShift,false,game) end); __gg.MH_stamShiftHeld=true end end
 				if tick()-clearAt>=0.6 then clearAt=tick()
 					replicaFire("SetAction","Exhausted",false); replicaFire("SetAction","Fatigued",false)
 					local stats=csStats(); if type(stats)=="table" then for _,k in ipairs({"Exhausted","Exhaustion","Fatigued","Tired"}) do
@@ -4021,10 +4058,10 @@ task.spawn(function()
 				end
 				local now=tick(); if now-runAt>=0.12 then runAt=now; replicaFire("SetAction","Run",true); asserted=true end
 				if r and not CFG.SpeedHack then
-					local speed=math.clamp(tonumber(CFG.InfStamSpeed) or 45,15,120); local v=r.AssemblyLinearVelocity
+					local speed=math.clamp(tonumber(CFG.InfStamSpeed) or 15,12,15); local v=r.AssemblyLinearVelocity
 					pcall(function() r.AssemblyLinearVelocity=Vector3.new(dir.X*speed,v.Y,dir.Z*speed) end)
 					local pid=__gg.MH_physicsReplicaId
-					if typeof(pid)=="number" and now-(__gg.MH_physicsSeenAt or 0)<5 and now-syncAt>=0.08 then
+					if typeof(pid)=="number" and now-(__gg.MH_physicsSeenAt or 0)<5 and now-syncAt>=0.1 then
 						syncAt=now; pcall(function() local re=RS:FindFirstChild("RemoteEvents"); re=re and re:FindFirstChild("ReplicaSignalUnreliable"); if re then re:FireServer(pid,"CFrame",r.CFrame) end end)
 					end
 				end
@@ -4795,34 +4832,27 @@ do
 		else PRO.cur=nil; PRO.token=nil; stopCircle(); task.wait(0.2) end   -- Pro Food OFF → hard-stop the circle NOW (keys + velocity)
 	end end)
 end
--- INF FOOD — one controller owns every feeding path. Every pass invokes live source replicas (works with no prior
--- food id); every ~1.5 seconds it also asks one streamed, diet-correct prompt to produce a genuine current-version
--- Bite packet. It never presses E and never moves or teleports the dinosaur.
+-- INF FOOD — one controller owns every feeding path. Each pass performs the actual sequence observed from the game:
+-- Consuming=true -> one controlled E hold on a diet-correct prompt -> Bite -> finish. It never moves/teleports.
 task.spawn(function()
-	local promptAt=0
 	while RUNNING do
 		if CFG.InfFood and alive() then
 			local token=__gg.MH_foodGen; local eHeld=false; pcall(function() eHeld=UIS:IsKeyDown(Enum.KeyCode.E) end)
 			if eHeld then __gg.MH_lastE=tick()
 			else
-				pcall(fakeEat)
-				local now=tick()
-				if now-promptAt>=1.5 then
-					promptAt=now
-					local list=nearbyFood(math.huge); local edible=_G.MH_edible
-					if type(edible)=="function" and #list>0 then for _=1,#list do
-						if not CFG.InfFood or token~=__gg.MH_foodGen then break end
-						__gg.MH_foodProbeCursor=((__gg.MH_foodProbeCursor or 0)%#list)+1
-						local fd=list[__gg.MH_foodProbeCursor]; local model,part,prompt=fd[1],fd[2],fd.prompt
-						if not prompt and model then prompt=model:FindFirstChildWhichIsA("ProximityPrompt",true) end
-						local okDiet,dietOk=pcall(edible,model,prompt)
-						if okDiet and dietOk==true and prompt and part and part.Parent then
-							pcall(function() __gg.MH_activatePrompt(prompt,math.huge) end); break
-						end
-					end end
-				end
+				local picked
+				local list=nearbyFood(math.huge); local edible=_G.MH_edible
+				if type(edible)=="function" and #list>0 then for _=1,#list do
+					if not CFG.InfFood or token~=__gg.MH_foodGen then break end
+					__gg.MH_foodProbeCursor=((__gg.MH_foodProbeCursor or 0)%#list)+1
+					local fd=list[__gg.MH_foodProbeCursor]; local model,part,prompt=fd[1],fd[2],fd.prompt
+					if not prompt and model then prompt=model:FindFirstChildWhichIsA("ProximityPrompt",true) end
+					local okDiet,dietOk=pcall(edible,model,prompt)
+					if okDiet and dietOk==true and prompt and part and part.Parent then picked=prompt; break end
+				end end
+				pcall(fakeEat,picked,token)
 			end
-			task.wait(0.18)
+			task.wait(0.12)
 		else task.wait(0.4) end
 	end
 end)
@@ -5583,6 +5613,7 @@ end
 local function isCorpseFood(m, prompt)
 	local nm=tostring(m and m.Name or ""):lower()
 	if nm:find("corpse") or nm:find("carcass") or nm:find("remains") or nm:find("carrion") or nm:find("dead") or nm:find("meat") then return true end
+	if m and (m:FindFirstAncestor("CorpseSpawns") or m:FindFirstAncestor("SpawnedMeat") or m:FindFirstAncestor("LeftCharacters") or m:FindFirstAncestor("Bonepiles")) then return true end
 	if m and m.GetAttribute then local ok,dinoType,hint=pcall(function() return m:GetAttribute("DinoType"),m:GetAttribute("HintType") end); if ok then
 		if type(dinoType)=="string" and dinoType~="" then return true end
 		local hv=tostring(hint or ""):lower(); if hv:find("corpse",1,true) or hv:find("carcass",1,true) or hv:find("meat",1,true) or hv:find("carrion",1,true) then return true end
@@ -5599,7 +5630,11 @@ local function edibleFor(diet, corpse)
 end
 -- Exposed for the INF Food loop (defined earlier in the file): true only if THIS food matches your dino's diet.
 -- Resolved at call time, so the loop that references _G.MH_edible always gets the real gate once this line runs.
-_G.MH_edible = function(m, prompt) return edibleFor(myDiet(), isCorpseFood(m, prompt)) end
+_G.MH_edible = function(m, prompt)
+	local selected=CFG.InfFoodDiet
+	local diet=(selected=="Herbivore" or selected=="Carnivore") and selected or myDiet()
+	return edibleFor(diet,isCorpseFood(m,prompt))
+end
 -- SIZE / STAGE helpers so the bot flees anything BIGGER than you (per request: use the ESP stage/size).
 local STAGE_RANK = {Hatchling=1,Baby=1,Juvenile=2,Child=2,Adolescent=3,SubAdult=4,["Sub Adult"]=4,["Sub-Adult"]=4,Adult=5,Elder=6}
 local function stageRank(m)
@@ -6352,6 +6387,7 @@ task.spawn(function() while RUNNING do task.wait(0.3); pcall(function()
 	lines[#lines+1]="MyID: "..tostring(myReplicaId or "nil (CharacterState.Replica.Id unavailable)")
 	lines[#lines+1]="Food replicas: "..tostring(__gg.MH_foodPreferredCount or 0).." preferred / "..tostring(__gg.MH_foodFallbackCount or 0).." fallback"
 	lines[#lines+1]="Bite attempts: "..tostring(__gg.MH_foodBitesSent or 0)
+	lines[#lines+1]="Eat cycle: "..tostring(__gg.MH_foodPhase or "idle").." | "..tostring(__gg.MH_foodPromptName or "none")
 	lines[#lines+1]="PhysicsID: "..tostring(__gg.MH_physicsReplicaId or "waiting for movement").." | INF speed "..tostring(CFG.InfStamSpeed)
 	lines[#lines+1]="Sound: "..(getSoundRemote() and "found" or "MISSING")
 	local tg=nearestTarget(300,true); lines[#lines+1]="Target: "..(tg and tg.Name or "none")
@@ -6927,6 +6963,7 @@ end) end end)
 -- CLEANUP
 G.__PRIOR_EXT_HUB = function()
 	RUNNING=false
+	if __gg.MH_foodSyntheticE then pcall(function() VIM:SendKeyEvent(false,Enum.KeyCode.E,false,game) end); __gg.MH_foodSyntheticE=false end
 	for _,c in ipairs(CONNS) do pcall(function() c:Disconnect() end) end; CONNS={}
 	pcall(stopFly); pcall(destroyESP); pcall(function() ESP.folder:Destroy() end)
 	pcall(function() for p in pairs(hbTouched) do restorePart(p) end end)
