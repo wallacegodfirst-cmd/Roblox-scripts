@@ -9,7 +9,8 @@ __gg.__PRIOR_EXT_HUB = nil
 __gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0
 __gg.MH_attackTemplate=nil; __gg.MH_registerTemplate=nil; __gg.MH_pendingRegister=nil; __gg.MH_attackSequence=nil; __gg.MH_soundTemplate=nil; __gg.MH_hbMade=nil; __gg.MH_hbBuildAt=nil
 __gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_verifiedReplicaId=nil; __gg.MH_wellbeing=nil
-__gg.MH_identityKey=nil; __gg.MH_dietCache=nil; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_healthPacket=nil; __gg.MH_guardLastHP=nil
+__gg.MH_identityKey=nil; __gg.MH_dietCache=nil; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0
+__gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_healthPacket=nil; __gg.MH_guardLastHP=nil
 __gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil; __gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
 -- Every captured packet below is valid only for one playable dinosaur. Character, species, or verified replica
 -- changes invalidate food-source ids, combat/sound templates, need reports, and protection high-water state together.
@@ -18,7 +19,8 @@ __gg.MH_clearDinoCaches=function(identityKey)
 	__gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0; __gg.MH_foodProbeCursor=0
 	__gg.MH_attackTemplate=nil; __gg.MH_registerTemplate=nil; __gg.MH_pendingRegister=nil; __gg.MH_attackSequence=nil; __gg.MH_soundTemplate=nil
 	__gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_hbBuildAt=nil
-	__gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_healthPacket=nil; __gg.MH_healthReportAt=nil
+	__gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0
+	__gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_healthPacket=nil; __gg.MH_healthReportAt=nil
 	__gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_guardLastHP=nil; __gg.MH_guardMax=nil
 	__gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
 	if type(MHNEED)=="table" then MHNEED.refs={food={},stamina={}}; MHNEED.max={food=nil,stamina=nil}; MHNEED.maxSource={food=nil,stamina=nil}; MHNEED.hasPaired={food=false,stamina=false}; MHNEED.at=0; MHNEED.root=nil; MHNEED.character=nil; MHNEED.capRoot=nil; MHNEED.capacity=nil end
@@ -842,7 +844,7 @@ local CFG = {
 	TurnHack=false, TurnSpeed=30,
 	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, DeathFix=true, Noclip=false, Invis=false,
 	InfJump=false, BypassTP=true,
-	InfFood=false, InfWater=false, InfStam=false, InfOxygen=false,
+	InfFood=false, InfWater=false, InfStam=false, InfStamSpeed=45, InfOxygen=false,
 	AntiDrown=true, AntiDrownRise=14, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false, HeadDmgReduce=100,
 	SaveDino=false, SaveHP=30, NoSleep=true, AutoHealBlood=false, AfkEat=false, BotPvP=true,
 	AutoFarmPlayer=false, FarmPlayerRange=120, AutoFarmFossil=false, FarmFossilRange=1000000, FossilSlow=1.2,
@@ -877,6 +879,7 @@ local function loadCfg()
 	end)
 end
 loadCfg()
+CFG.InfStamSpeed=math.clamp(tonumber(CFG.InfStamSpeed) or 45,15,120)
 MS("1 config ok")
 CFG.Keybinds = CFG.Keybinds or {}
 CFG.Keybinds.UIKey = CFG.Keybinds.UIKey or CFG.UIKey
@@ -1190,6 +1193,13 @@ local function installHook()
 				if MHNEED and MHNEED.replicaId then pcall(function() stateId=MHNEED.replicaId() end) end
 				if stateId then __gg.MH_verifiedReplicaId=stateId end
 				local selfCall=typeof(id)=="number" and __gg.MH_verifiedReplicaId~=nil and id==__gg.MH_verifiedReplicaId
+				-- PE streams body physics through a DIFFERENT replica than CharacterState (the supplied trace showed
+				-- 13438 for CFrame versus 13428 for actions). Learn that id only from a genuine game-generated CFrame
+				-- packet whose position matches our current root; this gives the stamina drive a valid sync route.
+				if self.Name=="ReplicaSignalUnreliable" and action=="CFrame" and typeof(id)=="number" and typeof(a[3])=="CFrame" then
+					local root=hrp()
+					if root and (a[3].Position-root.Position).Magnitude<40 then __gg.MH_physicsReplicaId=id; __gg.MH_physicsSeenAt=tick() end
+				end
 				if selfCall and myReplicaId~=id then noteReplicaId(id) end
 				if selfCall and action=="RegisterAttack" and self.Name=="ReplicaSignal" then
 					local snap={n=a.n,remote=self.Name,instance=self,capturedAt=tick(),path=a[3],slot=a[4],identity=__gg.MH_identityKey}; for i=1,a.n do snap[i]=a[i] end
@@ -1971,32 +1981,128 @@ end
 --   → (dinoId,"AnimationEnded","Eat"). The source id = the land's generic id (same set as the water ids), so we
 -- fire the Bite to ALL of them every tick = works on every land. Buffer captured = "\027\206\000\000\001".
 EAT_BUFFER = "\027\206\000\000\001"
+-- Replica's public client API exposes its active registry at Client._.Replicas (and Replica:FireServer automatically
+-- prefixes the correct id). Food is server-owned by those SOURCE replicas, not CharacterState. Discovering them here
+-- removes the old "eat once so the hook learns an id" requirement and also follows sources created after joining.
+__gg.MH_foodReplicaWords={"food","hunger","edible","consum","bite","eat","feed","forage","graze","plant","fern","tree","leaf","berry","fruit","seed","corpse","carcass","carrion","meat","flesh","chunk","fish","egg","insect","grub","larva","diet","nutrition","resource","gather"}
+function __gg.MH_getReplicaClient()
+	if type(__gg.MH_replicaClient)=="table" then return __gg.MH_replicaClient end
+	pcall(function()
+		local packages=RS:FindFirstChild("Packages"); local module=packages and packages:FindFirstChild("Replica")
+		if module then local package=require(module); __gg.MH_replicaClient=(type(package)=="table" and package.Client) or package end
+	end)
+	return type(__gg.MH_replicaClient)=="table" and __gg.MH_replicaClient or nil
+end
+function __gg.MH_getReplicaRegistry()
+	local client=__gg.MH_getReplicaClient(); if type(client)~="table" then return nil end
+	local internal=rawget(client,"_"); local registry=type(internal)=="table" and (rawget(internal,"Replicas") or rawget(internal,"replicas"))
+	if type(registry)=="table" then return registry end
+	registry=rawget(client,"Replicas") or rawget(client,"replicas"); if type(registry)=="table" then return registry end
+	-- Older packaged builds hide Replicas as an upvalue of FromId. Recover that exact table without a broad GC scan.
+	local getter=rawget(client,"FromId"); local getups=getupvalues or (debug and debug.getupvalues)
+	if type(getter)=="function" and type(getups)=="function" then pcall(function()
+		for _,up in pairs(getups(getter)) do if type(up)=="table" then
+			local matches=0; for id,rep in pairs(up) do if typeof(id)=="number" and type(rep)=="table" and tonumber(rep.Id)==id then matches+=1; if matches>=2 then registry=up; break end end end
+			if registry then break end
+		end end
+	end) end
+	return type(registry)=="table" and registry or nil
+end
+function __gg.MH_foodReplicaScore(rep)
+	if type(rep)~="table" then return -100 end
+	local token=tostring(rep.Token or ""):lower()
+	for _,bad in ipairs({"characterstate","wellbeing","playerdata","serverdata","weather","timecycle"}) do if token:find(bad,1,true) then return -100 end end
+	local score,count=0,0; local seen={}
+	local function addText(value,weight)
+		local text=tostring(value or ""):lower()
+		for _,word in ipairs(__gg.MH_foodReplicaWords or {}) do if text:find(word,1,true) then score+=weight; break end end
+	end
+	addText(token,5)
+	local function walk(value,depth)
+		if count>140 or depth>3 then return end; count+=1
+		if typeof(value)=="Instance" then
+			addText(value.Name,3)
+			local prompt=value:IsA("ProximityPrompt") and value or value:FindFirstChildWhichIsA("ProximityPrompt",true)
+			if prompt then addText(prompt.Name,4); addText(prompt.ActionText,6); addText(prompt.ObjectText,4) end
+			local model=value:IsA("Model") and value or value:FindFirstAncestorWhichIsA("Model")
+			if model and type(_G.MH_edible)=="function" then local ok,edible=pcall(_G.MH_edible,model,prompt); if ok and edible==true then score+=15 end end
+		elseif type(value)=="table" and not seen[value] then
+			seen[value]=true
+			for k,v in pairs(value) do addText(k,1); if type(v)=="string" then addText(v,2) elseif type(v)=="table" or typeof(v)=="Instance" then walk(v,depth+1) end; if count>140 then break end end
+		elseif type(value)=="string" then addText(value,2) end
+	end
+	walk(rep.Tags,0); walk(rep.Data,0)
+	return score
+end
+function __gg.MH_refreshFoodReplicas(force)
+	local old=__gg.MH_foodReplicaState or {preferred={},fallback={},at=0}; local now=tick()
+	if not force and now-(old.at or 0)<1.25 then return old end
+	local registry=__gg.MH_getReplicaRegistry(); if type(registry)~="table" then old.at=now; old.registry=nil; __gg.MH_foodReplicaState=old; return old end
+	local preferred,fallback={},{}; local selfId=MHNEED and MHNEED.replicaId and MHNEED.replicaId()
+	for id,rep in pairs(registry) do
+		id=tonumber((type(rep)=="table" and rep.Id) or id)
+		if id and id~=selfId and type(rep)=="table" and type(rep.FireServer)=="function" then
+			local score=__gg.MH_foodReplicaScore(rep); local entry={id=id,rep=rep,score=score,token=tostring(rep.Token or "?")}
+			if score>0 then preferred[#preferred+1]=entry end
+			if score>-100 then fallback[#fallback+1]=entry end
+		end
+	end
+	table.sort(preferred,function(a,b) if a.score==b.score then return a.id<b.id end return a.score>b.score end)
+	table.sort(fallback,function(a,b) return a.id<b.id end)
+	while #preferred>96 do table.remove(preferred) end; while #fallback>384 do table.remove(fallback) end
+	local state={preferred=preferred,fallback=fallback,at=now,registry=registry,prefCursor=old.prefCursor or 0,fallbackCursor=old.fallbackCursor or 0}
+	__gg.MH_foodReplicaState=state; __gg.MH_foodPreferredCount=#preferred; __gg.MH_foodFallbackCount=#fallback
+	return state
+end
+function __gg.MH_fireFoodReplicas(rs,buf,budget)
+	local state=__gg.MH_refreshFoodReplicas(false); budget=math.clamp(math.floor(tonumber(budget) or 6),2,24)
+	local sent,used=0,{}
+	local function cycle(list,key,limit)
+		if type(list)~="table" or #list==0 then return end
+		for _=1,math.min(limit,#list) do
+			state[key]=((state[key] or 0)%#list)+1; local entry=list[state[key]]
+			if entry and not used[entry.id] then
+				used[entry.id]=true; local ok=pcall(function() entry.rep:FireServer("Bite",buf) end)
+				if not ok and rs then ok=pcall(function() rs:FireServer(entry.id,"Bite",buf) end) end
+				if ok then sent+=1 end
+			end
+		end
+	end
+	local preferredBudget=(#(state.preferred or {})>0) and math.max(1,math.ceil(budget*0.6)) or 0
+	cycle(state.preferred,"prefCursor",preferredBudget); cycle(state.fallback,"fallbackCursor",budget-sent)
+	__gg.MH_foodBitesSent=(__gg.MH_foodBitesSent or 0)+sent
+	return sent
+end
 local function fakeEat()
 	if UIS and UIS:IsKeyDown(Enum.KeyCode.E) then return end   -- CENTRAL GUARD: never cancel YOUR manual E-hold eat (any caller)
 	local rs=getReplicaSignal(); if not rs then return end
 	replicaFire("SetAction","Consuming",true)              -- dino: start eating
-	-- Replay only calls actually captured from a real bite. Guessing source ids (including the water ids) sends
-	-- invalid Bite payloads after map updates and can make the server ignore the entire food sequence.
 	local cap = __gg.MH_eat
 	local buf = (type(cap)=="table" and cap.buf~=nil) and cap.buf or __gg.MH_eatBuf or EAT_BUFFER
 	if type(buf)=="string" and buffer and buffer.fromstring then pcall(function() buf = buffer.fromstring(buf) end) end
 	-- VERBATIM REPLAY (strongest): if we captured your exact eat call, replay it byte-for-byte a few times. This is
 	-- the "capture the remote when you eat, then spam it" path — it always lands because it IS the game's own call.
 	local ec = __gg.MH_lastEatCall
-	if type(ec)=="table" and ec.n and ec.n>=2 then
-		pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end)
-	end
+	local sent=0
+	if type(ec)=="table" and ec.n and ec.n>=2 then local ok=pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end); if ok then sent+=1 end end
 	if type(cap)=="table" and cap.id and not ec then pcall(function() rs:FireServer(cap.id, "Bite", cap.buf or buf) end) end
-	-- Replay each known real source once. The dedicated controller below applies the configured rate;
-	-- fakeEat stays a cheap one-shot helper for spawn recovery and the auto-play bot.
+	-- Retain genuine hook-captured sources, then actively cycle the live Replica registry. The fallback list deliberately
+	-- probes non-character replicas too: unknown Bite actions are ignored by replicas without a consumable listener,
+	-- while newly streamed food sources work immediately without hard-coded per-server ids.
 	local foodIds = __gg.MH_foodIds
-	if not ec and type(foodIds)=="table" then for foodId in pairs(foodIds) do pcall(function() rs:FireServer(foodId, "Bite", buf) end); break end end
+	if type(foodIds)=="table" then for foodId in pairs(foodIds) do if sent>=3 then break end; local ok=pcall(function() rs:FireServer(foodId,"Bite",buf) end); if ok then sent+=1 end end end
+	sent+=__gg.MH_fireFoodReplicas(rs,buf,math.max(4,(tonumber(CFG.FoodEatSpeed) or 3)*2))
+	-- Captured map ids are a final bootstrap only when Replica internals are unavailable. They came from the supplied
+	-- genuine Bite/Sip traces and avoid requiring a manual first bite on older executor/package combinations.
+	local state=__gg.MH_foodReplicaState
+	if sent==0 and (not state or not state.registry) then for land,id in pairs(WATER_IDS) do if WS:FindFirstChild(land) then pcall(function() rs:FireServer(id,"Bite",buf) end); break end end end
 	-- RE-CHECK E right before ending the action: the loop above YIELDS (task.wait), so if you started holding E
 	-- during it, the entry guard already passed. Skip the Consuming=false/AnimationEnded finish so we never cut
 	-- off a manual hold-to-eat you began mid-fakeEat.
 	if UIS and UIS:IsKeyDown(Enum.KeyCode.E) then return end
 	replicaFire("SetAction","Consuming",false)             -- dino: stop consuming
 	replicaFire("AnimationEnded","Eat")                    -- dino: finish (food gained)
+	return sent
 end
 -- ═══ ATTACK (the REAL captured bite-damage call — fires server-side damage) ═══
 -- Pattern: (myDinoId,"Attack", nil, {Group,Name,Position}, {Group="Head",Name="Jaw",Position=myJawPos}, groupString)
@@ -2955,7 +3061,8 @@ do local p=Pages["Survival"]
 	-- (INF Food / INF Water / Carnivore Meat TP / Teleport Back moved to the Growth tab.) Stamina stays here.
 	local _,f=mkSec(p,"Stamina",1)
 	mkToggle(f,"INF Stamina","InfStam",1)
-	mkLabel(f,"Pins stamina, clears exhaustion, and automatically uses the game's native Run state while you move.",1.5)
+	mkSlider(f,"INF Stamina speed","InfStamSpeed",15,120,45,2)
+	mkLabel(f,"Pins stamina, holds native sprint, and adds a controllable speed drive while you move.",1.5)
 	local _,pr=mkSec(p,"Protection",2)
 	-- Death Bug Fix = the spawn rescue (void/under-map/ocean spawns). It mutes ITSELF during any hub teleport
 	-- (map/biome/corpse/fossil TP) so it can never yank you around mid-teleport — and you can kill it here.
@@ -3033,8 +3140,7 @@ do local p=Pages["Growth"]
 		mkDropdown(g,"Stop at age", function() return {"Off","Juvenile","Teen","Adolescent","Sub Adult","Adult","Elder"} end, function() return CFG.ProFoodStopAge~="" and CFG.ProFoodStopAge or "Off" end, function(opt) CFG.ProFoodStopAge=opt; saveCfg() end, 2)
 		local _,fw=mkSec(p,"Food & Water",2)
 		mkToggle(fw,"INF Food","InfFood",1)
-		mkLabel(fw,"Herbivore: turn on, then eat one plant once.")
-		mkLabel(fw,"You can eat more if you want, and if you do it will grow faster. Just make sure you have INF Food on, eat 4 things, then watch the magic.")
+		mkLabel(fw,"Automatically discovers live plant/meat source replicas and repeatedly feeds your dinosaur. No first bite or food ID required.")
 		mkSlider(fw,"INF Food grow speed","FoodEatSpeed",1,10,3,1)
 		mkToggle(fw,"INF Water","InfWater",4)
 		mkToggle(fw,"Carnivore Meat TP","CarnMeatTP",5)
@@ -3600,17 +3706,13 @@ task.spawn(function()
 				for _,row in ipairs({{"food",CFG.InfFood},{"stamina",CFG.InfStam}}) do
 					local kind,on=row[1],row[2]
 					if on then
-						local mx=MHNEED.pin(kind)
-						if not MHNEED.report(kind,not wasOn[kind]) then MHNEED.reportKnown(kind,not wasOn[kind]) end
+						MHNEED.pin(kind)
+						local reported=MHNEED.report(kind,not wasOn[kind])
+						if kind=="stamina" and not reported then MHNEED.reportKnown(kind,not wasOn[kind]) end
 						if kind=="food" then
 							local now=tick()
-							-- This is the exact self-replica pattern used by the working standalone PE food controller.
-							-- Five reports per second is enough to beat depletion without Heartbeat-spamming the server.
-							if mx and (not wasOn.food or now-(__gg.MH_foodDirectAt or 0)>=0.2) then
-								__gg.MH_foodDirectAt=now
-								replicaFire("SetProperty","Hunger",mx)
-								replicaFire("SetProperty","Food",mx)
-							end
+							-- Food is increased by the source-replica Bite controller. Guessed CharacterState Hunger/Food
+							-- properties were rejected by the live server and only added remote traffic.
 							-- Growth can be paused again after a depletion/respawn update. Reassert only while the replicated
 							-- flag is actually paused and throttle the server request.
 							local rep=csReplica(); local growth=rep and rep.Data and rep.Data.Growth
@@ -3883,35 +3985,57 @@ end
 -- SPEED HACK ONLY drives the body by velocity. INF Stamina uses the game's native Run action below instead of a
 -- forced BodyVelocity, which gives the normal maximum sprint without reviving the old snapback/glide bug.
 conn(RunService.Heartbeat:Connect(function() if CFG.SpeedHack and alive() and not CFG.Fly then local r=hrp(); if r then local spd=CFG.SpeedVal; local dir=Vector3.zero; local cf=workspace.CurrentCamera and workspace.CurrentCamera.CFrame or CFrame.new() if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end if dir.Magnitude<=0 then local hh=hum(); local md=hh and hh.MoveDirection; if md and md.Magnitude>0 then dir=md end end if dir.Magnitude>0 then dir=Vector3.new(dir.X,0,dir.Z).Unit*spd; r.AssemblyLinearVelocity=Vector3.new(dir.X,r.AssemblyLinearVelocity.Y,dir.Z) end end end end))
--- INF STAM NATIVE AUTO-RUN: Run=true is the exact PE action observed when the player starts sprinting. Reassert it
--- only while movement is present, clear a stale exhausted/fatigued state, and send Run=false once when movement or
--- the toggle stops. No CFrame/velocity writes are made here.
+-- INF STAM MOVEMENT: PE needs all three layers together: a full stamina value, native Shift/Run state, and a minimum
+-- horizontal body speed. The body is synced through the separately captured physics replica, not CharacterState.
+-- This preserves steering and vertical velocity while preventing the "moves only a little" exhausted crawl.
 task.spawn(function()
-	local asserted=false; local clearAt=0
+	local asserted=false; local clearAt=0; local runAt=0; local syncAt=0
+	local function releaseRun()
+		if __gg.MH_stamShiftHeld then pcall(function() VIM:SendKeyEvent(false,Enum.KeyCode.LeftShift,false,game) end); __gg.MH_stamShiftHeld=false end
+		if asserted then replicaFire("SetAction","Run",false); asserted=false end
+	end
+	local function wantedDirection(root)
+		local dir=Vector3.zero; local cam=workspace.CurrentCamera; local cf=cam and cam.CFrame or CFrame.new()
+		pcall(function()
+			if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end
+			if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end
+			if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end
+			if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end
+		end)
+		dir=Vector3.new(dir.X,0,dir.Z)
+		if dir.Magnitude<0.05 then local h=hum(); local md=h and h.MoveDirection; if md and md.Magnitude>0.05 then dir=Vector3.new(md.X,0,md.Z) end end
+		if dir.Magnitude<0.05 and root then local v=root.AssemblyLinearVelocity; if Vector3.new(v.X,0,v.Z).Magnitude>0.8 then dir=Vector3.new(v.X,0,v.Z) end end
+		return dir.Magnitude>0.05 and dir.Unit or Vector3.zero
+	end
 	while RUNNING do
 		if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end
 		if CFG.InfStam and alive() and not CFG.Fly then
-			local r=hrp(); local moving=false
-			if r then local v=r.AssemblyLinearVelocity; moving=Vector3.new(v.X,0,v.Z).Magnitude>0.8 end
-			if not moving then
-				pcall(function() moving=UIS:IsKeyDown(Enum.KeyCode.W) or UIS:IsKeyDown(Enum.KeyCode.A) or UIS:IsKeyDown(Enum.KeyCode.S) or UIS:IsKeyDown(Enum.KeyCode.D) end)
-			end
-			if not moving then local h=hum(); local md=h and h.MoveDirection; moving=md and md.Magnitude>0.05 or false end
+			local r=hrp(); local dir=wantedDirection(r); local moving=dir.Magnitude>0
 			if moving then
+				if not __gg.MH_stamShiftHeld then local already=false; pcall(function() already=UIS:IsKeyDown(Enum.KeyCode.LeftShift) end); if not already then pcall(function() VIM:SendKeyEvent(true,Enum.KeyCode.LeftShift,false,game) end); __gg.MH_stamShiftHeld=true end end
 				if tick()-clearAt>=0.6 then clearAt=tick()
 					replicaFire("SetAction","Exhausted",false); replicaFire("SetAction","Fatigued",false)
 					local stats=csStats(); if type(stats)=="table" then for _,k in ipairs({"Exhausted","Exhaustion","Fatigued","Tired"}) do
 						if type(stats[k])=="boolean" then stats[k]=false elseif type(stats[k])=="number" then stats[k]=0 end
 					end end
 				end
-				replicaFire("SetAction","Run",true); asserted=true
-			elseif asserted then replicaFire("SetAction","Run",false); asserted=false end
-			task.wait(0.18)
+				local now=tick(); if now-runAt>=0.12 then runAt=now; replicaFire("SetAction","Run",true); asserted=true end
+				if r and not CFG.SpeedHack then
+					local speed=math.clamp(tonumber(CFG.InfStamSpeed) or 45,15,120); local v=r.AssemblyLinearVelocity
+					pcall(function() r.AssemblyLinearVelocity=Vector3.new(dir.X*speed,v.Y,dir.Z*speed) end)
+					local pid=__gg.MH_physicsReplicaId
+					if typeof(pid)=="number" and now-(__gg.MH_physicsSeenAt or 0)<5 and now-syncAt>=0.08 then
+						syncAt=now; pcall(function() local re=RS:FindFirstChild("RemoteEvents"); re=re and re:FindFirstChild("ReplicaSignalUnreliable"); if re then re:FireServer(pid,"CFrame",r.CFrame) end end)
+					end
+				end
+			else releaseRun() end
+			RunService.Heartbeat:Wait()
 		else
-			if asserted then replicaFire("SetAction","Run",false); asserted=false end
+			releaseRun()
 			task.wait(0.3)
 		end
 	end
+	releaseRun()
 end)
 -- FLOAT: a Y-only BodyVelocity HOLDS you in the air — plain velocity writes don't hold a CFrame-driven PE dino
 -- (that's why Float "didn't work"). It only controls vertical, so you still walk normally. Space=rise, Ctrl=sink.
@@ -4671,78 +4795,37 @@ do
 		else PRO.cur=nil; PRO.token=nil; stopCircle(); task.wait(0.2) end   -- Pro Food OFF → hard-stop the circle NOW (keys + velocity)
 	end end)
 end
-task.spawn(function() while RUNNING do
-	-- ONLY runs UNTIL you have bitten once. After that, __gg.MH_lastEatCall is set and the pure Bite-spam loop
-	-- below takes over — so INF Food stops firing prompts entirely, which is what was interfering with your manual
-	-- E-hold. This block discovers and probes a correct food source automatically until a genuine Bite is captured.
-	if CFG.InfFood and alive() and not __gg.MH_lastEatCall then
-		local token=__gg.MH_foodGen
-		-- Get the first correct-diet bite so we can capture the Bite remote (herbivore→plants, carnivore→meat).
-		local eHeld = false; pcall(function() eHeld = UIS:IsKeyDown(Enum.KeyCode.E) end)
-		if not eHeld then
-			-- Search the whole streamed map, not only a 24-stud bubble. The direct stat pin already fills the bar;
-			-- this background probe obtains a genuine diet-correct Bite packet for server growth without asking the
-			-- player to find/eat something first.
-			local me=hrp(); local list=nearbyFood(math.huge)
-			local edible = _G.MH_edible                  -- diet gate (set once the diet helpers load); nil-safe
-			if me and edible and #list>0 then for step=1,#list do
-				if not CFG.InfFood or token~=__gg.MH_foodGen then break end
-				__gg.MH_foodProbeCursor=((__gg.MH_foodProbeCursor or 0)%#list)+1
-				local fd=list[__gg.MH_foodProbeCursor]
-				local m,r,prompt=fd[1],fd[2],fd.prompt
-				if not prompt and m then prompt=m:FindFirstChildWhichIsA("ProximityPrompt",true) end
-				-- DIET FILTER: skip anything your dino should not eat (this is what keeps Comfort — and INF Stam — healthy)
-				local dietOk = false
-				if m then local okc,res=pcall(function() return edible(m, prompt) end); if okc then dietOk=(res==true) end end
-				if dietOk and prompt and r and r.Parent then
-					-- Try one diet-correct source per pass, rotating after rejection so a stale/streamed prompt cannot
-					-- starve every valid source behind it.
-					local stillHold=false
-					pcall(function() stillHold = UIS:IsKeyDown(Enum.KeyCode.E)
-						or (prompt.KeyboardKeyCode and prompt.KeyboardKeyCode~=Enum.KeyCode.Unknown and UIS:IsKeyDown(prompt.KeyboardKeyCode)) end)
-					if not stillHold then
-						task.wait()
+-- INF FOOD — one controller owns every feeding path. Every pass invokes live source replicas (works with no prior
+-- food id); every ~1.5 seconds it also asks one streamed, diet-correct prompt to produce a genuine current-version
+-- Bite packet. It never presses E and never moves or teleports the dinosaur.
+task.spawn(function()
+	local promptAt=0
+	while RUNNING do
+		if CFG.InfFood and alive() then
+			local token=__gg.MH_foodGen; local eHeld=false; pcall(function() eHeld=UIS:IsKeyDown(Enum.KeyCode.E) end)
+			if eHeld then __gg.MH_lastE=tick()
+			else
+				pcall(fakeEat)
+				local now=tick()
+				if now-promptAt>=1.5 then
+					promptAt=now
+					local list=nearbyFood(math.huge); local edible=_G.MH_edible
+					if type(edible)=="function" and #list>0 then for _=1,#list do
 						if not CFG.InfFood or token~=__gg.MH_foodGen then break end
-						pcall(function() __gg.MH_activatePrompt(prompt,math.huge) end)
-					end
-					break
-				end
-			end end
-		end
-		task.wait(0.5)
-	else task.wait(0.4) end
-end end)
--- INF FOOD — INFINITE BITE SPAM: once you have bitten ONCE (the hook captured your exact "Bite" call), this replays
--- that exact Bite remote on a fast loop, forever, so the bar stays pinned full with no walking and no key press. It
--- fires ONLY the Bite remote — it never touches E, never fires a prompt, never toggles Consuming — so it can NEVER
--- interfere with your manual E-hold-to-eat. This is the whole INF Food after the first bite.
-task.spawn(function() while RUNNING do
-	if CFG.InfFood and alive() and __gg.MH_lastEatCall then
-		local token=__gg.MH_foodGen
-		local eHeld=false; pcall(function() eHeld=UIS:IsKeyDown(Enum.KeyCode.E) end)
-		if eHeld then __gg.MH_lastE=tick() end
-		if not eHeld and tick()-(__gg.MH_lastE or 0)>1.25 then
-			local rs=getReplicaSignal()
-			if rs then
-				-- One controller owns all Bite replay. The speed slider is a bounded per-pass budget,
-				-- and a cursor rotates through sources instead of blasting every saved call every frame.
-				local list=__gg.MH_biteCalls
-				if type(list)~="table" or #list==0 then list={__gg.MH_lastEatCall} end
-				local budget=math.clamp(math.floor(tonumber(CFG.FoodEatSpeed) or 3),1,10)
-				for _=1,budget do
-					if not CFG.InfFood or token~=__gg.MH_foodGen then break end
-					__gg.MH_foodCursor=((__gg.MH_foodCursor or 0)%#list)+1
-					local ec=list[__gg.MH_foodCursor]
-					if type(ec)=="table" and ec.n and ec.n>=2 then
-						local re=RS:FindFirstChild("RemoteEvents"); local exact=(re and ec.remote and re:FindFirstChild(ec.remote)) or rs
-						pcall(function() exact:FireServer(table.unpack(ec,1,ec.n)) end)
-					end
+						__gg.MH_foodProbeCursor=((__gg.MH_foodProbeCursor or 0)%#list)+1
+						local fd=list[__gg.MH_foodProbeCursor]; local model,part,prompt=fd[1],fd[2],fd.prompt
+						if not prompt and model then prompt=model:FindFirstChildWhichIsA("ProximityPrompt",true) end
+						local okDiet,dietOk=pcall(edible,model,prompt)
+						if okDiet and dietOk==true and prompt and part and part.Parent then
+							pcall(function() __gg.MH_activatePrompt(prompt,math.huge) end); break
+						end
+					end end
 				end
 			end
-		end
-		task.wait(0.25)
-	else task.wait(0.4) end
-end end)
+			task.wait(0.18)
+		else task.wait(0.4) end
+	end
+end)
 task.spawn(function() while RUNNING do
 	if CFG.InfWater and alive() then
 		fakeDrink()                       -- fires the Sip remote directly (works map-wide)
@@ -6267,6 +6350,9 @@ task.spawn(function() while RUNNING do task.wait(0.3); pcall(function()
 	else lines[#lines+1]="(no data)" end
 	-- COMBAT DIAGNOSTICS: if "MyID" shows nil, Attack can't fire (no dino id captured) — move/look around to capture it.
 	lines[#lines+1]="MyID: "..tostring(myReplicaId or "nil (CharacterState.Replica.Id unavailable)")
+	lines[#lines+1]="Food replicas: "..tostring(__gg.MH_foodPreferredCount or 0).." preferred / "..tostring(__gg.MH_foodFallbackCount or 0).." fallback"
+	lines[#lines+1]="Bite attempts: "..tostring(__gg.MH_foodBitesSent or 0)
+	lines[#lines+1]="PhysicsID: "..tostring(__gg.MH_physicsReplicaId or "waiting for movement").." | INF speed "..tostring(CFG.InfStamSpeed)
 	lines[#lines+1]="Sound: "..(getSoundRemote() and "found" or "MISSING")
 	local tg=nearestTarget(300,true); lines[#lines+1]="Target: "..(tg and tg.Name or "none")
 	-- ═══ INF STAM DIAGNOSTIC — tells us the REAL speed lever (send me these lines if stam is still slow) ═══
