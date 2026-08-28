@@ -3,11 +3,19 @@
       This is a thin loader: it flips the PLUS flag, then loads the shared Ability Arena hub.
       Load:  loadstring(game:HttpGet("<raw url to this file>"))()  ]]
 _G.AA_PLUS = true
-_G.__DreamReportWebhook = _G.__DreamReportWebhook or ("https://discord.com/api/webhooks/1527849806108692500/".."Ryczyznv3EQVLJF_Y-AYsMqhK".."_fvBC5T3wu2d1uO5BBmSgMARN0_hST5vRRlzQZHkLyg")   -- PASTE YOUR DISCORD WEBHOOK URL here to receive bug reports live
+_G.AA_PREM = false
+_G.AA_TIER = "PLUS"
+pcall(function()
+    local env = getgenv()
+    env.AA_PLUS = true
+    env.AA_PREM = false
+    env.AA_TIER = "PLUS"
+end)
+-- Optional: set _G.__DreamReportWebhook before loading to enable reports.
 
 local URLS = {
-    "https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/claude/improve-ai-system-tUhhn/AbilityArena_CozyHub.lua",
-    "https://github.com/wallacegodfirst-cmd/roblox-scripts/raw/claude/improve-ai-system-tUhhn/AbilityArena_CozyHub.lua",
+    "https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/129b3d18b31cfcd18c907ceb6c3eb767d2a904dc/AbilityArena_CozyHub.lua",
+    "https://github.com/wallacegodfirst-cmd/roblox-scripts/raw/129b3d18b31cfcd18c907ceb6c3eb767d2a904dc/AbilityArena_CozyHub.lua",
 }
 local function toast(m) pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "Ability Arena PLUS", Text = m, Duration = 6 }) end) end
 
@@ -35,3 +43,4 @@ local fn, err = loadstring(src)
 if not fn then toast("compile error: " .. tostring(err)) return end
 local ok, rerr = pcall(fn)
 if not ok then toast("run error: " .. tostring(rerr)) return end
+
