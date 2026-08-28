@@ -1,5 +1,7 @@
--- Dream Hub | Ability Arena | v2.18.0
+-- Dream Hub | Ability Arena | v2.18.1
 -- by Dream Hub Owner
+-- v2.18.1: Executor register-limit fix. The late Admin/VIP UI now compiles in its own
+--          function scope, keeping the shared chunk below older loadstring register limits.
 -- v2.18.0: AA/AA Plus reliability audit. Paid-tier flags now survive executor environment
 --          boundaries, ability pads can be nested Folders/Models, M1/Ability Assistant are
 --          target-gated, Combat Pro input is released on disable/unload/re-execute, Auto Heal
@@ -3863,11 +3865,11 @@ RulesTab:CreateParagraph({Title="Rule 15", Content="Don't abuse the report syste
 
 -- \u2500\u2500 HOME (landing page) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 HomeTab:CreateSection("Welcome")
-HomeTab:CreateParagraph({Title="Dream Hub", Content="Ability Arena  -  v2.18.0\nPick a tab on the left to get started."})
+HomeTab:CreateParagraph({Title="Dream Hub", Content="Ability Arena  -  v2.18.1\nPick a tab on the left to get started."})
 HomeTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
 HomeTab:CreateParagraph({Title="Best combo", Content="M1 Warp (every click snaps you behind them for the swing) or Dash Behind On Hit. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
 HomeTab:CreateSection("Credits")
-HomeTab:CreateParagraph({Title="Credits", Content="Dream Hub v2.18.0 - by Dream Hub Owner"})
+HomeTab:CreateParagraph({Title="Credits", Content="Dream Hub v2.18.1 - by Dream Hub Owner"})
 
 CombatTab:CreateSection("Survival")
 CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
@@ -4562,7 +4564,7 @@ end
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 
 -- ═══ ADMIN TAB (whitelisted user only) ═══
-do
+;(function()
     local ADM = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true, ["babbage_sparse"]=true }
     if ADM[string.lower(LP.Name)] or ADM[string.lower(LP.DisplayName or "")] then
         local AdminTab = Window:CreateTab("Admin","shield")
@@ -4607,7 +4609,7 @@ do
             task.spawn(function() local okc=false pcall(function() local emb={title="Player Reported",color=14689068,fields={{name="Target",value=p.DisplayName.." (@"..p.Name..")  ["..tostring(p.UserId).."]",inline=false},{name="Profile",value="https://www.roblox.com/users/"..p.UserId.."/profile",inline=false},{name="Reason",value=string.sub(tostring(reason),1,1500),inline=false},{name="Reported by",value=LP.Name,inline=false}}}; local pf=tostring(proof); if #pf:gsub("%s","")>4 then table.insert(emb.fields,{name="Proof",value=string.sub(pf,1,400),inline=false}); if pf:match("^https?://%S+%.png") or pf:match("^https?://%S+%.jpg") or pf:match("^https?://%S+%.jpeg") or pf:match("^https?://%S+%.gif") then emb.image={url=pf} end end local FUNNY={"https://dev.plasmii.vip/folk-images/FyileRBHGM.png","https://dev.plasmii.vip/folk-images/7iHoNdXEZx.png","https://dev.plasmii.vip/folk-images/e7OU2vjjwy.png","https://dev.plasmii.vip/folk-images/zRugC3azOS.png","https://dev.plasmii.vip/folk-images/PdNAVfd1Xs.png","https://dev.plasmii.vip/folk-images/Gooning_folk.png","https://dev.plasmii.vip/folk-images/bvFh6jNwfg.png","https://dev.plasmii.vip/folk-images/3DpT2iqGIf.png","https://dev.plasmii.vip/folk-images/0p4BngFJ14.png","https://dev.plasmii.vip/folk-images/Fa8WC5QRLO.png","https://dev.plasmii.vip/folk-images/Gooner_folk.png","https://dev.plasmii.vip/folk-images/V1Lk4YW2hB.png","https://dev.plasmii.vip/folk-images/5qdmyDpxVm.png","https://dev.plasmii.vip/folk-images/folk.png","https://dev.plasmii.vip/folk-images/BmgbC2AbEY.png","https://dev.plasmii.vip/folk-images/Test.png"} local funpick=FUNNY[math.random(#FUNNY)] if emb.image then emb.thumbnail={url=funpick} else emb.image={url=funpick} end local body=game:GetService("HttpService"):JSONEncode({username="Dream Mod",embeds={emb}}) local res=req({Url=hook,Method="POST",Headers={["Content-Type"]="application/json"},Body=body}); if res and ((res.StatusCode and res.StatusCode>=200 and res.StatusCode<300) or res.Success) then okc=true end if not okc then local res2=req({Url=(hook:gsub("^https://discord%.com","https://webhook.lewisakura.moe")),Method="POST",Headers={["Content-Type"]="application/json"},Body=body}) if res2 and ((res2.StatusCode and res2.StatusCode>=200 and res2.StatusCode<300) or res2.Success) then okc=true end end end) toast(okc and ("Reported "..p.Name..".") or "Send failed.") end)
         end})
     end
-end
+end)()
 
 Rayfield:Notify({Title="Dream Hub", Content="Loaded.", Duration=5})
 
