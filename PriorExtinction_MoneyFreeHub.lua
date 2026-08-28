@@ -2,10 +2,27 @@
 
 print("[Dream Hub PE] script fetched OK - booting")   -- if you see THIS in F9 but no menu, send the red error line under it
 local __gg = (typeof(getgenv)=="function") and getgenv() or _G
+-- Recover user input before replacing an older build. Auto Play and legacy Pro Food builds could be stopped while
+-- one or more synthetic movement keys were still held, making the newly loaded hub appear to freeze movement.
+-- Key-up events are safe here: this runs once during execution and the current build only holds keys while its
+-- owning feature is enabled.
+__gg.MH_releaseSyntheticMovement=function()
+	pcall(function() if type(__gg.MH_botReleaseKeys)=="function" then __gg.MH_botReleaseKeys() end end)
+	pcall(function() if type(__gg.MH_stopProFood)=="function" then __gg.MH_stopProFood() end end)
+	pcall(function()
+		local vim=game:GetService("VirtualInputManager")
+		for _,kc in ipairs({Enum.KeyCode.W,Enum.KeyCode.A,Enum.KeyCode.S,Enum.KeyCode.D,Enum.KeyCode.Space,Enum.KeyCode.LeftControl,Enum.KeyCode.LeftShift,Enum.KeyCode.RightShift,Enum.KeyCode.E}) do
+			vim:SendKeyEvent(false,kc,false,game)
+		end
+	end)
+end
+pcall(__gg.MH_releaseSyntheticMovement)
 -- Older PE builds briefly synthesized Shift for INF Stamina. Release a stale owned press before their cleanup can
 -- clear the marker; the current build never presses Shift itself and leaves the game's native run controller alone.
 if __gg.MH_stamShiftHeld then pcall(function() game:GetService("VirtualInputManager"):SendKeyEvent(false,Enum.KeyCode.LeftShift,false,game) end) end
 if __gg.__PRIOR_EXT_HUB then pcall(__gg.__PRIOR_EXT_HUB) end
+pcall(__gg.MH_releaseSyntheticMovement)
+__gg.MH_botReleaseKeys=nil; __gg.MH_stopProFood=nil
 __gg.__PRIOR_EXT_HUB = nil
 -- Captured replica/source ids are scoped to one server session. Reusing them after a re-execute or server hop
 -- makes INF Food replay dead ids forever and prevents its nearby-food bootstrap from running.
@@ -844,7 +861,7 @@ end
 -- ═══ CONFIG ═══ (all features START OFF below so executing can never freeze you)
 local CFG = {
 	Aimbot=false, SilentAim=false, AimPart="Head", AimKey="C", AimSmooth=0.4, LockOn=false,
-	HitboxExpand=true, HitboxSize=35, HitboxVisible=true, HitboxOpacity=40, HitboxColor={r=255,g=40,b=60}, HitboxColorName="Red", HitboxBone="All",
+	HitboxExpand=false, HitboxSize=35, HitboxVisible=true, HitboxOpacity=40, HitboxColor={r=255,g=40,b=60}, HitboxColorName="Red", HitboxBone="All",
 	AutoPlayBot=false,
 	BotFlee=true, BotFleeRange=240, BotRoam=true, BotRoamRadius=350, BotEatAt=80, BotDrinkAt=80, BotSleepHeal=true, BotSpeed=18, BotAnnounce=true,
 	BoneProtect=false, ProtectBone="All",
@@ -906,7 +923,7 @@ if not (tonumber(CFG.FarmReach) and CFG.FarmReach>=30 and CFG.FarmReach<=120) th
 -- lag (no scan/remote loop runs until YOU enable a feature). Your keybinds / sliders / colours / UI scale
 -- still persist — only the boolean feature toggles (incl. protections) are forced off here.
 for _,key in ipairs({
-	"Aimbot","SilentAim","LockOn","BoneProtect","TurnHack","Fly","SpeedHack","Noclip","InfJump",
+	"Aimbot","SilentAim","LockOn","HitboxExpand","BoneProtect","TurnHack","Fly","SpeedHack","Noclip","InfJump",
 	"InfFood","InfWater","InfStam","InfOxygen","SaveDino","AutoFarmPlayer","AutoFarmFossil","AutoFarmGem","AutoPlayBot",
 	"ESPPlayers","ESPCorpses","FoodESP","FishESP","GemESP","AlertEnabled","CarnMeatTP","ProFood","FullBright","NightVision","NoDarkWater","WaterClear","NoClouds","AlwaysDamage","NoGrabLimit","RemoveTrees","Radar",
 	"Float","GodMode","InfLight","UnlockFOV","InfZoom","AntiDrown","WalkWater","AutoClean","AntiFracture","AntiBleed","Invis",
@@ -967,6 +984,12 @@ local function alive()
 	if h then return h.Health>0 end
 	return hrp()~=nil
 end
+-- One-shot recovery only; no loop owns these properties while movement features are off.
+__gg.MH_restoreMovementState=function()
+	local h=hum(); if h then pcall(function() h.PlatformStand=false; h.AutoRotate=true end) end
+	local r=hrp(); if r then pcall(function() r.Anchored=false end) end
+end
+task.defer(function() pcall(__gg.MH_restoreMovementState) end)
 local function dist(a,b) return (a-b).Magnitude end
 local function rootOf(m)
 	if not m then return nil end
@@ -7248,6 +7271,7 @@ end) end end)
 -- CLEANUP
 G.__PRIOR_EXT_HUB = function()
 	RUNNING=false
+	pcall(__gg.MH_releaseSyntheticMovement)
 	if __gg.MH_foodSyntheticE then pcall(function() VIM:SendKeyEvent(false,Enum.KeyCode.E,false,game) end); __gg.MH_foodSyntheticE=false end
 	if __gg.MH_stamShiftHeld then pcall(function() VIM:SendKeyEvent(false,Enum.KeyCode.LeftShift,false,game) end); __gg.MH_stamShiftHeld=false end
 	for _,c in ipairs(CONNS) do pcall(function() c:Disconnect() end) end; CONNS={}
@@ -7262,6 +7286,7 @@ G.__PRIOR_EXT_HUB = function()
 	pcall(function() SG:Destroy() end)
 	pcall(function() if ESP.gui then ESP.gui:Destroy() end end)
 	pcall(function() if Fluent then Fluent.Unloaded=true; if Fluent.Destroy then Fluent:Destroy() end end if FWindow and FWindow.Destroy then FWindow:Destroy() end end)
+	pcall(__gg.MH_restoreMovementState)
 	saveCfg()
 	G.__PRIOR_EXT_HUB=nil
 end
