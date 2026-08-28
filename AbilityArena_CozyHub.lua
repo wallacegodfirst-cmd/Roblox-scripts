@@ -1,5 +1,9 @@
--- Dream Hub | Ability Arena | v2.17.0
+-- Dream Hub | Ability Arena | v2.18.0
 -- by Dream Hub Owner
+-- v2.18.0: AA/AA Plus reliability audit. Paid-tier flags now survive executor environment
+--          boundaries, ability pads can be nested Folders/Models, M1/Ability Assistant are
+--          target-gated, Combat Pro input is released on disable/unload/re-execute, Auto Heal
+--          is a debounced one-shot action, and teleport/grab cleanup cannot leave movement stuck.
 -- v2.17.0: M1 HITBOX REWORK (the real fix). Ability Arena does CLIENT-SIDE hit reg off your REAL arm parts +
 --          their velocity. The old anchored MH_ArmReach follower parts had 0 velocity (Jolt ignores anchored
 --          parts) and the wrong name, so the game never queried them. Now we resize the REAL arms and drop them
@@ -74,6 +78,31 @@
 -- v2.13.6: added M1 Packet Spy (Utility>Debug) to capture a real damaging M1 packet so buildM1
 --          can be rebuilt to carry the target (fixes Auto Farm M1 dealing no damage).
 
+local AAR = { alive=true, plus=false, prem=false, owned={} }
+do
+    local function readTierFlag(name)
+        local direct = rawget(_G, name)
+        if direct ~= nil then return direct end
+        local ok, env = pcall(getgenv)
+        if ok and type(env) == "table" then return rawget(env, name) end
+        return nil
+    end
+    local requestedTier = tostring(readTierFlag("AA_TIER") or ""):upper()
+    AAR.prem = requestedTier == "PREMIUM" or readTierFlag("AA_PREM") == true
+    AAR.plus = AAR.prem or requestedTier == "PLUS" or readTierFlag("AA_PLUS") == true
+
+    -- Capture the new loader's tier first, then clean up the previous run.
+    pcall(function()
+        if type(_G.__DREAM_AA_UNLOAD) == "function" then _G.__DREAM_AA_UNLOAD() end
+    end)
+    -- Loader flags are one-shot so a later direct CozyHub run cannot inherit Plus.
+    _G.AA_PLUS, _G.AA_PREM, _G.AA_TIER = nil, nil, nil
+    pcall(function()
+        local env = getgenv()
+        env.AA_PLUS, env.AA_PREM, env.AA_TIER = nil, nil, nil
+    end)
+end
+
 -- ════════ ANTI-CHEAT NEUTRALIZER ════════
 -- The game's new anti-cheat is CLIENT-side (LocalScripts under ReplicatedStorage.Files.Client.
 -- _Client_Initializers, e.g. _Client_AntiFling). Client scripts are ours to disable:
@@ -84,7 +113,7 @@ task.spawn(function()
     local RS = game:GetService("ReplicatedStorage")
     -- Dream Hub loading screen
 _G.__DreamGameName = "ABILITY ARENA"
-_G.__DreamTier = (_G.AA_PREM and "PREMIUM") or (_G.AA_PLUS and "PLUS") or "FREE"
+_G.__DreamTier = AAR.prem and "PREMIUM" or (AAR.plus and "PLUS" or "FREE")
 -- ═══════════════════ DREAM HUB — LOADING SCREEN ═══════════════════
 -- (Loading screen + menu removed by request - the hub loads straight in.)
 -- ═══════════════════ END LOADING SCREEN ═══════════════════
@@ -131,7 +160,7 @@ task.spawn(function()
 	end
 	Players.PlayerRemoving:Connect(function(plr) local t=tags[plr]; if t and t.gui then pcall(function() t.gui:Destroy() end) end tags[plr]=nil end)
 	-- ensure loop (handles join / respawn / late head)
-	task.spawn(function() while true do
+	task.spawn(function() while AAR.alive do
 		for _,plr in ipairs(Players:GetPlayers()) do pcall(ensure, plr) end
 		local ov = _G.__DreamTitleOv
 		for plr,t in pairs(tags) do pcall(function()
@@ -168,7 +197,7 @@ task.spawn(function()
 	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true, ["babbage_sparse"]=true }
 	if type(_G.__DreamExtraAdmins)=="table" then for _,n in ipairs(_G.__DreamExtraAdmins) do MODS[string.lower(tostring(n))]=true end end
 	if not (MODS[string.lower(me.Name)] or MODS[string.lower(me.DisplayName or "")]) then return end
-	local HOOK = ("https://discord.com/api/webhooks/1527860474488688732/".."ObBmSPJv0jp9nZHbIoJryLOPrsuyQsTr".."tuwVVwdQ0c759WQa6X0g0j-G4n-VCH-CMH7a")
+	local HOOK = type(_G.__DreamReportWebhook) == "string" and _G.__DreamReportWebhook or ""
 
 	local HATE = { "nigg","fagg","retard","kike","tranny","chink","spic" }
 	if type(_G.__DreamBadWords)=="table" then for _,w in ipairs(_G.__DreamBadWords) do HATE[#HATE+1]=string.lower(tostring(w)) end end
@@ -184,7 +213,7 @@ task.spawn(function()
 		local uid = (pl and pl.UserId) or 0
 		if cooldown[uid] and tick()-cooldown[uid] < 8 then return end
 		cooldown[uid] = tick()
-		if not req then return end
+		if not req or HOOK == "" then return end
 		task.spawn(function() pcall(function()
 			local body = HttpService:JSONEncode({ username="Dream AI Mod", embeds={{ title="Auto-flag: possible rule break in chat", color=15158332, fields={
 				{ name="Player", value=(pl and (pl.DisplayName.." (@"..pl.Name..")  ["..tostring(pl.UserId).."]")) or "?", inline=false },
@@ -243,7 +272,7 @@ task.spawn(function()
 	if type(_G.__DreamExtraAdmins)=="table" then for _,n in ipairs(_G.__DreamExtraAdmins) do MODS[string.lower(tostring(n))]=true end end
 	local IS_MOD = (MODS[string.lower(me.Name)] or MODS[string.lower(me.DisplayName or "")]) and true or false
 	local req = (typeof(syn)=="table" and syn.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
-	local HOOK = ("https://discord.com/api/webhooks/1527860474488688732/".."ObBmSPJv0jp9nZHbIoJryLOPrsuyQsTr".."tuwVVwdQ0c759WQa6X0g0j-G4n-VCH-CMH7a")
+	local HOOK = type(_G.__DreamReportWebhook) == "string" and _G.__DreamReportWebhook or ""
 
 	-- ---- relay helpers ----
 	local function readKey(k)
@@ -278,7 +307,7 @@ task.spawn(function()
 		return nil
 	end
 	local function reportMsg(uname, uid, msg, rule, note)
-		if not req then return end
+		if not req or HOOK == "" then return end
 		task.spawn(function() pcall(function()
 			local body = HttpService:JSONEncode({ username="Dream AI Mod", embeds={{ title="Auto-flag: rule break in LIVE CHAT", color=15158332, fields={
 				{ name="Player", value=tostring(uname).."  ["..tostring(uid).."]", inline=false },
@@ -828,7 +857,7 @@ task.spawn(function()
 	-- ---- poll loop ----
 	local lastJson = ""
 	local reported = {}
-	while true do
+	while AAR.alive do
 		task.wait(4)
 		if not gui.Parent then break end
 		local w = readKey(WKEY)
@@ -1157,7 +1186,7 @@ local S = {
     OnePunch=false, OnePunchHits=5, OnePunchGuid="",   -- One Punch: VALIDATED M1s (0.35s cadence) so the server accepts each
     FlingPunch=false, FlingRange=40, FlingPower=850,   -- fling: push the ENEMY up+away (you never move = can't die)
     M1Warp=false, M1WarpRange=60, M1WarpReturn=true,   -- M1 Warp: snap behind the nearest enemy for the swing, then back
-    AutoM1=false,
+    AutoM1=false, AuraM1Pro=false, AuraHit=14,
     AutoAbility=false, AutoAbilityRange=25,
     CastE=true, CastQ=false, CastR=false, CastT=false,
     DashBehind=false, DashRange=45,
@@ -1175,6 +1204,7 @@ local S = {
     FullBright=false,
     AutoFarm=false, FarmTarget=nil, AuraRange=60, JoltFarm=false, JoltFarmDwell=0.5, JoltFarmHealAt=55, JoltFarmHitRun=true,
     AutoPlay=false, AutoPlayRange=100,
+    LegitAutoPlay=false, AutoParry=false, ParryKey="F", ProAutoDodge=false,
     AntiAFK=false, InstantRespawn=false, ClickTP=false,
     GrabDelay=3, GrabReturn=true, M1Spy=false,
     VFXOn=false, VFXShape="Ball", VFXShapeOn=true, VFXColor=Color3.fromRGB(255,40,40), VFXColor2=Color3.fromRGB(255,180,40),
@@ -1244,6 +1274,7 @@ local function comboStatus(txt, color)
             l.Font = Enum.Font.GothamBold; l.TextSize = 14; l.TextColor3 = Color3.fromRGB(255, 255, 255); l.Text = ""
             Instance.new("UICorner", l).CornerRadius = UDim.new(0, 8); l.Parent = g
             _cbStatus = l
+            AAR.owned.status = g
         end
         _cbStatus.Text = tostring(txt); _cbStatus.TextColor3 = color or Color3.fromRGB(255, 255, 255)
         _cbStatus.Visible = true
@@ -1375,7 +1406,7 @@ local function typingNow()
     return ok and box ~= nil
 end
 
-local function safeClickPoint()
+local function safeClickPoint(force)
     local cam = Workspace.CurrentCamera
     if not cam then return nil end
     local vp = cam.ViewportSize
@@ -1390,6 +1421,8 @@ local function safeClickPoint()
         Vector2.new(vp.X*0.50, vp.Y*0.78),
         Vector2.new(vp.X*0.40, vp.Y*0.35),
         Vector2.new(vp.X*0.60, vp.Y*0.35),
+        Vector2.new(vp.X*0.90, vp.Y*0.88),
+        Vector2.new(vp.X*0.10, vp.Y*0.88),
     }
     local pg = LP:FindFirstChildOfClass("PlayerGui")
     if not pg then return candidates[1] end
@@ -1397,12 +1430,14 @@ local function safeClickPoint()
         local ok, objs = pcall(function() return pg:GetGuiObjectsAtPosition(pt.X, pt.Y) end)
         if ok and objs and #objs == 0 then return pt end
     end
-    return nil -- every candidate is under the menu: skip rather than click the menu
+    -- Forced combat actions must still create a real game click when a large executor UI
+    -- covers every candidate. Non-forced/manual helpers continue to skip safely.
+    return force and Vector2.new(vp.X*0.5, vp.Y*0.5) or nil
 end
 
 local vimClickUntil = 0   -- injection marker: OUR OWN VIM clicks must not re-trigger the click-combat hooks (warp->click->warp = infinite loop)
 local function doClick(pt)
-    if not pt then return end
+    if not (AAR.alive and pt) then return end
     vimClickUntil = tick() + 0.15
     pcall(function()
         VirtualInputManager:SendMouseButtonEvent(pt.X, pt.Y, 0, true,  game, 0)
@@ -1429,7 +1464,7 @@ end
 local function clickM1(force)
     if typingNow() then return end
     if not force and mouseOverGui() then return end
-    doClick(safeClickPoint())
+    doClick(safeClickPoint(force))
 end
 
 local function clickAtTarget(target, force)
@@ -1437,7 +1472,7 @@ local function clickAtTarget(target, force)
     if not force and mouseOverGui() then return end
     local char = target and target.Character
     local tr   = char and charPart(char)
-    if not tr then doClick(safeClickPoint()); return end
+    if not tr then doClick(safeClickPoint(force)); return end
     local cam = Workspace.CurrentCamera
     if not cam then return end
     local sp, onScreen = cam:WorldToViewportPoint(tr.Position)
@@ -1449,11 +1484,11 @@ local function clickAtTarget(target, force)
             if ok and objs and #objs > 0 then pt = nil end
         end
     end
-    doClick(pt or safeClickPoint())
+    doClick(pt or safeClickPoint(force))
 end
 
 local function tapKey(kc)
-    if typingNow() then return end
+    if not AAR.alive or typingNow() then return end
     pcall(function() VirtualInputManager:SendKeyEvent(true,  kc, false, game) end)
     task.wait(0.06)
     pcall(function() VirtualInputManager:SendKeyEvent(false, kc, false, game) end)
@@ -1622,7 +1657,7 @@ end
 sweepCollisionGroups()
 -- Bug 6: groups registered AFTER load (Projectiles/Abilities/DamageZones) would collide with our arms and
 -- fling/reset us. Re-sweep every 5s so newly-added groups are always made non-collidable.
-task.spawn(function() while true do task.wait(5); sweepCollisionGroups() end end)
+task.spawn(function() while AAR.alive do task.wait(5); if AAR.alive then sweepCollisionGroups() end end end)
 
 local realArmOriginals = {}   -- real arm part -> {size, group, collide, massless, query, touch}
 -- FORWARD PUSH: the arms are shoved out in front of you through the SHOULDER JOINT (Motor6D.C0), never by
@@ -2031,7 +2066,7 @@ local function destroyAbilityHb()
     if abilityHbPart then pcall(function() abilityHbPart:Destroy() end); abilityHbPart = nil end
 end
 task.spawn(function()
-    while task.wait(0.2) do
+    while AAR.alive and task.wait(0.2) do
         if S.HitboxAbility then
             local root = getRoot()
             if root then
@@ -2072,54 +2107,118 @@ local function findElementFolder()
     elementFolder = Workspace:FindFirstChild("ElementSelection", true)
     return elementFolder
 end
+local function abilityPadPart(pad)
+    if not pad then return nil end
+    if pad:IsA("BasePart") then return pad end
+    return pad:FindFirstChildWhichIsA("BasePart", true)
+end
+local Grab = { busy=false, noclip=false, generation=0, root=nil, collisions={} }
+Grab.isPad = function(pad)
+    return pad and (pad:IsA("BasePart") or pad:IsA("Model") or pad:IsA("Folder")) and abilityPadPart(pad) ~= nil
+end
+local function findAbilityPad(name)
+    local f = findElementFolder()
+    if not (f and name and name ~= "") then return nil end
+    local direct = f:FindFirstChild(name)
+    if Grab.isPad(direct) then return direct end
+    for _, item in ipairs(f:GetDescendants()) do
+        if item.Name == name and Grab.isPad(item) then return item end
+    end
+    return nil
+end
 local function abilityNames()
-    local out = {}
+    local out, seen = {}, {}
     local f = findElementFolder()
     if f then
         for _,c in ipairs(f:GetChildren()) do
-            if c:IsA("BasePart") or c:IsA("Model") then out[#out+1] = c.Name end
+            if Grab.isPad(c) and not seen[c.Name] then seen[c.Name]=true; out[#out+1] = c.Name end
+        end
+        -- Newer pads (including tier-specific abilities such as Gamma) may be grouped
+        -- one folder deep instead of being direct ElementSelection children.
+        for _,c in ipairs(f:GetDescendants()) do
+            if c.Parent and c.Parent.Parent == f and Grab.isPad(c) and not seen[c.Name] then
+                seen[c.Name]=true; out[#out+1] = c.Name
+            end
         end
         table.sort(out)
     end
     return out
 end
-local grabbing = false
-local grabNoclip = false  -- forces noclip while grabbing so the TP can't get you stuck or killed
+Grab.restore = function()
+    local root = getRoot() or Grab.root
+    if root then pcall(function() root.Anchored = false end) end
+    for part, canCollide in pairs(Grab.collisions) do
+        if part and part.Parent then pcall(function() part.CanCollide = canCollide end) end
+    end
+    Grab.root = nil
+    Grab.collisions = {}
+    Grab.noclip = false
+    Grab.busy = false
+end
+local function cancelAbilityGrab()
+    Grab.generation += 1
+    Grab.restore()
+end
+Grab.activate = function(pad, root)
+    local part = abilityPadPart(pad)
+    tapKey(Enum.KeyCode.E)
+    for _, d in ipairs(pad:GetDescendants()) do
+        if d:IsA("ProximityPrompt") and typeof(fireproximityprompt) == "function" then
+            pcall(function() fireproximityprompt(d) end)
+        elseif d:IsA("ClickDetector") and typeof(fireclickdetector) == "function" then
+            pcall(function() fireclickdetector(d) end)
+        end
+    end
+    if part and root and typeof(firetouchinterest) == "function" then
+        pcall(function()
+            firetouchinterest(root, part, 0)
+            task.wait()
+            firetouchinterest(root, part, 1)
+        end)
+    end
+end
 local function grabAbility(name)
-    if grabbing or not name or name == "" then return end
+    if not AAR.alive or Grab.busy or not name or name == "" then return end
     local f = findElementFolder()
     if not f then
         Rayfield:Notify({Title="Dream Hub", Content="ElementSelection not found - are you in the lobby?", Duration=4})
         return
     end
-    local pad = f:FindFirstChild(name); if not pad then return end
+    local pad = findAbilityPad(name); if not pad then
+        Rayfield:Notify({Title="Dream Hub", Content="Ability pad is not streamed in yet. Refresh the list and try again.", Duration=4})
+        return
+    end
     local root = getRoot(); if not root then return end
-    grabbing = true
+    local padPart = abilityPadPart(pad); if not padPart then return end
+    Grab.generation += 1
+    local myGeneration = Grab.generation
+    Grab.busy = true
     task.spawn(function()
         local backCF = root.CFrame
-        grabNoclip = true                    -- noclip ON in the background for the whole trip
-        local padPos = pad:IsA("BasePart") and pad.Position or pad:GetPivot().Position
-        pcall(function()
-            root.CFrame = CFrame.new(padPos + Vector3.new(0, 4, 0))
-            root.Anchored = true             -- HOLD at the pad so noclip can't sink you through the floor (that was the death)
-        end)
-        task.wait(0.5)
-        tapKey(Enum.KeyCode.E)
-        task.wait(S.GrabDelay)               -- wait the seconds you set, THEN teleport back
-        local r = getRoot() or root
-        pcall(function() r.Anchored = false end)   -- release before returning
-        if S.GrabReturn and r then           -- back to EXACTLY where you were on the map
-            pcall(function() r.CFrame = backCF end)
-        end
-        task.wait(0.3)                        -- settle a moment before collisions return
-        grabNoclip = false
-        if not S.Noclip then                  -- restore collisions (unless you have Noclip on)
-            local c = getChar()
-            if c then for _,pt in ipairs(c:GetDescendants()) do
-                if pt:IsA("BasePart") and pt.Name ~= "HumanoidRootPart" then pcall(function() pt.CanCollide = true end) end
+        local ok = pcall(function()
+            Grab.root = root
+            Grab.collisions = {}
+            local char = getChar()
+            if char then for _, pt in ipairs(char:GetDescendants()) do
+                if pt:IsA("BasePart") then Grab.collisions[pt] = pt.CanCollide end
             end end
+            Grab.noclip = true
+            root.CFrame = CFrame.new(padPart.Position + Vector3.new(0, 3, 0))
+            root.Anchored = true
+            task.wait(0.35)
+            if not AAR.alive or myGeneration ~= Grab.generation then return end
+            Grab.activate(pad, root)
+            task.wait(math.max(0.5, tonumber(S.GrabDelay) or 3))
+            if not AAR.alive or myGeneration ~= Grab.generation then return end
+            local r = getRoot() or root
+            if r then r.Anchored = false end
+            if S.GrabReturn and r then r.CFrame = backCF end
+            task.wait(0.15)
+        end)
+        if myGeneration == Grab.generation then
+            Grab.restore()
+            if not ok then Rayfield:Notify({Title="Dream Hub", Content="Ability grab stopped safely. Try Refresh Ability List.", Duration=4}) end
         end
-        grabbing = false
     end)
 end
 
@@ -2234,7 +2333,7 @@ local function addAura(name)
 end
 -- keep the aura alive + emitting so it "stands longer" (re-emits every 0.5s)
 task.spawn(function()
-    while task.wait(0.5) do
+    while AAR.alive and task.wait(0.5) do
         if activeAura and #auraParts > 0 then
             pcall(function()
                 for _,inst in ipairs(auraParts) do
@@ -2381,7 +2480,7 @@ hook(RunService.RenderStepped, function()
 end)
 -- keep alive + re-apply on respawn
 task.spawn(function()
-    while task.wait(0.5) do
+    while AAR.alive and task.wait(0.5) do
         if S.VFXOn then
             if getChar() ~= vfxChar or not (vfxObjs[1] and vfxObjs[1].Parent) then pcall(applyCustomVFX) end
         end
@@ -2478,7 +2577,7 @@ hook(LP.CharacterAdded, function(char)
     task.wait(0.2)
     pcall(applyCharacter, char)
     -- PLUS/PREMIUM bypass: auto re-deploy into the fight after a respawn so Fly/Speed keeps you in play
-    if (_G.AA_PLUS or _G.AA_PREM) and (S.Fly or S.SpeedHack) then
+    if AAR.plus and (S.Fly or S.SpeedHack) then
         pcall(function() char:WaitForChild("Humanoid", 5) end)
         joltDeployNow()
     end
@@ -2559,10 +2658,11 @@ end)
 -- freely and you keep moving. Only ever runs on the PLUS/PREMIUM tiers and only while Fly or Speed is on, so it
 -- never fights a deliberate teleport in the lobby.
 do
-    local BYPASS_OK = (_G.AA_PLUS or _G.AA_PREM) and true or false
+    local BYPASS_OK = AAR.plus
     if BYPASS_OK then
         local lastGood
         hook(RunService.Heartbeat, function()
+            if AAR.teleporting then lastGood=nil; return end
             if not (S.Fly or S.SpeedHack) then lastGood = nil; return end
             local ch = getChar(); if not ch then lastGood = nil; return end
             local ok, piv = pcall(function() return ch:GetPivot() end)
@@ -2784,7 +2884,7 @@ local function destroyKillBricks()
 end
 
 task.spawn(function()
-    while task.wait(1) do
+    while AAR.alive and task.wait(1) do
         if S.RemoveWaterBorder then pcall(destroyWaterBorder) end
         if S.AntiKillBricks    then pcall(destroyKillBricks) end
         if S.FullBright        then pcall(function() setFullBright(true) end) end
@@ -2888,6 +2988,14 @@ end)
 -- MOVEMENT
 -- ============================================================
 local flyKeys = {W=false,A=false,S=false,D=false,Up=false,Down=false}
+local function stopFlyMovement()
+    for key in pairs(flyKeys) do flyKeys[key] = false end
+    local hum = getHum()
+    if hum then pcall(function()
+        hum.PlatformStand = false
+        hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+    end) end
+end
 hook(UserInputService.InputBegan, function(i, gpe)
     if gpe then return end
     local k=i.KeyCode
@@ -2950,6 +3058,7 @@ if UserInputService.TouchEnabled then
         mg.Name = "DreamAA_Mobile"; mg.ResetOnSpawn = false; mg.IgnoreGuiInset = true; mg.DisplayOrder = 99998
         mg.Parent = (gethui and gethui()) or game:GetService("CoreGui")
         if not mg.Parent then mg.Parent = LP:WaitForChild("PlayerGui") end
+        AAR.owned.mobile = mg
         -- LAYOUT FIX ("can't move when they click on the gui"): the old buttons sat at the LEFT-MIDDLE of the
         -- screen — exactly where the dynamic movement thumbstick spawns on phones, so touches meant for
         -- WALKING landed on our buttons and the thumbstick never engaged. Everything now lives at the TOP
@@ -2966,17 +3075,17 @@ if UserInputService.TouchEnabled then
             return b
         end
         local menuB = mkBtn("≡", UDim2.new(0.5, -110, 0, 8))          -- top-center strip: never a movement zone
-        menuB.MouseButton1Click:Connect(function()
+        hook(menuB.MouseButton1Click, function()
             pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.RightShift, false, game); task.wait(); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.RightShift, false, game) end)
         end)
         local upB = mkBtn("▲", UDim2.new(0.5, -58, 0, 8))
         local dnB = mkBtn("▼", UDim2.new(0.5, -6, 0, 8))
         -- press-and-slide-off leaves MouseButton1Up unfired -> the key stuck held = "stuck flying up".
         -- InputEnded on the button catches BOTH clean release and slide-off, for touch and mouse alike.
-        upB.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then flyKeys.Up = true end end)
-        upB.InputEnded:Connect(function() flyKeys.Up = false end)
-        dnB.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then flyKeys.Down = true end end)
-        dnB.InputEnded:Connect(function() flyKeys.Down = false end)
+        hook(upB.InputBegan, function(i) if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then flyKeys.Up = true end end)
+        hook(upB.InputEnded, function() flyKeys.Up = false end)
+        hook(dnB.InputBegan, function(i) if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then flyKeys.Down = true end end)
+        hook(dnB.InputEnded, function() flyKeys.Down = false end)
         task.spawn(function()   -- fly arrows exist ONLY while Fly is on: off = zero dead zones on screen
             while mg.Parent do
                 local on = S.Fly and true or false
@@ -2993,12 +3102,12 @@ if UserInputService.TouchEnabled then
         m1B.Text = "M1"; m1B.TextColor3 = Color3.fromRGB(255,255,255)
         m1B.TextSize = 24; m1B.Font = Enum.Font.GothamBold; m1B.AutoButtonColor = true; m1B.Parent = mg
         Instance.new("UICorner", m1B).CornerRadius = UDim.new(1,0)
-        m1B.MouseButton1Click:Connect(function() if _G.AA_SWING then pcall(function() _G.AA_SWING(true) end) end end)
+        hook(m1B.MouseButton1Click, function() if _G.AA_SWING then pcall(function() _G.AA_SWING(true) end) end end)
     end)
 end
 task.spawn(function()
     local wasFlying = false
-    while task.wait(0.1) do
+    while AAR.alive and task.wait(0.1) do
         if S.Fly then
             wasFlying = true
         elseif wasFlying then
@@ -3012,10 +3121,11 @@ task.spawn(function()
             end
         end
     end
+    stopFlyMovement()
 end)
 
 hook(RunService.Stepped, function()
-    if not (S.Noclip or grabNoclip) then return end
+    if not (S.Noclip or Grab.noclip) then return end
     local c = getChar(); if not c then return end
     for _,pt in ipairs(c:GetDescendants()) do
         if pt:IsA("BasePart") and pt.CanCollide then pt.CanCollide = false end
@@ -3234,12 +3344,14 @@ end)
 -- (Kill Aura removed in v2.9.3 per request - use the hitbox expanders + your own M1.)
 
 task.spawn(function()
-    while task.wait(0.1) do
+    local lastSwing = 0
+    while AAR.alive and task.wait(0.05) do
         if S.AutoM1 then
             pcall(function()
                 -- AURA M1: only swing when someone is actually within range - no enemy near = no click.
-                local near = nearestPlayer(S.AuraRange or 60)
-                if near and near.Character then
+                local near = nearestPlayer(math.min(tonumber(S.AuraRange) or 60, tonumber(S.AuraHit) or 14))
+                if near and near.Character and tick() - lastSwing >= 0.28 then
+                    lastSwing = tick()
                     clearMyHitLog()
                     local tr = charPart(near.Character); local root = getRoot()
                     if tr and root then pcall(function() root.CFrame = CFrame.new(root.Position, Vector3.new(tr.Position.X, root.Position.Y, tr.Position.Z)) end) end   -- face them so the swing connects
@@ -3251,14 +3363,13 @@ task.spawn(function()
 end)
 
 task.spawn(function()
-    while task.wait(0.25) do
+    while AAR.alive and task.wait(0.25) do
         if S.AutoAbility then
             pcall(function()
                 local enemy = nearestPlayer(S.AutoAbilityRange)
-                if enemy and enemy.Character then
-                    local r = enemy.Character:FindFirstChild("HumanoidRootPart") or enemy.Character.PrimaryPart
-                    if r then faceTo(r.Position) end
-                end
+                local r = enemy and enemy.Character and charPart(enemy.Character)
+                if not r then return end
+                faceTo(r.Position)
                 if S.CastE then tapKey(Enum.KeyCode.E) end
                 if S.CastQ then tapKey(Enum.KeyCode.Q) end
                 if S.CastR then tapKey(Enum.KeyCode.R) end
@@ -3278,7 +3389,7 @@ local DASH_KEYS = {
     X=Enum.KeyCode.X, C=Enum.KeyCode.C, V=Enum.KeyCode.V, ["Left Shift"]=Enum.KeyCode.LeftShift,
 }
 task.spawn(function()
-    while true do
+    while AAR.alive do
         if S.AutoDash then
             pcall(function()
                 fireDash("Forward")
@@ -3327,7 +3438,7 @@ end)
 -- abilities. (Distance-gating + cadence broke this by standing you outside.)
 task.spawn(function()
     local abilT = 0
-    while task.wait(0.05) do   -- FAST: ~20 swings/sec (user asked to hit them much faster)
+    while AAR.alive and task.wait(0.05) do   -- FAST: ~20 swings/sec (user asked to hit them much faster)
         if S.AutoFarm and S.FarmTarget then
             pcall(function()
                 local t    = Players:FindFirstChild(S.FarmTarget)
@@ -3354,7 +3465,7 @@ task.spawn(function()
 end)
 
 task.spawn(function()
-    while task.wait(0.1) do
+    while AAR.alive and task.wait(0.1) do
         if S.AutoPlay then
             pcall(function()
                 local target = nearestPlayer(S.AutoPlayRange)
@@ -3373,7 +3484,7 @@ task.spawn(function()
 end)
 
 task.spawn(function()
-    while task.wait() do
+    while AAR.alive and task.wait() do
         if S.SpinBot then
             pcall(function()
                 local root = getRoot()
@@ -3397,6 +3508,9 @@ hook(RunService.RenderStepped, function()
     if _holdCF and tick() < _holdUntil then
         local root = getRoot()
         if root then pcall(function() root.AssemblyLinearVelocity = Vector3.zero; root.CFrame = _holdCF end) end
+    elseif _holdCF then
+        _holdCF = nil
+        AAR.teleporting = false
     end
 end)
 -- JJS-STYLE BYPASS TELEPORT: an instant snap leaves the SERVER thinking you're still at the old spot for a beat,
@@ -3404,29 +3518,48 @@ end)
 -- speed-capped steps, zeroing velocity every frame and moving the WHOLE model — the server tracks each step, so your
 -- real (server) position actually moves with you. Then we HOLD the destination so it can't rubber-band back.
 local _tpGen = 0
+AAR.cancelTeleport = function()
+    _tpGen += 1
+    _holdCF, _holdUntil = nil, 0
+    AAR.teleporting = false
+end
 local function tpTo(cf, holdSec)
-    local root = getRoot(); if not (root and cf) then return false end
+    local root = getRoot(); if not (AAR.alive and root and cf) then return false end
     local dest = cf.Position
     _tpGen = _tpGen + 1; local gen = _tpGen
-    local char = getChar()
+    _holdCF, _holdUntil = nil, 0
+    AAR.teleporting = true
     -- clear any body-movers that would drag you back
     pcall(function() for _,v in ipairs(root:GetChildren()) do if v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("AlignPosition") or v:IsA("LinearVelocity") or v:IsA("VectorForce") then v:Destroy() end end end)
     task.spawn(function()
         local dt, t0 = 1/60, tick()
-        local rot = root.CFrame.Rotation
+        local rot = cf.Rotation
         while tick() - t0 < 6 do                      -- glide up to 6s (far pads)
-            if _tpGen ~= gen then return end
+            if not AAR.alive or _tpGen ~= gen then return end
             local r = getRoot(); if not r then break end
             local to = dest - r.Position; local d = to.Magnitude
             if d < 3 then break end
             local step = 140 * dt                     -- 140 studs/sec = fast but per-tick small enough that the server accepts each move
             local stepCF = CFrame.new(r.Position + to.Unit * math.min(d, step)) * rot
             pcall(function() r.CFrame = stepCF; r.AssemblyLinearVelocity = Vector3.zero; r.AssemblyAngularVelocity = Vector3.zero end)
-            if char then pcall(function() char:PivotTo(stepCF) end) end
+            local liveChar = getChar(); if liveChar then pcall(function() liveChar:PivotTo(stepCF) end) end
             dt = RunService.Heartbeat:Wait()
         end
+        if not AAR.alive or _tpGen ~= gen then return end
+        local r = getRoot()
+        if r then
+            pcall(function()
+                r.CFrame = cf
+                r.AssemblyLinearVelocity = Vector3.zero
+                r.AssemblyAngularVelocity = Vector3.zero
+            end)
+            local liveChar = getChar(); if liveChar then pcall(function() liveChar:PivotTo(cf) end) end
+            _holdCF = cf
+            _holdUntil = tick() + (holdSec or 0.45)
+        else
+            AAR.teleporting = false
+        end
     end)
-    _holdCF = cf; _holdUntil = tick() + (holdSec or 1.2)   -- longer hold so the server settles on the new spot
     return true
 end
 local function tpToPlayer(name, behind)
@@ -3474,8 +3607,13 @@ do
     -- held-key manager (for Legit Auto Play holding W)
     local heldKeys = {}
     local function holdKey(kc, isHolding)
-        if isHolding and not heldKeys[kc] then VIMp:SendKeyEvent(true, kc, false, game); heldKeys[kc] = true
-        elseif not isHolding and heldKeys[kc] then VIMp:SendKeyEvent(false, kc, false, game); heldKeys[kc] = false end
+        if isHolding and not heldKeys[kc] then
+            local ok = pcall(function() VIMp:SendKeyEvent(true, kc, false, game) end)
+            if ok then heldKeys[kc] = true end
+        elseif not isHolding and heldKeys[kc] then
+            pcall(function() VIMp:SendKeyEvent(false, kc, false, game) end)
+            heldKeys[kc] = nil
+        end
     end
     local function releaseAllKeys() for kc in pairs(heldKeys) do pcall(function() VIMp:SendKeyEvent(false, kc, false, game) end) end heldKeys = {} end
     _G.AA_RELEASEKEYS = releaseAllKeys
@@ -3490,7 +3628,7 @@ do
         if not t or t == "" or t == "All" then return true end
         return p and (p.Name == t or p.DisplayName == t)
     end
-    RunService.Heartbeat:Connect(function()
+    hook(RunService.Heartbeat, function()
         local myRoot = getRoot(); if not myRoot then return end
         for _, p in ipairs(Players:GetPlayers()) do
             if p ~= LP and p.Character and dodgeAllowed(p) then
@@ -3510,8 +3648,8 @@ do
                         trackedHumans[hum] = true
                         local anim = hum:FindFirstChildOfClass("Animator")
                         if anim then
-                            anim.AnimationPlayed:Connect(function()
-                                if not (S.ProAutoDodge or S.LegitAutoPlay) then return end
+                            hook(anim.AnimationPlayed, function()
+                                if not (S.ProAutoDodge or S.LegitAutoPlay or S.AutoParry) then return end
                                 if not dodgeAllowed(p) then return end
                                 local myR = getRoot(); if not myR then return end
                                 local tr2 = p.Character and (p.Character:FindFirstChild("HumanoidRootPart") or charPart(p.Character))
@@ -3531,7 +3669,7 @@ do
 
     -- ── AUTO DODGE: on an enemy M1, jump left/right a few studs ──
     local dodgeBusy = false
-    RunService.Heartbeat:Connect(function()
+    hook(RunService.Heartbeat, function()
         if not S.ProAutoDodge or dodgeBusy then return end
         if EnemyAttacked then
             dodgeBusy = true; EnemyAttacked = false
@@ -3546,19 +3684,37 @@ do
         end
     end)
 
+    -- ── AUTO PARRY: use a real configurable key when the same close-range
+    -- detector used by Auto Dodge sees an incoming M1. No raw remote is forged.
+    local PARRY_KEYS = {
+        F=Enum.KeyCode.F, Q=Enum.KeyCode.Q, E=Enum.KeyCode.E,
+        R=Enum.KeyCode.R, X=Enum.KeyCode.X, C=Enum.KeyCode.C,
+    }
+    local lastParry = 0
+    hook(RunService.Heartbeat, function()
+        if not S.AutoParry or not EnemyAttacked or tick() - lastParry < 0.45 then return end
+        lastParry = tick()
+        EnemyAttacked = false
+        local key = PARRY_KEYS[S.ParryKey or "F"] or Enum.KeyCode.F
+        task.spawn(function() tapKey(key) end)
+    end)
+
     -- ── AURA M1 (close-range auto attack): NO hitbox/arm grow. When an enemy is CLOSE, face them and throw a
     -- real M1 (+ ability spam). You close the distance (or use M1 Warp), then this clicks/attacks for you. This is
     -- the legit swing the game registers itself — no arm expander, so no giant hitboxes.
     task.spawn(function()
-        while true do
+        local lastSwing = 0
+        while AAR.alive do
             if S.AuraM1Pro then
                 local root = getRoot(); local target = nearestPlayer(S.AuraRange or 60)
                 local tr = target and target.Character and (target.Character:FindFirstChild("HumanoidRootPart") or charPart(target.Character))
                 if root and tr then
                     local close = (root.Position - tr.Position).Magnitude <= (tonumber(S.AuraHit) or 14)   -- only swing when you're in melee range
-                    if close then
+                    if close and tick() - lastSwing >= 0.28 then
+                        lastSwing = tick()
                         pcall(function() root.CFrame = CFrame.lookAt(root.Position, tr.Position) end)
-                        clickM1(true); tapKey(Enum.KeyCode.E); tapKey(Enum.KeyCode.R); tapKey(Enum.KeyCode.T)
+                        clearMyHitLog()
+                        clickAtTarget(target, true)
                     end
                 end
             end
@@ -3568,7 +3724,7 @@ do
 
     -- ── INSTANT 1v1 WIN: warp front/back + M1 + abilities ──
     task.spawn(function()
-        while true do
+        while AAR.alive do
             if S.Win1v1 then
                 local root = getRoot(); local target = nearestPlayer(50)
                 local tr = target and target.Character and (target.Character:FindFirstChild("HumanoidRootPart") or charPart(target.Character))
@@ -3583,10 +3739,14 @@ do
         end
     end)
 
-    -- ── LEGIT AUTO PLAY: hold W toward nearest, dash back (Q) on their M1, M1 in range ──
+    -- ── LEGIT AUTO PLAY: real W/A/S/D input toward/around the nearest target,
+    -- then real M1s in melee range. Every path releases held keys.
     local isDodging = false
     task.spawn(function()
-        while true do
+        local strafeRight = false
+        local nextStrafe = 0
+        local lastSwing = 0
+        while AAR.alive do
             if S.LegitAutoPlay then
                 local root = getRoot(); local hum = getHum(); local target = nearestPlayer(60)
                 local tr = target and target.Character and (target.Character:FindFirstChild("HumanoidRootPart") or charPart(target.Character))
@@ -3598,13 +3758,25 @@ do
                     end
                     if not isDodging then
                         pcall(function() root.CFrame = CFrame.lookAt(root.Position, tr.Position) end)
-                        if dist > 12 then holdKey(Enum.KeyCode.W, true)
-                        else holdKey(Enum.KeyCode.W, false); clickM1(true); tapKey(Enum.KeyCode.E); tapKey(Enum.KeyCode.T) end
+                        if tick() >= nextStrafe then
+                            strafeRight = not strafeRight
+                            nextStrafe = tick() + 0.8
+                        end
+                        holdKey(Enum.KeyCode.W, dist > 8)
+                        holdKey(Enum.KeyCode.S, dist < 4)
+                        holdKey(Enum.KeyCode.A, dist <= 14 and not strafeRight)
+                        holdKey(Enum.KeyCode.D, dist <= 14 and strafeRight)
+                        if dist <= (tonumber(S.AuraHit) or 14) and tick() - lastSwing >= 0.28 then
+                            lastSwing = tick()
+                            clearMyHitLog()
+                            clickAtTarget(target, true)
+                        end
                     end
                 else releaseAllKeys() end
             else releaseAllKeys() end
             task.wait(0.03)
         end
+        releaseAllKeys()
     end)
 end
 
@@ -3691,11 +3863,11 @@ RulesTab:CreateParagraph({Title="Rule 15", Content="Don't abuse the report syste
 
 -- \u2500\u2500 HOME (landing page) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 HomeTab:CreateSection("Welcome")
-HomeTab:CreateParagraph({Title="Dream Hub", Content="Ability Arena  -  v2.15.0\nPick a tab on the left to get started."})
+HomeTab:CreateParagraph({Title="Dream Hub", Content="Ability Arena  -  v2.18.0\nPick a tab on the left to get started."})
 HomeTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
 HomeTab:CreateParagraph({Title="Best combo", Content="M1 Warp (every click snaps you behind them for the swing) or Dash Behind On Hit. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
 HomeTab:CreateSection("Credits")
-HomeTab:CreateParagraph({Title="Credits", Content="Dream Hub v2.15.0 - by Dream Hub Owner"})
+HomeTab:CreateParagraph({Title="Credits", Content="Dream Hub v2.18.0 - by Dream Hub Owner"})
 
 CombatTab:CreateSection("Survival")
 CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
@@ -3728,7 +3900,7 @@ CombatTab:CreateSlider({Name="Save Health: sky height", Range={100,2000}, Increm
 -- of the trick itself: you also cannot M1 in that state (the game never armed your combat), so pair it with
 -- One Punch / abilities, or flip it while spectating to troll safely.
 -- GOD MODE: PLUS only. The free tier never even builds the toggle. AbilityArena_PLUS.lua sets _G.AA_PLUS.
-if _G.AA_PLUS then
+if AAR.plus then
 CombatTab:CreateToggle({Name="God Mode", CurrentValue=false, Flag="GodModeLobby", Callback=function(v)
     S.GodMode=v
     if not v then return end
@@ -3780,15 +3952,21 @@ end})
 -- re-deploy, and get teleported straight back to the exact spot you were standing on, with a fresh full-health
 -- character. The game refuses the lobby hop while you're IN COMBAT (the lobby button itself says so), so we tell
 -- you instead of silently doing nothing. Needs the executor's firesignal (most have it).
-if not _G.AA_PREM then   -- Auto Heal is a PLUS-tier feature; Premium intentionally does NOT get it
+local autoHealGeneration, autoHealBusy, autoHealConn = 0, false, nil
+local autoRespawnConn
+local function findMainControls()
+    local gi = LP:FindFirstChild("PlayerGui") and LP.PlayerGui:FindFirstChild("Game Interface")
+    local main = gi and gi:FindFirstChild("Main_HUD"); main = main and main:FindFirstChild("Main")
+    return main and main:FindFirstChild("Play"), main and main:FindFirstChild("MainMenu")
+end
+if AAR.plus and not AAR.prem then   -- Auto Heal is a Plus-tier one-shot action
 CombatTab:CreateButton({Name="Auto Heal (won't work in PvP)", Callback=function()
     -- NOTE: notifications are deliberately VAGUE — they never mention the lobby/re-deploy loop, so users can't
     -- learn the method from the toasts and patch/leak it. Keep it that way.
     local function say(t) pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "Auto Heal", Text = t, Duration = 5 }) end) end
-    local gi = LP:FindFirstChild("PlayerGui") and LP.PlayerGui:FindFirstChild("Game Interface")
-    local main = gi and gi:FindFirstChild("Main_HUD"); main = main and main:FindFirstChild("Main")
-    local deploy = main and main:FindFirstChild("Play")
-    local lobbyBtn = main and main:FindFirstChild("MainMenu")
+    if autoHealBusy then say("Auto Heal is already running.") return end
+    local _, lobbyBtn = findMainControls()
+    local deploy = select(1, findMainControls())
     if not (deploy and lobbyBtn) then say("Not available yet — wait for the game to fully load, then try again.") return end
     local txt = ""
     pcall(function() txt = tostring(lobbyBtn.TextContent.Text) end)
@@ -3800,35 +3978,60 @@ CombatTab:CreateButton({Name="Auto Heal (won't work in PvP)", Callback=function(
     local ch = LP.Character
     local og = ch and ch:GetPivot()
     if not og then say("No character to heal.") return end
-    LP.CharacterAdded:Once(function(newCh)
+    autoHealGeneration += 1
+    local generation = autoHealGeneration
+    autoHealBusy = true
+    if autoHealConn then pcall(function() autoHealConn:Disconnect() end); autoHealConn=nil end
+    autoHealConn = LP.CharacterAdded:Once(function(newCh)
         task.spawn(function()
-            newCh:WaitForChild("Humanoid", 8)
-            pcall(function() firesignal(deploy.Activated) end)
+            if not AAR.alive or generation ~= autoHealGeneration then autoHealBusy=false return end
+            pcall(function() newCh:WaitForChild("Humanoid", 8) end)
+            local liveDeploy
+            local findUntil = tick() + 5
+            repeat liveDeploy = select(1, findMainControls()); if not liveDeploy then task.wait(0.1) end until liveDeploy or tick() >= findUntil
+            if not (AAR.alive and liveDeploy and generation == autoHealGeneration) then
+                autoHealBusy=false; say("Auto Heal could not find the deploy button."); return
+            end
+            pcall(function() firesignal(liveDeploy.Activated) end)
             local t0 = tick()
+            local deployed = false
             repeat task.wait()   -- deployed onto the map (deploy can spawn ANOTHER character — always watch the live one)
+                if not AAR.alive or generation ~= autoHealGeneration then autoHealBusy=false return end
                 local c = LP.Character or newCh
                 local z; pcall(function() z = c:GetPivot().Position.Z end)
-                if z and z < -250 then break end
+                if z and z < -250 then deployed=true; break end
             until tick() - t0 > 10
-            pcall(function() (LP.Character or newCh):PivotTo(og) end)
-            say("Healed — full HP.")
+            if deployed then
+                pcall(function() (LP.Character or newCh):PivotTo(og) end)
+                say("Healed — full HP.")
+            else
+                say("Auto Heal timed out. Try again after leaving combat.")
+            end
+            autoHealBusy=false
+            autoHealConn=nil
         end)
     end)
-    pcall(function() firesignal(lobbyBtn.Activated) end)
+    Listeners[#Listeners+1] = autoHealConn
+    local fired = pcall(function() firesignal(lobbyBtn.Activated) end)
+    if not fired then
+        autoHealBusy=false
+        if autoHealConn then pcall(function() autoHealConn:Disconnect() end); autoHealConn=nil end
+        say("Auto Heal could not start.")
+    end
 end})
-end   -- (not _G.AA_PREM) — Auto Heal built for Plus only
+end
 -- AUTO RESPAWN (PLUS + PREMIUM): the moment you die and your new character spawns, it presses the game's Deploy
 -- button for you — instantly back in the fight, no lobby sitting. Toggle off = the connection is dropped cleanly.
 do
-    local arConn
     CombatTab:CreateToggle({Name="Auto Respawn", CurrentValue=false, Flag="AutoRespawn", Callback=function(v)
-        if arConn then pcall(function() arConn:Disconnect() end); arConn=nil end
+        S.AutoRespawn=v
+        if autoRespawnConn then pcall(function() autoRespawnConn:Disconnect() end); autoRespawnConn=nil end
         if not v then return end
         if typeof(firesignal) ~= "function" then
             pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "Auto Respawn", Text = "Your executor doesn't support Auto Respawn.", Duration = 5 }) end)
             return
         end
-        arConn = LP.CharacterAdded:Connect(function(ch)
+        autoRespawnConn = LP.CharacterAdded:Connect(function(ch)
             task.spawn(function()
                 pcall(function() ch:WaitForChild("Humanoid", 8) end)
                 local gi = LP:FindFirstChild("PlayerGui") and LP.PlayerGui:FindFirstChild("Game Interface")
@@ -3837,17 +4040,20 @@ do
                 if deploy then pcall(function() firesignal(deploy.Activated) end) end
             end)
         end)
+        Listeners[#Listeners+1] = autoRespawnConn
     end})
 end
 end
 
 CombatTab:CreateSection("Combat Pro")
 CombatTab:CreateToggle({Name="Legit Auto Play", CurrentValue=false, Flag="LegitAutoPlay", Callback=function(v) S.LegitAutoPlay=v; if not v and _G.AA_RELEASEKEYS then _G.AA_RELEASEKEYS() end end})
+CombatTab:CreateToggle({Name="Auto Parry", CurrentValue=false, Flag="AutoParry", Callback=function(v) S.AutoParry=v end})
+CombatTab:CreateDropdown({Name="Parry Key", Options={"F","Q","E","R","X","C"}, CurrentOption={"F"}, Flag="ParryKey", Callback=function(o) S.ParryKey=(type(o)=="table" and o[1]) or o or "F" end})
 -- Auto Dodge / Instant 1v1 Win / M1 Warp — PLUS + PREMIUM ONLY. The FREE build never builds these toggles, and
 -- their settings are forced off there so nothing that references them can run. (AbilityArena_PLUS.lua sets AA_PLUS;
 -- the Premium loader sets it too, so both paid tiers get them; Free does not.)
 local dodgeDrop   -- hoisted: refreshPlayerDrops() (below) references it; built only in the Plus block
-if _G.AA_PLUS then
+if AAR.plus then
 	CombatTab:CreateToggle({Name="Auto Dodge", CurrentValue=false, Flag="ProAutoDodge", Callback=function(v) S.ProAutoDodge=v end})
 	-- Dodge only a chosen player, or everyone. "All" = dodge any attacker; pick a name = dodge ONLY that player.
 	S.DodgeTarget = S.DodgeTarget or "All"
@@ -3866,7 +4072,8 @@ end
 CombatTab:CreateSection("Auto")
 CombatTab:CreateToggle({Name="Aura M1", CurrentValue=false, Flag="AuraM1Pro", Callback=function(v) S.AuraM1Pro=v end})
 CombatTab:CreateSlider({Name="Aura M1 Range", Range={5,120}, Increment=5, Suffix="studs", CurrentValue=60, Flag="AuraRange", Callback=function(v) S.AuraRange=v end})
-CombatTab:CreateToggle({Name="Auto Ability", CurrentValue=false, Flag="AutoAbility", Callback=function(v) S.AutoAbility=v end})
+CombatTab:CreateSlider({Name="Aura M1 Attack Distance", Range={4,20}, Increment=1, Suffix="studs", CurrentValue=14, Flag="AuraHit", Callback=function(v) S.AuraHit=v end})
+CombatTab:CreateToggle({Name="Ability Assistant", CurrentValue=false, Flag="AutoAbility", Callback=function(v) S.AutoAbility=v end})
 CombatTab:CreateSlider({Name="Auto Ability Range", Range={5,80}, Increment=1, Suffix="studs", CurrentValue=25, Flag="AutoAbilityRange", Callback=function(v) S.AutoAbilityRange=v end})
 CombatTab:CreateToggle({Name="Cast E", CurrentValue=true,  Flag="CastE", Callback=function(v) S.CastE=v end})
 CombatTab:CreateToggle({Name="Cast Q", CurrentValue=false, Flag="CastQ", Callback=function(v) S.CastQ=v end})
@@ -3923,11 +4130,11 @@ TeleportsTab:CreateButton({Name="TP To Ability Pads (lobby)", Callback=function(
     local f = findElementFolder()
     local root = getRoot()
     if f and root then
-        local pos = f:GetChildren()[1]
-        if pos and (pos:IsA("BasePart") or pos:IsA("Model")) then
-            local pp = pos:IsA("BasePart") and pos.Position or pos:GetPivot().Position
-            tpTo(CFrame.new(pp + Vector3.new(0, 5, 0)))
-        end
+        local names = abilityNames()
+        local pad = names[1] and findAbilityPad(names[1])
+        local part = abilityPadPart(pad)
+        if part then tpTo(CFrame.new(part.Position + Vector3.new(0, 5, 0)))
+        else Rayfield:Notify({Title="Dream Hub", Content="No streamed ability pad found. Refresh and try again.", Duration=3}) end
     else
         Rayfield:Notify({Title="Dream Hub", Content="Ability pads not found - are you in the lobby?", Duration=3})
     end
@@ -3958,8 +4165,8 @@ TeleportsTab:CreateButton({Name="Clear Safe Spawn", Callback=function()
 end})
 
 do
-    local BYPASS_OK = (_G.AA_PLUS or _G.AA_PREM) and true or false
-    MovementTab:CreateToggle({Name="Fly (WASD + Space/Ctrl)"..(BYPASS_OK and "  [bypass]" or ""), CurrentValue=false, Flag="Fly", Callback=function(v) S.Fly=v end})
+    local BYPASS_OK = AAR.plus
+    MovementTab:CreateToggle({Name="Fly (WASD + Space/Ctrl)"..(BYPASS_OK and "  [bypass]" or ""), CurrentValue=false, Flag="Fly", Callback=function(v) S.Fly=v; if not v then stopFlyMovement() end end})
     MovementTab:CreateSlider({Name="Fly Speed", Range={10,250}, Increment=5, Suffix="spd", CurrentValue=60, Flag="FlySpeed", Callback=function(v) S.FlySpeed=v end})
     if BYPASS_OK then MovementTab:CreateParagraph({Title="Anti-cheat bypass ACTIVE", Content="Fly + Speed Hack hold your position so the game can't snap you back. Auto re-deploys after respawn. (Plus/Premium)"}) end
 end
@@ -4077,7 +4284,7 @@ end})
 
 -- JOLT AUTO FARM (Plus + Premium): the user's method — deploy via Jolt, then bounce between on-map players
 -- spamming the real usem1 hit and snapping onto each. Fights EVERYONE deployed, not a single picked target.
-if _G.AA_PLUS then
+if AAR.plus then
     FarmTab:CreateSection("Jolt Auto Farm (Plus)")
     FarmTab:CreateToggle({Name="Jolt Auto Farm (hit everyone on the map)", CurrentValue=false, Flag="JoltFarm", Callback=function(v)
         S.JoltFarm=v
@@ -4129,7 +4336,7 @@ if _G.AA_PLUS then
         pcall(function() me:PivotTo(tc:GetPivot() * CFrame.new(0, 45, 0)) end)   -- 45 studs straight up
     end
     task.spawn(function()
-        while true do
+        while AAR.alive do
             if S.JoltFarm and onMap(LP) then
                 local healAt = (tonumber(S.JoltFarmHealAt) or 55)/100
                 if healAt>0 and myHPFrac() <= healAt then
@@ -4219,17 +4426,43 @@ UtilityTab:CreateToggle({Name="Spy M1 Packets  [removed - anti-cheat safe]", Cur
 end})
 
 UtilityTab:CreateSection("Admin")
-UtilityTab:CreateButton({Name="Unload Dream Hub", Callback=function()
+local unloading = false
+local function unloadHub()
+    if unloading then return end
+    unloading = true
+    AAR.alive = false
+    for k in pairs(S) do if type(S[k])=="boolean" then S[k]=false end end
+
+    -- Release/cancel state before disconnecting Heartbeat/Input hooks. Otherwise Fly,
+    -- Save Health, Ability Grab, or Legit Auto Play can leave the character immobile.
+    pcall(function() if _G.AA_RELEASEKEYS then _G.AA_RELEASEKEYS() end end)
+    pcall(AAR.cancelTeleport)
+    pcall(cancelAbilityGrab)
+    pcall(stopFlyMovement)
+    healPanic = false
+    local root = getRoot()
+    if root then pcall(function() root.Anchored = false end) end
+    local h=getHum()
+    if h then pcall(function() h.PlatformStand=false; h.WalkSpeed=16; setRagdollStates(h, true) end) end
+
     for _,c in pairs(Conns) do pcall(function() c:Disconnect() end) end
     for _,c in ipairs(Listeners) do pcall(function() c:Disconnect() end) end
-    pcall(function() setFullBright(false) end)   -- restore lighting if Full Bright was on
-    pcall(function() stopView() end)             -- restore camera if spectating
-    clearESP(); clearHighlights(); restoreHitboxes(); destroyAbilityHb(); clearAura()
-    if floatPart then pcall(function() floatPart:Destroy() end) end
-    local h=getHum(); if h then setRagdollStates(h, true) end
-    for k in pairs(S) do if type(S[k])=="boolean" then S[k]=false end end
+    pcall(function() setFullBright(false) end)
+    pcall(function() stopView() end)
+    pcall(clearESP); pcall(clearHighlights); pcall(restoreHitboxes); pcall(restoreArms)
+    pcall(destroyAbilityHb); pcall(clearAura); pcall(clearCustomVFX)
+    if floatPart then pcall(function() floatPart:Destroy() end); floatPart=nil end
+    for name, instance in pairs(AAR.owned) do
+        if instance then pcall(function() instance:Destroy() end) end
+        AAR.owned[name] = nil
+    end
+    _cbStatus=nil
+    _G.AA_RELEASEKEYS, _G.AA_SWING, _G.AA_JOLTFARM_DEPLOY = nil, nil, nil
+    if _G.__DREAM_AA_UNLOAD == unloadHub then _G.__DREAM_AA_UNLOAD = nil end
     pcall(function() Rayfield:Destroy() end)
-end})
+end
+_G.__DREAM_AA_UNLOAD = unloadHub
+UtilityTab:CreateButton({Name="Unload Dream Hub", Callback=unloadHub})
 
 
 -- session integrity watcher
@@ -4241,11 +4474,7 @@ do
     local G  = {"SimpleSpy","RemoteSpy","Dex","DarkDex","DarkDexV3","Hydroxide","SaveInstance","RemoteLogger","SimpleSpyExecutionList","Hydroxgen","Decompiler","IY_LOADED","Serpent","BytecodeInspector"}
     local NS = {"simplespy","remotespy","remote spy","darkdex","dex explorer","dex v","hydroxide","saveinstance","script spy","server spy","spy v","remote logger","decompile","bytecode","dumper"}
     local function bail(sig)
-        pcall(function() for _,c in pairs(Conns) do pcall(function() c:Disconnect() end) end end)
-        pcall(function() for _,c in ipairs(Listeners) do pcall(function() c:Disconnect() end) end end)
-        pcall(function() for k in pairs(S) do if type(S[k])=="boolean" then S[k]=false end end end)
-        pcall(function() restoreHitboxes(); restoreArms() end)
-        pcall(function() Rayfield:Destroy() end)
+        pcall(unloadHub)
         pcall(function() me:Kick("\226\154\160") end)   -- best-effort hard kick so the tool can't keep logging
     end
     local function scan()
@@ -4263,7 +4492,7 @@ do
             end end
         end
     end
-    task.spawn(function() task.wait(4); while true do pcall(scan); task.wait(3) end end)   -- settle, then poll
+    task.spawn(function() task.wait(4); while AAR.alive do pcall(scan); task.wait(3) end end)   -- settle, then poll
 end
 
 -- INSURANCE: Fluriore fires element callbacks on creation, which can flip the aura on during build.
@@ -4272,14 +4501,17 @@ task.delay(1.2, function() S.VFXOn=false; pcall(clearCustomVFX) end)
 
 -- ═══ DREAM LOGO BUTTON (Plus + Premium) ═══ Black & white floating Dream badge — tap hides/shows the menu, drag
 -- to move it. Same look as the PE hub. Toggles the Fluriore window (CoreGui.HirimiGui) Enabled state.
-if _G.AA_PLUS then
+if AAR.plus then
     task.delay(1.5, function()
         pcall(function()
             local CoreGui = game:GetService("CoreGui")
             local parentGui = (gethui and gethui()) or CoreGui
+            local old = parentGui:FindFirstChild("Dream_Logo")
+            if old then old:Destroy() end
             local tg = Instance.new("ScreenGui")
             tg.Name = "Dream_Logo"; tg.ResetOnSpawn = false; tg.IgnoreGuiInset = true; tg.DisplayOrder = 10050
             pcall(function() tg.Parent = parentGui end)
+            AAR.owned.logo = tg
             local btn = Instance.new("ImageButton")
             btn.Size = UDim2.fromOffset(46,46); btn.Position = UDim2.new(0,14,0.30,0)
             btn.BackgroundColor3 = Color3.fromRGB(10,10,10); btn.AutoButtonColor = true; btn.ZIndex = 50
@@ -4305,19 +4537,19 @@ if _G.AA_PLUS then
             end
             -- tap = toggle, drag = reposition (tell them apart by movement)
             local dragging, dragStart, startPos, moved = false, nil, nil, false
-            btn.InputBegan:Connect(function(i)
+            hook(btn.InputBegan, function(i)
                 if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
                     dragging=true; moved=false; dragStart=i.Position; startPos=btn.Position
                 end
             end)
-            UserInputService.InputChanged:Connect(function(i)
+            hook(UserInputService.InputChanged, function(i)
                 if dragging and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then
                     local d=i.Position-dragStart
                     if (math.abs(d.X)+math.abs(d.Y))>6 then moved=true end
                     btn.Position=UDim2.new(startPos.X.Scale, startPos.X.Offset+d.X, startPos.Y.Scale, startPos.Y.Offset+d.Y)
                 end
             end)
-            UserInputService.InputEnded:Connect(function(i)
+            hook(UserInputService.InputEnded, function(i)
                 if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
                     if dragging and not moved then toggleMenu() end
                     dragging=false
@@ -4356,7 +4588,7 @@ do
             toast("Teleported to "..p.Name) end})
         AdminTab:CreateButton({Name="View Player", Callback=function() local p=targ(); if not p then toast("Load a user first.") return end toast(spectate(p) and ("Viewing "..p.Name) or "They aren't loaded in.") end})
         AdminTab:CreateButton({Name="Stop Viewing", Callback=function() local cam=workspace.CurrentCamera; local mc=LP.Character; local h=mc and mc:FindFirstChildOfClass("Humanoid"); if cam then pcall(function() cam.CameraSubject=h end) end toast("Camera back on you.") end})
-        AdminTab:CreateToggle({Name="Fly", CurrentValue=false, Callback=function(v) S.Fly=v end})
+        AdminTab:CreateToggle({Name="Fly", CurrentValue=false, Callback=function(v) S.Fly=v; if not v then stopFlyMovement() end end})
         AdminTab:CreateSection("Their Roblox Identity")
         AdminTab:CreateButton({Name="Copy Username", Callback=function() local p=targ(); if not p then toast("Load a user first.") return end pcall(function() setclipboard(p.Name) end) toast("Copied @"..p.Name) end})
         AdminTab:CreateButton({Name="Copy UserId", Callback=function() local p=targ(); if not p then toast("Load a user first.") return end pcall(function() setclipboard(tostring(p.UserId)) end) toast("Copied "..p.UserId) end})
@@ -4368,8 +4600,9 @@ do
         AdminTab:CreateButton({Name="Send Report", Callback=function()
             local p=targ(); if not p then toast("Load a user first.") return end
             if #tostring(reason):gsub("%s","")<2 then toast("Type a reason first.") return end
-            local hook=("https://discord.com/api/webhooks/1527860474488688732/".."ObBmSPJv0jp9nZHbIoJryLOPrsuyQsTr".."tuwVVwdQ0c759WQa6X0g0j-G4n-VCH-CMH7a")
+            local hook=type(_G.__DreamReportWebhook)=="string" and _G.__DreamReportWebhook or ""
             local req=(typeof(syn)=="table" and syn.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
+            if hook=="" then toast("Reporting disabled. Set _G.__DreamReportWebhook before loading.") return end
             if not req then toast("No http on this executor.") return end
             task.spawn(function() local okc=false pcall(function() local emb={title="Player Reported",color=14689068,fields={{name="Target",value=p.DisplayName.." (@"..p.Name..")  ["..tostring(p.UserId).."]",inline=false},{name="Profile",value="https://www.roblox.com/users/"..p.UserId.."/profile",inline=false},{name="Reason",value=string.sub(tostring(reason),1,1500),inline=false},{name="Reported by",value=LP.Name,inline=false}}}; local pf=tostring(proof); if #pf:gsub("%s","")>4 then table.insert(emb.fields,{name="Proof",value=string.sub(pf,1,400),inline=false}); if pf:match("^https?://%S+%.png") or pf:match("^https?://%S+%.jpg") or pf:match("^https?://%S+%.jpeg") or pf:match("^https?://%S+%.gif") then emb.image={url=pf} end end local FUNNY={"https://dev.plasmii.vip/folk-images/FyileRBHGM.png","https://dev.plasmii.vip/folk-images/7iHoNdXEZx.png","https://dev.plasmii.vip/folk-images/e7OU2vjjwy.png","https://dev.plasmii.vip/folk-images/zRugC3azOS.png","https://dev.plasmii.vip/folk-images/PdNAVfd1Xs.png","https://dev.plasmii.vip/folk-images/Gooning_folk.png","https://dev.plasmii.vip/folk-images/bvFh6jNwfg.png","https://dev.plasmii.vip/folk-images/3DpT2iqGIf.png","https://dev.plasmii.vip/folk-images/0p4BngFJ14.png","https://dev.plasmii.vip/folk-images/Fa8WC5QRLO.png","https://dev.plasmii.vip/folk-images/Gooner_folk.png","https://dev.plasmii.vip/folk-images/V1Lk4YW2hB.png","https://dev.plasmii.vip/folk-images/5qdmyDpxVm.png","https://dev.plasmii.vip/folk-images/folk.png","https://dev.plasmii.vip/folk-images/BmgbC2AbEY.png","https://dev.plasmii.vip/folk-images/Test.png"} local funpick=FUNNY[math.random(#FUNNY)] if emb.image then emb.thumbnail={url=funpick} else emb.image={url=funpick} end local body=game:GetService("HttpService"):JSONEncode({username="Dream Mod",embeds={emb}}) local res=req({Url=hook,Method="POST",Headers={["Content-Type"]="application/json"},Body=body}); if res and ((res.StatusCode and res.StatusCode>=200 and res.StatusCode<300) or res.Success) then okc=true end if not okc then local res2=req({Url=(hook:gsub("^https://discord%.com","https://webhook.lewisakura.moe")),Method="POST",Headers={["Content-Type"]="application/json"},Body=body}) if res2 and ((res2.StatusCode and res2.StatusCode>=200 and res2.StatusCode<300) or res2.Success) then okc=true end end end) toast(okc and ("Reported "..p.Name..".") or "Send failed.") end)
         end})
@@ -4377,3 +4610,4 @@ do
 end
 
 Rayfield:Notify({Title="Dream Hub", Content="Loaded.", Duration=5})
+
