@@ -1,5 +1,7 @@
--- Dream Hub | Ability Arena | v2.18.1
+-- Dream Hub | Ability Arena | v2.19.0
 -- by Dream Hub Owner
+-- v2.19.0: Auto Heal and Jolt Farm low-HP retreat now stay on the live map. They share
+--          one bounded safe-retreat state and always restore position/movement without a reset.
 -- v2.18.1: Executor register-limit fix. The late Admin/VIP UI now compiles in its own
 --          function scope, keeping the shared chunk below older loadstring register limits.
 -- v2.18.0: AA/AA Plus reliability audit. Paid-tier flags now survive executor environment
@@ -80,7 +82,7 @@
 -- v2.13.6: added M1 Packet Spy (Utility>Debug) to capture a real damaging M1 packet so buildM1
 --          can be rebuilt to carry the target (fixes Auto Farm M1 dealing no damage).
 
-local AAR = { alive=true, plus=false, prem=false, owned={} }
+local AAR = { alive=true, plus=false, prem=false, owned={}, manualHeal=false }
 do
     local function readTierFlag(name)
         local direct = rawget(_G, name)
@@ -2575,7 +2577,7 @@ local healSaveCF = nil
 local healPanicT = 0
 hook(LP.CharacterAdded, function(char)
     destroyAbilityHb()
-    healPanic = false
+    healPanic = false; AAR.manualHeal = false
     task.wait(0.2)
     pcall(applyCharacter, char)
     -- PLUS/PREMIUM bypass: auto re-deploy into the fight after a respawn so Fly/Speed keeps you in play
@@ -2899,7 +2901,7 @@ end)
 -- (you finished healing), drop you back to exactly where you were.
 -- ============================================================
 hook(RunService.Heartbeat, function()
-    if not S.SaveHealth then
+    if not S.SaveHealth and not AAR.manualHeal then
         if healPanic then               -- toggled off mid-panic: bring us back down
             healPanic = false
             local root = getRoot()
@@ -2922,8 +2924,9 @@ hook(RunService.Heartbeat, function()
 
     -- if you start flying / inf-jumping mid-panic, release so it can't hold you
     if healPanic and (S.Fly or S.InfiniteJump) then
-        healPanic = false
+        healPanic = false; AAR.manualHeal = false
         pcall(function() root.Anchored = false end)
+        if healSaveCF then pcall(function() root.CFrame = healSaveCF + Vector3.new(0, 3, 0) end) end
     end
 
     if healPanic then
@@ -2937,9 +2940,9 @@ hook(RunService.Heartbeat, function()
         -- unreachable if the game heals slowly / caps HP), OR after a 30s safety
         -- timeout. The timeout works even if HP becomes unreadable, so you can
         -- NEVER get stuck anchored in the sky.
-        local exitPct = math.min(95, S.SaveHealthPct + 25)
+        local exitPct = AAR.manualHeal and 95 or math.min(95, S.SaveHealthPct + 25)
         if (pct and pct >= exitPct) or (tick() - healPanicT) > 30 then
-            healPanic = false
+            healPanic = false; AAR.manualHeal = false
             pcall(function() root.Anchored = false end)
             if healSaveCF then pcall(function() root.CFrame = healSaveCF + Vector3.new(0, 3, 0) end) end
         end
@@ -3865,11 +3868,11 @@ RulesTab:CreateParagraph({Title="Rule 15", Content="Don't abuse the report syste
 
 -- \u2500\u2500 HOME (landing page) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 HomeTab:CreateSection("Welcome")
-HomeTab:CreateParagraph({Title="Dream Hub", Content="Ability Arena  -  v2.18.1\nPick a tab on the left to get started."})
+HomeTab:CreateParagraph({Title="Dream Hub", Content="Ability Arena  -  v2.19.0\nPick a tab on the left to get started."})
 HomeTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
 HomeTab:CreateParagraph({Title="Best combo", Content="M1 Warp (every click snaps you behind them for the swing) or Dash Behind On Hit. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
 HomeTab:CreateSection("Credits")
-HomeTab:CreateParagraph({Title="Credits", Content="Dream Hub v2.18.1 - by Dream Hub Owner"})
+HomeTab:CreateParagraph({Title="Credits", Content="Dream Hub v2.19.0 - by Dream Hub Owner"})
 
 CombatTab:CreateSection("Survival")
 CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
@@ -3950,76 +3953,20 @@ CombatTab:CreateToggle({Name="God Mode", CurrentValue=false, Flag="GodModeLobby"
         end
     end)
 end})
--- AUTO HEAL (PLUS ONLY — NOT Premium): the lobby re-deploy trick — press it and you hop to the lobby, instantly
--- re-deploy, and get teleported straight back to the exact spot you were standing on, with a fresh full-health
--- character. The game refuses the lobby hop while you're IN COMBAT (the lobby button itself says so), so we tell
--- you instead of silently doing nothing. Needs the executor's firesignal (most have it).
-local autoHealGeneration, autoHealBusy, autoHealConn = 0, false, nil
+-- AUTO HEAL (PLUS/PREMIUM): stay on the current map and reuse Save Health's bounded safe-retreat cycle. No lobby,
+-- reset, death, deploy button, or CharacterAdded dependency. The shared heartbeat always unanchors and returns to
+-- the saved position on recovery, cancellation, unload, or the 30-second safety timeout.
 local autoRespawnConn
-local function findMainControls()
-    local gi = LP:FindFirstChild("PlayerGui") and LP.PlayerGui:FindFirstChild("Game Interface")
-    local main = gi and gi:FindFirstChild("Main_HUD"); main = main and main:FindFirstChild("Main")
-    return main and main:FindFirstChild("Play"), main and main:FindFirstChild("MainMenu")
-end
-if AAR.plus and not AAR.prem then   -- Auto Heal is a Plus-tier one-shot action
-CombatTab:CreateButton({Name="Auto Heal (won't work in PvP)", Callback=function()
-    -- NOTE: notifications are deliberately VAGUE — they never mention the lobby/re-deploy loop, so users can't
-    -- learn the method from the toasts and patch/leak it. Keep it that way.
+if AAR.plus then
+CombatTab:CreateButton({Name="Auto Heal (stay on map)", Callback=function()
     local function say(t) pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "Auto Heal", Text = t, Duration = 5 }) end) end
-    if autoHealBusy then say("Auto Heal is already running.") return end
-    local _, lobbyBtn = findMainControls()
-    local deploy = select(1, findMainControls())
-    if not (deploy and lobbyBtn) then say("Not available yet — wait for the game to fully load, then try again.") return end
-    local txt = ""
-    pcall(function() txt = tostring(lobbyBtn.TextContent.Text) end)
-    if txt:lower():find("combat", 1, true) then
-        say("WON'T WORK IN PVP: you're in combat. Get out of combat, then press again.")
-        return
-    end
-    if typeof(firesignal) ~= "function" then say("Your executor doesn't support Auto Heal.") return end
-    local ch = LP.Character
-    local og = ch and ch:GetPivot()
-    if not og then say("No character to heal.") return end
-    autoHealGeneration += 1
-    local generation = autoHealGeneration
-    autoHealBusy = true
-    if autoHealConn then pcall(function() autoHealConn:Disconnect() end); autoHealConn=nil end
-    autoHealConn = LP.CharacterAdded:Once(function(newCh)
-        task.spawn(function()
-            if not AAR.alive or generation ~= autoHealGeneration then autoHealBusy=false return end
-            pcall(function() newCh:WaitForChild("Humanoid", 8) end)
-            local liveDeploy
-            local findUntil = tick() + 5
-            repeat liveDeploy = select(1, findMainControls()); if not liveDeploy then task.wait(0.1) end until liveDeploy or tick() >= findUntil
-            if not (AAR.alive and liveDeploy and generation == autoHealGeneration) then
-                autoHealBusy=false; say("Auto Heal could not find the deploy button."); return
-            end
-            pcall(function() firesignal(liveDeploy.Activated) end)
-            local t0 = tick()
-            local deployed = false
-            repeat task.wait()   -- deployed onto the map (deploy can spawn ANOTHER character — always watch the live one)
-                if not AAR.alive or generation ~= autoHealGeneration then autoHealBusy=false return end
-                local c = LP.Character or newCh
-                local z; pcall(function() z = c:GetPivot().Position.Z end)
-                if z and z < -250 then deployed=true; break end
-            until tick() - t0 > 10
-            if deployed then
-                pcall(function() (LP.Character or newCh):PivotTo(og) end)
-                say("Healed — full HP.")
-            else
-                say("Auto Heal timed out. Try again after leaving combat.")
-            end
-            autoHealBusy=false
-            autoHealConn=nil
-        end)
-    end)
-    Listeners[#Listeners+1] = autoHealConn
-    local fired = pcall(function() firesignal(lobbyBtn.Activated) end)
-    if not fired then
-        autoHealBusy=false
-        if autoHealConn then pcall(function() autoHealConn:Disconnect() end); autoHealConn=nil end
-        say("Auto Heal could not start.")
-    end
+    if AAR.manualHeal or healPanic then say("Auto Heal is already running.") return end
+    if S.Fly or S.InfiniteJump then say("Turn Fly/Infinite Jump off first.") return end
+    local root = getRoot(); if not root then say("No deployed character to heal.") return end
+    local cur,max = getHealth()
+    if cur and max and max>0 and cur/max>=0.95 then say("Health is already full.") return end
+    healSaveCF=root.CFrame; healPanicT=tick(); AAR.manualHeal=true; healPanic=true
+    say("On-map heal retreat started. You will return automatically.")
 end})
 end
 -- AUTO RESPAWN (PLUS + PREMIUM): the moment you die and your new character spawns, it presses the game's Deploy
@@ -4323,14 +4270,12 @@ if AAR.plus then
         if h and h.MaxHealth>0 then return h.Health/h.MaxHealth end
         return 1
     end
-    -- LOW HP → don't die: hop to lobby (via the game's own ToLobby) then instantly re-deploy = full health, exactly
-    -- like Auto Heal. This is what stops "the auto farm kills me": instead of getting combo'd to death you bounce
-    -- out at low HP and come back topped up.
+    -- LOW HP: use the same on-map bounded retreat as Auto Heal. Never reset, visit the lobby, or kill the farmer.
     local function retreatHeal()
-        pcall(function() if joltToLobby and joltToLobby.Invoke then joltToLobby:Invoke() end end)
-        task.wait(0.5)
-        joltDeployNow()
-        task.wait(0.8)   -- let the new (full-HP) character load in
+        local root=getRoot()
+        if root and not healPanic then healSaveCF=root.CFrame; healPanicT=tick(); AAR.manualHeal=true; healPanic=true end
+        local untilT=tick()+31
+        while AAR.alive and S.JoltFarm and AAR.manualHeal and tick()<untilT do task.wait(0.2) end
     end
     -- snap you to a SAFE perch high above the target (out of any melee reach) between hits
     local function perchAbove(tc)
@@ -4441,7 +4386,7 @@ local function unloadHub()
     pcall(AAR.cancelTeleport)
     pcall(cancelAbilityGrab)
     pcall(stopFlyMovement)
-    healPanic = false
+    healPanic = false; AAR.manualHeal = false
     local root = getRoot()
     if root then pcall(function() root.Anchored = false end) end
     local h=getHum()
