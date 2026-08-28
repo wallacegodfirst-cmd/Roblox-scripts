@@ -12,8 +12,8 @@ _G.PE_PREM = false  -- Premium features stay off in this build — use PE_Premiu
 -- Two fetch routes pinned to the same immutable reviewed runtime commit. The branch loader may be updated later,
 -- but this execution target cannot silently change underneath people already using it.
 local URLS = {
-	"https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/e877ef498a1166ae3d357b195b651c89ffbe7647/PriorExtinction_MoneyFreeHub.lua",
-	"https://github.com/wallacegodfirst-cmd/roblox-scripts/raw/e877ef498a1166ae3d357b195b651c89ffbe7647/PriorExtinction_MoneyFreeHub.lua",
+	"https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/9e204bad7ca6b508a561bdf541500e0ace1008a8/PriorExtinction_MoneyFreeHub.lua",
+	"https://github.com/wallacegodfirst-cmd/roblox-scripts/raw/9e204bad7ca6b508a561bdf541500e0ace1008a8/PriorExtinction_MoneyFreeHub.lua",
 }
 local StarterGui = game:GetService("StarterGui")
 local function toast(msg, dur)
