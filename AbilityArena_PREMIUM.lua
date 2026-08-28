@@ -15,8 +15,8 @@ end)
 -- Optional: set _G.__DreamReportWebhook before loading to enable reports.
 
 local URLS = {
-    "https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/129b3d18b31cfcd18c907ceb6c3eb767d2a904dc/AbilityArena_CozyHub.lua",
-    "https://github.com/wallacegodfirst-cmd/roblox-scripts/raw/129b3d18b31cfcd18c907ceb6c3eb767d2a904dc/AbilityArena_CozyHub.lua",
+    "https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/b3ee08b93bb601e9e3c65ea5c5fd7837415972e0/AbilityArena_CozyHub.lua",
+    "https://github.com/wallacegodfirst-cmd/roblox-scripts/raw/b3ee08b93bb601e9e3c65ea5c5fd7837415972e0/AbilityArena_CozyHub.lua",
 }
 local function toast(m) pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "Ability Arena PREMIUM", Text = m, Duration = 6 }) end) end
 
