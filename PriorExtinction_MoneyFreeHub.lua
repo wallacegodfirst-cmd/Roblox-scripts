@@ -20,12 +20,13 @@ __gg.__PRIOR_EXT_HUB = nil
 -- Captured replica/source ids are scoped to one server session. Reusing them after a re-execute or server hop
 -- makes INF Food replay dead ids forever and prevents its nearby-food bootstrap from running.
 __gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0
+__gg.MH_foodMultAt=0; __gg.MH_foodMultSending=false; __gg.MH_foodMultSource=nil; __gg.MH_foodMultSent=0; __gg.MH_foodMultState="waiting for a normal Bite"
 __gg.MH_attackTemplate=nil; __gg.MH_registerTemplate=nil; __gg.MH_pendingRegister=nil; __gg.MH_attackSequence=nil; __gg.MH_soundTemplate=nil; __gg.MH_hbMade=nil; __gg.MH_hbBuildAt=nil
 __gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_verifiedReplicaId=nil; __gg.MH_wellbeing=nil
 __gg.MH_identityKey=nil; __gg.MH_dietCache=nil; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0; __gg.MH_foodCycleAttempts=0; __gg.MH_foodCycleBusy=false; __gg.MH_foodCycleStarted=0; __gg.MH_foodPhase="idle"; __gg.MH_foodPromptName="none"; __gg.MH_foodPromptAction="none"; __gg.MH_foodPromptCandidate=nil
 __gg.MH_infFoodTargetsCache=nil; __gg.MH_foodTargetCount=0; __gg.MH_foodTargetKind="none"; __gg.MH_foodTargetPath="none"; __gg.MH_foodTargetReplicaCount=0; __gg.MH_foodDietReplicaState=nil; __gg.MH_foodDietReplicaCount=0; __gg.MH_foodMatchedReplicaCount=0
 __gg.MH_foodSourceRevision=0; __gg.MH_foodSourceKinds="none"; __gg.MH_foodResolvedDiet="unresolved"; __gg.MH_foodBufferMode="none"; __gg.MH_foodVisibleBefore=nil; __gg.MH_foodVisibleAfter=nil; __gg.MH_foodVisibleDelta=nil; __gg.MH_foodAcceptance="unobserved"; __gg.MH_foodLastFailure="not run"
-__gg.MH_growthState="waiting"; __gg.MH_growthValue=nil; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_growthBase=nil; __gg.MH_stamBoostSpeed=0
+__gg.MH_growthState="waiting"; __gg.MH_growthValue=nil; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_growthBase=nil; __gg.MH_stamBoostSpeed=0; __gg.MH_stamPinState="waiting"; __gg.MH_stamReportState="waiting"
 __gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_healthPacket=nil; __gg.MH_guardLastHP=nil
 __gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil; __gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
 -- Every captured packet below is valid only for one playable dinosaur. Character, species, or verified replica
@@ -33,12 +34,13 @@ __gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil; __gg.MH_foodGen=(__g
 __gg.MH_clearDinoCaches=function(identityKey)
 	__gg.MH_identityKey=identityKey; __gg.MH_dietCache=nil
 	__gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0; __gg.MH_foodProbeCursor=0
+	__gg.MH_foodMultAt=0; __gg.MH_foodMultSending=false; __gg.MH_foodMultSource=nil; __gg.MH_foodMultSent=0; __gg.MH_foodMultState="waiting for a normal Bite"
 	__gg.MH_attackTemplate=nil; __gg.MH_registerTemplate=nil; __gg.MH_pendingRegister=nil; __gg.MH_attackSequence=nil; __gg.MH_soundTemplate=nil
 	__gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_hbBuildAt=nil
 	__gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0; __gg.MH_foodCycleAttempts=0; __gg.MH_foodCycleBusy=false; __gg.MH_foodCycleStarted=0; __gg.MH_foodPhase="idle"; __gg.MH_foodPromptName="none"; __gg.MH_foodPromptAction="none"; __gg.MH_foodPromptCandidate=nil
 	__gg.MH_infFoodTargetsCache=nil; __gg.MH_foodTargetCount=0; __gg.MH_foodTargetKind="none"; __gg.MH_foodTargetPath="none"; __gg.MH_foodTargetReplicaCount=0; __gg.MH_foodDietReplicaState=nil; __gg.MH_foodDietReplicaCount=0; __gg.MH_foodMatchedReplicaCount=0
 	__gg.MH_foodSourceRevision=(__gg.MH_foodSourceRevision or 0)+1; __gg.MH_foodSourceKinds="none"; __gg.MH_foodResolvedDiet="unresolved"; __gg.MH_foodBufferMode="none"; __gg.MH_foodVisibleBefore=nil; __gg.MH_foodVisibleAfter=nil; __gg.MH_foodVisibleDelta=nil; __gg.MH_foodAcceptance="unobserved"; __gg.MH_foodLastFailure="identity changed"
-	__gg.MH_growthState="waiting"; __gg.MH_growthValue=nil; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_growthBase=nil; __gg.MH_stamBoostSpeed=0
+	__gg.MH_growthState="waiting"; __gg.MH_growthValue=nil; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_growthBase=nil; __gg.MH_stamBoostSpeed=0; __gg.MH_stamPinState="waiting"; __gg.MH_stamReportState="waiting"
 	__gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_healthPacket=nil; __gg.MH_healthReportAt=nil
 	__gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_guardLastHP=nil; __gg.MH_guardMax=nil
 	__gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
@@ -863,7 +865,7 @@ local CFG = {
 	TurnHack=false, TurnSpeed=30,
 	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, DeathFix=false, RespawnDeathPoint=false, Noclip=false, Invis=false,
 	InfJump=false, BypassTP=true,
-	InfFood=false, InfFoodDiet="Auto", InfWater=false, InfStam=false, InfStamSpeed=15, InfOxygen=false,
+	InfFood=false, FoodMultiplier=false, FoodMultiplierX=10, InfFoodDiet="Auto", InfWater=false, InfStam=false, InfStamSpeed=15, InfOxygen=false,
 	AntiDrown=true, AntiDrownRise=14, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false, HeadDmgReduce=100,
 	SaveDino=false, SaveHP=30, NoSleep=true, AutoHealBlood=false, AfkEat=false, BotPvP=true,
 	AutoFarmPlayer=false, FarmPlayerRange=120, AutoFarmFossil=false, FarmFossilRange=1000000, FossilSlow=1.2,
@@ -901,6 +903,7 @@ loadCfg()
 -- InfStamSpeed is retained only so older config files still decode. Infinite Stamina never applies a custom speed;
 -- PE's own walk/run controller remains the sole movement owner.
 CFG.InfStamSpeed=15
+CFG.FoodMultiplierX=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 10),2,10)
 if CFG.InfFoodDiet~="Herbivore" and CFG.InfFoodDiet~="Carnivore" then CFG.InfFoodDiet="Auto" end
 MS("1 config ok")
 CFG.Keybinds = CFG.Keybinds or {}
@@ -918,7 +921,7 @@ if not (tonumber(CFG.FarmReach) and CFG.FarmReach>=30 and CFG.FarmReach<=120) th
 -- still persist — only the boolean feature toggles (incl. protections) are forced off here.
 for _,key in ipairs({
 		"Aimbot","SilentAim","LockOn","HitboxExpand","BoneProtect","TurnHack","Fly","SpeedHack","DeathFix","RespawnDeathPoint","Noclip","InfJump",
-	"InfFood","InfWater","InfStam","InfOxygen","SaveDino","AutoFarmPlayer","AutoFarmFossil","AutoFarmGem","AutoPlayBot",
+	"InfFood","FoodMultiplier","InfWater","InfStam","InfOxygen","SaveDino","AutoFarmPlayer","AutoFarmFossil","AutoFarmGem","AutoPlayBot",
 	"ESPPlayers","ESPCorpses","FoodESP","FishESP","GemESP","AlertEnabled","CarnMeatTP","ProFood","FullBright","NightVision","NoDarkWater","WaterClear","NoClouds","AlwaysDamage","NoGrabLimit","RemoveTrees","Radar",
 	"Float","GodMode","InfLight","UnlockFOV","InfZoom","AntiDrown","WalkWater","AutoClean","AntiFracture","AntiBleed","Invis",
 	"AntiBreakHead","AntiBreakNeck","AntiBreakLeg","AntiBreakTail","AntiBreakTorso","NoSleep","AntiAFK","UnlockMouse","__SpyOn",
@@ -935,6 +938,7 @@ for _,key in ipairs({
 __gg.MH_tpFeatureGen={CarnMeatTP=0,ProFood=0,AutoFarmFossil=0,AutoFarmGem=0}
 __gg.MH_featureToggleChanged=function(key,value)
 	if key=="InfFood" then __gg.MH_foodGen=(__gg.MH_foodGen or 0)+1; __gg.MH_infFoodTargetsCache=nil; __gg.MH_foodDietReplicaState=nil end
+	if key=="FoodMultiplier" then __gg.MH_foodMultAt=0; __gg.MH_foodMultState=value and "waiting for a normal Bite" or "off" end
 	if key=="InfStam" then
 		__gg.MH_stamShiftHeld=false
 		if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end
@@ -1278,6 +1282,25 @@ local function installHook()
 							local key=tostring(id); local replaced=false
 							for i,c in ipairs(__gg.MH_biteCalls) do if c.key==key then snap.key=key; __gg.MH_biteCalls[i]=snap; replaced=true; break end end
 							if not replaced then snap.key=key; table.insert(__gg.MH_biteCalls, snap); if #__gg.MH_biteCalls>3 then table.remove(__gg.MH_biteCalls,1) end end
+							-- FOOD x10 TEST: one genuine Bite is sent normally, then the exact same remote/id/buffer is replayed
+							-- nine more times. Replays are bounded, spread across a few frames, tied to this dinosaur identity,
+							-- and marked so executors without checkcaller cannot recursively multiply our own calls.
+							if CFG.FoodMultiplier and not __gg.MH_foodMultSending and tick()-(__gg.MH_foodMultAt or 0)>=0.18 then
+								__gg.MH_foodMultAt=tick(); __gg.MH_foodMultSource=id; __gg.MH_foodMultState="captured source "..tostring(id).."; sending bonus Bites"
+								local remote=self; local identity=snap.identity; local bonus=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 10),2,10)-1
+								task.defer(function()
+									local sent=0
+									for extra=1,bonus do
+										if not (RUNNING and CFG.FoodMultiplier and identity==__gg.MH_identityKey and remote and remote.Parent) then break end
+										__gg.MH_foodMultSending=true
+										local ok=pcall(function() remote:FireServer(table.unpack(snap,1,snap.n)) end)
+										__gg.MH_foodMultSending=false
+										if ok then sent+=1; __gg.MH_foodMultSent=(__gg.MH_foodMultSent or 0)+1 end
+										if extra%3==0 then task.wait(0.025) end
+									end
+									__gg.MH_foodMultSending=false; __gg.MH_foodMultState=sent>0 and ("last Bite +"..tostring(sent).." sent") or "bonus burst stopped"
+								end)
+							end
 						end
 					elseif selfCall then
 						noteReplicaId(id)
@@ -1310,12 +1333,12 @@ local function installHook()
 							if nk then
 								local snap={n=a.n,remote=self.Name,instance=self}; for i=1,a.n do snap[i]=a[i] end; __gg.MH_needPackets[nk]=snap
 								local target=MHNEED and MHNEED.maxForProperty and MHNEED.maxForProperty(nk,a[3])
-								if ((nk=="food" and CFG.InfFood) or (nk=="stamina" and CFG.InfStam)) and target and target>0 then
+								if ((nk=="food" and (CFG.InfFood or CFG.FoodMultiplier)) or (nk=="stamina" and CFG.InfStam)) and target and target>0 then
 									a[4]=target; snap[4]=target; return oldNC(self,table.unpack(a,1,a.n))
 								end
 							end
 						end
-						if selfCall and CFG.InfFood then
+						if selfCall and (CFG.InfFood or CFG.FoodMultiplier) then
 							local needAction=action:lower()
 							local foodNamed=needAction:find("food",1,true) or needAction:find("hunger",1,true) or needAction:find("starv",1,true)
 							local drainNamed=needAction:find("drain",1,true) or needAction:find("deplet",1,true) or needAction:find("reduce",1,true)
@@ -2088,18 +2111,23 @@ function MHNEED.pin(kind)
 end
 function MHNEED.report(kind, force)
 	local packet=__gg.MH_needPackets and __gg.MH_needPackets[kind]; local mx=packet and MHNEED.maxForProperty(kind,packet[3]); local id=MHNEED.replicaId()
-	-- Proactive reports require a paired data maximum. HUD/capacity fallbacks may pin local state and may rewrite a
-	-- genuine outgoing need report, but they never manufacture a new server report on their own.
-	if not (MHNEED.maxSource and MHNEED.maxSource[kind]=="paired" and type(packet)=="table" and packet.n and packet.n>=4 and mx and id and packet[1]==id) then return false end
-	local now=tick(); local last=__gg.MH_needReportAt[kind] or 0; if not force and now-last<0.9 then return false end
+	-- A captured packet preserves the game's exact remote, replica id, property name, and argument layout. For stamina,
+	-- that exact packet may use its paired max, HUD denominator, or same-dinosaur observed high-water value. Food keeps
+	-- the stricter paired-only route because Bite—not a guessed property report—is its authoritative refill path.
+	local source=MHNEED.maxSource and MHNEED.maxSource[kind]
+	local trusted=source=="paired" or (kind=="stamina" and (source=="hud" or source=="highwater"))
+	if not (trusted and type(packet)=="table" and packet.n and packet.n>=4 and mx and id and packet[1]==id and MHNEED.kindFor(packet[3],"")==kind) then return false end
+	local now=tick(); local last=__gg.MH_needReportAt[kind] or 0; local interval=kind=="stamina" and 0.2 or 0.9; if not force and now-last<interval then return false end
 	local re=RS:FindFirstChild("RemoteEvents"); local remote=(packet.instance and packet.instance.Parent and packet.instance) or (re and packet.remote and re:FindFirstChild(packet.remote))
 	if not remote then return false end
 	local args={n=packet.n}; for i=1,packet.n do args[i]=packet[i] end; args[4]=mx; __gg.MH_needReportAt[kind]=now
-	return pcall(function() remote:FireServer(table.unpack(args,1,args.n)) end)
+	local ok=pcall(function() remote:FireServer(table.unpack(args,1,args.n)) end)
+	if kind=="stamina" then __gg.MH_stamReportState=ok and ("exact packet / "..tostring(source)) or "exact packet failed" end
+	return ok
 end
 function MHNEED.reportKnown(kind,force)
 	MHNEED.refresh(); local mx=MHNEED.max[kind]; local source=MHNEED.maxSource and MHNEED.maxSource[kind]
-	if not (mx and (source=="paired" or source=="hud" or (kind=="food" and source=="capacity") or (kind=="stamina" and source=="highwater"))) then return false end
+	if not (mx and (source=="paired" or source=="hud" or (kind=="food" and source=="capacity"))) then return false end
 	-- Use only a current property name found on this dinosaur. MaxStats/capacity fields are never reported as current.
 	local property
 	for _,ref in ipairs(MHNEED.refs[kind] or {}) do
@@ -3528,12 +3556,15 @@ do local p=Pages["Growth"]
 		mkDropdown(g,"Stop at age", function() return {"Off","Juvenile","Teen","Adolescent","Sub Adult","Adult","Elder"} end, function() return CFG.ProFoodStopAge~="" and CFG.ProFoodStopAge or "Off" end, function(opt) CFG.ProFoodStopAge=opt; saveCfg() end, 2)
 		local _,fw=mkSec(p,"Food & Water",2)
 		mkToggle(fw,"INF Food","InfFood",1)
-		mkDropdown(fw,"My food type",function() return {"Auto","Herbivore","Carnivore"} end,function() return CFG.InfFoodDiet or "Auto" end,function(opt) CFG.InfFoodDiet=opt; __gg.MH_foodProbeCursor=0; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_infFoodTargetsCache=nil; __gg.MH_foodDietReplicaState=nil; saveCfg() end,2)
-		mkLabel(fw,"Herbivore scans green plants; Carnivore scans corpses, meat, bones, dead players, and Fish ESP sources. No camera movement or food teleport.")
-		mkSlider(fw,"INF Food grow speed","FoodEatSpeed",1,10,4,1)
-		mkToggle(fw,"INF Water","InfWater",5)
-		mkToggle(fw,"Carnivore Meat TP","CarnMeatTP",6)
-		mkBtn(fw,"Teleport Back",function() if __gg.MH_corpseBack then __gg.MH_corpseBack() end end,7)
+		mkToggle(fw,"Food x10 (learn my Bite)","FoodMultiplier",2)
+		mkSlider(fw,"Food multiplier","FoodMultiplierX",2,10,3,1)
+		mkLabel(fw,"Test separately: turn this on, then eat once normally. It repeats that exact live Bite for the same dinosaur/source; no random IDs.")
+		mkDropdown(fw,"My food type",function() return {"Auto","Herbivore","Carnivore"} end,function() return CFG.InfFoodDiet or "Auto" end,function(opt) CFG.InfFoodDiet=opt; __gg.MH_foodProbeCursor=0; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_infFoodTargetsCache=nil; __gg.MH_foodDietReplicaState=nil; saveCfg() end,4)
+		mkLabel(fw,"INF Food still remains for comparison until the learned x10 Bite is confirmed.")
+		mkSlider(fw,"INF Food grow speed","FoodEatSpeed",1,10,6,1)
+		mkToggle(fw,"INF Water","InfWater",7)
+		mkToggle(fw,"Carnivore Meat TP","CarnMeatTP",8)
+		mkBtn(fw,"Teleport Back",function() if __gg.MH_corpseBack then __gg.MH_corpseBack() end end,9)
 	end
 	local _,pg=mkSec(p,"Progress",3)
 	mkBtn(pg,"Progress Restore",function() progressRestore() end,1)
@@ -3963,7 +3994,7 @@ do local p=Pages["Settings"]
 	mkBtn(t,"Cycle Accent Color",function() CFG.AccentIndex=(CFG.AccentIndex % #ACCENTS)+1; T.Accent=ACCENTS[CFG.AccentIndex]; T.On=T.Accent; if accentBar then accentBar.BackgroundColor3=T.Accent end for key,ref in pairs(toggleRefs) do if CFG[key] and ref[1] then ref[1].BackgroundColor3=T.On end end showPage(currentPage); saveCfg() end,1)
 	mkSlider(t,"UI Scale","UIScale",1,3,2,0.1)
 	local _,k=mkSec(p,"Keybinds",2)
-	local binds = { {"Open/Close UI","UIKey"},{"Aim Lock","AimKey"},{"Aimbot","Aimbot"},{"Silent Aim","SilentAim"},{"Lock On","LockOn"},{"Turn Hack","TurnHack"},{"Hitbox","HitboxExpand"},{"Float","Float"},{"Fly","Fly"},{"Speed Hack","SpeedHack"},{"Noclip","Noclip"},{"Inf Jump","InfJump"},{"INF Food","InfFood"},{"INF Water","InfWater"},{"INF Stam","InfStam"},{"Anti Drown","AntiDrown"},{"Walk on Water","WalkWater"},{"Anti Fall","AntiFall"},{"Save Dino","SaveDino"},{"Auto Farm Player","AutoFarmPlayer"},{"Auto Farm Fossil","AutoFarmFossil"},{"Auto Farm Gem","AutoFarmGem"},{"ESP","ESPPlayers"},{"Plant ESP","FoodESP"},{"Fish ESP","FishESP"},{"Full Bright","FullBright"},{"No Night","NightVision"},{"INF Light","InfLight"},{"INF Zoom","InfZoom"} }
+	local binds = { {"Open/Close UI","UIKey"},{"Aim Lock","AimKey"},{"Aimbot","Aimbot"},{"Silent Aim","SilentAim"},{"Lock On","LockOn"},{"Turn Hack","TurnHack"},{"Hitbox","HitboxExpand"},{"Float","Float"},{"Fly","Fly"},{"Speed Hack","SpeedHack"},{"Noclip","Noclip"},{"Inf Jump","InfJump"},{"INF Food","InfFood"},{"Food x10","FoodMultiplier"},{"INF Water","InfWater"},{"INF Stam","InfStam"},{"Anti Drown","AntiDrown"},{"Walk on Water","WalkWater"},{"Anti Fall","AntiFall"},{"Save Dino","SaveDino"},{"Auto Farm Player","AutoFarmPlayer"},{"Auto Farm Fossil","AutoFarmFossil"},{"Auto Farm Gem","AutoFarmGem"},{"ESP","ESPPlayers"},{"Plant ESP","FoodESP"},{"Fish ESP","FishESP"},{"Full Bright","FullBright"},{"No Night","NightVision"},{"INF Light","InfLight"},{"INF Zoom","InfZoom"} }
 	if _G.PE_HIDE_LITE then local kept={} for _,kb in ipairs(binds) do if kb[2]~="InfFood" then kept[#kept+1]=kb end end binds=kept end   -- hide the INF Food keybind row in the no-lite build
 	for i,kb in ipairs(binds) do mkKeybind(k, kb[1], kb[2], i) end
 end
@@ -4090,16 +4121,20 @@ end))
 task.spawn(function()
 	local wasOn={food=false,stamina=false}
 	while RUNNING do
-		if alive() and (CFG.InfFood or CFG.InfStam) then
+		if alive() and (CFG.InfFood or CFG.FoodMultiplier or CFG.InfStam) then
 			pcall(function()
-				for _,row in ipairs({{"food",CFG.InfFood},{"stamina",CFG.InfStam}}) do
+				for _,row in ipairs({{"food",CFG.InfFood or CFG.FoodMultiplier},{"stamina",CFG.InfStam}}) do
 					local kind,on=row[1],row[2]
 					if on then
 						MHNEED.pin(kind)
 						local reported=MHNEED.report(kind,not wasOn[kind])
 						-- Once the resolver has an exact live Food/Stamina field (including CharacterState.PlayerData), use the
 						-- game's own throttled SetProperty route as a fallback. Captured exact packets still take priority.
-						if not reported then MHNEED.reportKnown(kind,not wasOn[kind]) end
+						local known=false; if not reported then known=MHNEED.reportKnown(kind,not wasOn[kind]) end
+						if kind=="stamina" and not reported then
+							local packet=__gg.MH_needPackets and __gg.MH_needPackets.stamina
+							__gg.MH_stamReportState=known and "known-property fallback sent" or (packet and "exact packet waiting for trusted max" or "waiting for exact stamina packet")
+						end
 						if kind=="food" then
 							local now=tick()
 							-- Food is increased by the source-replica Bite controller. Guessed CharacterState Hunger/Food
@@ -4386,25 +4421,24 @@ local function startFly()
 end
 -- SPEED HACK ONLY drives the body by velocity. INF Stamina never enters this path and leaves native movement alone.
 conn(RunService.Heartbeat:Connect(function() if CFG.SpeedHack and alive() and not CFG.Fly then local r=hrp(); if r then local spd=CFG.SpeedVal; local dir=Vector3.zero; local cf=workspace.CurrentCamera and workspace.CurrentCamera.CFrame or CFrame.new() if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end if dir.Magnitude<=0 then local hh=hum(); local md=hh and hh.MoveDirection; if md and md.Magnitude>0 then dir=md end end if dir.Magnitude>0 then dir=Vector3.new(dir.X,0,dir.Z).Unit*spd; r.AssemblyLinearVelocity=Vector3.new(dir.X,r.AssemblyLinearVelocity.Y,dir.Z) end end end end))
--- INF STAMINA: the authoritative need controller above owns the stamina pin/report. This companion only clears local
--- exhaustion mirrors and records native speed for diagnostics. It never fires an action remote and never writes
--- velocity, CFrame, WalkSpeed, Run/Shift input, BodyMovers, or movement state.
-task.spawn(function()
-	while RUNNING do
-		if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end
-		if CFG.InfStam and alive() and not CFG.Fly then
-			local stats=csStats(); if type(stats)=="table" then for _,k in ipairs({"Exhausted","Exhaustion","Fatigued","Tired"}) do
-				if type(stats[k])=="boolean" then stats[k]=false elseif type(stats[k])=="number" then stats[k]=0 end
+-- INF STAMINA: pin the exact resolved stamina references every physics frame so a 60 Hz replica update cannot drain
+-- between the old 20 Hz passes. This clears exhaustion mirrors and records native speed only; it never writes velocity,
+-- CFrame, WalkSpeed, Run/Shift input, BodyMovers, or movement state.
+conn(RunService.Heartbeat:Connect(function()
+	if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end
+	if not (CFG.InfStam and alive() and not CFG.Fly) then __gg.MH_stamShiftHeld=false; __gg.MH_stamBoostSpeed=0; return end
+	pcall(function()
+		local mx,changed=MHNEED.pin("stamina"); __gg.MH_stamPinState=mx and ("max "..tostring(mx)..(changed and " pinned" or " held")) or "no stamina field/max found"
+		local rep=csReplica(); local data=rep and rep.Data; local stats=select(1,csStats())
+		for _,tb in pairs({stats,data and data.State,data and data.Movement,CharacterState and CharacterState.Movement,CharacterState and CharacterState.PlayerData}) do
+			if type(tb)=="table" then for _,k in ipairs({"Exhausted","Exhaustion","Fatigued","Tired"}) do
+				if type(tb[k])=="boolean" then tb[k]=false elseif type(tb[k])=="number" then tb[k]=0 end
 			end end
-			local r=hrp(); if r then local v=r.AssemblyLinearVelocity; __gg.MH_stamBoostSpeed=Vector3.new(v.X,0,v.Z).Magnitude else __gg.MH_stamBoostSpeed=0 end
-			__gg.MH_stamShiftHeld=false
-			task.wait(0.08)
-		else
-			__gg.MH_stamShiftHeld=false; __gg.MH_stamBoostSpeed=0
-			task.wait(0.3)
 		end
-	end
-end)
+		local r=hrp(); if r then local v=r.AssemblyLinearVelocity; __gg.MH_stamBoostSpeed=Vector3.new(v.X,0,v.Z).Magnitude else __gg.MH_stamBoostSpeed=0 end
+		__gg.MH_stamShiftHeld=false
+	end)
+end))
 -- FLOAT: a Y-only BodyVelocity HOLDS you in the air — plain velocity writes don't hold a CFrame-driven PE dino
 -- (that's why Float "didn't work"). It only controls vertical, so you still walk normally. Space=rise, Ctrl=sink.
 -- No CFrame teleport = no 267. On enable it lifts you ~4 studs off the ground so you're floating, then hovers.
@@ -6875,6 +6909,7 @@ task.spawn(function() while RUNNING do task.wait(0.3); pcall(function()
 		lines[#lines+1]="Target replicas: "..tostring(__gg.MH_foodTargetReplicaCount or 0).." | matched "..tostring(__gg.MH_foodMatchedReplicaCount or 0)
 		lines[#lines+1]="Bite requests: "..tostring(__gg.MH_foodBitesSent or 0).." | cycles "..tostring(__gg.MH_foodCycleAttempts or 0)
 		local exact=__gg.MH_lastEatCall; lines[#lines+1]="Exact Bite packet: "..((type(exact)=="table" and exact.identity==__gg.MH_identityKey) and "captured" or "waiting")
+		lines[#lines+1]="Food x"..tostring(CFG.FoodMultiplierX or 10)..": "..tostring(__gg.MH_foodMultState or "waiting").." | bonus sent "..tostring(__gg.MH_foodMultSent or 0)
 		lines[#lines+1]="Eat cycle: "..tostring(__gg.MH_foodPhase or "idle").." | "..tostring(__gg.MH_foodPromptName or "none")
 		lines[#lines+1]="Food prompt: "..tostring(__gg.MH_foodPromptAction or "none")
 		lines[#lines+1]="Food observed: "..tostring(__gg.MH_foodVisibleBefore or "?").." -> "..tostring(__gg.MH_foodVisibleAfter or "?").." ("..tostring(__gg.MH_foodVisibleDelta or "?")..")"
@@ -6883,6 +6918,7 @@ task.spawn(function() while RUNNING do task.wait(0.3); pcall(function()
 		lines[#lines+1]="Growth: "..tostring(__gg.MH_growthState or "waiting").." | value "..tostring(__gg.MH_growthValue or "?").." | delta "..tostring(__gg.MH_growthDelta or "?").." | mass "..tostring(__gg.MH_growthMass or "?")
 		lines[#lines+1]="Wellbeing replica: "..(__gg.MH_wellbeingFound and "found" or "waiting")
 		lines[#lines+1]="Native movement speed: "..string.format("%.2f",tonumber(__gg.MH_stamBoostSpeed) or 0).." | stamina-only pin"
+		lines[#lines+1]="Stamina frame pin: "..tostring(__gg.MH_stamPinState or "waiting").." | report "..tostring(__gg.MH_stamReportState or "waiting")
 	lines[#lines+1]="Sound: "..(getSoundRemote() and "found" or "MISSING")
 	local tg=nearestTarget(300,true); lines[#lines+1]="Target: "..(tg and tg.Name or "none")
 	-- ═══ INF STAM DIAGNOSTIC — tells us the REAL speed lever (send me these lines if stam is still slow) ═══
@@ -7448,7 +7484,7 @@ task.spawn(function() while RUNNING do task.wait(0.4); pcall(function() local us
 task.spawn(function() while RUNNING do task.wait(0.5) pcall(function()
 	local h=hum(); local r=hrp()
 	if HUD.hp then HUD.hp.Text = h and string.format("%d / %d", math.floor(h.Health), math.floor(h.MaxHealth)) or "alive" end
-	if HUD.stat then local on={}; if CFG.GodMode then on[#on+1]="God" end if CFG.InfFood then on[#on+1]="Food" end if CFG.HitboxExpand then on[#on+1]="Hitbox" end if CFG.AutoFarmFossil then on[#on+1]="Fossil" end if CFG.AutoFarmGem then on[#on+1]="Gem" end HUD.stat.Text = #on>0 and table.concat(on,", ") or "idle" end
+	if HUD.stat then local on={}; if CFG.GodMode then on[#on+1]="God" end if CFG.InfFood then on[#on+1]="Food" end if CFG.FoodMultiplier then on[#on+1]="Food x"..tostring(CFG.FoodMultiplierX or 10) end if CFG.HitboxExpand then on[#on+1]="Hitbox" end if CFG.AutoFarmFossil then on[#on+1]="Fossil" end if CFG.AutoFarmGem then on[#on+1]="Gem" end HUD.stat.Text = #on>0 and table.concat(on,", ") or "idle" end
 	local d=lastSkinDino; if HUD.dino then HUD.dino.Text = d or "unknown" end  -- reuse the 2s-cached dino (no per-0.5s GetDescendants scan)
 	if d then CFG.SkinDino=d end
 	if HUD.pos and r then HUD.pos.Text = string.format("%d, %d, %d", r.Position.X, r.Position.Y, r.Position.Z) end
@@ -7480,4 +7516,4 @@ end
 MS("5 DONE - all tabs built, menu ready")
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
-print("[Dream Hub · Prior Extinction v6.9 PE-v4] Loaded — same-dino death return, stamina report fix, observed Bite payload")
+print("[Dream Hub · Prior Extinction v7.0 PE-v4] Loaded — learned Food x10 and per-frame stamina pin")
