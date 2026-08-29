@@ -2,29 +2,27 @@
 
 print("[Dream Hub PE] script fetched OK - booting")   -- if you see THIS in F9 but no menu, send the red error line under it
 local __gg = (typeof(getgenv)=="function") and getgenv() or _G
--- Recover only input that an older Dream Hub build explicitly owned. Blanket W/A/S/D/Shift key-up injection made
--- the game's controller ignore a physical key that was already held while the hub loaded, which looked like a full
--- movement freeze. Feature cleanup functions own and release their own keys instead.
+-- Input ownership is explicit. Older cleanup code unconditionally emitted W/A/S/D key-UP events even when the bot
+-- and Pro Food had never pressed those keys. If a real key was held while the hub loaded, PE's controller saw that
+-- fake release and stopped the dinosaur until the player released/re-pressed it. Only release keys this hub actually
+-- marked as synthetic; Pro Food and Infinite Stamina do not own keyboard input at all.
 __gg.MH_releaseSyntheticMovement=function()
-	pcall(function() if type(__gg.MH_botReleaseKeys)=="function" then __gg.MH_botReleaseKeys() end end)
-	pcall(function() if type(__gg.MH_stopProFood)=="function" then __gg.MH_stopProFood() end end)
+	if __gg.MH_botInputOwned and type(__gg.MH_botReleaseKeys)=="function" then pcall(__gg.MH_botReleaseKeys) end
+	__gg.MH_botInputOwned=false
 	if __gg.MH_stamShiftHeld then pcall(function() game:GetService("VirtualInputManager"):SendKeyEvent(false,Enum.KeyCode.LeftShift,false,game) end); __gg.MH_stamShiftHeld=false end
 	if __gg.MH_foodSyntheticE then pcall(function() game:GetService("VirtualInputManager"):SendKeyEvent(false,Enum.KeyCode.E,false,game) end); __gg.MH_foodSyntheticE=false end
 end
 pcall(__gg.MH_releaseSyntheticMovement)
--- Older PE builds briefly synthesized Shift for INF Stamina. Release a stale owned press before their cleanup can
--- clear the marker; the current build never presses Shift itself and leaves the game's native run controller alone.
-if __gg.MH_stamShiftHeld then pcall(function() game:GetService("VirtualInputManager"):SendKeyEvent(false,Enum.KeyCode.LeftShift,false,game) end) end
 if __gg.__PRIOR_EXT_HUB then pcall(__gg.__PRIOR_EXT_HUB) end
 pcall(__gg.MH_releaseSyntheticMovement)
-__gg.MH_botReleaseKeys=nil; __gg.MH_stopProFood=nil
+__gg.MH_botReleaseKeys=nil; __gg.MH_stopProFood=nil; __gg.MH_botInputOwned=false
 __gg.__PRIOR_EXT_HUB = nil
 -- Captured replica/source ids are scoped to one server session. Reusing them after a re-execute or server hop
 -- makes INF Food replay dead ids forever and prevents its nearby-food bootstrap from running.
 __gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0
 __gg.MH_attackTemplate=nil; __gg.MH_registerTemplate=nil; __gg.MH_pendingRegister=nil; __gg.MH_attackSequence=nil; __gg.MH_soundTemplate=nil; __gg.MH_hbMade=nil; __gg.MH_hbBuildAt=nil
 __gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_verifiedReplicaId=nil; __gg.MH_wellbeing=nil
-__gg.MH_identityKey=nil; __gg.MH_dietCache=nil; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0; __gg.MH_foodCycleAttempts=0; __gg.MH_foodCycleBusy=false; __gg.MH_foodCycleStarted=0; __gg.MH_foodPhase="idle"; __gg.MH_foodPromptName="none"
+__gg.MH_identityKey=nil; __gg.MH_dietCache=nil; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0; __gg.MH_foodCycleAttempts=0; __gg.MH_foodCycleBusy=false; __gg.MH_foodCycleStarted=0; __gg.MH_foodPhase="idle"; __gg.MH_foodPromptName="none"; __gg.MH_foodPromptAction="none"; __gg.MH_foodPromptCandidate=nil
 __gg.MH_infFoodTargetsCache=nil; __gg.MH_foodTargetCount=0; __gg.MH_foodTargetKind="none"; __gg.MH_foodTargetPath="none"; __gg.MH_foodTargetReplicaCount=0; __gg.MH_foodDietReplicaState=nil; __gg.MH_foodDietReplicaCount=0; __gg.MH_foodMatchedReplicaCount=0
 __gg.MH_foodSourceRevision=0; __gg.MH_foodSourceKinds="none"; __gg.MH_foodResolvedDiet="unresolved"; __gg.MH_foodVisibleBefore=nil; __gg.MH_foodVisibleAfter=nil; __gg.MH_foodVisibleDelta=nil; __gg.MH_foodAcceptance="unobserved"; __gg.MH_foodLastFailure="not run"
 __gg.MH_growthState="waiting"; __gg.MH_growthValue=nil; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_growthBase=nil; __gg.MH_stamBoostSpeed=0
@@ -37,7 +35,7 @@ __gg.MH_clearDinoCaches=function(identityKey)
 	__gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0; __gg.MH_foodProbeCursor=0
 	__gg.MH_attackTemplate=nil; __gg.MH_registerTemplate=nil; __gg.MH_pendingRegister=nil; __gg.MH_attackSequence=nil; __gg.MH_soundTemplate=nil
 	__gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_hbBuildAt=nil
-	__gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0; __gg.MH_foodCycleAttempts=0; __gg.MH_foodCycleBusy=false; __gg.MH_foodCycleStarted=0; __gg.MH_foodPhase="idle"; __gg.MH_foodPromptName="none"
+	__gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0; __gg.MH_foodCycleAttempts=0; __gg.MH_foodCycleBusy=false; __gg.MH_foodCycleStarted=0; __gg.MH_foodPhase="idle"; __gg.MH_foodPromptName="none"; __gg.MH_foodPromptAction="none"; __gg.MH_foodPromptCandidate=nil
 	__gg.MH_infFoodTargetsCache=nil; __gg.MH_foodTargetCount=0; __gg.MH_foodTargetKind="none"; __gg.MH_foodTargetPath="none"; __gg.MH_foodTargetReplicaCount=0; __gg.MH_foodDietReplicaState=nil; __gg.MH_foodDietReplicaCount=0; __gg.MH_foodMatchedReplicaCount=0
 	__gg.MH_foodSourceRevision=(__gg.MH_foodSourceRevision or 0)+1; __gg.MH_foodSourceKinds="none"; __gg.MH_foodResolvedDiet="unresolved"; __gg.MH_foodVisibleBefore=nil; __gg.MH_foodVisibleAfter=nil; __gg.MH_foodVisibleDelta=nil; __gg.MH_foodAcceptance="unobserved"; __gg.MH_foodLastFailure="identity changed"
 	__gg.MH_growthState="waiting"; __gg.MH_growthValue=nil; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_growthBase=nil; __gg.MH_stamBoostSpeed=0
@@ -900,10 +898,9 @@ local function loadCfg()
 	end)
 end
 loadCfg()
--- Historical live PE speed-finder runs held about 15.7 studs/s without snapback; 16+ was corrected by the server.
--- Reset old experimental 45/120 saves into that proven band instead of preserving a value that feels slow because
--- the server continually rubber-bands it.
-do local speed=tonumber(CFG.InfStamSpeed) or 15; CFG.InfStamSpeed=(speed>=12 and speed<=15) and speed or 15 end
+-- InfStamSpeed is retained only so older config files still decode. Infinite Stamina never applies a custom speed;
+-- PE's own walk/run controller remains the sole movement owner.
+CFG.InfStamSpeed=15
 if CFG.InfFoodDiet~="Herbivore" and CFG.InfFoodDiet~="Carnivore" then CFG.InfFoodDiet="Auto" end
 MS("1 config ok")
 CFG.Keybinds = CFG.Keybinds or {}
@@ -938,6 +935,11 @@ for _,key in ipairs({
 __gg.MH_tpFeatureGen={CarnMeatTP=0,ProFood=0,AutoFarmFossil=0,AutoFarmGem=0}
 __gg.MH_featureToggleChanged=function(key,value)
 	if key=="InfFood" then __gg.MH_foodGen=(__gg.MH_foodGen or 0)+1; __gg.MH_infFoodTargetsCache=nil; __gg.MH_foodDietReplicaState=nil end
+	if key=="InfStam" then
+		__gg.MH_stamShiftHeld=false
+		if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end
+		task.defer(function() if __gg.MH_restoreMovementState then pcall(__gg.MH_restoreMovementState) end end)
+	end
 	local gens=__gg.MH_tpFeatureGen
 	if type(gens)=="table" and gens[key]~=nil then
 		gens[key]=(gens[key] or 0)+1
@@ -2366,15 +2368,19 @@ local function fakeEat(prompt,foodToken,targetPart,targetModel,foodDiet)
 			local detector=(targetModel and targetModel:FindFirstChildWhichIsA("ClickDetector",true)) or targetPart:FindFirstChildWhichIsA("ClickDetector",true)
 			if clickFire and detector then pcall(function() clickFire(detector) end) end
 		end
-		replicaFire("SetAction","Consuming",true); task.wait(0.04)
 		if (prompt or targetPart) and enabled() then
-			if prompt then __gg.MH_foodPromptName=tostring(prompt.ObjectText~="" and prompt.ObjectText or prompt.ActionText~="" and prompt.ActionText or prompt.Name) end
-			-- Prefer the executor's atomic prompt helper. If it is unavailable, one native prompt begin/end is safe: it does
-			-- not synthesize E and cannot leave a keyboard key or camera input held.
-			__gg.MH_foodPhase="activating source"; if prompt and __gg.MH_activatePrompt then activated=__gg.MH_activatePrompt(prompt,40,false) end
+			if prompt then
+				local action=tostring(prompt.ActionText or ""); __gg.MH_foodPromptAction=action~="" and action or tostring(prompt.Name)
+				__gg.MH_foodPromptName=tostring(prompt.ObjectText~="" and prompt.ObjectText or action~="" and action or prompt.Name)
+			end
+			-- The carnivore corpse shown by PE uses "E — Investigate". Fire that exact prompt at extended range first;
+			-- Investigate can reveal/arm the source before its Bite replica accepts consumption. This never turns the camera,
+			-- teleports, or sends a keyboard E event. A newly-created Eat/Consume prompt is picked up on the next cycle.
+			__gg.MH_foodPhase="activating source"; if prompt and __gg.MH_activatePrompt then activated=__gg.MH_activatePrompt(prompt,1e9,false) end
 		end
-		task.wait(0.05)
+		task.wait(0.08)
 		if enabled() then
+			replicaFire("SetAction","Consuming",true); task.wait(0.04)
 			__gg.MH_foodPhase="biting"
 			local cap=__gg.MH_eat; local buf=(type(cap)=="table" and cap.buf~=nil) and cap.buf or __gg.MH_eatBuf or EAT_BUFFER
 			if type(buf)=="string" and buffer and buffer.fromstring then pcall(function() buf=buffer.fromstring(buf) end) end
@@ -4302,19 +4308,16 @@ local function startFly()
 end
 -- SPEED HACK ONLY drives the body by velocity. INF Stamina never enters this path and leaves native movement alone.
 conn(RunService.Heartbeat:Connect(function() if CFG.SpeedHack and alive() and not CFG.Fly then local r=hrp(); if r then local spd=CFG.SpeedVal; local dir=Vector3.zero; local cf=workspace.CurrentCamera and workspace.CurrentCamera.CFrame or CFrame.new() if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end if dir.Magnitude<=0 then local hh=hum(); local md=hh and hh.MoveDirection; if md and md.Magnitude>0 then dir=md end end if dir.Magnitude>0 then dir=Vector3.new(dir.X,0,dir.Z).Unit*spd; r.AssemblyLinearVelocity=Vector3.new(dir.X,r.AssemblyLinearVelocity.Y,dir.Z) end end end end))
--- INF STAMINA: pin only the real stamina need and clear exhaustion. Movement is entirely native: no velocity writes,
--- CFrame, Run/Shift input, BodyMover, start/stop action, or zero-velocity side channel.
+-- INF STAMINA: the authoritative need controller above owns the stamina pin/report. This companion only clears local
+-- exhaustion mirrors and records native speed for diagnostics. It never fires an action remote and never writes
+-- velocity, CFrame, WalkSpeed, Run/Shift input, BodyMovers, or movement state.
 task.spawn(function()
-	local clearAt=0
 	while RUNNING do
 		if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end
 		if CFG.InfStam and alive() and not CFG.Fly then
-			local now=tick(); if now-clearAt>=0.55 then clearAt=now
-				replicaFire("SetAction","Exhausted",false); replicaFire("SetAction","Fatigued",false)
-				local stats=csStats(); if type(stats)=="table" then for _,k in ipairs({"Exhausted","Exhaustion","Fatigued","Tired"}) do
-					if type(stats[k])=="boolean" then stats[k]=false elseif type(stats[k])=="number" then stats[k]=0 end
-				end end
-			end
+			local stats=csStats(); if type(stats)=="table" then for _,k in ipairs({"Exhausted","Exhaustion","Fatigued","Tired"}) do
+				if type(stats[k])=="boolean" then stats[k]=false elseif type(stats[k])=="number" then stats[k]=0 end
+			end end
 			local r=hrp(); if r then local v=r.AssemblyLinearVelocity; __gg.MH_stamBoostSpeed=Vector3.new(v.X,0,v.Z).Magnitude else __gg.MH_stamBoostSpeed=0 end
 			__gg.MH_stamShiftHeld=false
 			task.wait(0.08)
@@ -4802,6 +4805,13 @@ __gg.MH_collectInfFoodTargets=function(diet)
 	local wantsCarn=diet~="Herbivore"; local wantsHerb=diet~="Carnivore"
 	local ci=WS:FindFirstChild("CharacterIgnore")
 	if wantsCarn then
+		-- Highest-priority live signal: PE displays this exact prompt over a carnivore corpse ("E — Investigate").
+		-- PromptShown records it without touching the camera; add it directly even when the corpse model has generic
+		-- names/transparent rig parts that would fail the older visible-mesh test.
+		local shown=__gg.MH_foodPromptCandidate
+		if shown and shown.Parent then local action=tostring(shown.ActionText or ""):lower()
+			if action:find("investigate",1,true) or action:find("examine",1,true) then add(shown,partOf(shown.Parent),"Investigate corpse") end
+		end
 		-- Dead players/dinosaurs and the game's explicit corpse/meat containers.
 		local chars=WS:FindFirstChild("Characters"); if chars then for _,model in ipairs(chars:GetChildren()) do if model:IsA("Model") and (modelDead(model) or isScentCorpse(model) or isDownedBody(model)) then add(model,nil,"dead character") end end end
 		if ci then addChildren(ci:FindFirstChild("LeftCharacters"),"dead player"); addChildren(ci:FindFirstChild("SpawnedMeat"),"spawned meat") end
@@ -4823,7 +4833,12 @@ __gg.MH_collectInfFoodTargets=function(diet)
 			local found=false; local scanned=0
 			for _,item in ipairs(spawn:GetDescendants()) do
 				scanned+=1; if scanned>700 then break end
-				if item:IsA("Model") and item~=spawn then
+				if item:IsA("ProximityPrompt") then
+					local action=(tostring(item.ActionText or "").." "..tostring(item.ObjectText or "").." "..item.Name):lower()
+					if action:find("investigate",1,true) or action:find("examine",1,true) or action:find("eat",1,true) or action:find("consume",1,true) or action:find("bite",1,true) then
+						local p=partOf(item.Parent) or partOf(spawn); if p then add(item,p,"DinosaurSpawn Investigate"); found=true end
+					end
+				elseif item:IsA("Model") and item~=spawn then
 					local p=partOf(item); local h=item:FindFirstChildOfClass("Humanoid")
 					local visible=false; if p then pcall(function() visible=p.Transparency<0.95 end) end
 					if p and (visible or h or marked(item) or marked(p)) then add(item,p,"DinosaurSpawn corpse"); found=true end
@@ -4876,6 +4891,15 @@ __gg.MH_collectInfFoodTargets=function(diet)
 	__gg.MH_foodTargetCount=#out; __gg.MH_foodSourceKinds=kindsText; __gg.MH_infFoodTargetsCache={diet=diet,at=now,list=out,signature=signature}
 	return out
 end
+-- Cache PE's native corpse prompt as soon as it becomes visible. The food loop consumes this reference directly and
+-- invalidates its target cache so a just-streamed corpse is available on the very next controller pass.
+pcall(function() conn(game:GetService("ProximityPromptService").PromptShown:Connect(function(prompt)
+	if not (prompt and prompt.Parent) then return end
+	local action=(tostring(prompt.ActionText or "").." "..tostring(prompt.ObjectText or "").." "..prompt.Name):lower()
+	if action:find("investigate",1,true) or action:find("examine",1,true) then
+		__gg.MH_foodPromptCandidate=prompt; __gg.MH_foodPromptAction=tostring(prompt.ActionText or prompt.Name); __gg.MH_infFoodTargetsCache=nil
+	end
+end)) end)
 -- YES/NO confirmation popup
 carnGui=Instance.new("ScreenGui"); carnGui.Name="MH_CorpseTP"; carnGui.ResetOnSpawn=false; carnGui.Enabled=false; carnGui.IgnoreGuiInset=true; carnGui.DisplayOrder=9998
 safeParentGui(carnGui)
@@ -5147,20 +5171,20 @@ do
 		if prompt then pcall(function() __gg.MH_activatePrompt(prompt,40) end) end
 		pcall(fakeEat)   -- captured Bite remotes — fills the bar without pressing E
 	end
-	-- FULL → walk in a CIRCLE. REWORKED (was: W+D key holds — those only walked you diagonally in a straight line,
-	-- and the fake key-holds could STICK after you turned Pro Food off, so you kept "circling" forever): now the
-	-- circle is a Pro-Food-only rotating-heading velocity drive at a slow walk. It is never shared with Infinite Food
-	-- or Infinite Stamina. Stopping is a hard stop —
-	-- stopCircle() zeroes the drive, releases any legacy keys, and runs the moment Pro Food turns off or you eat.
+	-- FULL → walk in a CIRCLE. Pro Food owns velocity only while its toggle is actively circling. The old OFF branch
+	-- called stopCircle every 0.2s, and stopCircle emitted four unconditional W/A/S/D key-UP events; that was the exact
+	-- "move, then stop" bug even when Pro Food and Inf Stamina were off. Releases are now ownership-gated and the OFF
+	-- branch runs cleanup once per transition. Stopping simply stops future writes so native movement is uninterrupted.
 	local PWK = {W=Enum.KeyCode.W, A=Enum.KeyCode.A, S=Enum.KeyCode.S, D=Enum.KeyCode.D}
 	PRO.held = PRO.held or {}
-	local function releaseWASD()   -- unconditional key-ups: never trust the held-table to know a key stuck
-		for k,kc in pairs(PWK) do PRO.held[k]=false; pcall(function() VIM:SendKeyEvent(false, kc, false, game) end) end
+	local function releaseWASD()
+		for k,kc in pairs(PWK) do if PRO.held[k]==true then
+			PRO.held[k]=nil; pcall(function() VIM:SendKeyEvent(false,kc,false,game) end)
+		end end
 	end
 	local function stopCircle()
 		PRO.circling=false
 		releaseWASD()
-		local r=hrp(); if r then pcall(function() r.AssemblyLinearVelocity=Vector3.new(0, r.AssemblyLinearVelocity.Y, 0) end) end
 	end
 	__gg.MH_stopProFood=stopCircle
 	local function circle()   -- one STEP of the circle walk; call it repeatedly while food is full
@@ -5199,7 +5223,11 @@ do
 					else circle(); task.wait(0.1) end   -- nothing to eat anywhere → keep circling (still grows)
 				end
 			end
-		else PRO.cur=nil; PRO.token=nil; stopCircle(); task.wait(0.2) end   -- Pro Food OFF → hard-stop the circle NOW (keys + velocity)
+		else
+			PRO.cur=nil
+			if PRO.token~=nil or PRO.circling then PRO.token=nil; stopCircle() end
+			task.wait(0.2)
+		end
 	end end)
 end
 -- INF FOOD — one bounded controller owns every feeding path. It never presses E, holds a prompt, moves the camera,
@@ -6119,11 +6147,14 @@ end
 BOT.kc = {W=Enum.KeyCode.W, A=Enum.KeyCode.A, S=Enum.KeyCode.S, D=Enum.KeyCode.D}
 BOT.held = BOT.held or {}
 function BOT.setKey(name, down)
-	if BOT.held[name]==down then return end             -- only fire on a state CHANGE (not every frame)
-	BOT.held[name]=down
-	pcall(function() VIM:SendKeyEvent(down, BOT.kc[name], false, game) end)
+	local was=BOT.held[name]==true; down=down==true
+	if was==down then return end                         -- only fire on a state CHANGE (not every frame)
+	BOT.held[name]=down and true or nil
+	pcall(function() VIM:SendKeyEvent(down,BOT.kc[name],false,game) end)
+	if down then __gg.MH_botInputOwned=true
+	elseif not next(BOT.held) then __gg.MH_botInputOwned=false end
 end
-function BOT.releaseKeys() for n in pairs(BOT.kc) do BOT.setKey(n,false) end end
+function BOT.releaseKeys() for n in pairs(BOT.kc) do if BOT.held[n]==true then BOT.setKey(n,false) end end; __gg.MH_botInputOwned=false end
 __gg.MH_botReleaseKeys = BOT.releaseKeys                 -- so the on/off + death paths can stop the walk
 -- press the WASD combo that moves toward desFlat given the current camera facing (release all if no direction)
 function BOT.driveToward(desFlat)
@@ -6765,6 +6796,7 @@ task.spawn(function() while RUNNING do task.wait(0.3); pcall(function()
 		lines[#lines+1]="Bite requests: "..tostring(__gg.MH_foodBitesSent or 0).." | cycles "..tostring(__gg.MH_foodCycleAttempts or 0)
 		local exact=__gg.MH_lastEatCall; lines[#lines+1]="Exact Bite packet: "..((type(exact)=="table" and exact.identity==__gg.MH_identityKey) and "captured" or "waiting")
 		lines[#lines+1]="Eat cycle: "..tostring(__gg.MH_foodPhase or "idle").." | "..tostring(__gg.MH_foodPromptName or "none")
+		lines[#lines+1]="Food prompt: "..tostring(__gg.MH_foodPromptAction or "none")
 		lines[#lines+1]="Food observed: "..tostring(__gg.MH_foodVisibleBefore or "?").." -> "..tostring(__gg.MH_foodVisibleAfter or "?").." ("..tostring(__gg.MH_foodVisibleDelta or "?")..")"
 		lines[#lines+1]="Food result: "..tostring(__gg.MH_foodAcceptance or "unobserved")
 		lines[#lines+1]="Food failure: "..tostring(__gg.MH_foodLastFailure or "none")
@@ -7345,6 +7377,7 @@ end) end end)
 -- CLEANUP
 G.__PRIOR_EXT_HUB = function()
 	RUNNING=false
+	pcall(function() if type(__gg.MH_stopProFood)=="function" then __gg.MH_stopProFood() end end)
 	pcall(__gg.MH_releaseSyntheticMovement)
 	if __gg.MH_foodSyntheticE then pcall(function() VIM:SendKeyEvent(false,Enum.KeyCode.E,false,game) end); __gg.MH_foodSyntheticE=false end
 	if __gg.MH_stamShiftHeld then pcall(function() VIM:SendKeyEvent(false,Enum.KeyCode.LeftShift,false,game) end); __gg.MH_stamShiftHeld=false end
@@ -7367,5 +7400,4 @@ end
 MS("5 DONE - all tabs built, menu ready")
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
-print("[Dream Hub · Prior Extinction v6.7 PE-v4] Loaded — native movement, PlayerData food pin, death-point respawn")
-
+print("[Dream Hub · Prior Extinction v6.8 PE-v4] Loaded — input-safe movement, data-only stamina, Investigate food")
