@@ -12,8 +12,8 @@ _G.PE_PREM = false  -- Premium features stay off in this build — use PE_Premiu
 -- Two fetch routes pinned to the same immutable reviewed runtime commit. The branch loader may be updated later,
 -- but this execution target cannot silently change underneath people already using it.
 local URLS = {
-	"https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/72b25f5dde8b409b435bc61a5c6dfcc510bfa409/PriorExtinction_MoneyFreeHub.lua",
-	"https://github.com/wallacegodfirst-cmd/roblox-scripts/raw/72b25f5dde8b409b435bc61a5c6dfcc510bfa409/PriorExtinction_MoneyFreeHub.lua",
+	"https://raw.githubusercontent.com/wallacegodfirst-cmd/roblox-scripts/a4d5c29f73ddb07afeef358b7d4295e3118548b7/PriorExtinction_MoneyFreeHub.lua",
+	"https://github.com/wallacegodfirst-cmd/roblox-scripts/raw/a4d5c29f73ddb07afeef358b7d4295e3118548b7/PriorExtinction_MoneyFreeHub.lua",
 }
 local StarterGui = game:GetService("StarterGui")
 local function toast(msg, dur)
@@ -90,4 +90,3 @@ task.delay(6, function()
 	if found then toast("Dream Hub is up - press RightShift (or the on-screen button on mobile)", 8)
 	else toast("script ran but no menu detected - send this message to support", 10) end
 end)
-
