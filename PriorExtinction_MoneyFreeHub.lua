@@ -903,7 +903,7 @@ loadCfg()
 -- InfStamSpeed is retained only so older config files still decode. Infinite Stamina never applies a custom speed;
 -- PE's own walk/run controller remains the sole movement owner.
 CFG.InfStamSpeed=15
-CFG.FoodMultiplierX=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 10),2,10)
+CFG.FoodMultiplierX=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 10),1,100)
 if CFG.InfFoodDiet~="Herbivore" and CFG.InfFoodDiet~="Carnivore" then CFG.InfFoodDiet="Auto" end
 MS("1 config ok")
 CFG.Keybinds = CFG.Keybinds or {}
@@ -1282,12 +1282,13 @@ local function installHook()
 							local key=tostring(id); local replaced=false
 							for i,c in ipairs(__gg.MH_biteCalls) do if c.key==key then snap.key=key; __gg.MH_biteCalls[i]=snap; replaced=true; break end end
 							if not replaced then snap.key=key; table.insert(__gg.MH_biteCalls, snap); if #__gg.MH_biteCalls>3 then table.remove(__gg.MH_biteCalls,1) end end
-							-- FOOD x10 TEST: one genuine Bite is sent normally, then the exact same remote/id/buffer is replayed
-							-- nine more times. Replays are bounded, spread across a few frames, tied to this dinosaur identity,
+							-- FOOD MULTIPLIER: one genuine Bite is sent normally, then the exact same remote/id/buffer is replayed
+							-- up to 99 more times. Replays are bounded, spread across frames, tied to this dinosaur identity,
 							-- and marked so executors without checkcaller cannot recursively multiply our own calls.
 							if CFG.FoodMultiplier and not __gg.MH_foodMultSending and tick()-(__gg.MH_foodMultAt or 0)>=0.18 then
 								__gg.MH_foodMultAt=tick(); __gg.MH_foodMultSource=id; __gg.MH_foodMultState="captured source "..tostring(id).."; sending bonus Bites"
-								local remote=self; local identity=snap.identity; local bonus=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 10),2,10)-1
+								local remote=self; local identity=snap.identity; local bonus=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 10),1,100)-1
+								if bonus<=0 then __gg.MH_foodMultState="x1: normal Bite only" end
 								task.defer(function()
 									local sent=0
 									for extra=1,bonus do
@@ -1333,12 +1334,12 @@ local function installHook()
 							if nk then
 								local snap={n=a.n,remote=self.Name,instance=self}; for i=1,a.n do snap[i]=a[i] end; __gg.MH_needPackets[nk]=snap
 								local target=MHNEED and MHNEED.maxForProperty and MHNEED.maxForProperty(nk,a[3])
-								if ((nk=="food" and (CFG.InfFood or CFG.FoodMultiplier)) or (nk=="stamina" and CFG.InfStam)) and target and target>0 then
+								if ((nk=="food" and CFG.InfFood) or (nk=="stamina" and CFG.InfStam)) and target and target>0 then
 									a[4]=target; snap[4]=target; return oldNC(self,table.unpack(a,1,a.n))
 								end
 							end
 						end
-						if selfCall and (CFG.InfFood or CFG.FoodMultiplier) then
+						if selfCall and CFG.InfFood then
 							local needAction=action:lower()
 							local foodNamed=needAction:find("food",1,true) or needAction:find("hunger",1,true) or needAction:find("starv",1,true)
 							local drainNamed=needAction:find("drain",1,true) or needAction:find("deplet",1,true) or needAction:find("reduce",1,true)
@@ -1735,7 +1736,9 @@ __gg.MH_deathDinoIdentity=function(model)
 	local spawnData; pcall(function() local pp=__gg.MH_restore; spawnData=pp and pp[1] and pp[1][3] and pp[1][3][1] end)
 	local sources={model,mesh,tags,data,CharacterState and CharacterState.PlayerData,spawnData}
 	local function pick(keys)
-		for _,source in ipairs(sources) do if source then for _,key in ipairs(keys) do
+		-- Numeric iteration is deliberate: this source list is sparse while a character is respawning, and ipairs
+		-- stopped at the first nil entry before it ever inspected CharacterState or the saved spawn payload.
+		for index=1,6 do local source=sources[index]; if source then for _,key in ipairs(keys) do
 			local value
 			if typeof(source)=="Instance" then pcall(function() value=source:GetAttribute(key) end)
 			elseif type(source)=="table" then pcall(function() value=source[key] end) end
@@ -1754,11 +1757,15 @@ __gg.MH_deathDinoIdentity=function(model)
 end
 __gg.MH_sameDeathDino=function(saved,current)
 	if type(saved)~="table" or type(current)~="table" then return nil end
-	if saved.id or current.id then if not (saved.id and current.id) then return nil end; if saved.id~=current.id then return false end end
-	if not (saved.species and current.species) then return nil end
-	if saved.species~=current.species then return false end
-	for _,key in ipairs({"variant","skin","gender","stage"}) do if saved[key] and current[key] and saved[key]~=current[key] then return false end end
-	return true
+	-- A matching stable save-slot id is conclusive. If one side has not replicated its id yet, fall back to the
+	-- species signature instead of waiting forever. Growth stage is intentionally ignored because it can advance.
+	if saved.id and current.id then return saved.id==current.id end
+	if saved.species and current.species then
+		if saved.species~=current.species then return false end
+		for _,key in ipairs({"variant","skin","gender"}) do if saved[key] and current[key] and saved[key]~=current[key] then return false end end
+		return true
+	end
+	return nil
 end
 local function groundedDeathCFrame(root,model)
 	if not (root and root.Parent) then return nil end
@@ -1784,7 +1791,7 @@ task.spawn(function()
 			state.last=nil; state.pending=nil; state.lastRoot=nil; state.deathRoot=nil; state.lastDino=nil; state.pendingDino=nil; state.wasPlayable=false; state.lostAt=nil; state.returning=false
 			task.wait(0.35)
 		else
-			local characters=WS:FindFirstChild("Characters"); local model=(characters and characters:FindFirstChild(LP.Name)) or ((not characters) and LP.Character)
+			local characters=WS:FindFirstChild("Characters"); local model=(characters and characters:FindFirstChild(LP.Name)) or LP.Character
 			local root=deathPointRoot(model); local health=deathPointHealth(model); local currentDino=__gg.MH_deathDinoIdentity(model)
 			if root and root.Parent then
 				state.lostAt=nil
@@ -1798,12 +1805,12 @@ task.spawn(function()
 					state.returning=true; local wanted=state.pending; local wantedDino=state.pendingDino
 					task.spawn(function()
 						task.wait(1.8)
-						local currentCharacters=WS:FindFirstChild("Characters"); local currentModel=(currentCharacters and currentCharacters:FindFirstChild(LP.Name)) or ((not currentCharacters) and LP.Character); local currentRoot=deathPointRoot(currentModel)
+						local currentCharacters=WS:FindFirstChild("Characters"); local currentModel=(currentCharacters and currentCharacters:FindFirstChild(LP.Name)) or LP.Character; local currentRoot=deathPointRoot(currentModel)
 						local currentHealth=deathPointHealth(currentModel); local currentRespawned=currentRoot and (currentRoot~=state.deathRoot or (currentHealth and currentHealth>0 and tick()-(state.deathAt or 0)>0.8))
 						local stillSame=__gg.MH_sameDeathDino(wantedDino,__gg.MH_deathDinoIdentity(currentModel))
 						if RUNNING and CFG.RespawnDeathPoint and state.pending==wanted and state.pendingDino==wantedDino and currentRespawned and stillSame==true then
 							local moved=false
-							if type(__gg.MH_safeTeleport)=="function" then moved=__gg.MH_safeTeleport(wanted,{saveReturn=false,settle=1.1,tolerance=8})==true
+							if type(__gg.MH_safeTeleport)=="function" then moved=__gg.MH_safeTeleport(wanted,{saveReturn=false,settle=1.1,tolerance=8,allowDuringSpawn=true})==true
 							else moved=pcall(function() currentRoot.CFrame=wanted end) end
 							if moved then
 								state.pending=nil; state.pendingDino=nil; state.deathRoot=nil
@@ -3556,9 +3563,9 @@ do local p=Pages["Growth"]
 		mkDropdown(g,"Stop at age", function() return {"Off","Juvenile","Teen","Adolescent","Sub Adult","Adult","Elder"} end, function() return CFG.ProFoodStopAge~="" and CFG.ProFoodStopAge or "Off" end, function(opt) CFG.ProFoodStopAge=opt; saveCfg() end, 2)
 		local _,fw=mkSec(p,"Food & Water",2)
 		mkToggle(fw,"INF Food","InfFood",1)
-		mkToggle(fw,"Food x10 (learn my Bite)","FoodMultiplier",2)
-		mkSlider(fw,"Food multiplier","FoodMultiplierX",2,10,3,1)
-		mkLabel(fw,"Test separately: turn this on, then eat once normally. It repeats that exact live Bite for the same dinosaur/source; no random IDs.")
+		mkToggle(fw,"Food Multiplier (learn my Bite)","FoodMultiplier",2)
+		mkSlider(fw,"Food multiplier","FoodMultiplierX",1,100,3,1)
+		mkLabel(fw,"Set 1-100x, then press E normally near food. It never takes over E; it only repeats the exact Bite the game accepted.")
 		mkDropdown(fw,"My food type",function() return {"Auto","Herbivore","Carnivore"} end,function() return CFG.InfFoodDiet or "Auto" end,function(opt) CFG.InfFoodDiet=opt; __gg.MH_foodProbeCursor=0; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_infFoodTargetsCache=nil; __gg.MH_foodDietReplicaState=nil; saveCfg() end,4)
 		mkLabel(fw,"INF Food still remains for comparison until the learned x10 Bite is confirmed.")
 		mkSlider(fw,"INF Food grow speed","FoodEatSpeed",1,10,6,1)
@@ -4121,9 +4128,9 @@ end))
 task.spawn(function()
 	local wasOn={food=false,stamina=false}
 	while RUNNING do
-		if alive() and (CFG.InfFood or CFG.FoodMultiplier or CFG.InfStam) then
+		if alive() and (CFG.InfFood or CFG.InfStam) then
 			pcall(function()
-				for _,row in ipairs({{"food",CFG.InfFood or CFG.FoodMultiplier},{"stamina",CFG.InfStam}}) do
+				for _,row in ipairs({{"food",CFG.InfFood},{"stamina",CFG.InfStam}}) do
 					local kind,on=row[1],row[2]
 					if on then
 						MHNEED.pin(kind)
@@ -4168,6 +4175,9 @@ end)
 conn(UIS.InputBegan:Connect(function(input, gp)
 	if input.KeyCode ~= Enum.KeyCode.E then return end
 	if __gg.MH_foodSyntheticE then return end
+	-- Multiplier mode must leave the game's E interaction completely native so a genuine, server-accepted Bite
+	-- reaches the namecall hook first. Only the separate INF Food mode may add prompt assistance.
+	if CFG.FoodMultiplier and not CFG.InfFood then return end
 	__gg.MH_lastE = tick()
 	if not alive() then return end
 	task.spawn(function() pcall(function()
@@ -7516,4 +7526,4 @@ end
 MS("5 DONE - all tabs built, menu ready")
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
-print("[Dream Hub · Prior Extinction v7.0 PE-v4] Loaded — learned Food x10 and per-frame stamina pin")
+print("[Dream Hub · Prior Extinction v7.1 PE-v4] Loaded — passive Food Multiplier 1-100x and repaired Death Point")
