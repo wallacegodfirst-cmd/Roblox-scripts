@@ -903,7 +903,7 @@ loadCfg()
 -- InfStamSpeed is retained only so older config files still decode. Infinite Stamina never applies a custom speed;
 -- PE's own walk/run controller remains the sole movement owner.
 CFG.InfStamSpeed=15
-CFG.FoodMultiplierX=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 10),1,100)
+CFG.FoodMultiplierX=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 10),1,1000)
 if CFG.InfFoodDiet~="Herbivore" and CFG.InfFoodDiet~="Carnivore" then CFG.InfFoodDiet="Auto" end
 MS("1 config ok")
 CFG.Keybinds = CFG.Keybinds or {}
@@ -938,7 +938,10 @@ for _,key in ipairs({
 __gg.MH_tpFeatureGen={CarnMeatTP=0,ProFood=0,AutoFarmFossil=0,AutoFarmGem=0}
 __gg.MH_featureToggleChanged=function(key,value)
 	if key=="InfFood" then __gg.MH_foodGen=(__gg.MH_foodGen or 0)+1; __gg.MH_infFoodTargetsCache=nil; __gg.MH_foodDietReplicaState=nil end
-	if key=="FoodMultiplier" then __gg.MH_foodMultAt=0; __gg.MH_foodMultState=value and "waiting for a normal Bite" or "off" end
+	if key=="FoodMultiplier" then
+		__gg.MH_foodMultGen=(__gg.MH_foodMultGen or 0)+1; __gg.MH_foodMultBurst=false; __gg.MH_foodMultSending=false
+		__gg.MH_foodMultAt=0; __gg.MH_foodMultState=value and "waiting for a normal Bite" or "off"
+	end
 	if key=="InfStam" then
 		__gg.MH_stamShiftHeld=false
 		if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end
@@ -1283,23 +1286,26 @@ local function installHook()
 							for i,c in ipairs(__gg.MH_biteCalls) do if c.key==key then snap.key=key; __gg.MH_biteCalls[i]=snap; replaced=true; break end end
 							if not replaced then snap.key=key; table.insert(__gg.MH_biteCalls, snap); if #__gg.MH_biteCalls>3 then table.remove(__gg.MH_biteCalls,1) end end
 							-- FOOD MULTIPLIER: one genuine Bite is sent normally, then the exact same remote/id/buffer is replayed
-							-- up to 99 more times. Replays are bounded, spread across frames, tied to this dinosaur identity,
+							-- up to 999 more times. Replays are bounded, spread across frames, tied to this dinosaur identity,
 							-- and marked so executors without checkcaller cannot recursively multiply our own calls.
-							if CFG.FoodMultiplier and not __gg.MH_foodMultSending and tick()-(__gg.MH_foodMultAt or 0)>=0.18 then
+							if CFG.FoodMultiplier and not __gg.MH_foodMultSending and not __gg.MH_foodMultBurst and tick()-(__gg.MH_foodMultAt or 0)>=0.18 then
 								__gg.MH_foodMultAt=tick(); __gg.MH_foodMultSource=id; __gg.MH_foodMultState="captured source "..tostring(id).."; sending bonus Bites"
-								local remote=self; local identity=snap.identity; local bonus=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 10),1,100)-1
+								local remote=self; local identity=snap.identity; local bonus=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 10),1,1000)-1
 								if bonus<=0 then __gg.MH_foodMultState="x1: normal Bite only" end
+								if bonus>0 then __gg.MH_foodMultGen=(__gg.MH_foodMultGen or 0)+1; __gg.MH_foodMultBurst=true end
+								local generation=__gg.MH_foodMultGen
 								task.defer(function()
 									local sent=0
 									for extra=1,bonus do
-										if not (RUNNING and CFG.FoodMultiplier and identity==__gg.MH_identityKey and remote and remote.Parent) then break end
+										if not (RUNNING and CFG.FoodMultiplier and generation==__gg.MH_foodMultGen and identity==__gg.MH_identityKey and remote and remote.Parent) then break end
 										__gg.MH_foodMultSending=true
 										local ok=pcall(function() remote:FireServer(table.unpack(snap,1,snap.n)) end)
 										__gg.MH_foodMultSending=false
 										if ok then sent+=1; __gg.MH_foodMultSent=(__gg.MH_foodMultSent or 0)+1 end
 										if extra%3==0 then task.wait(0.025) end
 									end
-									__gg.MH_foodMultSending=false; __gg.MH_foodMultState=sent>0 and ("last Bite +"..tostring(sent).." sent") or "bonus burst stopped"
+									__gg.MH_foodMultSending=false
+									if generation==__gg.MH_foodMultGen then __gg.MH_foodMultBurst=false; __gg.MH_foodMultState=sent>0 and ("last Bite +"..tostring(sent).." sent") or (bonus<=0 and "x1: normal Bite only" or "bonus burst stopped") end
 								end)
 							end
 						end
@@ -3564,8 +3570,8 @@ do local p=Pages["Growth"]
 		local _,fw=mkSec(p,"Food & Water",2)
 		mkToggle(fw,"INF Food","InfFood",1)
 		mkToggle(fw,"Food Multiplier (learn my Bite)","FoodMultiplier",2)
-		mkSlider(fw,"Food multiplier","FoodMultiplierX",1,100,3,1)
-		mkLabel(fw,"Set 1-100x, then press E normally near food. It never takes over E; it only repeats the exact Bite the game accepted.")
+		mkSlider(fw,"Food multiplier","FoodMultiplierX",1,1000,3,1)
+		mkLabel(fw,"Set 1-1000x, then press E normally near food. It never takes over E; it only repeats the exact Bite the game accepted.")
 		mkDropdown(fw,"My food type",function() return {"Auto","Herbivore","Carnivore"} end,function() return CFG.InfFoodDiet or "Auto" end,function(opt) CFG.InfFoodDiet=opt; __gg.MH_foodProbeCursor=0; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_infFoodTargetsCache=nil; __gg.MH_foodDietReplicaState=nil; saveCfg() end,4)
 		mkLabel(fw,"INF Food still remains for comparison until the learned x10 Bite is confirmed.")
 		mkSlider(fw,"INF Food grow speed","FoodEatSpeed",1,10,6,1)
@@ -7526,4 +7532,4 @@ end
 MS("5 DONE - all tabs built, menu ready")
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
-print("[Dream Hub · Prior Extinction v7.1 PE-v4] Loaded — passive Food Multiplier 1-100x and repaired Death Point")
+print("[Dream Hub · Prior Extinction v7.2 PE-v4] Loaded — passive Food Multiplier 1-1000x and repaired Death Point")
