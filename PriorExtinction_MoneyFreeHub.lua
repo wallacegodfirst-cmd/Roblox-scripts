@@ -29,9 +29,10 @@ __gg.__PRIOR_EXT_HUB = nil
 __gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0
 __gg.MH_attackTemplate=nil; __gg.MH_registerTemplate=nil; __gg.MH_pendingRegister=nil; __gg.MH_attackSequence=nil; __gg.MH_soundTemplate=nil; __gg.MH_hbMade=nil; __gg.MH_hbBuildAt=nil
 __gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_verifiedReplicaId=nil; __gg.MH_wellbeing=nil
-__gg.MH_identityKey=nil; __gg.MH_dietCache=nil; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0; __gg.MH_foodCycleBusy=false; __gg.MH_foodPhase="idle"; __gg.MH_foodPromptName="none"
-__gg.MH_infFoodTargetsCache=nil; __gg.MH_foodTargetCount=0; __gg.MH_foodTargetKind="none"; __gg.MH_foodTargetPath="none"; __gg.MH_foodTargetReplicaCount=0; __gg.MH_foodDietReplicaState=nil; __gg.MH_foodDietReplicaCount=0
-__gg.MH_growthState="waiting"; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_stamBoostSpeed=0
+__gg.MH_identityKey=nil; __gg.MH_dietCache=nil; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0; __gg.MH_foodCycleAttempts=0; __gg.MH_foodCycleBusy=false; __gg.MH_foodCycleStarted=0; __gg.MH_foodPhase="idle"; __gg.MH_foodPromptName="none"
+__gg.MH_infFoodTargetsCache=nil; __gg.MH_foodTargetCount=0; __gg.MH_foodTargetKind="none"; __gg.MH_foodTargetPath="none"; __gg.MH_foodTargetReplicaCount=0; __gg.MH_foodDietReplicaState=nil; __gg.MH_foodDietReplicaCount=0; __gg.MH_foodMatchedReplicaCount=0
+__gg.MH_foodSourceRevision=0; __gg.MH_foodSourceKinds="none"; __gg.MH_foodResolvedDiet="unresolved"; __gg.MH_foodVisibleBefore=nil; __gg.MH_foodVisibleAfter=nil; __gg.MH_foodVisibleDelta=nil; __gg.MH_foodAcceptance="unobserved"; __gg.MH_foodLastFailure="not run"
+__gg.MH_growthState="waiting"; __gg.MH_growthValue=nil; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_growthBase=nil; __gg.MH_stamBoostSpeed=0
 __gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_healthPacket=nil; __gg.MH_guardLastHP=nil
 __gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil; __gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
 -- Every captured packet below is valid only for one playable dinosaur. Character, species, or verified replica
@@ -41,9 +42,10 @@ __gg.MH_clearDinoCaches=function(identityKey)
 	__gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0; __gg.MH_foodProbeCursor=0
 	__gg.MH_attackTemplate=nil; __gg.MH_registerTemplate=nil; __gg.MH_pendingRegister=nil; __gg.MH_attackSequence=nil; __gg.MH_soundTemplate=nil
 	__gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_hbBuildAt=nil
-	__gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0; __gg.MH_foodCycleBusy=false; __gg.MH_foodPhase="idle"; __gg.MH_foodPromptName="none"
-	__gg.MH_infFoodTargetsCache=nil; __gg.MH_foodTargetCount=0; __gg.MH_foodTargetKind="none"; __gg.MH_foodTargetPath="none"; __gg.MH_foodTargetReplicaCount=0; __gg.MH_foodDietReplicaState=nil; __gg.MH_foodDietReplicaCount=0
-	__gg.MH_growthState="waiting"; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_stamBoostSpeed=0
+	__gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0; __gg.MH_foodCycleAttempts=0; __gg.MH_foodCycleBusy=false; __gg.MH_foodCycleStarted=0; __gg.MH_foodPhase="idle"; __gg.MH_foodPromptName="none"
+	__gg.MH_infFoodTargetsCache=nil; __gg.MH_foodTargetCount=0; __gg.MH_foodTargetKind="none"; __gg.MH_foodTargetPath="none"; __gg.MH_foodTargetReplicaCount=0; __gg.MH_foodDietReplicaState=nil; __gg.MH_foodDietReplicaCount=0; __gg.MH_foodMatchedReplicaCount=0
+	__gg.MH_foodSourceRevision=(__gg.MH_foodSourceRevision or 0)+1; __gg.MH_foodSourceKinds="none"; __gg.MH_foodResolvedDiet="unresolved"; __gg.MH_foodVisibleBefore=nil; __gg.MH_foodVisibleAfter=nil; __gg.MH_foodVisibleDelta=nil; __gg.MH_foodAcceptance="unobserved"; __gg.MH_foodLastFailure="identity changed"
+	__gg.MH_growthState="waiting"; __gg.MH_growthValue=nil; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_growthBase=nil; __gg.MH_stamBoostSpeed=0
 	__gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_healthPacket=nil; __gg.MH_healthReportAt=nil
 	__gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_guardLastHP=nil; __gg.MH_guardMax=nil
 	__gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
@@ -837,15 +839,15 @@ local hookmeta    = hookmetamethod
 local getnamecall = getnamecallmethod
 local setclip     = setclipboard
 local checkcaller = checkcaller or function() return false end
--- Prompt activation shared by food paths. Prefer the executor helper when available; otherwise use Roblox's native
--- hold API. Every property is restored immediately so INF Food cannot leave eating/fossil prompts modified.
-__gg.MH_activatePrompt=function(prompt,maxDistance)
+-- Prompt activation shared by food paths. Infinite Food passes noHold=true: it may use the executor's atomic prompt
+-- helper, but it never starts a prompt hold and never synthesizes E or any other key. Properties are always restored.
+__gg.MH_activatePrompt=function(prompt,maxDistance,noHold)
 	if not (prompt and prompt:IsA("ProximityPrompt") and prompt.Parent) then return false end
 	local od,oh,ol,oe=prompt.MaxActivationDistance,prompt.HoldDuration,prompt.RequiresLineOfSight,prompt.Enabled
 	local fired=false
 	pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.max(tonumber(od) or 8,tonumber(maxDistance) or 30); prompt.HoldDuration=0; prompt.Enabled=true end)
 	if fireprox then fired=pcall(function() fireprox(prompt) end)
-	else fired=pcall(function() prompt:InputHoldBegin(); task.wait(); prompt:InputHoldEnd() end) end
+	elseif not noHold then fired=pcall(function() prompt:InputHoldBegin(); task.wait(); prompt:InputHoldEnd() end) end
 	pcall(function() prompt.MaxActivationDistance=od; prompt.HoldDuration=oh; prompt.RequiresLineOfSight=ol; prompt.Enabled=oe end)
 	return fired
 end
@@ -1257,13 +1259,13 @@ local function installHook()
 							seenSet[id]=true; seenIds[#seenIds+1]=id
 							if #seenIds>64 then local oldId=table.remove(seenIds,1); seenSet[oldId]=nil end
 						end
-						if action=="Bite" and a.n>=3 then __gg.MH_eat={id=id,buf=a[3]}; __gg.MH_foodIds=__gg.MH_foodIds or {}; if id~=myReplicaId then __gg.MH_foodIds[id]=true; __gg.MH_eatBuf=a[3] end end
+						if action=="Bite" and a.n>=3 then __gg.MH_eat={id=id,buf=a[3],identity=__gg.MH_identityKey,capturedAt=tick()}; __gg.MH_foodIds=__gg.MH_foodIds or {}; if id~=myReplicaId then __gg.MH_foodIds[id]=true; __gg.MH_eatBuf=a[3] end end
 						-- BITE-ONLY CAPTURE (for the INF Food spam loop): record the ENTIRE Bite call verbatim — the exact
 						-- id + "Bite" + every argument the game sent when YOU bit food — so we can replay it byte-for-byte,
 						-- fast, forever. We keep a LIST of the last several DIFFERENT bites, so the more different things you
 						-- eat, the more Bite calls the spam loop fires per pass = faster growth. Bite is the one that fills the bar.
 						if action=="Bite" then
-							local snap={n=a.n,remote=self.Name} for i=1,a.n do snap[i]=a[i] end
+							local snap={n=a.n,remote=self.Name,identity=__gg.MH_identityKey,capturedAt=tick()} for i=1,a.n do snap[i]=a[i] end
 							__gg.MH_lastEatCall=snap; __gg.MH_lastEatT=tick()
 							__gg.MH_biteCalls = __gg.MH_biteCalls or {}
 							-- One current call per source. tostring(buffer) contains an allocation address, so using it
@@ -1899,6 +1901,18 @@ function MHNEED.refresh(force)
 	end
 end
 function MHNEED.maxFor(kind) MHNEED.refresh(); return MHNEED.max[kind] end
+function MHNEED.current(kind,force)
+	MHNEED.refresh(force)
+	local best
+	for _,ref in ipairs(MHNEED.refs[kind] or {}) do
+		local value
+		if ref.mode=="table" and ref.tb then value=tonumber(ref.tb[ref.key])
+		elseif ref.mode=="attr" and ref.inst and ref.inst.Parent then local ok,v=pcall(function() return ref.inst:GetAttribute(ref.key) end); if ok then value=tonumber(v) end
+		elseif ref.mode=="value" and ref.inst and ref.inst.Parent then local ok,v=pcall(function() return ref.inst.Value end); if ok then value=tonumber(v) end end
+		if value and value>=0 and (best==nil or value>best) then best=value end
+	end
+	return best
+end
 function MHNEED.maxForProperty(kind,property)
 	MHNEED.refresh(); local want=MHNEED.norm(property)
 	for _,ref in ipairs(MHNEED.refs[kind] or {}) do
@@ -2235,7 +2249,7 @@ function __gg.MH_fireTargetFoodReplicas(rs,buf,targetPart,targetModel,budget)
 		if score>=18 then ranked[#ranked+1]={entry=entry,score=score} end
 	end end
 	table.sort(ranked,function(a,b) if a.score==b.score then return a.entry.id<b.entry.id end return a.score>b.score end)
-	__gg.MH_foodTargetReplicaCount=#ranked
+	__gg.MH_foodTargetReplicaCount=#ranked; __gg.MH_foodMatchedReplicaCount=#ranked
 	local sent=0; local fired={}; budget=math.clamp(math.floor(tonumber(budget) or 3),1,6)
 	-- A named ReplicaId/SourceId/FoodId attribute is authoritative even when that replica is not exposed by the
 	-- packaged client's registry. Try it directly before position-based matches.
@@ -2252,8 +2266,8 @@ function __gg.MH_fireTargetFoodReplicas(rs,buf,targetPart,targetModel,budget)
 end
 local function fakeEat(prompt,foodToken,targetPart,targetModel,foodDiet)
 	if __gg.MH_foodCycleBusy then return 0 end
-	if UIS and UIS:IsKeyDown(Enum.KeyCode.E) then return 0 end   -- never cancel a manual E-hold
-	local rs=getReplicaSignal(); if not rs then return 0 end
+	if UIS and UIS:IsKeyDown(Enum.KeyCode.E) then return 0 end
+	local rs=getReplicaSignal(); if not rs then __gg.MH_foodLastFailure="ReplicaSignal missing"; return 0 end
 	if not (prompt and prompt.Parent) then prompt=nil end
 	if not (targetPart and targetPart:IsA("BasePart") and targetPart.Parent) then
 		targetPart=(targetModel and rootOf(targetModel)) or (prompt and ((prompt.Parent:IsA("BasePart") and prompt.Parent) or prompt.Parent:FindFirstChildWhichIsA("BasePart",true) or prompt:FindFirstAncestorWhichIsA("BasePart")))
@@ -2263,81 +2277,57 @@ local function fakeEat(prompt,foodToken,targetPart,targetModel,foodDiet)
 	if foodDiet~="Herbivore" and foodDiet~="Carnivore" then
 		foodDiet=CFG.InfFoodDiet; if foodDiet=="Auto" and type(_G.MH_foodDiet)=="function" then local ok,res=pcall(_G.MH_foodDiet); if ok then foodDiet=res end end
 	end
-	if foodDiet~="Herbivore" then foodDiet="Carnivore" end
-	__gg.MH_foodCycleBusy=true
-	local sent=0; local eDown=false; local promptState; local touchRoot
-	pcall(function()
-		local function enabled()
-			return RUNNING and alive() and (foodToken==nil or (CFG.InfFood and foodToken==__gg.MH_foodGen))
-		end
+	if foodDiet~="Herbivore" and foodDiet~="Carnivore" then foodDiet=((__gg.MH_foodCycleAttempts or 0)%2==0) and "Carnivore" or "Herbivore" end
+	__gg.MH_foodResolvedDiet=foodDiet; __gg.MH_foodCycleBusy=true; __gg.MH_foodCycleAttempts=(__gg.MH_foodCycleAttempts or 0)+1; __gg.MH_foodCycleStarted=tick()
+	local sent=0; local activated=false; local before=MHNEED.current("food",true)
+	__gg.MH_foodVisibleBefore=before; __gg.MH_foodVisibleAfter=before; __gg.MH_foodVisibleDelta=0; __gg.MH_foodAcceptance="running"; __gg.MH_foodLastFailure="none"
+	local okCycle,cycleErr=pcall(function()
+		local function enabled() return RUNNING and alive() and (foodToken==nil or (CFG.InfFood and foodToken==__gg.MH_foodGen)) end
 		__gg.MH_foodPhase="starting"
 		if targetPart and targetPart.Parent then
 			local okPath,path=pcall(function() return (targetModel or targetPart):GetFullName() end)
-			__gg.MH_foodPromptName=okPath and path or tostring((targetModel and targetModel.Name) or targetPart.Name)
-			__gg.MH_foodTargetPath=__gg.MH_foodPromptName
-			-- Never steer the camera or character. Remote source matching below handles far-away eating; the E/touch/prompt
-			-- helpers are only additional compatibility paths for executors and nearby native prompts.
-			pcall(function() if LP.RequestStreamAroundAsync then task.spawn(function() pcall(function() LP:RequestStreamAroundAsync(targetPart.Position,0.35) end) end) end end)
-			touchRoot=hrp(); if firetouch and touchRoot then pcall(function() firetouch(touchRoot,targetPart,0) end) end
+			__gg.MH_foodPromptName=okPath and path or tostring((targetModel and targetModel.Name) or targetPart.Name); __gg.MH_foodTargetPath=__gg.MH_foodPromptName
+			-- No camera steering, remote streaming, touch-driving, synthetic E, prompt holds, or teleporting.
 			local clickFire=(typeof(fireclickdetector)=="function") and fireclickdetector or nil
 			local detector=(targetModel and targetModel:FindFirstChildWhichIsA("ClickDetector",true)) or targetPart:FindFirstChildWhichIsA("ClickDetector",true)
 			if clickFire and detector then pcall(function() clickFire(detector) end) end
 		end
-		replicaFire("SetAction","Consuming",true)
-		-- Keep the chosen diet-correct prompt active for one controlled E hold. This gives the game's own client enough
-		-- time to create the current server/dinosaur's exact Bite packet instead of ending Consuming immediately.
-		task.wait(0.12)
+		replicaFire("SetAction","Consuming",true); task.wait(0.04)
 		if (prompt or targetPart) and enabled() then
 			if prompt then __gg.MH_foodPromptName=tostring(prompt.ObjectText~="" and prompt.ObjectText or prompt.ActionText~="" and prompt.ActionText or prompt.Name) end
-			__gg.MH_foodPhase="holding E"
-			if prompt then
-				promptState={prompt.MaxActivationDistance,prompt.HoldDuration,prompt.RequiresLineOfSight,prompt.Enabled}
-				pcall(function() prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=math.huge; prompt.HoldDuration=0; prompt.Enabled=true end)
-				if fireprox then pcall(function() fireprox(prompt) end) else pcall(function() prompt:InputHoldBegin() end) end
-			end
-			__gg.MH_foodSyntheticE=true
-			pcall(function() VIM:SendKeyEvent(true,Enum.KeyCode.E,false,game); eDown=true end)
+			__gg.MH_foodPhase="activating source"; if prompt and __gg.MH_activatePrompt then activated=__gg.MH_activatePrompt(prompt,40,true) end
 		end
-		task.wait(0.5)
+		task.wait(0.05)
 		if enabled() then
 			__gg.MH_foodPhase="biting"
-			-- Resolve the buffer AFTER the prompt, so a packet captured from this exact server/dinosaur wins over the
-			-- legacy fallback bytes on the very first automatic cycle.
-			local cap=__gg.MH_eat
-			local buf=(type(cap)=="table" and cap.buf~=nil) and cap.buf or __gg.MH_eatBuf or EAT_BUFFER
+			local cap=__gg.MH_eat; local buf=(type(cap)=="table" and cap.buf~=nil) and cap.buf or __gg.MH_eatBuf or EAT_BUFFER
 			if type(buf)=="string" and buffer and buffer.fromstring then pcall(function() buf=buffer.fromstring(buf) end) end
+			local replayed={}; local calls=__gg.MH_biteCalls
+			if type(calls)=="table" then for _,ec in ipairs(calls) do if sent>=2 then break end
+				if type(ec)=="table" and ec.identity==__gg.MH_identityKey and ec.n and ec.n>=2 then local ok=pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end); if ok then sent+=1; replayed[ec.key or ec]=true end end
+			end end
 			local ec=__gg.MH_lastEatCall
-			if type(ec)=="table" and ec.n and ec.n>=2 then local ok=pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end); if ok then sent+=1 end end
-			if type(cap)=="table" and cap.id and not ec then local ok=pcall(function() rs:FireServer(cap.id,"Bite",cap.buf or buf) end); if ok then sent+=1 end end
-			local foodIds=__gg.MH_foodIds
-			if type(foodIds)=="table" then for foodId in pairs(foodIds) do if sent>=4 then break end; local ok=pcall(function() rs:FireServer(foodId,"Bite",buf) end); if ok then sent+=1 end end end
-			-- First bite the replica linked to the exact selected corpse/plant. This is the no-manual-food-ID path.
-			if targetPart and targetPart.Parent then sent+=__gg.MH_fireTargetFoodReplicas(rs,buf,targetPart,targetModel,5) end
-			-- Diet-specific replica scanning also reaches sources whose corpse/fish/plant model is not streamed locally.
-			sent+=__gg.MH_fireDietFoodReplicas(rs,buf,foodDiet,12)
-			-- Small generic rotation remains as a fallback for sources with fully opaque Tags/Data.
-			sent+=__gg.MH_fireFoodReplicas(rs,buf,4)
-			-- Keep the supplied per-map source capture as an additional bootstrap. It is deliberately one attempt per
-			-- chew cycle, not the old all-map burst.
+			if sent<2 and type(ec)=="table" and ec.identity==__gg.MH_identityKey and ec.n and ec.n>=2 and not replayed[ec.key or ec] then local ok=pcall(function() rs:FireServer(table.unpack(ec,1,ec.n)) end); if ok then sent+=1 end end
+			if type(cap)=="table" and cap.identity==__gg.MH_identityKey and cap.id and sent==0 then local ok=pcall(function() rs:FireServer(cap.id,"Bite",cap.buf or buf) end); if ok then sent+=1 end end
+			local foodIds=__gg.MH_foodIds; if type(foodIds)=="table" then for foodId in pairs(foodIds) do if sent>=3 then break end; local ok=pcall(function() rs:FireServer(foodId,"Bite",buf) end); if ok then sent+=1 end end end
+			if targetPart and targetPart.Parent then sent+=__gg.MH_fireTargetFoodReplicas(rs,buf,targetPart,targetModel,4) else __gg.MH_foodMatchedReplicaCount=0 end
+			sent+=__gg.MH_fireDietFoodReplicas(rs,buf,foodDiet,8); sent+=__gg.MH_fireFoodReplicas(rs,buf,3)
 			for land,id in pairs(WATER_IDS) do if WS:FindFirstChild(land) then local ok=pcall(function() rs:FireServer(id,"Bite",buf) end); if ok then sent+=1 end; break end end
 			__gg.MH_foodBitesSent=(__gg.MH_foodBitesSent or 0)+sent
-			task.wait(0.18)
 		end
 	end)
-	-- Guaranteed cleanup: release only the E press owned by this cycle and restore the prompt exactly as it was.
-	if eDown then pcall(function() VIM:SendKeyEvent(false,Enum.KeyCode.E,false,game) end) end
 	__gg.MH_foodSyntheticE=false
-	if firetouch and touchRoot and targetPart and targetPart.Parent then pcall(function() firetouch(touchRoot,targetPart,1) end) end
-	if promptState and prompt and prompt.Parent then pcall(function()
-		if not fireprox then prompt:InputHoldEnd() end
-		prompt.MaxActivationDistance=promptState[1]; prompt.HoldDuration=promptState[2]; prompt.RequiresLineOfSight=promptState[3]; prompt.Enabled=promptState[4]
-	end) end
 	local nowManual=false; pcall(function() nowManual=UIS:IsKeyDown(Enum.KeyCode.E) end)
-	if not nowManual then
-		__gg.MH_foodPhase="finishing"
-		replicaFire("SetAction","Consuming",false)
-		replicaFire("AnimationEnded","Eat")
-	end
+	if not nowManual then __gg.MH_foodPhase="finishing"; replicaFire("SetAction","Consuming",false); replicaFire("AnimationEnded","Eat") end
+	task.wait(0.16)
+	local after=MHNEED.current("food",true); __gg.MH_foodVisibleAfter=after; local delta=(before and after) and (after-before) or nil; __gg.MH_foodVisibleDelta=delta
+	local maximum=MHNEED.maxFor("food")
+	if not okCycle then __gg.MH_foodAcceptance="cycle error"; __gg.MH_foodLastFailure=tostring(cycleErr)
+	elseif delta and delta>0.001 then __gg.MH_foodAcceptance="visible food increased"; __gg.MH_foodLastFailure="none"
+	elseif after and maximum and after>=maximum-0.001 then __gg.MH_foodAcceptance="food full/pinned"; __gg.MH_foodLastFailure="none"
+	elseif sent>0 then __gg.MH_foodAcceptance="requests sent; no visible increase"; __gg.MH_foodLastFailure="server rejected or source mismatch"
+	elseif activated then __gg.MH_foodAcceptance="prompt fired; no Bite source"; __gg.MH_foodLastFailure="no matched food replica"
+	else __gg.MH_foodAcceptance="no request sent"; __gg.MH_foodLastFailure="no live food source/prompt" end
 	__gg.MH_foodCycleBusy=false; __gg.MH_foodPhase="idle"
 	return sent
 end
@@ -3954,7 +3944,7 @@ task.spawn(function()
 							-- flag is actually paused and throttle the server request.
 							local rep=csReplica(); local growth=rep and rep.Data and rep.Data.Growth
 							if growth then
-								__gg.MH_growthDelta=tonumber(growth.Delta); __gg.MH_growthMass=tonumber(growth.Mass); __gg.MH_growthState=growth.Paused==true and "paused" or "running"
+								__gg.MH_growthDelta=tonumber(growth.Delta); __gg.MH_growthMass=tonumber(growth.Mass); __gg.MH_growthValue=tonumber(growth.Value or growth.Growth or growth.Percent or growth.Delta); __gg.MH_growthBase=__gg.MH_growthBase or __gg.MH_growthValue; __gg.MH_growthState=growth.Paused==true and "paused" or "running"
 								-- Exact action confirmed by the supplied Wellbeing GUI decompile. Reassert even when the local
 								-- flag already reads false, because the authoritative server can pause stagnant growth later.
 								if not wasOn.food or now-(__gg.MH_growthResumeAt or 0)>=1.2 then
@@ -4249,7 +4239,7 @@ task.spawn(function()
 			local shift=false; pcall(function() shift=UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift) end)
 			if shift and not CFG.SpeedHack then local r=hrp(); if r then local v=r.AssemblyLinearVelocity; local flat=Vector3.new(v.X,0,v.Z); local speed=flat.Magnitude
 				__gg.MH_stamBoostSpeed=speed
-				if speed>1.5 and speed<15.5 then local boosted=math.min(15.5,speed+math.min(0.12,(15.5-speed)*0.18)); local dir=flat.Unit
+				if speed>1.5 and speed<15.65 then local boosted=math.min(15.65,speed+math.min(0.16,(15.65-speed)*0.2)); local dir=flat.Unit
 					pcall(function() r.AssemblyLinearVelocity=Vector3.new(dir.X*boosted,v.Y,dir.Z*boosted) end); __gg.MH_stamBoostSpeed=boosted
 				end
 			end else __gg.MH_stamBoostSpeed=0 end
@@ -4698,8 +4688,8 @@ end
 -- includes dead players, ragdolls, spawned meat/chunks, and diet-correct plant sources.
 __gg.MH_collectInfFoodTargets=function(diet)
 	local now=tick(); local cache=__gg.MH_infFoodTargetsCache
-	if type(cache)=="table" and cache.diet==diet and now-(cache.at or 0)<0.9 then return cache.list or {} end
-	local me=hrp(); local out,seen={},{ }
+	if type(cache)=="table" and cache.diet==diet and now-(cache.at or 0)<0.75 then return cache.list or {} end
+	local me=hrp(); local out,seen,kinds={},{},{}
 	local function partOf(inst)
 		if not inst then return nil end
 		if inst:IsA("BasePart") then return inst end
@@ -4726,8 +4716,8 @@ __gg.MH_collectInfFoodTargets=function(diet)
 		if model==getMyModel() or (model and model==char()) then return end
 		local key=(holder and holder:IsA("BasePart") and holder) or model or holder or part
 		if seen[key] then return end; seen[key]=true
-		local d=me and (part.Position-me.Position).Magnitude or math.huge
-		out[#out+1]={model=model or holder or part,part=part,prompt=promptOf(holder) or promptOf(model) or promptOf(part),kind=kind or "food",distance=d}
+		local d=me and (part.Position-me.Position).Magnitude or math.huge; kind=kind or "food"; kinds[kind]=(kinds[kind] or 0)+1
+		out[#out+1]={model=model or holder or part,part=part,prompt=promptOf(holder) or promptOf(model) or promptOf(part),kind=kind,distance=d}
 	end
 	local function addChildren(root,kind)
 		if not root then return end
@@ -4807,7 +4797,10 @@ __gg.MH_collectInfFoodTargets=function(diet)
 	end
 	table.sort(out,function(a,b) return a.distance<b.distance end)
 	while #out>220 do table.remove(out) end
-	__gg.MH_foodTargetCount=#out; __gg.MH_infFoodTargetsCache={diet=diet,at=now,list=out}
+	local labels={}; for kind,count in pairs(kinds) do labels[#labels+1]=kind..":"..tostring(count) end; table.sort(labels)
+	local kindsText=#labels>0 and table.concat(labels,", ") or "none"; local signature=tostring(diet).."|"..tostring(#out).."|"..kindsText
+	if type(cache)~="table" or cache.signature~=signature then __gg.MH_foodSourceRevision=(__gg.MH_foodSourceRevision or 0)+1 end
+	__gg.MH_foodTargetCount=#out; __gg.MH_foodSourceKinds=kindsText; __gg.MH_infFoodTargetsCache={diet=diet,at=now,list=out,signature=signature}
 	return out
 end
 -- YES/NO confirmation popup
@@ -5136,8 +5129,8 @@ do
 		else PRO.cur=nil; PRO.token=nil; stopCircle(); task.wait(0.2) end   -- Pro Food OFF → hard-stop the circle NOW (keys + velocity)
 	end end)
 end
--- INF FOOD — one controller owns every feeding path. Each pass performs the actual sequence observed from the game:
--- Consuming=true -> one controlled E hold on a diet-correct prompt -> Bite -> finish. It never moves/teleports.
+-- INF FOOD — one bounded controller owns every feeding path. It never presses E, holds a prompt, moves the camera,
+-- streams the character elsewhere, or teleports; it activates an atomic prompt when available and fires matched Bites.
 task.spawn(function()
 	while RUNNING do
 		if CFG.InfFood and alive() then
@@ -5146,6 +5139,7 @@ task.spawn(function()
 			else
 				local picked; local diet=CFG.InfFoodDiet
 				if diet=="Auto" and type(_G.MH_foodDiet)=="function" then local ok,res=pcall(_G.MH_foodDiet); if ok then diet=res end end
+				__gg.MH_foodResolvedDiet=tostring(diet or "unresolved")
 				local targets=__gg.MH_collectInfFoodTargets and __gg.MH_collectInfFoodTargets(diet) or {}
 				if #targets>0 then
 					__gg.MH_foodProbeCursor=((__gg.MH_foodProbeCursor or 0)%#targets)+1; picked=targets[__gg.MH_foodProbeCursor]
@@ -5153,7 +5147,7 @@ task.spawn(function()
 				else __gg.MH_foodTargetKind="none"; __gg.MH_foodTargetPath="none"; __gg.MH_foodTargetReplicaCount=0 end
 				pcall(fakeEat,picked and picked.prompt,token,picked and picked.part,picked and picked.model,diet)
 			end
-			task.wait(0.12)
+			task.wait(0.28)
 		else task.wait(0.4) end
 	end
 end)
@@ -6690,13 +6684,18 @@ task.spawn(function() while RUNNING do task.wait(0.3); pcall(function()
 	lines[#lines+1]="Food replicas: "..tostring(__gg.MH_foodPreferredCount or 0).." preferred / "..tostring(__gg.MH_foodFallbackCount or 0).." fallback"
 	lines[#lines+1]="Diet food replicas: "..tostring(__gg.MH_foodDietReplicaCount or 0)
 	lines[#lines+1]="Food targets: "..tostring(__gg.MH_foodTargetCount or 0).." | "..tostring(__gg.MH_foodTargetKind or "none")
-	lines[#lines+1]="Food target: "..tostring(__gg.MH_foodTargetPath or "none")
-	lines[#lines+1]="Target replicas: "..tostring(__gg.MH_foodTargetReplicaCount or 0)
-	lines[#lines+1]="Bite attempts: "..tostring(__gg.MH_foodBitesSent or 0)
-	lines[#lines+1]="Eat cycle: "..tostring(__gg.MH_foodPhase or "idle").." | "..tostring(__gg.MH_foodPromptName or "none")
-	lines[#lines+1]="Growth: "..tostring(__gg.MH_growthState or "waiting").." | delta "..tostring(__gg.MH_growthDelta or "?").." | mass "..tostring(__gg.MH_growthMass or "?")
-	lines[#lines+1]="Wellbeing replica: "..(__gg.MH_wellbeingFound and "found" or "waiting")
-	lines[#lines+1]="Stamina fixed boost: "..string.format("%.1f",tonumber(__gg.MH_stamBoostSpeed) or 0).." | no CFrame/Run control"
+		lines[#lines+1]="Food target: "..tostring(__gg.MH_foodTargetPath or "none")
+		lines[#lines+1]="Food diet: "..tostring(__gg.MH_foodResolvedDiet or "unresolved").." | sources r"..tostring(__gg.MH_foodSourceRevision or 0)
+		lines[#lines+1]="Source kinds: "..tostring(__gg.MH_foodSourceKinds or "none")
+		lines[#lines+1]="Target replicas: "..tostring(__gg.MH_foodTargetReplicaCount or 0).." | matched "..tostring(__gg.MH_foodMatchedReplicaCount or 0)
+		lines[#lines+1]="Bite requests: "..tostring(__gg.MH_foodBitesSent or 0).." | cycles "..tostring(__gg.MH_foodCycleAttempts or 0)
+		lines[#lines+1]="Eat cycle: "..tostring(__gg.MH_foodPhase or "idle").." | "..tostring(__gg.MH_foodPromptName or "none")
+		lines[#lines+1]="Food observed: "..tostring(__gg.MH_foodVisibleBefore or "?").." -> "..tostring(__gg.MH_foodVisibleAfter or "?").." ("..tostring(__gg.MH_foodVisibleDelta or "?")..")"
+		lines[#lines+1]="Food result: "..tostring(__gg.MH_foodAcceptance or "unobserved")
+		lines[#lines+1]="Food failure: "..tostring(__gg.MH_foodLastFailure or "none")
+		lines[#lines+1]="Growth: "..tostring(__gg.MH_growthState or "waiting").." | value "..tostring(__gg.MH_growthValue or "?").." | delta "..tostring(__gg.MH_growthDelta or "?").." | mass "..tostring(__gg.MH_growthMass or "?")
+		lines[#lines+1]="Wellbeing replica: "..(__gg.MH_wellbeingFound and "found" or "waiting")
+		lines[#lines+1]="Stamina sprint assist: "..string.format("%.2f",tonumber(__gg.MH_stamBoostSpeed) or 0).." | no CFrame/Run control"
 	lines[#lines+1]="Sound: "..(getSoundRemote() and "found" or "MISSING")
 	local tg=nearestTarget(300,true); lines[#lines+1]="Target: "..(tg and tg.Name or "none")
 	-- ═══ INF STAM DIAGNOSTIC — tells us the REAL speed lever (send me these lines if stam is still slow) ═══
@@ -7293,5 +7292,5 @@ end
 MS("5 DONE - all tabs built, menu ready")
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
-print("[Dream Hub · Prior Extinction v6.4 PE-v3] Loaded — exact need/stamina packets, wellbeing resolver, cached streaming combat")
+print("[Dream Hub · Prior Extinction v6.5 PE-v4] Loaded — input-free food sources, stable stamina, cached streaming combat")
 
