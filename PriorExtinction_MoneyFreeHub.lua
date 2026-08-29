@@ -24,7 +24,7 @@ __gg.MH_attackTemplate=nil; __gg.MH_registerTemplate=nil; __gg.MH_pendingRegiste
 __gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_verifiedReplicaId=nil; __gg.MH_wellbeing=nil
 __gg.MH_identityKey=nil; __gg.MH_dietCache=nil; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0; __gg.MH_foodCycleAttempts=0; __gg.MH_foodCycleBusy=false; __gg.MH_foodCycleStarted=0; __gg.MH_foodPhase="idle"; __gg.MH_foodPromptName="none"; __gg.MH_foodPromptAction="none"; __gg.MH_foodPromptCandidate=nil
 __gg.MH_infFoodTargetsCache=nil; __gg.MH_foodTargetCount=0; __gg.MH_foodTargetKind="none"; __gg.MH_foodTargetPath="none"; __gg.MH_foodTargetReplicaCount=0; __gg.MH_foodDietReplicaState=nil; __gg.MH_foodDietReplicaCount=0; __gg.MH_foodMatchedReplicaCount=0
-__gg.MH_foodSourceRevision=0; __gg.MH_foodSourceKinds="none"; __gg.MH_foodResolvedDiet="unresolved"; __gg.MH_foodVisibleBefore=nil; __gg.MH_foodVisibleAfter=nil; __gg.MH_foodVisibleDelta=nil; __gg.MH_foodAcceptance="unobserved"; __gg.MH_foodLastFailure="not run"
+__gg.MH_foodSourceRevision=0; __gg.MH_foodSourceKinds="none"; __gg.MH_foodResolvedDiet="unresolved"; __gg.MH_foodBufferMode="none"; __gg.MH_foodVisibleBefore=nil; __gg.MH_foodVisibleAfter=nil; __gg.MH_foodVisibleDelta=nil; __gg.MH_foodAcceptance="unobserved"; __gg.MH_foodLastFailure="not run"
 __gg.MH_growthState="waiting"; __gg.MH_growthValue=nil; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_growthBase=nil; __gg.MH_stamBoostSpeed=0
 __gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_healthPacket=nil; __gg.MH_guardLastHP=nil
 __gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil; __gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
@@ -37,7 +37,7 @@ __gg.MH_clearDinoCaches=function(identityKey)
 	__gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_hbBuildAt=nil
 	__gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0; __gg.MH_foodCycleAttempts=0; __gg.MH_foodCycleBusy=false; __gg.MH_foodCycleStarted=0; __gg.MH_foodPhase="idle"; __gg.MH_foodPromptName="none"; __gg.MH_foodPromptAction="none"; __gg.MH_foodPromptCandidate=nil
 	__gg.MH_infFoodTargetsCache=nil; __gg.MH_foodTargetCount=0; __gg.MH_foodTargetKind="none"; __gg.MH_foodTargetPath="none"; __gg.MH_foodTargetReplicaCount=0; __gg.MH_foodDietReplicaState=nil; __gg.MH_foodDietReplicaCount=0; __gg.MH_foodMatchedReplicaCount=0
-	__gg.MH_foodSourceRevision=(__gg.MH_foodSourceRevision or 0)+1; __gg.MH_foodSourceKinds="none"; __gg.MH_foodResolvedDiet="unresolved"; __gg.MH_foodVisibleBefore=nil; __gg.MH_foodVisibleAfter=nil; __gg.MH_foodVisibleDelta=nil; __gg.MH_foodAcceptance="unobserved"; __gg.MH_foodLastFailure="identity changed"
+	__gg.MH_foodSourceRevision=(__gg.MH_foodSourceRevision or 0)+1; __gg.MH_foodSourceKinds="none"; __gg.MH_foodResolvedDiet="unresolved"; __gg.MH_foodBufferMode="none"; __gg.MH_foodVisibleBefore=nil; __gg.MH_foodVisibleAfter=nil; __gg.MH_foodVisibleDelta=nil; __gg.MH_foodAcceptance="unobserved"; __gg.MH_foodLastFailure="identity changed"
 	__gg.MH_growthState="waiting"; __gg.MH_growthValue=nil; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_growthBase=nil; __gg.MH_stamBoostSpeed=0
 	__gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_healthPacket=nil; __gg.MH_healthReportAt=nil
 	__gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_guardLastHP=nil; __gg.MH_guardMax=nil
@@ -1691,7 +1691,7 @@ local function csReplica() return CharacterState and CharacterState.Replica end
 local function csStats() local r=csReplica(); if r and r.Data then return r.Data.Stats, r.Data.MaxStats end end
 -- RESPAWN AT DEATH POINT: remember the last grounded CFrame of the current playable, arm only after a confirmed
 -- death/despawn, and return only a NEW root after respawn. This never runs unless the user enables the toggle.
-__gg.MH_deathReturn={last=nil,pending=nil,lastRoot=nil,deathRoot=nil,wasPlayable=false,lostAt=nil,returning=false,deathAt=0}
+__gg.MH_deathReturn={last=nil,pending=nil,lastRoot=nil,deathRoot=nil,lastDino=nil,pendingDino=nil,wasPlayable=false,lostAt=nil,returning=false,deathAt=0}
 local function deathPointHealth(model)
 	local h=model and model:FindFirstChildOfClass("Humanoid"); if h then return tonumber(h.Health) end
 	local stats=csStats(); if type(stats)=="table" then for _,key in ipairs({"Health","HP","HitPoints","CurrentHealth"}) do local value=tonumber(stats[key]); if value then return value end end end
@@ -1704,52 +1704,120 @@ local function deathPointRoot(model)
 	if body and body:IsA("BasePart") then return body end
 	return rootOf(model)
 end
+-- Stable playable signature for Death Point. Replica/root ids are intentionally excluded because they can be replaced
+-- by a normal respawn. A real save-slot/character id wins when PE exposes one; otherwise species + variant/skin/
+-- gender/stage from the live model, CharacterState, and the game's genuine spawn payload identify the dinosaur.
+__gg.MH_deathDinoIdentity=function(model)
+	local rep=csReplica(); local data=rep and rep.Data; local tags=rep and rep.Tags; local mesh=model and model:FindFirstChild("MeshModel")
+	local spawnData; pcall(function() local pp=__gg.MH_restore; spawnData=pp and pp[1] and pp[1][3] and pp[1][3][1] end)
+	local sources={model,mesh,tags,data,CharacterState and CharacterState.PlayerData,spawnData}
+	local function pick(keys)
+		for _,source in ipairs(sources) do if source then for _,key in ipairs(keys) do
+			local value
+			if typeof(source)=="Instance" then pcall(function() value=source:GetAttribute(key) end)
+			elseif type(source)=="table" then pcall(function() value=source[key] end) end
+			if value~=nil and tostring(value)~="" then return tostring(value) end
+		end end end
+	end
+	local out={
+		id=pick({"SaveSlot","Slot","SlotId","SlotID","CharacterId","CharacterID","DinosaurId","DinoId","PlayableId","SaveId","UUID","Guid"}),
+		species=pick({"Species","Character","Type","Dinosaur","DinoType","Creature"}),
+		variant=pick({"Variant","Morph","Form"}), skin=pick({"Skin","SkinName"}), gender=pick({"Gender","Sex"}),
+		stage=pick({"GrowthStage","Stage","LifeStage"}),
+	}
+	if not out.stage and type(data)=="table" and type(data.Growth)=="table" then out.stage=tostring(data.Growth.Stage or data.GrowthStage or ""); if out.stage=="" then out.stage=nil end end
+	if not out.id and not out.species then return nil end
+	return out
+end
+__gg.MH_sameDeathDino=function(saved,current)
+	if type(saved)~="table" or type(current)~="table" then return nil end
+	if saved.id or current.id then if not (saved.id and current.id) then return nil end; if saved.id~=current.id then return false end end
+	if not (saved.species and current.species) then return nil end
+	if saved.species~=current.species then return false end
+	for _,key in ipairs({"variant","skin","gender","stage"}) do if saved[key] and current[key] and saved[key]~=current[key] then return false end end
+	return true
+end
 local function groundedDeathCFrame(root,model)
 	if not (root and root.Parent) then return nil end
 	local pos=root.Position; local look=root.CFrame.LookVector; look=Vector3.new(look.X,0,look.Z); if look.Magnitude<0.05 then look=Vector3.new(0,0,-1) else look=look.Unit end
+	local grounded=false
 	pcall(function()
 		local params=RaycastParams.new(); params.FilterType=Enum.RaycastFilterType.Exclude; params.IgnoreWater=false; params.RespectCanCollide=true
 		params.FilterDescendantsInstances={model,LP.Character,WS:FindFirstChild("Characters"),WS:FindFirstChild("CharacterIgnore")}
 		local hit=WS:Raycast(pos+Vector3.new(0,5,0),Vector3.new(0,-220,0),params)
-		if hit then pos=Vector3.new(pos.X,hit.Position.Y+5,pos.Z) else pos+=Vector3.new(0,5,0) end
+		if hit then
+			grounded=true
+			-- Preserve this dinosaur's exact body-to-ground offset. The old fixed +5 replacement made small rigs hover.
+			local gap=pos.Y-hit.Position.Y; if gap< -2 or gap>80 then pos=Vector3.new(pos.X,hit.Position.Y+5,pos.Z) end
+		end
 	end)
+	if not grounded then return nil end
 	return CFrame.lookAt(pos,pos+look)
 end
 task.spawn(function()
 	local state=__gg.MH_deathReturn
 	while RUNNING do
 		if not CFG.RespawnDeathPoint then
-			state.last=nil; state.pending=nil; state.lastRoot=nil; state.deathRoot=nil; state.wasPlayable=false; state.lostAt=nil; state.returning=false
+			state.last=nil; state.pending=nil; state.lastRoot=nil; state.deathRoot=nil; state.lastDino=nil; state.pendingDino=nil; state.wasPlayable=false; state.lostAt=nil; state.returning=false
 			task.wait(0.35)
 		else
 			local characters=WS:FindFirstChild("Characters"); local model=(characters and characters:FindFirstChild(LP.Name)) or ((not characters) and LP.Character)
-			local root=deathPointRoot(model); local health=deathPointHealth(model)
+			local root=deathPointRoot(model); local health=deathPointHealth(model); local currentDino=__gg.MH_deathDinoIdentity(model)
 			if root and root.Parent then
 				state.lostAt=nil
 				local respawned=root~=state.deathRoot or (health and health>0 and tick()-(state.deathAt or 0)>0.8)
-				if state.pending and respawned and not state.returning then
-					state.returning=true; local wanted=state.pending
+				local sameDino=state.pending and __gg.MH_sameDeathDino(state.pendingDino,currentDino) or nil
+				if state.pending and sameDino==false then
+					state.pending=nil; state.pendingDino=nil; state.deathRoot=nil; state.returning=false
+					pcall(function() notify("Death Point","New dinosaur detected — old death point was cleared.") end)
+				end
+				if state.pending and sameDino==true and respawned and not state.returning then
+					state.returning=true; local wanted=state.pending; local wantedDino=state.pendingDino
 					task.spawn(function()
 						task.wait(1.8)
 						local currentCharacters=WS:FindFirstChild("Characters"); local currentModel=(currentCharacters and currentCharacters:FindFirstChild(LP.Name)) or ((not currentCharacters) and LP.Character); local currentRoot=deathPointRoot(currentModel)
 						local currentHealth=deathPointHealth(currentModel); local currentRespawned=currentRoot and (currentRoot~=state.deathRoot or (currentHealth and currentHealth>0 and tick()-(state.deathAt or 0)>0.8))
-						if RUNNING and CFG.RespawnDeathPoint and state.pending==wanted and currentRespawned then
+						local stillSame=__gg.MH_sameDeathDino(wantedDino,__gg.MH_deathDinoIdentity(currentModel))
+						if RUNNING and CFG.RespawnDeathPoint and state.pending==wanted and state.pendingDino==wantedDino and currentRespawned and stillSame==true then
 							local moved=false
 							if type(__gg.MH_safeTeleport)=="function" then moved=__gg.MH_safeTeleport(wanted,{saveReturn=false,settle=1.1,tolerance=8})==true
 							else moved=pcall(function() currentRoot.CFrame=wanted end) end
-							if moved then state.pending=nil; state.deathRoot=nil; pcall(function() notify("Death Point","Returned to where you died.") end) end
+							if moved then
+								state.pending=nil; state.pendingDino=nil; state.deathRoot=nil
+								-- Release teleport residue without injecting movement keys. A small downward velocity lets gravity
+								-- settle the exact saved body height instead of leaving the dinosaur hovering or drifting forward.
+								local function releaseReturnDrift(first)
+									pcall(function()
+									local rr=deathPointRoot(currentModel); if not rr then return end; rr.Anchored=false
+									if not CFG.Float then local mover=rr:FindFirstChild("MH_Float"); if mover then mover:Destroy() end end
+									local h=currentModel and currentModel:FindFirstChildOfClass("Humanoid"); if h then h.PlatformStand=false; h.AutoRotate=true end
+									local intent=false
+									for _,key in ipairs({Enum.KeyCode.W,Enum.KeyCode.A,Enum.KeyCode.S,Enum.KeyCode.D}) do if UIS:IsKeyDown(key) then intent=true; break end end
+									if h and h.MoveDirection.Magnitude>0.04 then intent=true end
+									if first or not intent then
+										local y=first and -2 or math.min(rr.AssemblyLinearVelocity.Y,0)
+										rr.AssemblyLinearVelocity=Vector3.new(0,y,0); rr.AssemblyAngularVelocity=Vector3.zero
+									end
+									end)
+								end
+								releaseReturnDrift(true)
+								task.delay(0.2,function() if RUNNING then releaseReturnDrift(false) end end)
+								task.delay(0.45,function() if RUNNING then releaseReturnDrift(false) end end)
+								task.delay(0.25,function() if __gg.MH_restoreMovementState then pcall(__gg.MH_restoreMovementState) end end)
+								pcall(function() notify("Death Point","Returned to where this dinosaur died.") end)
+							end
 						end
 						state.returning=false
 					end)
 				end
 				if health==nil or health>0 then
-					state.last=groundedDeathCFrame(root,model) or state.last; state.lastRoot=root; state.wasPlayable=true
+					state.last=groundedDeathCFrame(root,model) or state.last; state.lastRoot=root; state.lastDino=currentDino or state.lastDino; state.wasPlayable=true
 				elseif health<=0 and state.wasPlayable and state.last then
-					state.pending=state.last; state.deathRoot=state.lastRoot; state.deathAt=tick(); state.wasPlayable=false
+					state.pending=state.last; state.pendingDino=state.lastDino or currentDino; state.deathRoot=state.lastRoot; state.deathAt=tick(); state.wasPlayable=false
 				end
 			elseif state.wasPlayable then
 				state.lostAt=state.lostAt or tick()
-				if tick()-state.lostAt>=0.8 and state.last then state.pending=state.last; state.deathRoot=state.lastRoot; state.deathAt=tick(); state.wasPlayable=false end
+				if tick()-state.lostAt>=0.8 and state.last then state.pending=state.last; state.pendingDino=state.lastDino; state.deathRoot=state.lastRoot; state.deathAt=tick(); state.wasPlayable=false end
 			end
 			task.wait(0.15)
 		end
@@ -1964,8 +2032,8 @@ function MHNEED.refresh(force)
 		end end
 		if hudMax then candidate(kind,hudMax,1,"hud") end
 	end
-	-- Last-resort stamina pin: retain only the highest value actually observed for this dinosaur. It is deliberately
-	-- lower priority than every true maximum and is never eligible for reportKnown/namecall server rewrites.
+	-- Last-resort stamina pin: retain only the highest value actually observed for this dinosaur. It stays lower
+	-- priority than every true maximum and may be reported only through a property the game identifies as stamina.
 	for _,ref in ipairs(refs.stamina) do local value=refValue(ref); if value and value>0 and value<1e8 then
 		__gg.MH_needHighWater.stamina=math.max(tonumber(__gg.MH_needHighWater.stamina) or 0,value)
 	end end
@@ -1999,7 +2067,9 @@ function MHNEED.maxForProperty(kind,property)
 	-- Stamina. Once the property and the resolved field both classify as the same need, the paired maximum is still
 	-- authoritative; requiring an identical spelling made valid stamina/food reports fail silently.
 	local source=MHNEED.maxSource and MHNEED.maxSource[kind]
-	if MHNEED.kindFor(property,"")==kind and (source=="paired" or source=="hud" or (kind=="food" and source=="capacity")) then return MHNEED.max[kind] end
+	-- A stamina high-water value is the highest value genuinely observed on this same dinosaur. It is safe only when
+	-- the game itself names the outgoing property as stamina; it must never be used for an unrelated/generic packet.
+	if MHNEED.kindFor(property,"")==kind and (source=="paired" or source=="hud" or (kind=="food" and source=="capacity") or (kind=="stamina" and source=="highwater")) then return MHNEED.max[kind] end
 	return nil
 end
 function MHNEED.pin(kind)
@@ -2029,7 +2099,7 @@ function MHNEED.report(kind, force)
 end
 function MHNEED.reportKnown(kind,force)
 	MHNEED.refresh(); local mx=MHNEED.max[kind]; local source=MHNEED.maxSource and MHNEED.maxSource[kind]
-	if not (mx and (source=="paired" or source=="hud" or (kind=="food" and source=="capacity"))) then return false end
+	if not (mx and (source=="paired" or source=="hud" or (kind=="food" and source=="capacity") or (kind=="stamina" and source=="highwater"))) then return false end
 	-- Use only a current property name found on this dinosaur. MaxStats/capacity fields are never reported as current.
 	local property
 	for _,ref in ipairs(MHNEED.refs[kind] or {}) do
@@ -2105,6 +2175,10 @@ end
 --   → (dinoId,"AnimationEnded","Eat"). The source id = the land's generic id (same set as the water ids), so we
 -- fire the Bite to ALL of them every tick = works on every land. Buffer captured = "\027\206\000\000\001".
 EAT_BUFFER = "\027\206\000\000\001"
+-- User-captured live herbivore packet: sourceId, "Bite", buffer.fromstring("%f\0\0\1"). Source ids such as 3028
+-- vary by map/server, so the resolver supplies the live plant/corpse replica id instead of guessing random numbers.
+-- When no exact Bite has been learned yet, try this observed payload first and alternate the older captured payload.
+EAT_BUFFER_OBSERVED = "%f\000\000\001"
 -- Replica's public client API exposes its active registry at Client._.Replicas (and Replica:FireServer automatically
 -- prefixes the correct id). Food is server-owned by those SOURCE replicas, not CharacterState. Discovering them here
 -- removes the old "eat once so the hook learns an id" requirement and also follows sources created after joining.
@@ -2382,7 +2456,11 @@ local function fakeEat(prompt,foodToken,targetPart,targetModel,foodDiet)
 		if enabled() then
 			replicaFire("SetAction","Consuming",true); task.wait(0.04)
 			__gg.MH_foodPhase="biting"
-			local cap=__gg.MH_eat; local buf=(type(cap)=="table" and cap.buf~=nil) and cap.buf or __gg.MH_eatBuf or EAT_BUFFER
+			local cap=__gg.MH_eat; local buf
+			if type(cap)=="table" and cap.buf~=nil then buf=cap.buf; __gg.MH_foodBufferMode="captured source"
+			elseif __gg.MH_eatBuf~=nil then buf=__gg.MH_eatBuf; __gg.MH_foodBufferMode="captured Bite"
+			elseif (__gg.MH_foodCycleAttempts or 1)%2==1 then buf=EAT_BUFFER_OBSERVED; __gg.MH_foodBufferMode="observed %f"
+			else buf=EAT_BUFFER; __gg.MH_foodBufferMode="legacy captured" end
 			if type(buf)=="string" and buffer and buffer.fromstring then pcall(function() buf=buffer.fromstring(buf) end) end
 			local replayed={}; local calls=__gg.MH_biteCalls
 			if type(calls)=="table" then for _,ec in ipairs(calls) do if sent>=2 then break end
@@ -3376,7 +3454,7 @@ do local p=Pages["Survival"]
 		-- (map/biome/corpse/fossil TP) so it can never yank you around mid-teleport — and you can kill it here.
 		mkToggle(pr,"Death Bug Fix (spawn rescue)","DeathFix",0)
 		mkToggle(pr,"Respawn at Death Point","RespawnDeathPoint",1)
-		mkLabel(pr,"Records your last safe position before death and returns the new dinosaur there after respawn.",2)
+		mkLabel(pr,"Returns only the same dinosaur to its own death point; changing species/slot clears the old point.",2)
 		mkToggle(pr,"Anti Drown","AntiDrown",2)
 		mkSlider(pr,"Anti Drown Rise","AntiDrownRise",2,30,1,2)
 		mkLabel(pr,"How fast Anti Drown lifts you to the surface. Lower = smoother on weak devices.")
@@ -6787,10 +6865,12 @@ task.spawn(function() while RUNNING do task.wait(0.3); pcall(function()
 	lines[#lines+1]="MyID: "..tostring(myReplicaId or "nil (CharacterState.Replica.Id unavailable)")
 		lines[#lines+1]="Food replicas: "..tostring(__gg.MH_foodPreferredCount or 0).." preferred / "..tostring(__gg.MH_foodFallbackCount or 0).." fallback"
 		lines[#lines+1]="Food pin: refs "..tostring(MHNEED and MHNEED.refs and #(MHNEED.refs.food or {}) or 0).." | max "..tostring(MHNEED and MHNEED.max and MHNEED.max.food or "?").." ("..tostring(MHNEED and MHNEED.maxSource and MHNEED.maxSource.food or "?")..")"
+		lines[#lines+1]="Stamina pin: refs "..tostring(MHNEED and MHNEED.refs and #(MHNEED.refs.stamina or {}) or 0).." | max "..tostring(MHNEED and MHNEED.max and MHNEED.max.stamina or "?").." ("..tostring(MHNEED and MHNEED.maxSource and MHNEED.maxSource.stamina or "?")..")"
 	lines[#lines+1]="Diet food replicas: "..tostring(__gg.MH_foodDietReplicaCount or 0)
 	lines[#lines+1]="Food targets: "..tostring(__gg.MH_foodTargetCount or 0).." | "..tostring(__gg.MH_foodTargetKind or "none")
 		lines[#lines+1]="Food target: "..tostring(__gg.MH_foodTargetPath or "none")
 		lines[#lines+1]="Food diet: "..tostring(__gg.MH_foodResolvedDiet or "unresolved").." | sources r"..tostring(__gg.MH_foodSourceRevision or 0)
+		lines[#lines+1]="Food buffer: "..tostring(__gg.MH_foodBufferMode or "none")
 		lines[#lines+1]="Source kinds: "..tostring(__gg.MH_foodSourceKinds or "none")
 		lines[#lines+1]="Target replicas: "..tostring(__gg.MH_foodTargetReplicaCount or 0).." | matched "..tostring(__gg.MH_foodMatchedReplicaCount or 0)
 		lines[#lines+1]="Bite requests: "..tostring(__gg.MH_foodBitesSent or 0).." | cycles "..tostring(__gg.MH_foodCycleAttempts or 0)
@@ -7400,4 +7480,4 @@ end
 MS("5 DONE - all tabs built, menu ready")
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
-print("[Dream Hub · Prior Extinction v6.8 PE-v4] Loaded — input-safe movement, data-only stamina, Investigate food")
+print("[Dream Hub · Prior Extinction v6.9 PE-v4] Loaded — same-dino death return, stamina report fix, observed Bite payload")
