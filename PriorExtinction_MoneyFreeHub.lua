@@ -2,19 +2,14 @@
 
 print("[Dream Hub PE] script fetched OK - booting")   -- if you see THIS in F9 but no menu, send the red error line under it
 local __gg = (typeof(getgenv)=="function") and getgenv() or _G
--- Recover user input before replacing an older build. Auto Play and legacy Pro Food builds could be stopped while
--- one or more synthetic movement keys were still held, making the newly loaded hub appear to freeze movement.
--- Key-up events are safe here: this runs once during execution and the current build only holds keys while its
--- owning feature is enabled.
+-- Recover only input that an older Dream Hub build explicitly owned. Blanket W/A/S/D/Shift key-up injection made
+-- the game's controller ignore a physical key that was already held while the hub loaded, which looked like a full
+-- movement freeze. Feature cleanup functions own and release their own keys instead.
 __gg.MH_releaseSyntheticMovement=function()
 	pcall(function() if type(__gg.MH_botReleaseKeys)=="function" then __gg.MH_botReleaseKeys() end end)
 	pcall(function() if type(__gg.MH_stopProFood)=="function" then __gg.MH_stopProFood() end end)
-	pcall(function()
-		local vim=game:GetService("VirtualInputManager")
-		for _,kc in ipairs({Enum.KeyCode.W,Enum.KeyCode.A,Enum.KeyCode.S,Enum.KeyCode.D,Enum.KeyCode.Space,Enum.KeyCode.LeftControl,Enum.KeyCode.LeftShift,Enum.KeyCode.RightShift,Enum.KeyCode.E}) do
-			vim:SendKeyEvent(false,kc,false,game)
-		end
-	end)
+	if __gg.MH_stamShiftHeld then pcall(function() game:GetService("VirtualInputManager"):SendKeyEvent(false,Enum.KeyCode.LeftShift,false,game) end); __gg.MH_stamShiftHeld=false end
+	if __gg.MH_foodSyntheticE then pcall(function() game:GetService("VirtualInputManager"):SendKeyEvent(false,Enum.KeyCode.E,false,game) end); __gg.MH_foodSyntheticE=false end
 end
 pcall(__gg.MH_releaseSyntheticMovement)
 -- Older PE builds briefly synthesized Shift for INF Stamina. Release a stale owned press before their cleanup can
@@ -990,8 +985,16 @@ end
 __gg.MH_restoreMovementState=function()
 	local h=hum(); if h then pcall(function() h.PlatformStand=false; h.AutoRotate=true end) end
 	local r=hrp(); if r then pcall(function() r.Anchored=false end) end
+	pcall(function() UIS.ModalEnabled=false end)
+	local model=(WS:FindFirstChild("Characters") and WS.Characters:FindFirstChild(LP.Name)) or char()
+	local movementFeatureOn=RUNNING and (CFG.Fly or CFG.Float or CFG.WalkWater or CFG.AntiDrown or CFG.ProFood or CFG.AutoFarmFossil or CFG.AutoFarmGem)
+	if model and not movementFeatureOn then for _,item in ipairs(model:GetDescendants()) do
+		if (item:IsA("BodyVelocity") or item:IsA("BodyPosition") or item:IsA("BodyGyro") or item:IsA("LinearVelocity") or item:IsA("AlignPosition")) and item.Name:sub(1,3)=="MH_" then pcall(function() item:Destroy() end) end
+	end end
 end
 task.defer(function() pcall(__gg.MH_restoreMovementState) end)
+task.delay(1,function() if RUNNING then pcall(__gg.MH_restoreMovementState) end end)
+task.delay(3,function() if RUNNING then pcall(__gg.MH_restoreMovementState) end end)
 local function dist(a,b) return (a-b).Magnitude end
 local function rootOf(m)
 	if not m then return nil end
@@ -1832,13 +1835,18 @@ function MHNEED.refresh(force)
 		walk(root,root.MaxStats or root.Max,"Replica.Data",0)
 	end
 	if CharacterState then
-		for _,k in ipairs({"Stats","State","Data","Vitals","Needs","Resources"}) do local tb=CharacterState[k]; if type(tb)=="table" then walk(tb,tb.MaxStats or tb.Max,"CharacterState."..k,0) end end
+		-- The supplied Wellbeing class sets Data=CharacterState.PlayerData. Include that exact path along with the
+		-- layouts used by older maps so food can be pinned where the wellbeing/HUD code actually reads it.
+		for _,k in ipairs({"Stats","State","Data","PlayerData","SavableStats","CurrentStats","Vitals","Needs","Resources"}) do local tb=CharacterState[k]; if type(tb)=="table" then walk(tb,tb.MaxStats or tb.Max,"CharacterState."..k,0) end end
 		for k,v in pairs(CharacterState) do if type(v)=="number" then local kind=MHNEED.kindFor(k,"CharacterState"); if kind then
 			local mx=MHNEED.pairedMax(CharacterState,k,CharacterState.MaxStats,kind,v); addRef(kind,{mode="table",tb=CharacterState,key=k,path="CharacterState."..tostring(k)},mx,pairPriority(kind,k))
 		end end end
 	end
 	local wb=__gg.MH_wellbeing; local wr=wb and wb.Data and wb.Data.SavableStats
 	if wr and type(wr.Stats)=="table" then walk(wr.Stats,wr.MaxStats or wr.Max,"Wellbeing.Stats",0) end
+	if wb then
+		for _,row in ipairs({{wb.Data,"Wellbeing.Data"},{wb.Stats,"Wellbeing.Stats"},{wb.SavableStats,"Wellbeing.SavableStats"}}) do local tb=row[1]; if type(tb)=="table" then walk(tb,tb.MaxStats or tb.Max,row[2],0) end end
+	end
 	-- ConsumptionData is a fallback only when no matching data-table pair exists.
 	if not chosen.food then candidate("food",MHNEED.foodCapacity(),2,"capacity") end
 	-- HUD denominator/data-source fallback. Do not mutate text, bar Size, or fill/ratio properties.
@@ -2295,7 +2303,9 @@ local function fakeEat(prompt,foodToken,targetPart,targetModel,foodDiet)
 		replicaFire("SetAction","Consuming",true); task.wait(0.04)
 		if (prompt or targetPart) and enabled() then
 			if prompt then __gg.MH_foodPromptName=tostring(prompt.ObjectText~="" and prompt.ObjectText or prompt.ActionText~="" and prompt.ActionText or prompt.Name) end
-			__gg.MH_foodPhase="activating source"; if prompt and __gg.MH_activatePrompt then activated=__gg.MH_activatePrompt(prompt,40,true) end
+			-- Prefer the executor's atomic prompt helper. If it is unavailable, one native prompt begin/end is safe: it does
+			-- not synthesize E and cannot leave a keyboard key or camera input held.
+			__gg.MH_foodPhase="activating source"; if prompt and __gg.MH_activatePrompt then activated=__gg.MH_activatePrompt(prompt,40,false) end
 		end
 		task.wait(0.05)
 		if enabled() then
@@ -2319,7 +2329,7 @@ local function fakeEat(prompt,foodToken,targetPart,targetModel,foodDiet)
 	__gg.MH_foodSyntheticE=false
 	local nowManual=false; pcall(function() nowManual=UIS:IsKeyDown(Enum.KeyCode.E) end)
 	if not nowManual then __gg.MH_foodPhase="finishing"; replicaFire("SetAction","Consuming",false); replicaFire("AnimationEnded","Eat") end
-	task.wait(0.16)
+	task.wait(0.35)
 	local after=MHNEED.current("food",true); __gg.MH_foodVisibleAfter=after; local delta=(before and after) and (after-before) or nil; __gg.MH_foodVisibleDelta=delta
 	local maximum=MHNEED.maxFor("food")
 	if not okCycle then __gg.MH_foodAcceptance="cycle error"; __gg.MH_foodLastFailure=tostring(cycleErr)
@@ -3288,7 +3298,7 @@ do local p=Pages["Survival"]
 	-- (INF Food / INF Water / Carnivore Meat TP / Teleport Back moved to the Growth tab.) Stamina stays here.
 	local _,f=mkSec(p,"Stamina",1)
 	mkToggle(f,"INF Stamina","InfStam",1)
-	mkLabel(f,"Keeps stamina full and adds a small fixed sprint boost. No speed slider; no CFrame, Run-toggle, or zero-velocity control.",2)
+	mkLabel(f,"Keeps stamina full while the game's normal walk/run controller stays untouched. No velocity, CFrame, or Run-key takeover.",2)
 	local _,pr=mkSec(p,"Protection",2)
 	-- Death Bug Fix = the spawn rescue (void/under-map/ocean spawns). It mutes ITSELF during any hub teleport
 	-- (map/biome/corpse/fossil TP) so it can never yank you around mid-teleport — and you can kill it here.
@@ -3913,7 +3923,7 @@ conn(RunService.RenderStepped:Connect(function()
 			if CFG.InfOxygen then for _,k in ipairs({"IsInWater","Submerged","InWater","Underwater","Swimming","Drowning"}) do pcall(function() if CharacterState[k]~=nil then CharacterState[k]=false end end) end end
 			-- SANDBOX: the stat tables can hang off CharacterState directly (not under Replica.Data). Deep-walk it too.
 			pcall(function()
-				for _,sub in ipairs({"Stats","State","Data","Vitals","Needs"}) do
+				for _,sub in ipairs({"Stats","State","Data","PlayerData","SavableStats","CurrentStats","Vitals","Needs"}) do
 					local t=CharacterState[sub]
 					if type(t)=="table" then deepPinStats(t, t.MaxStats or t.Max, 0) end
 				end
@@ -4196,8 +4206,8 @@ local function stopFly() if FLY.conn then FLY.conn:Disconnect(); FLY.conn=nil en
 local function startFly()
 	local r=hrp(); if not r then return end
 	stopFly(); local h=hum(); if h then pcall(function() h.PlatformStand=true end) end
-	FLY.bv=Instance.new("BodyVelocity"); FLY.bv.MaxForce=Vector3.new(1,1,1)*9e9; FLY.bv.Velocity=Vector3.zero; FLY.bv.Parent=r
-	FLY.bg=Instance.new("BodyGyro"); FLY.bg.MaxTorque=Vector3.new(1,1,1)*9e9; FLY.bg.P=9e4; FLY.bg.CFrame=Cam.CFrame; FLY.bg.Parent=r
+	FLY.bv=Instance.new("BodyVelocity"); FLY.bv.Name="MH_FlyVelocity"; FLY.bv.MaxForce=Vector3.new(1,1,1)*9e9; FLY.bv.Velocity=Vector3.zero; FLY.bv.Parent=r
+	FLY.bg=Instance.new("BodyGyro"); FLY.bg.Name="MH_FlyGyro"; FLY.bg.MaxTorque=Vector3.new(1,1,1)*9e9; FLY.bg.P=9e4; FLY.bg.CFrame=Cam.CFrame; FLY.bg.Parent=r
 	FLY.conn=RunService.RenderStepped:Connect(function()
 		if not (CFG.Fly and alive()) then return end
 		local root=hrp(); if not root then return end
@@ -4222,9 +4232,8 @@ local function startFly()
 end
 -- SPEED HACK ONLY drives the body by velocity. INF Stamina never enters this path and leaves native movement alone.
 conn(RunService.Heartbeat:Connect(function() if CFG.SpeedHack and alive() and not CFG.Fly then local r=hrp(); if r then local spd=CFG.SpeedVal; local dir=Vector3.zero; local cf=workspace.CurrentCamera and workspace.CurrentCamera.CFrame or CFrame.new() if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end if dir.Magnitude<=0 then local hh=hum(); local md=hh and hh.MoveDirection; if md and md.Magnitude>0 then dir=md end end if dir.Magnitude>0 then dir=Vector3.new(dir.X,0,dir.Z).Unit*spd; r.AssemblyLinearVelocity=Vector3.new(dir.X,r.AssemblyLinearVelocity.Y,dir.Z) end end end end))
--- INF STAMINA: keep the proven need pin and native Shift-running. The only speed assist is a tiny momentum increase
--- along velocity the game already created, capped below PE's observed ~15.7 correction threshold. It never starts or
--- stops movement, never sends Run/Shift, never writes CFrame, and never writes zero velocity.
+-- INF STAMINA: pin only the real stamina need and clear exhaustion. Movement is entirely native: no velocity writes,
+-- CFrame, Run/Shift input, BodyMover, start/stop action, or zero-velocity side channel.
 task.spawn(function()
 	local clearAt=0
 	while RUNNING do
@@ -4236,13 +4245,7 @@ task.spawn(function()
 					if type(stats[k])=="boolean" then stats[k]=false elseif type(stats[k])=="number" then stats[k]=0 end
 				end end
 			end
-			local shift=false; pcall(function() shift=UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift) end)
-			if shift and not CFG.SpeedHack then local r=hrp(); if r then local v=r.AssemblyLinearVelocity; local flat=Vector3.new(v.X,0,v.Z); local speed=flat.Magnitude
-				__gg.MH_stamBoostSpeed=speed
-				if speed>1.5 and speed<15.65 then local boosted=math.min(15.65,speed+math.min(0.16,(15.65-speed)*0.2)); local dir=flat.Unit
-					pcall(function() r.AssemblyLinearVelocity=Vector3.new(dir.X*boosted,v.Y,dir.Z*boosted) end); __gg.MH_stamBoostSpeed=boosted
-				end
-			end else __gg.MH_stamBoostSpeed=0 end
+			local r=hrp(); if r then local v=r.AssemblyLinearVelocity; __gg.MH_stamBoostSpeed=Vector3.new(v.X,0,v.Z).Magnitude else __gg.MH_stamBoostSpeed=0 end
 			__gg.MH_stamShiftHeld=false
 			task.wait(0.08)
 		else
@@ -4258,7 +4261,7 @@ task.spawn(function() local bv, target while RUNNING do
 	if CFG.Float and alive() and not CFG.Fly then
 		local r=hrp()
 		if r then
-			if not (bv and bv.Parent) then pcall(function() if bv then bv:Destroy() end end); bv=Instance.new("BodyVelocity"); bv.MaxForce=Vector3.new(0,9e9,0); bv.P=9e4; bv.Velocity=Vector3.new(0,8,0); bv.Parent=r
+			if not (bv and bv.Parent) then pcall(function() if bv then bv:Destroy() end end); bv=Instance.new("BodyVelocity"); bv.Name="MH_Float"; bv.MaxForce=Vector3.new(0,9e9,0); bv.P=9e4; bv.Velocity=Vector3.new(0,8,0); bv.Parent=r
 				local gy; pcall(function() local rp=RaycastParams.new(); rp.FilterType=Enum.RaycastFilterType.Exclude; rp.FilterDescendantsInstances={getMyModel()}; local res=WS:Raycast(r.Position+Vector3.new(0,2,0), Vector3.new(0,-300,0), rp); if res then gy=res.Position.Y end end); target=(gy and gy+4) or (r.Position.Y+4) end
 			local up
 			if UIS:IsKeyDown(Enum.KeyCode.Space) then up=18; target=r.Position.Y
@@ -4952,7 +4955,7 @@ yesBtn.MouseButton1Click:Connect(function()   -- YES = stay at this corpse (and 
 	-- Growth-tab toggle you flip yourself.)
 	pcall(function() notify("Corpse TP","Staying here. Want the full growth loop (eat + circle + next corpse)? Turn on Pro Food in the Growth tab.") end)
 	local r=hrp(); if r then local pos=r.Position
-		task.spawn(function() local bp=Instance.new("BodyPosition"); bp.MaxForce=Vector3.new(9e9,9e9,9e9); bp.P=2e4; bp.D=2500; bp.Position=pos; pcall(function() bp.Parent=r end)
+		task.spawn(function() local bp=Instance.new("BodyPosition"); bp.Name="MH_CorpseHold"; bp.MaxForce=Vector3.new(9e9,9e9,9e9); bp.P=2e4; bp.D=2500; bp.Position=pos; pcall(function() bp.Parent=r end)
 			local t0=tick(); while tick()-t0<1.2 do local rr=hrp(); if rr then pcall(function() rr.AssemblyLinearVelocity=Vector3.zero end) end; task.wait(0.1) end
 			pcall(function() bp:Destroy() end)
 		end)
@@ -5732,7 +5735,7 @@ local function runFarm(enabledKey, kind, rangeKey)
 						local hold = (kind=="gem") and 12 or 3
 						local done=false
 						local tconn; if prompt then pcall(function() tconn=prompt.Triggered:Connect(function() done=true end) end) end
-						local me=hrp(); local bp; pcall(function() if me then bp=Instance.new("BodyPosition"); bp.MaxForce=Vector3.new(9e9,9e9,9e9); bp.P=2e4; bp.D=2500; bp.Position=me.Position; bp.Parent=me end end)
+						local me=hrp(); local bp; pcall(function() if me then bp=Instance.new("BodyPosition"); bp.Name="MH_FarmHold"; bp.MaxForce=Vector3.new(9e9,9e9,9e9); bp.P=2e4; bp.D=2500; bp.Position=me.Position; bp.Parent=me end end)
 						local od,ol,okc,oen
 						if prompt then pcall(function() od,ol,okc,oen=prompt.MaxActivationDistance,prompt.RequiresLineOfSight,prompt.KeyboardKeyCode,prompt.Enabled; prompt.RequiresLineOfSight=false; prompt.MaxActivationDistance=1e9; prompt.KeyboardKeyCode=Enum.KeyCode.E; prompt.Enabled=true end) end
 						if prompt and fireprox then pcall(function() fireprox(prompt) end) end
@@ -6689,13 +6692,14 @@ task.spawn(function() while RUNNING do task.wait(0.3); pcall(function()
 		lines[#lines+1]="Source kinds: "..tostring(__gg.MH_foodSourceKinds or "none")
 		lines[#lines+1]="Target replicas: "..tostring(__gg.MH_foodTargetReplicaCount or 0).." | matched "..tostring(__gg.MH_foodMatchedReplicaCount or 0)
 		lines[#lines+1]="Bite requests: "..tostring(__gg.MH_foodBitesSent or 0).." | cycles "..tostring(__gg.MH_foodCycleAttempts or 0)
+		local exact=__gg.MH_lastEatCall; lines[#lines+1]="Exact Bite packet: "..((type(exact)=="table" and exact.identity==__gg.MH_identityKey) and "captured" or "waiting")
 		lines[#lines+1]="Eat cycle: "..tostring(__gg.MH_foodPhase or "idle").." | "..tostring(__gg.MH_foodPromptName or "none")
 		lines[#lines+1]="Food observed: "..tostring(__gg.MH_foodVisibleBefore or "?").." -> "..tostring(__gg.MH_foodVisibleAfter or "?").." ("..tostring(__gg.MH_foodVisibleDelta or "?")..")"
 		lines[#lines+1]="Food result: "..tostring(__gg.MH_foodAcceptance or "unobserved")
 		lines[#lines+1]="Food failure: "..tostring(__gg.MH_foodLastFailure or "none")
 		lines[#lines+1]="Growth: "..tostring(__gg.MH_growthState or "waiting").." | value "..tostring(__gg.MH_growthValue or "?").." | delta "..tostring(__gg.MH_growthDelta or "?").." | mass "..tostring(__gg.MH_growthMass or "?")
 		lines[#lines+1]="Wellbeing replica: "..(__gg.MH_wellbeingFound and "found" or "waiting")
-		lines[#lines+1]="Stamina sprint assist: "..string.format("%.2f",tonumber(__gg.MH_stamBoostSpeed) or 0).." | no CFrame/Run control"
+		lines[#lines+1]="Native movement speed: "..string.format("%.2f",tonumber(__gg.MH_stamBoostSpeed) or 0).." | stamina-only pin"
 	lines[#lines+1]="Sound: "..(getSoundRemote() and "found" or "MISSING")
 	local tg=nearestTarget(300,true); lines[#lines+1]="Target: "..(tg and tg.Name or "none")
 	-- ═══ INF STAM DIAGNOSTIC — tells us the REAL speed lever (send me these lines if stam is still slow) ═══
@@ -7292,5 +7296,5 @@ end
 MS("5 DONE - all tabs built, menu ready")
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
-print("[Dream Hub · Prior Extinction v6.5 PE-v4] Loaded — input-free food sources, stable stamina, cached streaming combat")
+print("[Dream Hub · Prior Extinction v6.6 PE-v4] Loaded — movement-safe startup, input-free food sources, stamina-only pin")
 
