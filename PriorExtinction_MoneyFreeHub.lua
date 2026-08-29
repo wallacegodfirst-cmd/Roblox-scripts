@@ -863,7 +863,7 @@ local CFG = {
 	BotFlee=true, BotFleeRange=240, BotRoam=true, BotRoamRadius=350, BotEatAt=80, BotDrinkAt=80, BotSleepHeal=true, BotSpeed=18, BotAnnounce=true,
 	BoneProtect=false, ProtectBone="All",
 	TurnHack=false, TurnSpeed=30,
-	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, DeathFix=true, Noclip=false, Invis=false,
+	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, DeathFix=false, RespawnDeathPoint=false, Noclip=false, Invis=false,
 	InfJump=false, BypassTP=true,
 	InfFood=false, InfFoodDiet="Auto", InfWater=false, InfStam=false, InfStamSpeed=15, InfOxygen=false,
 	AntiDrown=true, AntiDrownRise=14, AntiFracture=true, AntiBleed=true, WalkWater=false, AutoClean=false, HeadDmgReduce=100,
@@ -920,7 +920,7 @@ if not (tonumber(CFG.FarmReach) and CFG.FarmReach>=30 and CFG.FarmReach<=120) th
 -- lag (no scan/remote loop runs until YOU enable a feature). Your keybinds / sliders / colours / UI scale
 -- still persist — only the boolean feature toggles (incl. protections) are forced off here.
 for _,key in ipairs({
-	"Aimbot","SilentAim","LockOn","HitboxExpand","BoneProtect","TurnHack","Fly","SpeedHack","Noclip","InfJump",
+		"Aimbot","SilentAim","LockOn","HitboxExpand","BoneProtect","TurnHack","Fly","SpeedHack","DeathFix","RespawnDeathPoint","Noclip","InfJump",
 	"InfFood","InfWater","InfStam","InfOxygen","SaveDino","AutoFarmPlayer","AutoFarmFossil","AutoFarmGem","AutoPlayBot",
 	"ESPPlayers","ESPCorpses","FoodESP","FishESP","GemESP","AlertEnabled","CarnMeatTP","ProFood","FullBright","NightVision","NoDarkWater","WaterClear","NoClouds","AlwaysDamage","NoGrabLimit","RemoveTrees","Radar",
 	"Float","GodMode","InfLight","UnlockFOV","InfZoom","AntiDrown","WalkWater","AutoClean","AntiFracture","AntiBleed","Invis",
@@ -1687,6 +1687,72 @@ local CharacterState
 pcall(function() local cm=RS:FindFirstChild("Common"); local cs=cm and cm:FindFirstChild("CharacterState"); if cs then CharacterState=require(cs) end end)
 local function csReplica() return CharacterState and CharacterState.Replica end
 local function csStats() local r=csReplica(); if r and r.Data then return r.Data.Stats, r.Data.MaxStats end end
+-- RESPAWN AT DEATH POINT: remember the last grounded CFrame of the current playable, arm only after a confirmed
+-- death/despawn, and return only a NEW root after respawn. This never runs unless the user enables the toggle.
+__gg.MH_deathReturn={last=nil,pending=nil,lastRoot=nil,deathRoot=nil,wasPlayable=false,lostAt=nil,returning=false,deathAt=0}
+local function deathPointHealth(model)
+	local h=model and model:FindFirstChildOfClass("Humanoid"); if h then return tonumber(h.Health) end
+	local stats=csStats(); if type(stats)=="table" then for _,key in ipairs({"Health","HP","HitPoints","CurrentHealth"}) do local value=tonumber(stats[key]); if value then return value end end end
+	local rep=csReplica(); local data=rep and rep.Data; if type(data)=="table" then for _,key in ipairs({"Health","HP","HitPoints","CurrentHealth"}) do local value=tonumber(data[key]); if value then return value end end end
+	return nil
+end
+local function deathPointRoot(model)
+	if not model then return nil end
+	local turning=model:FindFirstChild("TurningAnimation"); local body=turning and turning:FindFirstChild("Body")
+	if body and body:IsA("BasePart") then return body end
+	return rootOf(model)
+end
+local function groundedDeathCFrame(root,model)
+	if not (root and root.Parent) then return nil end
+	local pos=root.Position; local look=root.CFrame.LookVector; look=Vector3.new(look.X,0,look.Z); if look.Magnitude<0.05 then look=Vector3.new(0,0,-1) else look=look.Unit end
+	pcall(function()
+		local params=RaycastParams.new(); params.FilterType=Enum.RaycastFilterType.Exclude; params.IgnoreWater=false; params.RespectCanCollide=true
+		params.FilterDescendantsInstances={model,LP.Character,WS:FindFirstChild("Characters"),WS:FindFirstChild("CharacterIgnore")}
+		local hit=WS:Raycast(pos+Vector3.new(0,5,0),Vector3.new(0,-220,0),params)
+		if hit then pos=Vector3.new(pos.X,hit.Position.Y+5,pos.Z) else pos+=Vector3.new(0,5,0) end
+	end)
+	return CFrame.lookAt(pos,pos+look)
+end
+task.spawn(function()
+	local state=__gg.MH_deathReturn
+	while RUNNING do
+		if not CFG.RespawnDeathPoint then
+			state.last=nil; state.pending=nil; state.lastRoot=nil; state.deathRoot=nil; state.wasPlayable=false; state.lostAt=nil; state.returning=false
+			task.wait(0.35)
+		else
+			local characters=WS:FindFirstChild("Characters"); local model=(characters and characters:FindFirstChild(LP.Name)) or ((not characters) and LP.Character)
+			local root=deathPointRoot(model); local health=deathPointHealth(model)
+			if root and root.Parent then
+				state.lostAt=nil
+				local respawned=root~=state.deathRoot or (health and health>0 and tick()-(state.deathAt or 0)>0.8)
+				if state.pending and respawned and not state.returning then
+					state.returning=true; local wanted=state.pending
+					task.spawn(function()
+						task.wait(1.8)
+						local currentCharacters=WS:FindFirstChild("Characters"); local currentModel=(currentCharacters and currentCharacters:FindFirstChild(LP.Name)) or ((not currentCharacters) and LP.Character); local currentRoot=deathPointRoot(currentModel)
+						local currentHealth=deathPointHealth(currentModel); local currentRespawned=currentRoot and (currentRoot~=state.deathRoot or (currentHealth and currentHealth>0 and tick()-(state.deathAt or 0)>0.8))
+						if RUNNING and CFG.RespawnDeathPoint and state.pending==wanted and currentRespawned then
+							local moved=false
+							if type(__gg.MH_safeTeleport)=="function" then moved=__gg.MH_safeTeleport(wanted,{saveReturn=false,settle=1.1,tolerance=8})==true
+							else moved=pcall(function() currentRoot.CFrame=wanted end) end
+							if moved then state.pending=nil; state.deathRoot=nil; pcall(function() notify("Death Point","Returned to where you died.") end) end
+						end
+						state.returning=false
+					end)
+				end
+				if health==nil or health>0 then
+					state.last=groundedDeathCFrame(root,model) or state.last; state.lastRoot=root; state.wasPlayable=true
+				elseif health<=0 and state.wasPlayable and state.last then
+					state.pending=state.last; state.deathRoot=state.lastRoot; state.deathAt=tick(); state.wasPlayable=false
+				end
+			elseif state.wasPlayable then
+				state.lostAt=state.lostAt or tick()
+				if tick()-state.lostAt>=0.8 and state.last then state.pending=state.last; state.deathRoot=state.lastRoot; state.deathAt=tick(); state.wasPlayable=false end
+			end
+			task.wait(0.15)
+		end
+	end
+end)
 -- Runtime need resolver. Food always requires a real capacity. Stamina may use the highest value observed on this
 -- exact dinosaur as a LOCAL-only fallback when neither MaxStats nor the HUD denominator is discoverable; that keeps
 -- client exhaustion from slowing movement without manufacturing a larger server value. Resolution order is
@@ -3300,21 +3366,23 @@ do local p=Pages["Survival"]
 	mkToggle(f,"INF Stamina","InfStam",1)
 	mkLabel(f,"Keeps stamina full while the game's normal walk/run controller stays untouched. No velocity, CFrame, or Run-key takeover.",2)
 	local _,pr=mkSec(p,"Protection",2)
-	-- Death Bug Fix = the spawn rescue (void/under-map/ocean spawns). It mutes ITSELF during any hub teleport
-	-- (map/biome/corpse/fossil TP) so it can never yank you around mid-teleport — and you can kill it here.
-	mkToggle(pr,"Death Bug Fix (spawn rescue)","DeathFix",0)
-	mkToggle(pr,"Anti Drown","AntiDrown",1)
-	mkSlider(pr,"Anti Drown Rise","AntiDrownRise",2,30,1,1)
-	mkLabel(pr,"How fast Anti Drown lifts you to the surface. Lower = smoother on weak devices.")
-	mkToggle(pr,"Walk on Water","WalkWater",2)
-	mkToggle(pr,"Auto Clean","AutoClean",3)
-	mkToggle(pr,"Anti Head","AntiFracture",4)
-	mkSlider(pr,"Damage Reduce %","HeadDmgReduce",0,100,4,5)
-	mkToggle(pr,"Anti Bleed","AntiBleed",5)
-	mkToggle(pr,"Anti Fall","AntiFall",6)
-	mkToggle(pr,"No Sleep Screen","NoSleep",7)
-	mkToggle(pr,"Bone Protection","BoneProtect",8)
-	mkDropdown(pr,"Protect Bone", function() return {"All","Head","Neck","Arm","Leg","Body"} end, function() return CFG.ProtectBone~="" and CFG.ProtectBone or "All" end, function(opt) CFG.ProtectBone=opt; saveCfg() end, 9)
+		-- Death Bug Fix = the spawn rescue (void/under-map/ocean spawns). It mutes ITSELF during any hub teleport
+		-- (map/biome/corpse/fossil TP) so it can never yank you around mid-teleport — and you can kill it here.
+		mkToggle(pr,"Death Bug Fix (spawn rescue)","DeathFix",0)
+		mkToggle(pr,"Respawn at Death Point","RespawnDeathPoint",1)
+		mkLabel(pr,"Records your last safe position before death and returns the new dinosaur there after respawn.",2)
+		mkToggle(pr,"Anti Drown","AntiDrown",2)
+		mkSlider(pr,"Anti Drown Rise","AntiDrownRise",2,30,1,2)
+		mkLabel(pr,"How fast Anti Drown lifts you to the surface. Lower = smoother on weak devices.")
+		mkToggle(pr,"Walk on Water","WalkWater",3)
+		mkToggle(pr,"Auto Clean","AutoClean",4)
+		mkToggle(pr,"Anti Head","AntiFracture",5)
+		mkSlider(pr,"Damage Reduce %","HeadDmgReduce",0,100,4,6)
+		mkToggle(pr,"Anti Bleed","AntiBleed",7)
+		mkToggle(pr,"Anti Fall","AntiFall",8)
+		mkToggle(pr,"No Sleep Screen","NoSleep",9)
+		mkToggle(pr,"Bone Protection","BoneProtect",10)
+		mkDropdown(pr,"Protect Bone", function() return {"All","Head","Neck","Arm","Leg","Body"} end, function() return CFG.ProtectBone~="" and CFG.ProtectBone or "All" end, function(opt) CFG.ProtectBone=opt; saveCfg() end, 11)
 	local _,sv=mkSec(p,"Auto Heal",4)
 	mkToggle(sv,"Save Dino","SaveDino",1)
 	mkSlider(sv,"Save at HP %","SaveHP",5,90,2,5)
@@ -3945,7 +4013,9 @@ task.spawn(function()
 					if on then
 						MHNEED.pin(kind)
 						local reported=MHNEED.report(kind,not wasOn[kind])
-						if kind=="stamina" and not reported then MHNEED.reportKnown(kind,not wasOn[kind]) end
+						-- Once the resolver has an exact live Food/Stamina field (including CharacterState.PlayerData), use the
+						-- game's own throttled SetProperty route as a fallback. Captured exact packets still take priority.
+						if not reported then MHNEED.reportKnown(kind,not wasOn[kind]) end
 						if kind=="food" then
 							local now=tick()
 							-- Food is increased by the source-replica Bite controller. Guessed CharacterState Hunger/Food
@@ -6684,7 +6754,8 @@ task.spawn(function() while RUNNING do task.wait(0.3); pcall(function()
 	else lines[#lines+1]="(no data)" end
 	-- COMBAT DIAGNOSTICS: if "MyID" shows nil, Attack can't fire (no dino id captured) — move/look around to capture it.
 	lines[#lines+1]="MyID: "..tostring(myReplicaId or "nil (CharacterState.Replica.Id unavailable)")
-	lines[#lines+1]="Food replicas: "..tostring(__gg.MH_foodPreferredCount or 0).." preferred / "..tostring(__gg.MH_foodFallbackCount or 0).." fallback"
+		lines[#lines+1]="Food replicas: "..tostring(__gg.MH_foodPreferredCount or 0).." preferred / "..tostring(__gg.MH_foodFallbackCount or 0).." fallback"
+		lines[#lines+1]="Food pin: refs "..tostring(MHNEED and MHNEED.refs and #(MHNEED.refs.food or {}) or 0).." | max "..tostring(MHNEED and MHNEED.max and MHNEED.max.food or "?").." ("..tostring(MHNEED and MHNEED.maxSource and MHNEED.maxSource.food or "?")..")"
 	lines[#lines+1]="Diet food replicas: "..tostring(__gg.MH_foodDietReplicaCount or 0)
 	lines[#lines+1]="Food targets: "..tostring(__gg.MH_foodTargetCount or 0).." | "..tostring(__gg.MH_foodTargetKind or "none")
 		lines[#lines+1]="Food target: "..tostring(__gg.MH_foodTargetPath or "none")
@@ -7296,5 +7367,5 @@ end
 MS("5 DONE - all tabs built, menu ready")
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
-print("[Dream Hub · Prior Extinction v6.6 PE-v4] Loaded — movement-safe startup, input-free food sources, stamina-only pin")
+print("[Dream Hub · Prior Extinction v6.7 PE-v4] Loaded — native movement, PlayerData food pin, death-point respawn")
 
