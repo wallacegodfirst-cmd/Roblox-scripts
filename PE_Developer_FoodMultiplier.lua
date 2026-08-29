@@ -9,7 +9,10 @@ local CoreGui = game:GetService("CoreGui")
 local LP = Players.LocalPlayer
 local ENV = (typeof(getgenv)=="function" and getgenv()) or _G
 
--- Mirrors the PE developer/admin list. This is a client-side convenience gate, not server-side licensing.
+-- Mirrors the PE developer/admin list for an on-screen owner marker only. This file is intentionally separate from
+-- the public PE Plus loader, but a username gate cannot safely identify every account/alias the owner tests with.
+-- Do not return before constructing the GUI: that was the reason the explicit developer loader appeared to do
+-- nothing on an unlisted test account.
 local DEVELOPERS = {
 	chloeflash9563=true,
 	bruckner_tempest=true,
@@ -19,11 +22,7 @@ local DEVELOPERS = {
 	wallacegodfirst=true,
 	wallacegodfirstcmd=true,
 }
-
-if not DEVELOPERS[string.lower(tostring(LP and LP.Name or ""))] then
-	warn("[Dream Hub Dev Multiplier] This GUI is restricted to the PE developer allowlist.")
-	return
-end
+local recognizedDeveloper = DEVELOPERS[string.lower(tostring(LP and LP.Name or ""))]
 
 if ENV.__PE_DEV_FOOD_MULT and ENV.__PE_DEV_FOOD_MULT.unload then
 	pcall(ENV.__PE_DEV_FOOD_MULT.unload)
@@ -70,7 +69,7 @@ local function label(text,y,height,size,color)
 	return item
 end
 
-label("PE Developer · Food Multiplier",12,24,17,Color3.fromRGB(93,235,145))
+label("PE Developer · Food Multiplier"..(recognizedDeveloper and "" or " · private loader"),12,24,17,Color3.fromRGB(93,235,145))
 label("Enter 1, any number, or INF",40,20,12,Color3.fromRGB(153,162,177))
 
 local amountBox=Instance.new("TextBox")

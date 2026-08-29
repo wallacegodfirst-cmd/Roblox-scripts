@@ -28,6 +28,7 @@ __gg.MH_infFoodTargetsCache=nil; __gg.MH_foodTargetCount=0; __gg.MH_foodTargetKi
 __gg.MH_foodSourceRevision=0; __gg.MH_foodSourceKinds="none"; __gg.MH_foodResolvedDiet="unresolved"; __gg.MH_foodBufferMode="none"; __gg.MH_foodVisibleBefore=nil; __gg.MH_foodVisibleAfter=nil; __gg.MH_foodVisibleDelta=nil; __gg.MH_foodAcceptance="unobserved"; __gg.MH_foodLastFailure="not run"
 __gg.MH_growthState="waiting"; __gg.MH_growthValue=nil; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_growthBase=nil; __gg.MH_stamBoostSpeed=0; __gg.MH_stamPinState="waiting"; __gg.MH_stamReportState="waiting"
 __gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_healthPacket=nil; __gg.MH_guardLastHP=nil
+__gg.MH_runPacket=nil; __gg.MH_nativeRunActive=false; __gg.MH_runShielded=0; __gg.MH_autoHitClicking=false
 __gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil; __gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
 -- Every captured packet below is valid only for one playable dinosaur. Character, species, or verified replica
 -- changes invalidate food-source ids, combat/sound templates, need reports, and protection high-water state together.
@@ -42,6 +43,7 @@ __gg.MH_clearDinoCaches=function(identityKey)
 	__gg.MH_foodSourceRevision=(__gg.MH_foodSourceRevision or 0)+1; __gg.MH_foodSourceKinds="none"; __gg.MH_foodResolvedDiet="unresolved"; __gg.MH_foodBufferMode="none"; __gg.MH_foodVisibleBefore=nil; __gg.MH_foodVisibleAfter=nil; __gg.MH_foodVisibleDelta=nil; __gg.MH_foodAcceptance="unobserved"; __gg.MH_foodLastFailure="identity changed"
 	__gg.MH_growthState="waiting"; __gg.MH_growthValue=nil; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_growthBase=nil; __gg.MH_stamBoostSpeed=0; __gg.MH_stamPinState="waiting"; __gg.MH_stamReportState="waiting"
 	__gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_healthPacket=nil; __gg.MH_healthReportAt=nil
+	__gg.MH_runPacket=nil; __gg.MH_nativeRunActive=false; __gg.MH_runShielded=0; __gg.MH_autoHitClicking=false
 	__gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_guardLastHP=nil; __gg.MH_guardMax=nil
 	__gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
 	if type(MHNEED)=="table" then MHNEED.refs={food={},stamina={}}; MHNEED.max={food=nil,stamina=nil}; MHNEED.maxSource={food=nil,stamina=nil}; MHNEED.hasPaired={food=false,stamina=false}; MHNEED.at=0; MHNEED.root=nil; MHNEED.character=nil; MHNEED.capRoot=nil; MHNEED.capacity=nil end
@@ -952,6 +954,12 @@ __gg.MH_featureToggleChanged=function(key,value)
 		if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end
 		task.defer(function()
 			if value and MHNEED then pcall(function() MHNEED.refresh(true); MHNEED.pin("stamina"); MHNEED.report("stamina",true); MHNEED.reportKnown("stamina",true) end) end
+			-- Clear an already-running server drain when enabling. When disabling during a held native run, restore the
+			-- real Run=true state. This never presses Shift/W or writes movement/velocity.
+			if type(__gg.MH_syncRun)=="function" then
+				if value then pcall(__gg.MH_syncRun,false)
+				elseif __gg.MH_nativeRunActive then pcall(__gg.MH_syncRun,true) end
+			end
 			if __gg.MH_restoreMovementState then pcall(__gg.MH_restoreMovementState) end
 		end)
 	end
@@ -1328,6 +1336,18 @@ local function installHook()
 					print("[MH REMOTE] id="..tostring(id).."  "..action.."  ["..table.concat(ex,", ").."]")
 				end
 				if typeof(action)=="string" then
+						-- Infinite Stamina's authoritative path. PE tells the server to begin draining through the exact
+						-- (selfId,"SetAction","Run",true) packet supplied by the user. Keep the game's local/native Run
+						-- state and input untouched, but report Run=false while INF Stamina is enabled so the server never
+						-- starts that drain. Genuine Run=false still passes normally, preventing stuck movement.
+						if selfCall and action=="SetAction" and a[3]=="Run" and typeof(a[4])=="boolean" then
+							local snap={n=a.n,remote=self.Name,instance=self,identity=__gg.MH_identityKey}; for i=1,a.n do snap[i]=a[i] end
+							__gg.MH_runPacket=snap; __gg.MH_nativeRunActive=a[4]
+							if CFG.InfStam and a[4] then
+								a[4]=false; __gg.MH_runShielded=(__gg.MH_runShielded or 0)+1; __gg.MH_stamReportState="Run drain shielded"
+								return oldNC(self,table.unpack(a,1,a.n))
+							end
+						end
 						-- Anti-Fall: report every fall as a harmless 0.1 so the server deals no fall damage.
 						if selfCall and action=="Fall" and CFG.AntiFall and typeof(a[3])=="number" then
 							a[3]=0.1; if a[5]~=nil then a[5]=a[4] end
@@ -2211,6 +2231,7 @@ end
 setHeadAngles = function(pitch, yaw) return replicaFire("SetProperty", "HeadAngles", {pitch, yaw}) end
 local function setReplicaProp(prop, value) return replicaFire("SetProperty", prop, value) end
 local function replicaAction(...) return replicaFire(...) end
+__gg.MH_syncRun=function(on) return replicaFire("SetAction","Run",on==true) end
 -- WATER: per-MAP water-source IDs the user captured (each land's Sip uses a fixed id). We fire Sip to ALL of
 -- them every tick — the current map's id always lands, so INF Water now works on EVERY land, anywhere (no
 -- need to stand at water / capture an id first). Cretaceous Lowland 3028 / Archipelago 3251 / Jurassic 2910 /
@@ -3470,7 +3491,7 @@ do local p=Pages["Combat"]
 	mkDropdown(a,"Auto Hit Bone", function() return {"Auto","Head","Neck","Spine","Body","Hip","Leg","Tail"} end, function() return CFG.DamagePart~="" and CFG.DamagePart or "Auto" end, function(opt) CFG.DamagePart=opt; saveCfg() end, 4)
 	mkDropdown(a,"Aim Part", function() return {"Hitbox","Head","Spine","Neck","Hip","Body","Leg","Tail"} end, function() return CFG.AimPart~="" and CFG.AimPart or "Hitbox" end, function(opt) CFG.AimPart=opt; saveCfg() end, 5)
 	mkSlider(a,"Aim Smoothness","AimSmooth",0,1,6)
-	mkLabel(a,"Auto Hit targets the nearest live dinosaur and learns this dinosaur's genuine attack automatically.",7)
+	mkLabel(a,"Auto Hit detects a visible dinosaur in range and performs a real M1 on its selected bone.",7)
 end
 do local p=Pages["PvP"]
 	local _,d=mkSec(p,"Damage",1)
@@ -5406,15 +5427,59 @@ end
 __gg.MH_primeCombat=function(target)
 	if tick()-(__gg.MH_combatPrimeAt or 0)<0.8 then return end
 	__gg.MH_combatPrimeAt=tick()
-	-- The fallback ScreenGui stays Enabled as a loader-health signal, so the legacy clickMouse helper always refuses.
-	-- Auto Hit briefly aims the native attack ray at its target, sends one M1 to capture the real packet, then restores
-	-- the camera immediately. Subsequent attacks use the captured packet and do not move the view.
+	-- Always Damage still needs one genuine native M1 to learn this dinosaur's changing attack packet. This priming
+	-- click is kept separate from Auto Hit, whose permanent path below performs a real M1 on every detection.
 	pcall(function()
 		local cam=workspace.CurrentCamera; local v=cam and cam.ViewportSize or Vector2.new(800,600); local old=cam and cam.CFrame
 		local targetPart=target and (getHitbox(target) or rootOf(target)); if cam and targetPart then cam.CFrame=CFrame.new(cam.CFrame.Position,targetPart.Position) end
 		VIM:SendMouseButtonEvent(v.X/2,v.Y/2,0,true,game,0); task.wait(); VIM:SendMouseButtonEvent(v.X/2,v.Y/2,0,false,game,0)
 		if cam and old then cam.CFrame=old end
 	end)
+end
+-- Find the nearest live dinosaur whose selected bone is actually visible on-screen. Auto Hit then moves the virtual
+-- mouse to that bone and sends a genuine local MouseButton1 press/release. No RegisterAttack/Attack packet is replayed
+-- by this feature, so the game itself owns the attack animation, cooldown, and hit registration exactly like a click.
+__gg.MH_autoHitAim=function(model)
+	if not model then return nil end
+	local want=CFG.DamagePart; local list=(want and want~="" and want~="Auto" and ATK_GROUPS[want]) or ATK_GROUPS.Auto
+	for _,entry in ipairs(list or {}) do local bone=_findIn(model,entry.n); if _bonePos(bone) then return bone end end
+	if want and want~="" and want~="Auto" then
+		local words=({Head={"head","skull","jaw","crani"},Neck={"neck"},Spine={"spine","body","torso","chest"},Body={"spine","body","torso","chest","hip"},Leg={"leg","femur","tibia","foot","toe"},Tail={"tail"},Hip={"hip","pelvis","ilium"}})[want]
+		if words then local scanned=0; for _,item in ipairs(model:GetDescendants()) do scanned+=1; if scanned>600 then break end
+			if item:IsA("BasePart") or item:IsA("Bone") or item:IsA("Attachment") then local name=item.Name:lower()
+				for _,word in ipairs(words) do if name:find(word,1,true) and _bonePos(item) then return item end end
+			end
+		end end
+	end
+	return getAimPart(model) or getHitbox(model) or rootOf(model)
+end
+__gg.MH_autoHitTarget=function()
+	local me=hrp(); local cam=workspace.CurrentCamera; if not (me and cam) then return nil end
+	local mine=getMyModel(); local best,bestDistance=nil,tonumber(CFG.DamageRange) or 120
+	for _,model in ipairs(charModels()) do if model~=mine then
+		local humanoid=model:FindFirstChildOfClass("Humanoid")
+		if not humanoid or humanoid.Health>0 then
+			local aim=__gg.MH_autoHitAim(model); local position=partPos(aim)
+			if position then local distance=dist(me.Position,position); local screen,visible=cam:WorldToViewportPoint(position)
+				if distance<=bestDistance and visible and screen.Z>0 then best,bestDistance=model,distance end
+			end
+		end
+	end end
+	return best
+end
+__gg.MH_autoHitM1=function(target)
+	if __gg.MH_autoHitClicking or not target then return false end
+	local cam=workspace.CurrentCamera; local aim=__gg.MH_autoHitAim(target); local position=partPos(aim)
+	if not (cam and position) then return false end
+	local screen,visible=cam:WorldToViewportPoint(position); if not visible or screen.Z<=0 then return false end
+	__gg.MH_autoHitClicking=true
+	pcall(function() VIM:SendMouseMoveEvent(screen.X,screen.Y,game) end)
+	local ok=pcall(function()
+		VIM:SendMouseButtonEvent(screen.X,screen.Y,0,true,game,0); task.wait(0.035)
+		VIM:SendMouseButtonEvent(screen.X,screen.Y,0,false,game,0)
+	end)
+	__gg.MH_autoHitClicking=false
+	return ok
 end
 task.spawn(function() while RUNNING do
 	if CFG.AlwaysDamage and alive() then
@@ -5442,12 +5507,12 @@ task.spawn(function() while RUNNING do
 		task.wait(1/math.max(1,CFG.DamageRate))
 	else task.wait(0.15) end
 end end)
--- AUTO HIT: nearest-target version of the same captured combat sequence. It never moves the camera or requires a
--- user click. If this dinosaur has not produced a genuine attack packet yet, one throttled native M1 primes it.
+-- AUTO HIT: conditional real input. It does nothing with no visible dinosaur in range; when one is detected, it
+-- performs the local M1 for the user at that dinosaur's selected bone.
 task.spawn(function() while RUNNING do
 	if CFG.AutoHit and not CFG.AlwaysDamage and not CFG.SilentAim and alive() then
-		local target=nearestTarget(tonumber(CFG.DamageRange) or 120,true)
-		if target then if __gg.MH_combatReady() then MHCOMBAT.sequence(target) else __gg.MH_primeCombat(target) end end
+		local target=__gg.MH_autoHitTarget()
+		if target then __gg.MH_autoHitM1(target) end
 		task.wait(1/math.max(1,tonumber(CFG.DamageRate) or 4))
 	else task.wait(0.15) end
 end end)
@@ -5472,6 +5537,7 @@ do local lastClickDmg=0; local mouse=LP:GetMouse()
 conn(UIS.InputBegan:Connect(function(input, gp)
 	if gp then return end                                            -- click landed on the GUI = ignore (don't attack)
 	if input.UserInputType~=Enum.UserInputType.MouseButton1 then return end
+	if __gg.MH_autoHitClicking then return end                       -- Auto Hit already issued the genuine click
 	if not (CFG.HitboxExpand and alive()) then return end            -- only when Hitbox is on
 	if tick()-lastClickDmg < 0.12 then return end; lastClickDmg=tick()
 	local me=hrp(); if not me then return end
@@ -7489,6 +7555,7 @@ end) end end)
 -- CLEANUP
 G.__PRIOR_EXT_HUB = function()
 	RUNNING=false
+	pcall(function() if __gg.MH_nativeRunActive and type(__gg.MH_syncRun)=="function" then __gg.MH_syncRun(true) end end)
 	pcall(function() if type(__gg.MH_stopProFood)=="function" then __gg.MH_stopProFood() end end)
 	pcall(__gg.MH_releaseSyntheticMovement)
 	if __gg.MH_foodSyntheticE then pcall(function() VIM:SendKeyEvent(false,Enum.KeyCode.E,false,game) end); __gg.MH_foodSyntheticE=false end
@@ -7512,4 +7579,4 @@ end
 MS("5 DONE - all tabs built, menu ready")
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
-print("[Dream Hub · Prior Extinction v8.0 PE-v4] Loaded — threshold Pro Food, repaired stamina/combat, Auto Hit")
+print("[Dream Hub · Prior Extinction v8.1 PE-v4] Loaded — Run-shield stamina and real-input Auto Hit")
