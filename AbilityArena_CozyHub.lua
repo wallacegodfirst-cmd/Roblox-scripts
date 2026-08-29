@@ -1,0 +1,4562 @@
+-- Dream Hub | Ability Arena | v2.19.1
+-- by Dream Hub Owner
+-- v2.19.1: Premium and Plus are now exclusive tiers. AA_PREM takes priority and never
+--          enters an AA_PLUS feature block, including when a stale Plus flag exists.
+-- v2.19.0: Auto Heal and Jolt Farm low-HP retreat now stay on the live map. They share
+--          one bounded safe-retreat state and always restore position/movement without a reset.
+-- v2.18.1: Executor register-limit fix. The late Admin/VIP UI now compiles in its own
+--          function scope, keeping the shared chunk below older loadstring register limits.
+-- v2.18.0: AA/AA Plus reliability audit. Paid-tier flags now survive executor environment
+--          boundaries, ability pads can be nested Folders/Models, M1/Ability Assistant are
+--          target-gated, Combat Pro input is released on disable/unload/re-execute, Auto Heal
+--          is a debounced one-shot action, and teleport/grab cleanup cannot leave movement stuck.
+-- v2.17.0: M1 HITBOX REWORK (the real fix). Ability Arena does CLIENT-SIDE hit reg off your REAL arm parts +
+--          their velocity. The old anchored MH_ArmReach follower parts had 0 velocity (Jolt ignores anchored
+--          parts) and the wrong name, so the game never queried them. Now we resize the REAL arms and drop them
+--          into a collision group that collides with NOTHING (+ CanCollide off, Massless on) so Jolt can't fling
+--          or reset you; CanQuery/CanTouch stay on so the game's GetPartBoundsInBox registers the hit. Also
+--          stopped forcing enemy hitboxes to Block (that shrank Ball hitboxes under shape-aware queries).
+-- v2.16.0: NEW ANTI-CHEAT NEUTRALIZED - the game added client-side anti-cheat initializers
+--          (ReplicatedStorage.Files.Client._Client_Initializers._Client_AntiFling etc). They run on
+--          YOUR client, so we disable the running copies AND pre-disable the templates (clones of a
+--          Disabled script spawn dead) - teleports/velocity features work again. Notifications
+--          rebuilt: small fast toasts (no more doubled text, gone in ~2s).
+-- v2.8.0: Kill Aura fixed (crash bug killed the loop), real clicking, One Shot Punch
+--         remote wired into every M1, fixed M1 packet bytes, buffer sends, hitbox
+--         expanders reworked (M1 + Ability share one engine), Teleports tab added.
+-- v2.8.1: manual-click one shot debounced (no more self-kick from click flooding)
+--         + skipped while typing; Kill Aura no longer secretly forces the M1 Hitbox
+--         toggle on (it used to stay stuck on after you turned Kill Aura off).
+-- v2.9.0: Kill Aura targeting reworked - this game's characters often have NO
+--         Humanoid (they use a custom "Hitbox" part + a "Health" script), so the
+--         old "require a Humanoid" target test matched nobody = Kill Aura did
+--         nothing. Now targets the Hitbox directly. Added God Mode (best effort,
+--         off the Health object) and an Add Aura feature (client-side visual).
+-- v2.9.1: removed the M1 + Ability hitbox expanders (server-side hit validation
+--         meant they never landed - they only made enemies look big). Auras now
+--         force every emitter/light ON and re-emit every 0.5s so you SEE the glow
+--         (not just the mesh), it stays on, and re-applies after you respawn.
+-- v2.9.2: removed God Mode + One Shot. Added Save Health (low HP -> fly to sky,
+--         hold, drop back when healed). Anti Void/Water no longer needs a
+--         Humanoid (raycast ground-memory). Kill Aura auto-click now SKIPS firing
+--         whenever your real cursor is over the Rayfield menu.
+-- v2.9.3: brought BACK the M1 + Ability hitbox expanders (this game does
+--         client-side hit detection - the M1 packet has a "Hits" list - so
+--         growing the enemy Hitbox makes your real M1s reach farther; now
+--         targets via isAlive so it applies with no Humanoid). Removed Kill Aura.
+-- v2.9.4: Auto Dash -> "Dash Behind On Hit" (M1 snaps you behind the nearest
+--         enemy - which also LANDS the M1 point-blank - then dashes Q; removed the
+--         LeftShift/shift-lock that messed your camera). Save Health now ANCHORS you
+--         in the sky (default 700) so knockback can't pull you out. Auras strip
+--         GUIs + weld every VFX part to your body so all the effects actually show.
+-- v2.9.5: Ability Grabber now RETURNS you to a real map spawn (workspace.GameMap
+--         .Spawns) after grabbing instead of stranding you in the lobby to die;
+--         "Return to map spawn" defaults ON. TP To Spawn button uses GameMap.Spawns too.
+-- v2.9.6: GameMap.Spawns turned out to BE the lobby, so the grab now returns you to
+--         your EXACT pre-grab spot on the map (backCF) instead. Hitbox + Ability
+--         Hitbox sizes bumped (50/40, up to 150) so the reach is big enough for the
+--         game's overlap check to register your hits.
+-- v2.9.7: ESP now reads HP for characters with NO Humanoid (custom Health) so the
+--         label is never blank. Added "Remove Water Border" (destroys the invisible
+--         Border.Water walls so Anti Water actually holds) and "Anti Kill Bricks"
+--         (destroys Workspace.KillBricks so they can't touch-kill you). Both are
+--         toggles that re-clear every second to beat re-replication.
+-- v2.9.8: neon-red Rayfield theme (near-black UI, glowing red toggles/sliders/tabs).
+-- v2.9.9: rebranded to Dream Hub; added a Home tab + per-tab sidebar icons.
+-- v2.10.0: teleport fixes (no fling, removed lobby TP-to-Spawn, safe Click-TP, auto-refresh
+--          target lists, Save-Health-safe Safe-Spawn) + full Unload disconnect + lighting restore.
+-- v2.11.0: richer ESP (ability + colored health bar + 2D boxes + max-distance), View Player
+--          (spectate), and a stronger hitbox (handles Model hitboxes + whole-body, cap 300).
+-- v2.11.1: fixed Auto Farm / Auto Play - now face the target, no fling, correct position.
+-- v2.11.2: Auto Farm/Play only teleport when out of range (>8 studs), then just face the
+--          target - stops the constant snap-back/rubber-banding.
+-- v2.12.0: added best-effort God Mode (re-applies full HP + flips existing safe/damage flags).
+-- v2.13.0: added Ability Aim Assist (face nearest enemy w/ velocity lead on skill cast).
+-- v2.13.1: removed God Mode.
+-- v2.13.2: Auto Farm/Play now actually deal damage - auto-grow the enemy hitbox while on,
+--          and force the M1 click so it fires even with the menu open.
+-- v2.13.3: Auto Farm/Play M1 lands consistently - throttled swing cadence (~0.35s) so the M1
+--          isn't cancelled before its hit-frame; abilities spaced out so they don't interrupt it.
+-- v2.13.4: auto-farm now clicks ON the enemy (forced); broader ability detection; added a
+--          'Dump Player Data' debug button to read the game's real attributes/values.
+-- v2.13.5: reverted Auto Farm/Play to the original point-blank brute-force (teleport INSIDE the
+--          target's hitbox every 0.1s) that actually lands hits; the distance-gating broke it.
+-- v2.13.6: added M1 Packet Spy (Utility>Debug) to capture a real damaging M1 packet so buildM1
+--          can be rebuilt to carry the target (fixes Auto Farm M1 dealing no damage).
+
+local AAR = { alive=true, plus=false, prem=false, owned={}, manualHeal=false }
+do
+    local function readTierFlag(name)
+        local direct = rawget(_G, name)
+        if direct ~= nil then return direct end
+        local ok, env = pcall(getgenv)
+        if ok and type(env) == "table" then return rawget(env, name) end
+        return nil
+    end
+    local requestedTier = tostring(readTierFlag("AA_TIER") or ""):upper()
+    AAR.prem = requestedTier == "PREMIUM" or readTierFlag("AA_PREM") == true
+    AAR.plus = not AAR.prem and (requestedTier == "PLUS" or readTierFlag("AA_PLUS") == true)
+
+    -- Capture the new loader's tier first, then clean up the previous run.
+    pcall(function()
+        if type(_G.__DREAM_AA_UNLOAD) == "function" then _G.__DREAM_AA_UNLOAD() end
+    end)
+    -- Loader flags are one-shot so a later direct CozyHub run cannot inherit Plus.
+    _G.AA_PLUS, _G.AA_PREM, _G.AA_TIER = nil, nil, nil
+    pcall(function()
+        local env = getgenv()
+        env.AA_PLUS, env.AA_PREM, env.AA_TIER = nil, nil, nil
+    end)
+end
+
+-- ════════ ANTI-CHEAT NEUTRALIZER ════════
+-- The game's new anti-cheat is CLIENT-side (LocalScripts under ReplicatedStorage.Files.Client.
+-- _Client_Initializers, e.g. _Client_AntiFling). Client scripts are ours to disable:
+--  1) pre-disable the TEMPLATES (a clone of a Disabled script never runs), and
+--  2) kill every RUNNING copy in PlayerScripts / PlayerGui / your character, now and on respawn.
+task.spawn(function()
+    local Players = game:GetService("Players")
+    local RS = game:GetService("ReplicatedStorage")
+    -- Dream Hub loading screen
+_G.__DreamGameName = "ABILITY ARENA"
+_G.__DreamTier = AAR.prem and "PREMIUM" or (AAR.plus and "PLUS" or "FREE")
+-- ═══════════════════ DREAM HUB — LOADING SCREEN ═══════════════════
+-- (Loading screen + menu removed by request - the hub loads straight in.)
+-- ═══════════════════ END LOADING SCREEN ═══════════════════
+-- ═══ DREAM HUB — MOD OVERHEAD TITLE (only script-users see it) ═══
+-- Rendered LOCALLY by every Dream Hub client: your script draws a floating rainbow title above any whitelisted
+-- moderator in the server. Because ONLY people running the script execute this, only they see it — exactly
+-- "only people using my scripts can see it". Non-users see nothing. Follows respawns; cheap single loop.
+task.spawn(function()
+	local Players = game:GetService("Players")
+	local RunService = game:GetService("RunService")
+	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true, ["babbage_sparse"]=true }   -- whitelist (matches Name or DisplayName)
+	local ROLE = { ["chloeflash9563"]="OWNER", ["real_revvybxnned11"]="DEV", ["hvdkssl25"]="HEAD MOD", ["bruckner_tempest"]="GAME MOD", ["babbage_sparse"]="MOD" }
+	local host; pcall(function() host = (typeof(gethui)=="function" and gethui()) or game:GetService("CoreGui") end)
+	if not host then host = Players.LocalPlayer:WaitForChild("PlayerGui") end
+	local tags = {}   -- [player] = {gui=BillboardGui, grad=UIGradient}
+	local function isMod(plr) return MODS[string.lower(plr.Name)] or MODS[string.lower(plr.DisplayName or "")] end
+	local function head(plr)
+		local c=plr.Character
+		if c then local h=c:FindFirstChild("Head") or c:FindFirstChildWhichIsA("BasePart"); if h then return h end end
+		-- Prior Extinction (and games like it): the playable model is NOT plr.Character. Find a workspace model
+		-- named after the player (checks folders one level deep too) so mods ALWAYS get their title.
+		for _,m in ipairs(workspace:GetChildren()) do
+			if (m:IsA("Model")) and (m.Name==plr.Name or m.Name==plr.DisplayName) then local h=m:FindFirstChild("Head") or m:FindFirstChildWhichIsA("BasePart"); if h then return h end end
+			if m:IsA("Folder") then local c2=m:FindFirstChild(plr.Name) or (plr.DisplayName and m:FindFirstChild(plr.DisplayName)); if c2 and c2:IsA("Model") then local h=c2:FindFirstChild("Head") or c2:FindFirstChildWhichIsA("BasePart"); if h then return h end end end
+		end
+		return nil
+	end
+	local function ensure(plr)
+		if not isMod(plr) then return end
+		local h=head(plr); if not h then return end
+		local t=tags[plr]
+		if t and t.gui and t.gui.Parent and t.gui.Adornee==h then return end
+		if t and t.gui then pcall(function() t.gui:Destroy() end) end
+		local bb=Instance.new("BillboardGui")
+		bb.Name="DreamModTag"; bb.Adornee=h; bb.Size=UDim2.fromOffset(280,50); bb.StudsOffsetWorldSpace=Vector3.new(0,(h.Size and h.Size.Y/2 or 1)+3,0); bb.AlwaysOnTop=true; bb.MaxDistance=1200; bb.ResetOnSpawn=false
+		local title=Instance.new("TextLabel"); title.Size=UDim2.new(1,0,0,26); title.BackgroundTransparency=1; title.Font=Enum.Font.GothamBlack; title.Text="DREAM HUB  "..(ROLE[string.lower(plr.Name)] or ROLE[string.lower(plr.DisplayName or "")] or "GAME MOD"); title.TextSize=20; title.TextColor3=Color3.fromRGB(255,255,255); title.TextStrokeColor3=Color3.fromRGB(10,8,16); title.TextStrokeTransparency=0.15; title.Parent=bb
+		local grad=Instance.new("UIGradient"); grad.Color=ColorSequence.new({
+			ColorSequenceKeypoint.new(0.0, Color3.fromRGB(255,80,80)), ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255,190,60)),
+			ColorSequenceKeypoint.new(0.4, Color3.fromRGB(120,255,120)), ColorSequenceKeypoint.new(0.6, Color3.fromRGB(80,200,255)),
+			ColorSequenceKeypoint.new(0.8, Color3.fromRGB(180,120,255)), ColorSequenceKeypoint.new(1.0, Color3.fromRGB(255,90,180)) }); grad.Parent=title
+		local sub=Instance.new("TextLabel"); sub.Position=UDim2.new(0,0,0,26); sub.Size=UDim2.new(1,0,0,18); sub.BackgroundTransparency=1; sub.Font=Enum.Font.GothamBold; sub.Text="@"..plr.Name; sub.TextSize=13; sub.TextColor3=Color3.fromRGB(215,215,225); sub.TextStrokeTransparency=0.5; sub.Parent=bb
+		bb.Parent=host
+		tags[plr]={gui=bb, grad=grad}
+	end
+	Players.PlayerRemoving:Connect(function(plr) local t=tags[plr]; if t and t.gui then pcall(function() t.gui:Destroy() end) end tags[plr]=nil end)
+	-- ensure loop (handles join / respawn / late head)
+	task.spawn(function() while AAR.alive do
+		for _,plr in ipairs(Players:GetPlayers()) do pcall(ensure, plr) end
+		local ov = _G.__DreamTitleOv
+		for plr,t in pairs(tags) do pcall(function()
+			local want
+			if type(ov) == "table" then want = ov[string.lower(plr.Name)] or ov[string.lower(plr.DisplayName or "")] end
+			local lbl = t.gui and t.gui:FindFirstChildOfClass("TextLabel")
+			if lbl then
+				local base = "DREAM HUB  "..(ROLE[string.lower(plr.Name)] or ROLE[string.lower(plr.DisplayName or "")] or "GAME MOD")
+				local goal = want or base
+				if lbl.Text ~= goal then lbl.Text = goal end
+			end
+		end) end
+		task.wait(0.5)
+	end end)
+	-- rainbow animate all tags
+	RunService.RenderStepped:Connect(function()
+		local off=Vector2.new(((tick()*0.4)%2)-1, 0)
+		for _,t in pairs(tags) do if t.grad then pcall(function() t.grad.Offset=off end) end end
+	end)
+end)
+-- ═══ END MOD OVERHEAD TITLE ═══
+-- ═══ DREAM HUB — AI RULE WATCHER (admin clients only) ═══
+-- Watches public chat locally on a moderator's client. When a message trips a rule, it auto-reports to the admin
+-- Discord with the player + the EXACT message as evidence. (Roblox scripts can't capture/upload a real image
+-- screenshot, so the verbatim chat line is the proof — cleaner than a screenshot anyway.) Per-player cooldown so
+-- it never spams. Only runs for whitelisted admins, so no duplicate reports from normal users.
+-- Add your own flagged words:  _G.__DreamBadWords = {"word1","word2"}   before loading.
+task.spawn(function()
+	local Players = game:GetService("Players")
+	local HttpService = game:GetService("HttpService")
+	local TextChatService = game:GetService("TextChatService")
+	local me = Players.LocalPlayer
+	if not me then return end
+	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true, ["babbage_sparse"]=true }
+	if type(_G.__DreamExtraAdmins)=="table" then for _,n in ipairs(_G.__DreamExtraAdmins) do MODS[string.lower(tostring(n))]=true end end
+	if not (MODS[string.lower(me.Name)] or MODS[string.lower(me.DisplayName or "")]) then return end
+	local HOOK = type(_G.__DreamReportWebhook) == "string" and _G.__DreamReportWebhook or ""
+
+	local HATE = { "nigg","fagg","retard","kike","tranny","chink","spic" }
+	if type(_G.__DreamBadWords)=="table" then for _,w in ipairs(_G.__DreamBadWords) do HATE[#HATE+1]=string.lower(tostring(w)) end end
+	local CATS = {
+		{ "Rule 2 - hate speech / slur", HATE },
+		{ "Rule 7 - advertising", { "discord.gg","join my","my server","buy script","selling script","dm to buy","cheap robux","i sell " } },
+		{ "Rule 5 - scam", { "free robux","robux generator","robux gen","tinyurl.com","bit.ly/","claim your","gift card code","rbx.","freerobux" } },
+		{ "Rule 1/4 - threats / harassment", { "kys","kill yourself","neck yourself","gonna dox","i'll dox","get cancer","you should die" } },
+	}
+	local cooldown = {}
+	local req = (typeof(syn)=="table" and syn.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
+	local function report(pl, msg, rule)
+		local uid = (pl and pl.UserId) or 0
+		if cooldown[uid] and tick()-cooldown[uid] < 8 then return end
+		cooldown[uid] = tick()
+		if not req or HOOK == "" then return end
+		task.spawn(function() pcall(function()
+			local body = HttpService:JSONEncode({ username="Dream AI Mod", embeds={{ title="Auto-flag: possible rule break in chat", color=15158332, fields={
+				{ name="Player", value=(pl and (pl.DisplayName.." (@"..pl.Name..")  ["..tostring(pl.UserId).."]")) or "?", inline=false },
+				{ name="Rule", value=rule, inline=false },
+				{ name="Message (evidence)", value=string.sub(tostring(msg),1,900), inline=false },
+				{ name="Profile", value=(pl and ("https://www.roblox.com/users/"..tostring(pl.UserId).."/profile")) or "-", inline=false },
+				{ name="Game", value=tostring(_G.__DreamGameName or "Ability Arena"), inline=true },
+				{ name="Caught by", value=me.Name, inline=true },
+			} }} })
+			local r1=req({ Url=HOOK, Method="POST", Headers={["Content-Type"]="application/json"}, Body=body }) if not (r1 and ((r1.StatusCode and r1.StatusCode>=200 and r1.StatusCode<300) or r1.Success)) then req({ Url=(HOOK:gsub("^https://discord%.com","https://webhook.lewisakura.moe")), Method="POST", Headers={["Content-Type"]="application/json"}, Body=body }) end
+		end) end)
+	end
+	local function scan(pl, msg)
+		if not msg or msg=="" or pl==me then return end
+		local low = string.lower(msg)
+		for _,c in ipairs(CATS) do for _,w in ipairs(c[2]) do if w~="" and low:find(w,1,true) then report(pl, msg, c[1]); return end end end
+	end
+	-- modern TextChatService
+	pcall(function()
+		local function hook(ch) if ch:IsA("TextChannel") then ch.MessageReceived:Connect(function(m)
+			local pl; pcall(function() local src=m.TextSource; if src then pl=Players:GetPlayerByUserId(src.UserId) end end)
+			scan(pl, m.Text)
+		end) end end
+		for _,d in ipairs(TextChatService:GetDescendants()) do hook(d) end
+		TextChatService.DescendantAdded:Connect(hook)
+	end)
+	-- legacy Chatted (works when the game still uses the old chat)
+	local function bind(pl) pcall(function() pl.Chatted:Connect(function(msg) scan(pl, msg) end) end) end
+	for _,pl in ipairs(Players:GetPlayers()) do if pl~=me then bind(pl) end end
+	Players.PlayerAdded:Connect(function(pl) if pl~=me then bind(pl) end end)
+end)
+-- ═══ END AI RULE WATCHER ═══
+-- ═══ DREAM HUB — LIVE CHAT + AI MOD (all script users) ═══
+-- Cross-server chat for everyone running Dream Hub, shared across all supported games. Backed by a tiny
+-- public key-value relay (textdb.online): every client polls it and appends its messages, so ONLY people
+-- running the hub can see or talk in it. Each row shows the player's avatar, username and plan, plus a MOD
+-- badge for staff. The AI mod lives in here too — your message is scanned BEFORE it sends (blocked +
+-- reported if it breaks a rule) and incoming messages are censored on arrival. Staff warns are delivered
+-- through the same relay and pop up as a NOTIFICATION + warning card (not chat).
+-- Honest limit: this can only reach players who are running the hub — it's a relay, not a Roblox feature.
+task.spawn(function()
+	local Players = game:GetService("Players")
+	local HttpService = game:GetService("HttpService")
+	local StarterGui = game:GetService("StarterGui")
+	local UIS = game:GetService("UserInputService")
+	local me = Players.LocalPlayer
+	if not me then return end
+	local GAME = "Ability Arena"
+	local TIER = tostring(_G.__DreamTier or "FREE")
+	local KEY, WKEY = "dreamhub_lc_v1", "dreamhub_warn_v1"
+	local MKEY = "dreamhub_mod_v1"   -- shared moderation state: mutes + emoji bans
+	local LKEY = "dreamhub_warnlog_v1"   -- staff warning history (the tracker)
+	local MODSTATE = { mu={}, ne={}, sl=0, lk=0, bw={}, tt={} }
+	local lastMuteNotif = 0
+	local MODS = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true, ["babbage_sparse"]=true }
+	if type(_G.__DreamExtraAdmins)=="table" then for _,n in ipairs(_G.__DreamExtraAdmins) do MODS[string.lower(tostring(n))]=true end end
+	local IS_MOD = (MODS[string.lower(me.Name)] or MODS[string.lower(me.DisplayName or "")]) and true or false
+	local req = (typeof(syn)=="table" and syn.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
+	local HOOK = type(_G.__DreamReportWebhook) == "string" and _G.__DreamReportWebhook or ""
+
+	-- ---- relay helpers ----
+	local function readKey(k)
+		local ok, r = pcall(function() return game:HttpGet("https://textdb.online/"..k) end)
+		if ok and type(r)=="string" and r~="" then
+			local ok2, d = pcall(function() return HttpService:JSONDecode(r) end)
+			if ok2 and type(d)=="table" then return d end
+		end
+		return nil
+	end
+	local function writeKey(k, tbl)
+		local body
+		pcall(function() body = "key="..k.."&value="..HttpService:UrlEncode(HttpService:JSONEncode(tbl)) end)
+		if not body then return end
+		if req then pcall(function() req({ Url="https://textdb.online/update/", Method="POST", Headers={["Content-Type"]="application/x-www-form-urlencoded"}, Body=body }) end)
+		else pcall(function() game:HttpGet("https://textdb.online/update/?"..body) end) end
+	end
+
+	-- ---- AI mod (same rules as the in-game watcher) ----
+	local HATE = { "nigg","fagg","retard","kike","tranny","chink","spic" }
+	if type(_G.__DreamBadWords)=="table" then for _,w in ipairs(_G.__DreamBadWords) do HATE[#HATE+1]=string.lower(tostring(w)) end end
+	local CATS = {
+		{ "Rule 2 - hate speech / slur", HATE },
+		{ "Rule 7 - advertising", { "discord.gg","join my","my server","buy script","selling script","dm to buy","cheap robux","i sell " } },
+		{ "Rule 5 - scam", { "free robux","robux generator","robux gen","tinyurl.com","bit.ly/","claim your","gift card code","freerobux" } },
+		{ "Rule 1/4 - threats / harassment", { "kys","kill yourself","neck yourself","gonna dox","i'll dox","get cancer","you should die" } },
+	}
+	local function scanText(msg)
+		local low = string.lower(tostring(msg or ""))
+		for _,c in ipairs(CATS) do for _,w in ipairs(c[2]) do if w~="" and low:find(w,1,true) then return c[1] end end end
+		for _,w in ipairs(MODSTATE.bw or {}) do local lw=string.lower(tostring(w)) if lw~="" and low:find(lw,1,true) then return "staff filter" end end
+		return nil
+	end
+	local function reportMsg(uname, uid, msg, rule, note)
+		if not req or HOOK == "" then return end
+		task.spawn(function() pcall(function()
+			local body = HttpService:JSONEncode({ username="Dream AI Mod", embeds={{ title="Auto-flag: rule break in LIVE CHAT", color=15158332, fields={
+				{ name="Player", value=tostring(uname).."  ["..tostring(uid).."]", inline=false },
+				{ name="Rule", value=tostring(rule), inline=false },
+				{ name="Message (evidence)", value=string.sub(tostring(msg),1,900), inline=false },
+				{ name="Profile", value="https://www.roblox.com/users/"..tostring(uid).."/profile", inline=false },
+				{ name="Where", value="Live chat ("..GAME..")  -  "..tostring(note or ""), inline=true },
+				{ name="Caught by", value=me.Name, inline=true },
+			} }} })
+			local r1=req({ Url=HOOK, Method="POST", Headers={["Content-Type"]="application/json"}, Body=body }) if not (r1 and ((r1.StatusCode and r1.StatusCode>=200 and r1.StatusCode<300) or r1.Success)) then req({ Url=(HOOK:gsub("^https://discord%.com","https://webhook.lewisakura.moe")), Method="POST", Headers={["Content-Type"]="application/json"}, Body=body }) end
+		end) end)
+	end
+
+	-- ---- UI ----
+	local function esc(s) return tostring(s):gsub("&","&amp;"):gsub("<","&lt;"):gsub(">","&gt;") end
+	-- emoji shortcodes: typing :skull: sends the actual emoji, Discord-style
+	local EMO = { skull="\u{1F480}", fire="\u{1F525}", joy="\u{1F602}", sob="\u{1F62D}", cry="\u{1F622}", smile="\u{1F604}", grin="\u{1F601}", heart="\u{2764}\u{FE0F}", heart_eyes="\u{1F60D}", thumbsup="\u{1F44D}", thumbsdown="\u{1F44E}", crown="\u{1F451}", eyes="\u{1F440}", goat="\u{1F410}", clown="\u{1F921}", cap="\u{1F9E2}", pray="\u{1F64F}", rage="\u{1F621}", cool="\u{1F60E}", ghost="\u{1F47B}", shrug="\u{1F937}", moyai="\u{1F5FF}", x="\u{274C}", check="\u{2705}", wave="\u{1F44B}", ["100"]="\u{1F4AF}" }
+	local function emojify(s) local r=tostring(s):gsub("%:([%w_]+)%:", function(k) return EMO[string.lower(k)] or (":"..k..":") end) return r end
+	local par
+	pcall(function() par = (gethui and gethui()) end)
+	if not par then pcall(function() par = game:GetService("CoreGui") end) end
+	if not par then par = me:WaitForChild("PlayerGui") end
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "DH_LC_"..tostring(math.floor(tick()%97))
+	gui.ResetOnSpawn = false
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	gui.Parent = par
+
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(0,86,0,30); btn.Position = UDim2.new(1,-96,1,-120)
+	btn.BackgroundColor3 = Color3.fromRGB(28,26,40); btn.TextColor3 = Color3.fromRGB(235,232,255)
+	btn.Font = Enum.Font.GothamBold; btn.TextSize = 12; btn.Text = "CHAT"; btn.AutoButtonColor = true; btn.Parent = gui
+	do local c=Instance.new("UICorner") c.CornerRadius=UDim.new(0,8) c.Parent=btn
+	   local st=Instance.new("UIStroke") st.Color=Color3.fromRGB(120,90,255) st.Thickness=1 st.Parent=btn end
+
+	local win = Instance.new("Frame")
+	win.Size = UDim2.new(0,320,0,400); win.Position = UDim2.new(1,-340,1,-540)
+	win.BackgroundColor3 = Color3.fromRGB(22,20,32); win.Visible = false; win.Active = true; win.Parent = gui
+	do local c=Instance.new("UICorner") c.CornerRadius=UDim.new(0,10) c.Parent=win
+	   local st=Instance.new("UIStroke") st.Color=Color3.fromRGB(120,90,255) st.Thickness=1 st.Parent=win end
+
+	local head = Instance.new("TextLabel")
+	head.Size = UDim2.new(1,-34,0,32); head.BackgroundTransparency = 1
+	head.Font = Enum.Font.GothamBold; head.TextSize = 13; head.TextXAlignment = Enum.TextXAlignment.Left
+	head.Text = "   DREAM HUB  -  LIVE CHAT"; head.TextColor3 = Color3.fromRGB(235,232,255); head.Parent = win
+	local hide = Instance.new("TextButton")
+	hide.Size = UDim2.new(0,26,0,26); hide.Position = UDim2.new(1,-30,0,3)
+	hide.BackgroundTransparency = 1; hide.Font = Enum.Font.GothamBold; hide.TextSize = 16
+	hide.Text = "-"; hide.TextColor3 = Color3.fromRGB(200,196,220); hide.Parent = win
+
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Size = UDim2.new(1,-12,1,-78); scroll.Position = UDim2.new(0,6,0,34)
+	scroll.BackgroundTransparency = 1; scroll.BorderSizePixel = 0; scroll.ScrollBarThickness = 4
+	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y; scroll.CanvasSize = UDim2.new(0,0,0,0); scroll.Parent = win
+	local lay = Instance.new("UIListLayout") lay.Padding = UDim.new(0,6) lay.SortOrder = Enum.SortOrder.LayoutOrder lay.Parent = scroll
+
+	local box = Instance.new("TextBox")
+	box.Size = UDim2.new(1,-76,0,32); box.Position = UDim2.new(0,6,1,-38)
+	box.BackgroundColor3 = Color3.fromRGB(32,30,46); box.TextColor3 = Color3.fromRGB(235,232,255)
+	box.PlaceholderText = "Say something...  (:skull: :fire: :100:)"; box.PlaceholderColor3 = Color3.fromRGB(120,116,140)
+	box.Font = Enum.Font.Gotham; box.TextSize = 12; box.Text = ""; box.ClearTextOnFocus = false
+	box.TextXAlignment = Enum.TextXAlignment.Left; box.Parent = win
+	do local c=Instance.new("UICorner") c.CornerRadius=UDim.new(0,8) c.Parent=box
+	   local pd=Instance.new("UIPadding") pd.PaddingLeft=UDim.new(0,8) pd.PaddingRight=UDim.new(0,8) pd.Parent=box end
+	local send = Instance.new("TextButton")
+	send.Size = UDim2.new(0,58,0,32); send.Position = UDim2.new(1,-64,1,-38)
+	send.BackgroundColor3 = Color3.fromRGB(120,90,255); send.TextColor3 = Color3.fromRGB(255,255,255)
+	send.Font = Enum.Font.GothamBold; send.TextSize = 12; send.Text = "SEND"; send.Parent = win
+	do local c=Instance.new("UICorner") c.CornerRadius=UDim.new(0,8) c.Parent=send end
+
+	-- drag by header
+	do
+		local dragging, dragStart, startPos
+		head.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true dragStart=i.Position startPos=win.Position end end)
+		UIS.InputChanged:Connect(function(i) if dragging and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then local d=i.Position-dragStart win.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+d.X,startPos.Y.Scale,startPos.Y.Offset+d.Y) end end)
+		UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=false end end)
+	end
+
+	local function notifyLocal(t, m)
+		pcall(function() StarterGui:SetCore("SendNotification", { Title=t, Text=m, Duration=6 }) end)
+	end
+
+	-- ---- render ----
+	local cache = {}
+	local ROLES = { ["chloeflash9563"]={"OWNER","#ffd35a"}, ["real_revvybxnned11"]={"DEV","#5ad1ff"}, ["hvdkssl25"]={"HEAD MOD","#ff9d5a"}, ["bruckner_tempest"]={"MOD","#ff5c5c"}, ["babbage_sparse"]={"MOD","#ff5c5c"} }
+	local function tierChip(m)
+		local r = ROLES[string.lower(tostring(m.u or ""))]
+		if r then return '<font color="'..r[2]..'">['..r[1]..']</font>' end
+		if m.md then return '<font color="#ff5c5c">[MOD]</font>' end
+		local t = string.upper(tostring(m.t or "FREE"))
+		if t == "FREE" then return '<font color="#9a96b0">[FREE]</font>' end
+		return '<font color="#ffc85a">['..esc(t)..']</font>'
+	end
+	local function render()
+		for _,c in ipairs(scroll:GetChildren()) do if c:IsA("Frame") then c:Destroy() end end
+		for i,m in ipairs(cache) do
+			if type(m)=="table" then
+				local row = Instance.new("Frame")
+				row.BackgroundTransparency = 1; row.Size = UDim2.new(1,-6,0,36)
+				row.AutomaticSize = Enum.AutomaticSize.Y; row.LayoutOrder = i; row.Parent = scroll
+				local av = Instance.new("ImageLabel")
+				av.Size = UDim2.new(0,26,0,26); av.Position = UDim2.new(0,0,0,2)
+				av.BackgroundColor3 = Color3.fromRGB(40,38,56); av.Image = "rbxthumb://type=AvatarHeadShot&id="..tostring(tonumber(m.id) or 1).."&w=48&h=48"
+				av.Parent = row
+				do local c2=Instance.new("UICorner") c2.CornerRadius=UDim.new(1,0) c2.Parent=av end
+				local nm = Instance.new("TextLabel")
+				nm.Size = UDim2.new(1,-34,0,14); nm.Position = UDim2.new(0,32,0,0)
+				nm.BackgroundTransparency = 1; nm.RichText = true; nm.Font = Enum.Font.GothamBold; nm.TextSize = 11
+				nm.TextXAlignment = Enum.TextXAlignment.Left; nm.TextColor3 = Color3.fromRGB(235,232,255)
+				nm.Text = esc(m.u or "?").."  "..tierChip(m)..'  <font color="#6f6a88">'..esc(m.g or "")..'</font>'
+				nm.Parent = row
+				local tx = Instance.new("TextLabel")
+				tx.Size = UDim2.new(1,-34,0,0); tx.Position = UDim2.new(0,32,0,15)
+				tx.AutomaticSize = Enum.AutomaticSize.Y; tx.BackgroundTransparency = 1
+				tx.Font = Enum.Font.Gotham; tx.TextSize = 12; tx.TextWrapped = true
+				tx.TextXAlignment = Enum.TextXAlignment.Left
+				local rule = scanText(m.m)
+				if rule then
+					tx.Text = "[removed by AI mod]"; tx.TextColor3 = Color3.fromRGB(255,110,110)
+				else
+					tx.Text = emojify(tostring(m.m or "")); tx.TextColor3 = Color3.fromRGB(208,204,226)
+				end
+				tx.Parent = row
+				if IS_MOD then
+					local del = Instance.new("TextButton")
+					del.AnchorPoint = Vector2.new(1,0); del.Position = UDim2.new(1,-2,0,2); del.Size = UDim2.fromOffset(16,16)
+					del.BackgroundTransparency = 0.35; del.BackgroundColor3 = Color3.fromRGB(60,26,32)
+					del.Font = Enum.Font.GothamBold; del.TextSize = 10; del.Text = "x"; del.TextColor3 = Color3.fromRGB(255,120,120); del.ZIndex = 5; del.Parent = row
+					do local cc2 = Instance.new("UICorner") cc2.CornerRadius = UDim.new(0,4) cc2.Parent = del end
+					local mkey = tostring(m.ts or 0).."|"..tostring(m.u or "").."|"..tostring(m.m or "")
+					del.MouseButton1Click:Connect(function()
+						local cur = readKey(KEY) or {}
+						local kept = {}
+						for _,mm in ipairs(cur) do if type(mm)~="table" or (tostring(mm.ts or 0).."|"..tostring(mm.u or "").."|"..tostring(mm.m or "")) ~= mkey then kept[#kept+1]=mm end end
+						writeKey(KEY, kept); cache = kept; render()
+					end)
+				end
+			end
+		end
+		task.defer(function() pcall(function() scroll.CanvasPosition = Vector2.new(0, math.max(0, lay.AbsoluteContentSize.Y)) end) end)
+	end
+
+	btn.MouseButton1Click:Connect(function() win.Visible = not win.Visible; btn.Text = "CHAT"; if win.Visible then render() end end)
+	hide.MouseButton1Click:Connect(function() win.Visible = false end)
+
+	-- ---- send ----
+	-- ---- staff chat commands (?cmds shows all of them) + relay moderation ----
+	local TeleS = game:GetService("TeleportService")
+	local Light = game:GetService("Lighting")
+	local function resolveName(q)
+		q = string.lower(tostring(q or "")) if q == "" then return nil end
+		local names = {}
+		for _,pl in ipairs(Players:GetPlayers()) do names[#names+1] = pl.Name end
+		for _,mm in ipairs(cache) do if type(mm)=="table" and mm.u then names[#names+1] = tostring(mm.u) end end
+		for _,n in ipairs(names) do if string.lower(n) == q then return n end end
+		for _,n in ipairs(names) do if string.lower(n):sub(1,#q) == q then return n end end
+		return q
+	end
+	local function setState2(fn)
+		local ms = readKey(MKEY) or {}
+		if type(ms.mu) ~= "table" then ms.mu = {} end
+		if type(ms.ne) ~= "table" then ms.ne = {} end
+		if type(ms.bw) ~= "table" then ms.bw = {} end
+		if type(ms.tt) ~= "table" then ms.tt = {} end
+		ms.sl = tonumber(ms.sl) or 0
+		ms.lk = tonumber(ms.lk) or 0
+		fn(ms)
+		writeKey(MKEY, ms)
+		MODSTATE = { mu=ms.mu, ne=ms.ne, sl=ms.sl, lk=ms.lk, bw=ms.bw, tt=ms.tt }
+		pcall(function() _G.__DreamTitleOv = ms.tt end)
+	end
+	local function makeListWin(titleTxt)
+		local w = Instance.new("Frame")
+		w.Size = UDim2.new(0,370,0,430); w.Position = UDim2.new(0.5,-185,0.5,-215)
+		w.BackgroundColor3 = Color3.fromRGB(22,20,32); w.Visible = false; w.Active = true; w.ZIndex = 30; w.Parent = gui
+		local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0,10) c.Parent = w
+		local st = Instance.new("UIStroke") st.Color = Color3.fromRGB(120,90,255) st.Thickness = 1 st.Parent = w
+		local h = Instance.new("TextLabel") h.Size = UDim2.new(1,-34,0,32) h.BackgroundTransparency = 1 h.Font = Enum.Font.GothamBold h.TextSize = 13 h.TextXAlignment = Enum.TextXAlignment.Left h.Text = "   "..titleTxt h.TextColor3 = Color3.fromRGB(235,232,255) h.ZIndex = 31 h.Parent = w
+		local xb = Instance.new("TextButton") xb.Size = UDim2.new(0,26,0,26) xb.Position = UDim2.new(1,-30,0,3) xb.BackgroundTransparency = 1 xb.Font = Enum.Font.GothamBold xb.TextSize = 16 xb.Text = "x" xb.TextColor3 = Color3.fromRGB(200,196,220) xb.ZIndex = 31 xb.Parent = w
+		xb.MouseButton1Click:Connect(function() w.Visible = false end)
+		local sc = Instance.new("ScrollingFrame") sc.Size = UDim2.new(1,-12,1,-40) sc.Position = UDim2.new(0,6,0,34) sc.BackgroundTransparency = 1 sc.BorderSizePixel = 0 sc.ScrollBarThickness = 4 sc.AutomaticCanvasSize = Enum.AutomaticSize.Y sc.CanvasSize = UDim2.new(0,0,0,0) sc.ZIndex = 31 sc.Parent = w
+		local ll = Instance.new("UIListLayout") ll.Padding = UDim.new(0,4) ll.SortOrder = Enum.SortOrder.LayoutOrder ll.Parent = sc
+		return { win=w, set=function(lines)
+			for _,c2 in ipairs(sc:GetChildren()) do if c2:IsA("TextLabel") then c2:Destroy() end end
+			for i,ln in ipairs(lines) do
+				local t = Instance.new("TextLabel") t.LayoutOrder = i t.Size = UDim2.new(1,-8,0,0) t.AutomaticSize = Enum.AutomaticSize.Y t.BackgroundTransparency = 1 t.Font = Enum.Font.Gotham t.TextSize = 11 t.TextWrapped = true t.RichText = true t.TextXAlignment = Enum.TextXAlignment.Left t.TextColor3 = Color3.fromRGB(208,204,226) t.Text = ln t.ZIndex = 32 t.Parent = sc
+			end
+		end }
+	end
+	local cmdsWin, warnsWin
+	local savedPos, spdOrig, jmpOrig = nil, nil, nil
+	local flyOn, clipOff, invisOn, brightOn = false, false, false, false
+	local lightSaved = nil
+	local function myRoot() local c = me.Character return c and (c:FindFirstChild("HumanoidRootPart") or c.PrimaryPart or c:FindFirstChildWhichIsA("BasePart")) end
+	local function myHum() local c = me.Character return c and c:FindFirstChildOfClass("Humanoid") end
+	local function findPlr(nm) nm = string.lower(tostring(nm or "")) for _,pl in ipairs(Players:GetPlayers()) do if string.lower(pl.Name) == nm or string.lower(pl.DisplayName or "") == nm then return pl end end end
+	local function tpToPlr(pl)
+		local c = pl and pl.Character; local tr = c and (c:FindFirstChild("HumanoidRootPart") or c.PrimaryPart or c:FindFirstChildWhichIsA("BasePart"))
+		local mr = myRoot(); if not (tr and mr) then return false end
+		savedPos = mr.CFrame
+		pcall(function() mr.AssemblyLinearVelocity = Vector3.zero end)
+		mr.CFrame = tr.CFrame * CFrame.new(0,0,-5)
+		return true
+	end
+	local function needPlr(rest) local who = tostring(rest or ""):match("^(%S+)") if not who then return nil, "Give a username." end local nm = resolveName(who) return findPlr(nm), nm end
+	local CMDS
+	CMDS = {
+		-- ============ MODERATION ============
+		warn = { "user msg", "red warning popup on their screen + logged in the tracker", function(rest)
+			local who, msg = rest:match("^(%S+)%s+(.+)$") if not who then return "Use:  ?warn user your message" end
+			local nm = resolveName(who) _G.__DreamWarnSend(nm, msg) return "Warned "..nm.."." end },
+		warnall = { "msg", "warning popup for EVERY hub user", function(rest)
+			if rest == "" then return "Use:  ?warnall message" end _G.__DreamWarnSend("*", rest) return "Warned everyone." end },
+		announce = { "msg", "blue announcement popup for every hub user", function(rest)
+			if rest == "" then return "Use:  ?announce message" end _G.__DreamWarnSend("*", rest, "a") return "Announced." end },
+		dm = { "user msg", "private popup only they see", function(rest)
+			local who, msg = rest:match("^(%S+)%s+(.+)$") if not who then return "Use:  ?dm user message" end
+			local nm = resolveName(who) _G.__DreamWarnSend(nm, msg, "d") return "DM sent to "..nm.."." end },
+		notify = { "user msg", "small corner notification only they see", function(rest)
+			local who, msg = rest:match("^(%S+)%s+(.+)$") if not who then return "Use:  ?notify user message" end
+			local nm = resolveName(who) _G.__DreamWarnSend(nm, msg, "n") return "Notified "..nm.."." end },
+		mute = { "user mins", "block them from live chat (cross-server)", function(rest)
+			local who, mins = rest:match("^(%S+)%s*(%d*)$") if not who then return "Use:  ?mute user minutes" end
+			local nm = resolveName(who) local m = math.clamp(tonumber(mins) or 5, 1, 1440)
+			setState2(function(ms) ms.mu[string.lower(nm)] = os.time() + m*60 end) return "Muted "..nm.." for "..m.." min." end },
+		unmute = { "user", "lift a mute early", function(rest)
+			local who = rest:match("^(%S+)") if not who then return "Use:  ?unmute user" end
+			local nm = resolveName(who) setState2(function(ms) ms.mu[string.lower(nm)] = 0 end) return nm.." unmuted." end },
+		noemoji = { "user mins", "their :codes: stop turning into emoji", function(rest)
+			local who, mins = rest:match("^(%S+)%s*(%d*)$") if not who then return "Use:  ?noemoji user minutes" end
+			local nm = resolveName(who) local m = math.clamp(tonumber(mins) or 5, 1, 1440)
+			setState2(function(ms) ms.ne[string.lower(nm)] = os.time() + m*60 end) return "Emojis off for "..nm.." ("..m.." min)." end },
+		okemoji = { "user", "give their emojis back", function(rest)
+			local who = rest:match("^(%S+)") if not who then return "Use:  ?okemoji user" end
+			local nm = resolveName(who) setState2(function(ms) ms.ne[string.lower(nm)] = 0 end) return "Emojis back for "..nm.."." end },
+		del = { "user", "delete that user's LAST chat message", function(rest)
+			local who = rest:match("^(%S+)") if not who then return "Use:  ?del user" end
+			local nm = string.lower(resolveName(who))
+			local cur = readKey(KEY) or {}
+			for i = #cur, 1, -1 do local mm = cur[i]
+				if type(mm)=="table" and string.lower(tostring(mm.u or "")) == nm then table.remove(cur, i) writeKey(KEY, cur) cache = cur render() return "Deleted "..nm.."'s last message." end
+			end
+			return "No message from "..nm.." in the feed." end },
+		delall = { "user", "delete EVERY message that user has in the feed", function(rest)
+			local who = rest:match("^(%S+)") if not who then return "Use:  ?delall user" end
+			local nm = string.lower(resolveName(who))
+			local cur = readKey(KEY) or {}
+			local kept, n = {}, 0
+			for _,mm in ipairs(cur) do if type(mm)=="table" and string.lower(tostring(mm.u or "")) == nm then n += 1 else kept[#kept+1] = mm end end
+			writeKey(KEY, kept) cache = kept render() return "Deleted "..n.." message"..(n==1 and "" or "s").." from "..nm.."." end },
+		clearchat = { "", "wipe the whole live chat feed", function()
+			writeKey(KEY, {}) cache = {} render() return "Chat cleared." end },
+		warns = { "", "open the warning tracker (who has warnings + reasons)", function()
+			local l = readKey(LKEY) or {}
+			local per, order = {}, {}
+			for _,e in ipairs(l) do if type(e)=="table" then
+				local k = string.lower(tostring(e.to or "?"))
+				if not per[k] then per[k] = { n=0, name=tostring(e.to or "?"), rs={} } order[#order+1] = k end
+				per[k].n += 1
+				table.insert(per[k].rs, 1, tostring(e.m or "").."  (by "..tostring(e.by or "?")..")")
+			end end
+			local lines = {}
+			for _,k in ipairs(order) do local p2 = per[k]
+				lines[#lines+1] = '<font color="#ff9d5a"><b>'..p2.name..'</b></font>   '..p2.n..' warning'..(p2.n==1 and "" or "s")
+				for i = 1, math.min(3, #p2.rs) do lines[#lines+1] = "      - "..p2.rs[i] end
+			end
+			if #lines == 0 then lines = { "No warnings on record." } end
+			if not warnsWin then warnsWin = makeListWin("WARNING TRACKER") end
+			warnsWin.set(lines) warnsWin.win.Visible = true
+			return "Warning tracker opened." end },
+		clearwarns = { "user", "remove a user's warnings from the tracker", function(rest)
+			local who = rest:match("^(%S+)") if not who then return "Use:  ?clearwarns user" end
+			local nm = string.lower(resolveName(who))
+			local l = readKey(LKEY) or {}
+			local kept, n = {}, 0
+			for _,e in ipairs(l) do if type(e)=="table" and string.lower(tostring(e.to or "")) == nm then n += 1 else kept[#kept+1] = e end end
+			writeKey(LKEY, kept) return "Removed "..n.." warning"..(n==1 and "" or "s").." for "..nm.."." end },
+		slowmode = { "secs", "everyone must wait N seconds between messages", function(rest)
+			local n = math.clamp(tonumber(rest:match("%d+")) or 10, 2, 300)
+			setState2(function(ms) ms.sl = n end) return "Slowmode: "..n.."s." end },
+		slowoff = { "", "turn slowmode off", function() setState2(function(ms) ms.sl = 0 end) return "Slowmode off." end },
+		lockchat = { "", "only staff can send in live chat", function() setState2(function(ms) ms.lk = 1 end) return "Chat locked (staff only)." end },
+		unlockchat = { "", "unlock live chat for everyone", function() setState2(function(ms) ms.lk = 0 end) return "Chat unlocked." end },
+		badword = { "word", "add a word to the AI filter (blocks + auto-reports)", function(rest)
+			local w = rest:match("^(%S+)") if not w then return "Use:  ?badword word" end
+			setState2(function(ms) ms.bw[#ms.bw+1] = string.lower(w) end) return "Added to the filter." end },
+		goodword = { "word", "remove a word from the staff filter", function(rest)
+			local w = string.lower(rest:match("^(%S+)") or "") if w == "" then return "Use:  ?goodword word" end
+			setState2(function(ms) for i = #ms.bw, 1, -1 do if string.lower(tostring(ms.bw[i])) == w then table.remove(ms.bw, i) end end end) return "Removed from the filter." end },
+		settitle = { "user text", "override someone's overhead title (hub users see it)", function(rest)
+			local who, txt2 = rest:match("^(%S+)%s+(.+)$") if not who then return "Use:  ?settitle user New Title" end
+			local nm = resolveName(who) setState2(function(ms) ms.tt[string.lower(nm)] = string.sub(txt2, 1, 40) end) return "Title set for "..nm.."." end },
+		cleartitle = { "user", "put their normal overhead title back", function(rest)
+			local who = rest:match("^(%S+)") if not who then return "Use:  ?cleartitle user" end
+			local nm = resolveName(who) setState2(function(ms) ms.tt[string.lower(nm)] = nil end) return "Title reset for "..nm.."." end },
+		-- ============ INFO ============
+		cmds = { "", "show every staff command", function()
+			local names = {}
+			for k in pairs(CMDS) do names[#names+1] = k end
+			table.sort(names)
+			local lines = { #names.." staff commands. Type them in the chat box:", "" }
+			for _,k in ipairs(names) do local e2 = CMDS[k]
+				lines[#lines+1] = '<font color="#a78bfa"><b>?'..k..(e2[1] ~= "" and (" "..e2[1]) or "")..'</b></font>   '..e2[2]
+			end
+			if not cmdsWin then cmdsWin = makeListWin("STAFF COMMANDS") end
+			cmdsWin.set(lines) cmdsWin.win.Visible = true
+			return "Command list opened." end },
+		who = { "user", "profile info about a player in your server", function(rest)
+			local pl = needPlr(rest) if not pl then return "They aren't in this server." end
+			return pl.DisplayName.."  (@"..pl.Name..")  id "..pl.UserId.."  |  account "..pl.AccountAge.." days old" end },
+		id = { "user", "their UserId", function(rest)
+			local pl = needPlr(rest) if not pl then return "They aren't in this server." end return pl.Name.." = "..pl.UserId end },
+		age = { "user", "their account age in days", function(rest)
+			local pl = needPlr(rest) if not pl then return "They aren't in this server." end return pl.Name.." is "..pl.AccountAge.." days old" end },
+		list = { "", "who is in this server", function()
+			local t = {}
+			for _,pl in ipairs(Players:GetPlayers()) do t[#t+1] = pl.Name end
+			return #t.." here: "..table.concat(t, ", ", 1, math.min(#t, 10))..(#t > 10 and " ..." or "") end },
+		staff = { "", "which staff are in this server", function()
+			local t = {}
+			for _,pl in ipairs(Players:GetPlayers()) do if MODS[string.lower(pl.Name)] or MODS[string.lower(pl.DisplayName or "")] then t[#t+1] = pl.Name end end
+			return #t == 0 and "No other staff here." or ("Staff here: "..table.concat(t, ", ")) end },
+		online = { "", "how many different people talked in chat recently", function()
+			local seen, n = {}, 0
+			for _,mm in ipairs(cache) do if type(mm)=="table" and mm.u and not seen[mm.u] then seen[mm.u] = true n += 1 end end
+			return n.." different hub user"..(n==1 and "" or "s").." in the recent feed." end },
+		server = { "", "place + job id of this server", function()
+			pcall(function() setclipboard(tostring(game.JobId)) end) return "Place "..game.PlaceId.."  |  JobId copied to clipboard." end },
+		ping = { "", "relay round-trip time", function()
+			local t0 = tick() readKey(KEY) return "Relay ping: "..math.floor((tick()-t0)*1000).."ms" end },
+		time = { "", "current UTC time", function() return os.date("!%H:%M:%S UTC  (%d %b)") end },
+		ver = { "", "game + your plan", function() return GAME.."  |  plan "..TIER end },
+		-- ============ SELF / UTILITY ============
+		tp = { "user", "teleport to a player in your server", function(rest)
+			local pl, nm = needPlr(rest) if not pl then return "They aren't in this server." end
+			return tpToPlr(pl) and ("Teleported to "..pl.Name..".  ?back to return.") or "No character to teleport to." end },
+		rtp = { "", "teleport to a RANDOM player", function()
+			local opts = {}
+			for _,pl in ipairs(Players:GetPlayers()) do if pl ~= me and pl.Character then opts[#opts+1] = pl end end
+			if #opts == 0 then return "Nobody else here." end
+			local pl = opts[math.random(#opts)]
+			return tpToPlr(pl) and ("Teleported to "..pl.Name..".  ?back to return.") or "Couldn't reach them." end },
+		back = { "", "return to where you were before ?tp / ?rtp", function()
+			local mr = myRoot() if not (savedPos and mr) then return "No saved spot." end
+			pcall(function() mr.AssemblyLinearVelocity = Vector3.zero end) mr.CFrame = savedPos return "Back." end },
+		view = { "user", "spectate a player", function(rest)
+			local pl = needPlr(rest) if not pl then return "They aren't in this server." end
+			local c = pl.Character; local h = c and c:FindFirstChildOfClass("Humanoid")
+			local cam = workspace.CurrentCamera
+			if cam and h then cam.CameraSubject = h return "Viewing "..pl.Name..".  ?unview to stop." end
+			local pt = c and c:FindFirstChildWhichIsA("BasePart")
+			if cam and pt then cam.CameraSubject = pt return "Viewing "..pl.Name..".  ?unview to stop." end
+			return "Their character isn't loaded for you." end },
+		unview = { "", "camera back on you", function()
+			local cam = workspace.CurrentCamera local h = myHum()
+			if cam then pcall(function() cam.CameraSubject = h end) end return "Camera back on you." end },
+		speed = { "n", "set your WalkSpeed", function(rest)
+			local n = tonumber(rest:match("%d+%.?%d*")) if not n then return "Use:  ?speed 32" end
+			local h = myHum() if not h then return "No humanoid." end
+			if spdOrig == nil then spdOrig = h.WalkSpeed end
+			h.WalkSpeed = math.clamp(n, 1, 500) return "Speed "..h.WalkSpeed.."." end },
+		speedreset = { "", "back to normal speed", function()
+			local h = myHum() if h and spdOrig then h.WalkSpeed = spdOrig end return "Speed reset." end },
+		jump = { "n", "set your JumpPower", function(rest)
+			local n = tonumber(rest:match("%d+%.?%d*")) if not n then return "Use:  ?jump 80" end
+			local h = myHum() if not h then return "No humanoid." end
+			if jmpOrig == nil then jmpOrig = h.JumpPower end
+			pcall(function() h.UseJumpPower = true end) h.JumpPower = math.clamp(n, 1, 500) return "Jump "..h.JumpPower.."." end },
+		jumpreset = { "", "back to normal jump", function()
+			local h = myHum() if h and jmpOrig then h.JumpPower = jmpOrig end return "Jump reset." end },
+		fly = { "", "simple fly (WASD + Space up / Ctrl down)", function()
+			if flyOn then return "Already flying - ?unfly to stop." end
+			flyOn = true
+			task.spawn(function()
+				while flyOn do
+					local r = myRoot()
+					if r then pcall(function()
+						local cam = workspace.CurrentCamera
+						local v = Vector3.zero
+						if cam then
+							if UIS:IsKeyDown(Enum.KeyCode.W) then v += cam.CFrame.LookVector end
+							if UIS:IsKeyDown(Enum.KeyCode.S) then v -= cam.CFrame.LookVector end
+							if UIS:IsKeyDown(Enum.KeyCode.D) then v += cam.CFrame.RightVector end
+							if UIS:IsKeyDown(Enum.KeyCode.A) then v -= cam.CFrame.RightVector end
+							if UIS:IsKeyDown(Enum.KeyCode.Space) then v += Vector3.new(0,1,0) end
+							if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then v -= Vector3.new(0,1,0) end
+						end
+						r.AssemblyLinearVelocity = (v.Magnitude > 0 and v.Unit * 60 or Vector3.zero)
+					end) end
+					task.wait()
+				end
+				local r = myRoot() if r then pcall(function() r.AssemblyLinearVelocity = Vector3.zero end) end
+			end)
+			return "Fly ON.  WASD + Space / Ctrl.  ?unfly to stop." end },
+		unfly = { "", "stop flying", function() flyOn = false return "Fly off." end },
+		noclip = { "", "walk through walls", function()
+			if clipOff then return "Noclip already on - ?clip to stop." end
+			clipOff = true
+			task.spawn(function()
+				while clipOff do
+					local c = me.Character
+					if c then pcall(function() for _,d in ipairs(c:GetDescendants()) do if d:IsA("BasePart") and d.CanCollide then d.CanCollide = false end end end) end
+					task.wait(0.1)
+				end
+			end)
+			return "Noclip ON.  ?clip to stop." end },
+		clip = { "", "collisions back on", function()
+			clipOff = false
+			local c = me.Character
+			if c then pcall(function() for _,d in ipairs(c:GetDescendants()) do if d:IsA("BasePart") then d.CanCollide = true end end end) end
+			return "Noclip off." end },
+		invis = { "", "your character goes see-through ON YOUR SCREEN only", function()
+			if invisOn then return "Already invisible - ?visible" end
+			invisOn = true
+			task.spawn(function()
+				while invisOn do
+					local c = me.Character
+					if c then pcall(function() for _,d in ipairs(c:GetDescendants()) do if d:IsA("BasePart") then d.LocalTransparencyModifier = 0.85 end end end) end
+					task.wait(0.25)
+				end
+				local c = me.Character
+				if c then pcall(function() for _,d in ipairs(c:GetDescendants()) do if d:IsA("BasePart") then d.LocalTransparencyModifier = 0 end end end) end
+			end)
+			return "Invisible (your screen only - others still see you)." end },
+		visible = { "", "stop being see-through", function() invisOn = false return "Visible again." end },
+		unstuck = { "", "nudge yourself up 8 studs", function()
+			local mr = myRoot() if not mr then return "No character." end
+			pcall(function() mr.AssemblyLinearVelocity = Vector3.zero end) mr.CFrame = mr.CFrame + Vector3.new(0,8,0) return "Nudged up." end },
+		sit = { "", "sit down", function() local h = myHum() if h then h.Sit = true end return "Sitting." end },
+		reset = { "", "reset your character", function()
+			local h = myHum() if h then pcall(function() h.Health = 0 end) end
+			pcall(function() me.Character:BreakJoints() end) return "Reset." end },
+		rejoin = { "", "rejoin THIS server", function()
+			pcall(function() TeleS:TeleportToPlaceInstance(game.PlaceId, game.JobId, me) end) return "Rejoining..." end },
+		hop = { "", "jump to a fresh server", function()
+			pcall(function() TeleS:Teleport(game.PlaceId, me) end) return "Hopping..." end },
+		fov = { "n", "camera field of view (10-120)", function(rest)
+			local n = tonumber(rest:match("%d+")) if not n then return "Use:  ?fov 90" end
+			pcall(function() workspace.CurrentCamera.FieldOfView = math.clamp(n, 10, 120) end) return "FOV "..math.clamp(n,10,120).."." end },
+		fovreset = { "", "normal FOV (70)", function()
+			pcall(function() workspace.CurrentCamera.FieldOfView = 70 end) return "FOV reset." end },
+		bright = { "", "fullbright (see in the dark)", function()
+			if not lightSaved then lightSaved = { b = Light.Brightness, c = Light.ClockTime, f = Light.FogEnd, g = Light.GlobalShadows } end
+			pcall(function() Light.Brightness = 2 Light.ClockTime = 14 Light.FogEnd = 1e6 Light.GlobalShadows = false end)
+			brightOn = true return "Fullbright ON.  ?unbright to undo." end },
+		unbright = { "", "normal lighting", function()
+			if lightSaved then pcall(function() Light.Brightness = lightSaved.b Light.ClockTime = lightSaved.c Light.FogEnd = lightSaved.f Light.GlobalShadows = lightSaved.g end) end
+			brightOn = false return "Lighting back to normal." end },
+		day = { "", "make it daytime (your screen only)", function() pcall(function() Light.ClockTime = 12 end) return "Daytime." end },
+		night = { "", "make it night (your screen only)", function() pcall(function() Light.ClockTime = 0 end) return "Night." end },
+		copyid = { "user", "copy their UserId", function(rest)
+			local pl = needPlr(rest) if not pl then return "They aren't in this server." end
+			pcall(function() setclipboard(tostring(pl.UserId)) end) return "Copied "..pl.UserId.."." end },
+		copyname = { "user", "copy their exact username", function(rest)
+			local pl = needPlr(rest) if not pl then return "They aren't in this server." end
+			pcall(function() setclipboard(pl.Name) end) return "Copied @"..pl.Name.."." end },
+		copyprofile = { "user", "copy their profile link", function(rest)
+			local pl = needPlr(rest) if not pl then return "They aren't in this server." end
+			pcall(function() setclipboard("https://www.roblox.com/users/"..pl.UserId.."/profile") end) return "Profile link copied." end },
+	}
+	local function runCmd(t)
+		local cmd, rest = t:match("^%?(%w+)%s*(.*)$")
+		cmd = string.lower(tostring(cmd or ""))
+		if cmd == "help" then cmd = "cmds" end
+		local e = CMDS[cmd]
+		if not e then notifyLocal("Staff", "Unknown command - type  ?cmds") return end
+		local ok, res = pcall(e[3], rest or "")
+		notifyLocal("Staff", ok and tostring(res or "Done.") or "That command hit an error.")
+	end
+	local lastSend = 0
+	local function doSend()
+		local txt = tostring(box.Text or ""):gsub("^%s+",""):gsub("%s+$","")
+		if txt == "" then return end
+		if IS_MOD and txt:sub(1,1) == "?" then box.Text = "" runCmd(txt) return end
+		local myLow = string.lower(me.Name)
+		local mts = tonumber(MODSTATE.mu[myLow] or MODSTATE.mu[string.lower(me.DisplayName or "")] or 0) or 0
+		if mts > os.time() then box.Text = "" notifyLocal("Live Chat","You are muted by staff for another "..math.ceil((mts-os.time())/60).." min.") return end
+		if #txt > 120 then txt = string.sub(txt,1,120) end
+		if not IS_MOD and (tonumber(MODSTATE.lk) or 0) == 1 then box.Text = "" notifyLocal("Live Chat","Chat is locked by staff right now.") return end
+		if (tonumber(MODSTATE.ne[myLow] or 0) or 0) <= os.time() then txt = emojify(txt) end
+		local cool = IS_MOD and 2 or math.max(2, tonumber(MODSTATE.sl) or 0)
+		if tick()-lastSend < cool then notifyLocal("Live Chat","Slow down a little"..(cool > 2 and ("  (slowmode "..cool.."s)") or "")..".") return end
+		lastSend = tick()
+		local rule = scanText(txt)
+		if rule then
+			box.Text = ""
+			notifyLocal("AI Mod","Message blocked ("..rule..") and reported to staff.")
+			reportMsg(me.Name, me.UserId, txt, rule, "blocked before send")
+			return
+		end
+		box.Text = ""
+		local c = readKey(KEY) or {}
+		c[#c+1] = { u=me.Name, id=me.UserId, t=TIER, g=GAME, m=txt, ts=os.time(), md=IS_MOD and 1 or nil }
+		while #c > 20 do table.remove(c,1) end
+		cache = c; writeKey(KEY, c); render()
+	end
+	send.MouseButton1Click:Connect(doSend)
+	box.FocusLost:Connect(function(enter) if enter then doSend() end end)
+
+	-- ---- warn delivery (relay -> popup notification, NOT chat) ----
+	_G.__DreamWarnSend = function(target, msg, kind)
+		local w = readKey(WKEY) or {}
+		w[#w+1] = { to=tostring(target), m=tostring(msg), by=me.Name, ts=os.time(), k=kind }
+		while #w > 10 do table.remove(w,1) end
+		writeKey(WKEY, w)
+		if kind == nil or kind == "w" then   -- real warnings land in the tracker
+			local l = readKey(LKEY) or {}
+			l[#l+1] = { to=tostring(target), m=tostring(msg), by=me.Name, ts=os.time() }
+			while #l > 40 do table.remove(l,1) end
+			writeKey(LKEY, l)
+		end
+		return true
+	end
+	local boot = os.time()
+	local shownW = {}
+	local function handleWarn(x)
+		if type(x) ~= "table" then return end
+		local id = tostring(x.ts or 0)..string.lower(tostring(x.to or ""))..tostring(x.k or "w")
+		if shownW[id] then return end
+		shownW[id] = true
+		local tgt = string.lower(tostring(x.to or ""))
+		if tgt ~= "*" and tgt ~= string.lower(me.Name) then return end
+		if (tonumber(x.ts) or 0) < boot - 60 then return end  -- ignore anything from before this session
+		local kind = tostring(x.k or "w")
+		local head1, cAcc, cBg, nTitle
+		if kind == "a" then head1="ANNOUNCEMENT  ("..tostring(x.by or "staff")..")" cAcc=Color3.fromRGB(90,160,255) cBg=Color3.fromRGB(14,20,32) nTitle="ANNOUNCEMENT"
+		elseif kind == "d" then head1="DM FROM STAFF  ("..tostring(x.by or "?")..")" cAcc=Color3.fromRGB(180,150,255) cBg=Color3.fromRGB(22,18,34) nTitle="Staff DM"
+		elseif kind == "n" then notifyLocal("Message from staff", tostring(x.m)) return
+		else head1="WARNING FROM STAFF  ("..tostring(x.by or "?")..")" cAcc=Color3.fromRGB(255,80,80) cBg=Color3.fromRGB(30,16,18) nTitle="ADMIN WARNING" end
+		notifyLocal(nTitle, tostring(x.m))
+		pcall(function()
+			local card = Instance.new("Frame")
+			card.Size = UDim2.new(0,380,0,110); card.Position = UDim2.new(0.5,-190,0.22,0)
+			card.BackgroundColor3 = cBg; card.Parent = gui
+			local c=Instance.new("UICorner") c.CornerRadius=UDim.new(0,12) c.Parent=card
+			local st=Instance.new("UIStroke") st.Color=cAcc st.Thickness=2 st.Parent=card
+			local t1=Instance.new("TextLabel") t1.Size=UDim2.new(1,-20,0,30) t1.Position=UDim2.new(0,10,0,10)
+			t1.BackgroundTransparency=1 t1.Font=Enum.Font.GothamBold t1.TextSize=16
+			t1.TextColor3=cAcc t1.Text=head1 t1.Parent=card
+			local t2=Instance.new("TextLabel") t2.Size=UDim2.new(1,-20,0,56) t2.Position=UDim2.new(0,10,0,44)
+			t2.BackgroundTransparency=1 t2.Font=Enum.Font.Gotham t2.TextSize=13 t2.TextWrapped=true
+			t2.TextColor3=Color3.fromRGB(235,220,222) t2.Text=tostring(x.m) t2.Parent=card
+			task.delay(7, function() pcall(function() card:Destroy() end) end)
+		end)
+	end
+
+	-- ---- poll loop ----
+	local lastJson = ""
+	local reported = {}
+	while AAR.alive do
+		task.wait(4)
+		if not gui.Parent then break end
+		local w = readKey(WKEY)
+		if w then for _,x in ipairs(w) do handleWarn(x) end end
+		local ms = readKey(MKEY)
+		if type(ms) == "table" then
+			MODSTATE.mu = (type(ms.mu)=="table" and ms.mu) or {}
+			MODSTATE.ne = (type(ms.ne)=="table" and ms.ne) or {}
+			MODSTATE.sl = tonumber(ms.sl) or 0
+			MODSTATE.lk = tonumber(ms.lk) or 0
+			MODSTATE.bw = (type(ms.bw)=="table" and ms.bw) or {}
+			MODSTATE.tt = (type(ms.tt)=="table" and ms.tt) or {}
+			pcall(function() _G.__DreamTitleOv = MODSTATE.tt end)
+		end
+		local myL = string.lower(me.Name)
+		local mts2 = tonumber(MODSTATE.mu[myL] or 0) or 0
+		if mts2 > os.time() and mts2 ~= lastMuteNotif then lastMuteNotif = mts2 notifyLocal("Live Chat","A staff member muted you for "..math.ceil((mts2-os.time())/60).." min.") end
+		local c = readKey(KEY)
+		if c then
+			local j = ""
+			pcall(function() j = HttpService:JSONEncode(c) end)
+			if j ~= lastJson then
+				lastJson = j
+				cache = c
+				if win.Visible then render() else btn.Text = "CHAT  •" end
+				-- mods auto-report NEW flagged messages that slipped into the feed
+				if IS_MOD then
+					for _,m in ipairs(c) do
+						if type(m)=="table" and (tonumber(m.ts) or 0) >= boot then
+							local rid = tostring(m.ts or 0)..tostring(m.u or "")
+							if not reported[rid] then
+								local rule = scanText(m.m)
+								if rule then reported[rid]=true reportMsg(m.u, m.id, m.m, rule, "seen in feed") end
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+end)
+-- ═══ END LIVE CHAT ═══
+
+
+
+
+local LP = Players.LocalPlayer
+    local function isAC(o)
+        if not (o:IsA("LocalScript") or o:IsA("Script")) then return false end
+        local n = o.Name:lower()
+        return n:find("anti", 1, true) ~= nil   -- _Client_AntiFling, AntiCheat, AntiTeleport, ...
+    end
+    local function kill(o) pcall(function() o.Disabled = true end) end
+    local function sweep(root)
+        if not root then return end
+        pcall(function() for _, d in ipairs(root:GetDescendants()) do if isAC(d) then kill(d) end end end)
+        pcall(function() root.DescendantAdded:Connect(function(d) if isAC(d) then task.defer(kill, d) end end) end)
+    end
+    pcall(function()   -- templates first: everything cloned from here spawns already-disabled
+        local files = RS:WaitForChild("Files", 9)
+        local client = files and files:FindFirstChild("Client")
+        sweep(client)
+    end)
+    sweep(LP:FindFirstChild("PlayerScripts") or LP:WaitForChild("PlayerScripts", 5))
+    sweep(LP:FindFirstChild("PlayerGui"))
+    if LP.Character then sweep(LP.Character) end
+    LP.CharacterAdded:Connect(function(c) task.wait(0.2); sweep(c) end)
+end)
+
+-- ════════ UI: Fluriore (Rayfield-compatible shim) with a Rayfield FALLBACK ════════
+-- The hub was written against Rayfield's API. We load Fluriore and expose a tiny `Rayfield`
+-- adapter mapping CreateWindow/CreateTab/CreateSection/CreateToggle/... onto Fluriore's real
+-- API (verified: MakeGui / CreateTab / AddSection / AddToggle/AddSlider/AddButton/AddInput/
+-- AddDropdown{:Refresh}/AddParagraph / MakeNotify / DestroyGui). If Fluriore fails to load,
+-- we fall back to the FULL Rayfield so EVERY tab + feature still appears.
+local Rayfield
+local _FluWindow
+do
+    local FluLib
+    pcall(function() FluLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mc4121ban/Fluriore-UI/main/source.lua"))() end)
+
+    if type(FluLib) == "table" and type(FluLib.MakeGui) == "function" then
+        local ACCENT = Color3.fromRGB(255, 32, 32)   -- Dream Hub v2 GUI: punchier glowing RED accent
+        -- ---- New GUI: DEEP-BLACK panels with RED edge outlines, keeping the red accents ----
+        -- Fluriore ships a dark theme (Main = RGB 15,15,15). We push every non-red dark
+        -- background to pure black, then trace the larger panels with a thin red stroke so the
+        -- whole hub reads as glowing-red-on-black. Red accents / light text are never touched.
+        local CoreGuiSvc = game:GetService("CoreGui")
+        local VBLACK = Color3.fromRGB(0,0,0)
+        local EDGE   = Color3.fromRGB(150, 22, 22)   -- subtle red panel outline
+        local function lum(c) return 0.299*c.R + 0.587*c.G + 0.114*c.B end
+        local function isReddish(c) return c.R > c.G + 0.12 and c.R > c.B + 0.12 end  -- protect red accents
+        local function edgeOne(o)
+            -- Trace ONLY the larger black panels with a faint red outline. We tag them so we
+            -- never double-stroke, and skip small controls/text to keep it clean.
+            pcall(function()
+                if not (o:IsA("Frame") or o:IsA("ScrollingFrame")) then return end
+                if o:GetAttribute("DreamEdged") then return end
+                local sz = o.AbsoluteSize
+                if sz.X < 120 or sz.Y < 26 then return end
+                o:SetAttribute("DreamEdged", true)
+                local st = Instance.new("UIStroke")
+                st.Color = EDGE; st.Thickness = 1; st.Transparency = 0.25
+                st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; st.Parent = o
+            end)
+        end
+        local function recolorOne(o)
+            if not o then return end
+            pcall(function()
+                if o:IsA("GuiObject") then
+                    local bg = o.BackgroundColor3
+                    -- Only darken genuinely-dark, non-red panels -> pure black. Never touch red
+                    -- accents (selected-tab bar, toggles-on, section gradient) or light text.
+                    if (not isReddish(bg)) and lum(bg) < 0.30 then
+                        o.BackgroundColor3 = VBLACK
+                        edgeOne(o)
+                    end
+                end
+            end)
+        end
+        local function recolorTree(root)
+            if not root then return end
+            recolorOne(root)
+            for _,d in ipairs(root:GetDescendants()) do recolorOne(d) end
+        end
+        local function watchGui(gui)
+            if not gui then return end
+            recolorTree(gui)
+            pcall(function() gui.DescendantAdded:Connect(function(d) task.defer(recolorOne, d) end) end)
+        end
+        local TAB_ICON = "rbxassetid://16932740082"
+        local ICONS = {   -- Lucide-name -> real asset id (Fluriore only takes rbxassetid, no Lucide names)
+            home="rbxassetid://7733960981", swords="rbxassetid://7733798747", sparkles="rbxassetid://8997388430",
+            navigation="rbxassetid://7734020989", footprints="rbxassetid://7743870731", eye="rbxassetid://7733774602",
+            target="rbxassetid://7743872758", wrench="rbxassetid://7743878358",
+        }
+        local function arr(t) local o={}; if type(t)=="table" then for _,v in ipairs(t) do o[#o+1]=v end end; return o end
+        local function asTable(v) if type(v)=="table" then return v elseif v~=nil then return {v} else return {} end end
+        local shim = {}
+        -- CUSTOM fast toasts. Fluriore's MakeNotify printed the message TWICE (once next to the title,
+        -- once as the body) and hung around too long. These are small, single-text, gone in ~2s.
+        local notifList
+        local function ensureNotif()
+            if notifList and notifList.Parent then return end
+            local g = Instance.new("ScreenGui")
+            g.Name = "DreamNotif"; g.ResetOnSpawn = false; g.DisplayOrder = 99999; g.IgnoreGuiInset = true
+            pcall(function() g.Parent = (gethui and gethui()) or CoreGuiSvc end)
+            if not g.Parent then g.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui") end
+            notifList = Instance.new("Frame")
+            notifList.BackgroundTransparency = 1; notifList.AnchorPoint = Vector2.new(1, 1)
+            notifList.Position = UDim2.new(1, -14, 1, -14); notifList.Size = UDim2.fromOffset(290, 420); notifList.Parent = g
+            local lay = Instance.new("UIListLayout")
+            lay.VerticalAlignment = Enum.VerticalAlignment.Bottom; lay.HorizontalAlignment = Enum.HorizontalAlignment.Right
+            lay.Padding = UDim.new(0, 6); lay.Parent = notifList
+        end
+        function shim:Notify(cfg)
+            cfg = cfg or {}
+            pcall(function()
+                ensureNotif()
+                local TS = game:GetService("TweenService")
+                local msg = tostring(cfg.Content or cfg.Description or "")
+                local f = Instance.new("Frame")
+                f.BackgroundColor3 = Color3.fromRGB(6, 6, 6); f.BorderSizePixel = 0; f.Size = UDim2.new(1, 0, 0, 42); f.Parent = notifList
+                Instance.new("UICorner", f).CornerRadius = UDim.new(0, 8)
+                local st = Instance.new("UIStroke"); st.Color = ACCENT; st.Thickness = 1.3; st.Parent = f
+                local t = Instance.new("TextLabel")
+                t.BackgroundTransparency = 1; t.Font = Enum.Font.GothamBold; t.TextSize = 12; t.TextColor3 = ACCENT
+                t.TextXAlignment = Enum.TextXAlignment.Left; t.Position = UDim2.fromOffset(10, 4); t.Size = UDim2.new(1, -20, 0, 14)
+                t.Text = tostring(cfg.Title or "Dream Hub"); t.Parent = f
+                local b = Instance.new("TextLabel")
+                b.BackgroundTransparency = 1; b.Font = Enum.Font.Gotham; b.TextSize = 12; b.TextColor3 = Color3.fromRGB(235, 235, 235)
+                b.TextXAlignment = Enum.TextXAlignment.Left; b.TextWrapped = true; b.TextTruncate = Enum.TextTruncate.AtEnd
+                b.Position = UDim2.fromOffset(10, 19); b.Size = UDim2.new(1, -20, 0, 20); b.Text = msg; b.Parent = f
+                f.BackgroundTransparency = 1; st.Transparency = 1; t.TextTransparency = 1; b.TextTransparency = 1
+                TS:Create(f, TweenInfo.new(0.12), { BackgroundTransparency = 0.05 }):Play()
+                TS:Create(st, TweenInfo.new(0.12), { Transparency = 0.2 }):Play()
+                TS:Create(t, TweenInfo.new(0.12), { TextTransparency = 0 }):Play()
+                TS:Create(b, TweenInfo.new(0.12), { TextTransparency = 0 }):Play()
+                task.delay(math.min(cfg.Duration or 2, 2.4), function()   -- FAST: visible ~2s max, then fades
+                    pcall(function()
+                        TS:Create(f, TweenInfo.new(0.18), { BackgroundTransparency = 1 }):Play()
+                        TS:Create(st, TweenInfo.new(0.18), { Transparency = 1 }):Play()
+                        TS:Create(t, TweenInfo.new(0.18), { TextTransparency = 1 }):Play()
+                        TS:Create(b, TweenInfo.new(0.18), { TextTransparency = 1 }):Play()
+                    end)
+                    task.delay(0.2, function() pcall(function() f:Destroy() end) end)
+                end)
+            end)
+        end
+        function shim:Destroy()
+            pcall(function() if _FluWindow then (_FluWindow.DestroyGui or _FluWindow.Destroy)(_FluWindow) end end)
+        end
+        function shim:CreateWindow(cfg)
+            cfg = cfg or {}
+            local col = ACCENT   -- Dream Hub: red accent (see ACCENT above)
+            _FluWindow = FluLib:MakeGui({ NameHub = cfg.Name or "Hub", Description = cfg.LoadingSubtitle or "", Color = col })
+            -- Flip Fluriore's dark theme to white + strong black, and keep new elements recolored.
+            pcall(function() watchGui(CoreGuiSvc:FindFirstChild("HirimiGui")) end)
+            pcall(function()
+                local nb = CoreGuiSvc:FindFirstChild("NotifyGui")
+                if nb then watchGui(nb) end
+                CoreGuiSvc.ChildAdded:Connect(function(ch)
+                    if ch and ch.Name == "NotifyGui" then task.defer(watchGui, ch) end
+                end)
+            end)
+            -- MOBILE FIX: stop invisible full-screen frames from eating touch input (blocks joystick/movement)
+            task.defer(function()
+                task.wait(1)
+                local function unblockMobile(gui)
+                    if not gui then return end
+                    for _, d in ipairs(gui:GetDescendants()) do
+                        pcall(function()
+                            if d:IsA("Frame") and d.Active then
+                                local sz = d.AbsoluteSize
+                                if sz.X > 400 and sz.Y > 300 and d.BackgroundTransparency > 0.8 then
+                                    local hasButtons = false
+                                    for _, c in ipairs(d:GetChildren()) do
+                                        if c:IsA("TextButton") or c:IsA("ImageButton") then
+                                            hasButtons = true; break
+                                        end
+                                    end
+                                    if not hasButtons then d.Active = false end
+                                end
+                            end
+                        end)
+                    end
+                end
+                pcall(function() unblockMobile(CoreGuiSvc:FindFirstChild("HirimiGui")) end)
+                -- Re-apply if Fluriore adds new frames later
+                pcall(function()
+                    local hg = CoreGuiSvc:FindFirstChild("HirimiGui")
+                    if hg then hg.DescendantAdded:Connect(function(d)
+                        task.defer(function()
+                            pcall(function()
+                                if d:IsA("Frame") and d.Active and d.AbsoluteSize.X > 400 and d.AbsoluteSize.Y > 300 and d.BackgroundTransparency > 0.8 then
+                                    local hasButtons = false
+                                    for _, c in ipairs(d:GetChildren()) do
+                                        if c:IsA("TextButton") or c:IsA("ImageButton") then hasButtons = true; break end
+                                    end
+                                    if not hasButtons then d.Active = false end
+                                end
+                            end)
+                        end)
+                    end) end
+                end)
+            end)
+            local W = {}
+            function W:CreateTab(name, icon)
+                local flTab = _FluWindow:CreateTab({ Name = name, Icon = ICONS[icon] or TAB_ICON })
+                local T, cur = {}, nil
+                local function sec() if not cur then cur = flTab:AddSection("General") end return cur end
+                function T:CreateSection(nm) cur = flTab:AddSection(nm or "Section"); return T end
+                function T:CreateParagraph(c) c=c or {}; pcall(function() sec():AddParagraph({ Title=c.Title or "", Content=c.Content or "" }) end); return {} end
+                function T:CreateButton(c) c=c or {}; pcall(function() sec():AddButton({ Title=c.Name or "Button", Content="", Callback=c.Callback or function() end }) end); return {} end
+                function T:CreateToggle(c) c=c or {}; pcall(function() sec():AddToggle({ Title=c.Name or "Toggle", Content="", Default=c.CurrentValue and true or false, Callback=c.Callback or function() end }) end); return { Set=function() end } end
+                function T:CreateSlider(c)
+                    c=c or {}; local r=c.Range or {0,100}
+                    pcall(function() sec():AddSlider({ Title=c.Name or "Slider", Content=c.Suffix or "", Min=r[1] or 0, Max=r[2] or 100, Increment=c.Increment or 1, Default=c.CurrentValue or r[1] or 0, Callback=c.Callback or function() end }) end)
+                    return { Set=function() end }
+                end
+                function T:CreateInput(c)
+                    c=c or {}
+                    -- Fluriore AddInput reads Title + Content ONLY; its placeholder is hardcoded. So we put the
+                    -- label in Title and the hint in Content (the box's own placeholder can't be changed by the lib).
+                    local nm=c.Name or "Input"; local ph=c.PlaceholderText or ""
+                    pcall(function() sec():AddInput({ Title=nm, Content=ph, Callback=c.Callback or function() end }) end)
+                    -- the lib hardcodes the inner placeholder to "Write your input there" -> rewrite the box we
+                    -- just created (first still-default TextBox, creation order) so it shows OUR hint instead
+                    task.defer(function() pcall(function()
+                        local host=(typeof(gethui)=="function" and gethui()) or game:GetService("CoreGui")
+                        for _,d in ipairs(host:GetDescendants()) do
+                            if d:IsA("TextBox") and d.PlaceholderText=="Write your input there" then d.PlaceholderText=(ph~="" and ph or "type here...") break end
+                        end
+                    end) end)
+                    return { Set=function() end }
+                end
+                function T:CreateColorPicker(c)
+                    -- Fluriore has no color picker -> expose an "r,g,b" input that feeds the callback a Color3
+                    c=c or {}
+                    pcall(function() sec():AddInput({ Title=(c.Name or "Color").." (type r,g,b)", Content="e.g. 255,40,40", Callback=function(txt)
+                        local r,g,b = tostring(txt):match("(%d+)%D+(%d+)%D+(%d+)")
+                        if r and c.Callback then pcall(c.Callback, Color3.fromRGB(tonumber(r), tonumber(g), tonumber(b))) end
+                    end }) end)
+                    return { Set=function() end }
+                end
+                function T:CreateDropdown(c)
+                    c=c or {}; local el
+                    pcall(function() el = sec():AddDropdown({ Title=c.Name or "Dropdown", Content="", Multi=c.MultipleOptions and true or false, Options=arr(c.Options), Default=asTable(c.CurrentOption), Callback=c.Callback or function() end }) end)
+                    return {
+                        Refresh = function(_, newOpts) if el and type(el.Refresh)=="function" then pcall(function() el:Refresh(arr(newOpts)) end) end end,
+                        Set = function() end,
+                    }
+                end
+                return T
+            end
+            return W
+        end
+        Rayfield = shim
+    else
+        -- Fluriore unavailable → full Rayfield so every tab + feature still loads
+        Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
+    end
+end
+
+local Players             = game:GetService("Players")
+local RS                  = game:GetService("ReplicatedStorage")
+local Workspace           = game:GetService("Workspace")
+local RunService          = game:GetService("RunService")
+local UserInputService    = game:GetService("UserInputService")
+local Lighting            = game:GetService("Lighting")
+local TeleportService     = game:GetService("TeleportService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local HttpService         = game:GetService("HttpService")
+
+local LP = Players.LocalPlayer
+
+-- ============================================================
+-- SETTINGS (must be defined BEFORE any function that reads it)
+-- ============================================================
+local S = {
+    AntiRagdoll=false, AntiPush=false, AntiVoid=false,
+    SaveHealth=false, SaveHealthPct=35, SaveHealthHeight=700,
+    RemoveWaterBorder=false, AntiKillBricks=false,
+    M1Hitbox=false, M1HitboxSize=80,   -- 80 default: long spear-arm reach (arms = slider*1.5 forward, thin sides)
+    HitboxAbility=false, HitboxAbilitySize=40, HitboxAllParts=false, HitboxVisible=true,
+    OnePunch=false, OnePunchHits=5, OnePunchGuid="",   -- One Punch: VALIDATED M1s (0.35s cadence) so the server accepts each
+    FlingPunch=false, FlingRange=40, FlingPower=850,   -- fling: push the ENEMY up+away (you never move = can't die)
+    M1Warp=false, M1WarpRange=60, M1WarpReturn=true,   -- M1 Warp: snap behind the nearest enemy for the swing, then back
+    AutoM1=false, AuraM1Pro=false, AuraHit=14,
+    AutoAbility=false, AutoAbilityRange=25,
+    CastE=true, CastQ=false, CastR=false, CastT=false,
+    DashBehind=false, DashRange=45,
+    AutoDash=false, AutoDashKey="Q", AutoDashDelay=0.6,
+    CamLock=false, CamLockRange=120,
+    AimAssist=false, AimAssistRange=140, AimAssistLead=0.12, AimStrong=false, AimSmooth=0.35, AimOnM1=true,
+    Fly=false, FlySpeed=60,
+    Noclip=false,
+    SpeedHack=false, Speed=16,
+    InfiniteJump=false,
+    SpinBot=false, AntiFling=false, GodMode=false,
+    ESP=false, ESPColor=true, Tracers=false, ESPBox=false, ESPAbility=true, ESPMaxDist=0,
+    Viewing=nil, ViewTarget=nil,
+    EnemyHighlight=false, HighlightColor="Bright blue",
+    FullBright=false,
+    AutoFarm=false, FarmTarget=nil, AuraRange=60, JoltFarm=false, JoltFarmDwell=0.5, JoltFarmHealAt=55, JoltFarmHitRun=true,
+    AutoPlay=false, AutoPlayRange=100,
+    LegitAutoPlay=false, AutoParry=false, ParryKey="F", ProAutoDodge=false,
+    AntiAFK=false, InstantRespawn=false, ClickTP=false,
+    GrabDelay=3, GrabReturn=true, M1Spy=false,
+    VFXOn=false, VFXShape="Ball", VFXShapeOn=true, VFXColor=Color3.fromRGB(255,40,40), VFXColor2=Color3.fromRGB(255,180,40),
+    VFXSize=6, VFXTransparency=0.4, VFXParticles=true, VFXTexture="Sparkles", VFXRate=80, VFXSpeed=6, VFXSpread=180, VFXPSize=1.2,
+    VFXRainbow=false, VFXLight=true, VFXBrightness=5, VFXRings=false, VFXRingCount=2, VFXSpin=2, VFXBeams=false, VFXTrail=true,
+    TPTarget=nil,
+}
+
+local function getChar() return LP.Character end
+local function getHum()  local c=LP.Character; return c and c:FindFirstChildOfClass("Humanoid") end
+local function getRoot()
+    local c=LP.Character; if not c then return nil end
+    return c:FindFirstChild("HumanoidRootPart") or c.PrimaryPart or c:FindFirstChildWhichIsA("BasePart")
+end
+
+-- This game's player characters live in Workspace named by username, each with a
+-- custom "Hitbox" part and a "Health" script - MANY HAVE NO STANDARD HUMANOID.
+-- Targeting must NOT require a Humanoid (that is exactly why Kill Aura found
+-- nobody). charPart() returns the best part to aim at; isAlive() never excludes
+-- a player just because we cannot read a Humanoid.
+local function charPart(char)
+    if not char then return nil end
+    local hb = char:FindFirstChild("Hitbox")
+    if hb then
+        if hb:IsA("BasePart") then return hb end
+        if hb:IsA("Model")    then return hb.PrimaryPart or hb:FindFirstChildWhichIsA("BasePart") end
+    end
+    return char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart or char:FindFirstChildWhichIsA("BasePart")
+end
+local function isAlive(char)
+    if not char then return false end
+    if not char.Parent then return false end
+    -- Bug 10: explicit death markers first (custom-health corpses were staying "alive" = cyan ghosts forever)
+    if char:GetAttribute("Dead") == true or char:FindFirstChild("Dead") then return false end
+    local h = char:FindFirstChildOfClass("Humanoid")
+    if h then return h.Health > 0 end
+    local hp = char:GetAttribute("Health")
+    if type(hp) == "number" then return hp > 0 end
+    return true -- custom health we cannot read -> assume alive so they stay targetable
+end
+-- Read a target's CURRENT health from whatever source this game uses (Humanoid, a Health attribute, or a
+-- ValueBase named Health). Returns (hp, readable): readable=false means we genuinely can't see their HP.
+local function readHealth(char)
+    if not char then return 0, false end
+    local h = char:FindFirstChildOfClass("Humanoid")
+    if h and h.MaxHealth > 0 then return h.Health, true end
+    local hp = char:GetAttribute("Health")
+    if type(hp) == "number" then return hp, true end
+    local hv = char:FindFirstChild("Health")
+    if hv and hv:IsA("ValueBase") and type(hv.Value) == "number" then return hv.Value, true end
+    if hv then for _, v in ipairs(hv:GetDescendants()) do if v:IsA("ValueBase") and type(v.Value) == "number" then return v.Value, true end end end
+    return 0, false
+end
+-- Tiny on-screen readout so One Punch / Fling SHOW what happened (no F9 needed): target found, hits landed,
+-- their HP before -> after, whether they died / were launched. This is how you verify it in-game.
+local _cbStatus
+local function comboStatus(txt, color)
+    pcall(function()
+        if not _cbStatus then
+            local g = Instance.new("ScreenGui")
+            g.Name = "\0"; g.ResetOnSpawn = false; g.IgnoreGuiInset = true; g.DisplayOrder = 99997
+            g.Parent = (gethui and gethui()) or game:GetService("CoreGui")
+            if not g.Parent then g.Parent = LP:WaitForChild("PlayerGui") end
+            local l = Instance.new("TextLabel")
+            l.AnchorPoint = Vector2.new(0.5, 0); l.Position = UDim2.new(0.5, 0, 0, 96); l.Size = UDim2.fromOffset(460, 30)
+            l.BackgroundColor3 = Color3.fromRGB(10, 10, 12); l.BackgroundTransparency = 0.15; l.BorderSizePixel = 0
+            l.Font = Enum.Font.GothamBold; l.TextSize = 14; l.TextColor3 = Color3.fromRGB(255, 255, 255); l.Text = ""
+            Instance.new("UICorner", l).CornerRadius = UDim.new(0, 8); l.Parent = g
+            _cbStatus = l
+            AAR.owned.status = g
+        end
+        _cbStatus.Text = tostring(txt); _cbStatus.TextColor3 = color or Color3.fromRGB(255, 255, 255)
+        _cbStatus.Visible = true
+        local mine = txt
+        task.delay(3, function() if _cbStatus and _cbStatus.Text == mine then _cbStatus.Visible = false end end)
+    end)
+end
+
+-- A safe MAP SPAWN to land on (workspace.GameMap.Spawns = invisible neon Parts).
+-- Used to return you to the map after grabbing an ability so you don't get
+-- stranded in the lobby / ability area and die.
+
+-- ============================================================
+-- REMOTE LAYER (Jolt_Reliable wants BUFFERS, not strings)
+-- ============================================================
+local JoltReliable
+pcall(function()
+    JoltReliable = RS:WaitForChild("Files",10)
+        :WaitForChild("Shared"):WaitForChild("Components")
+        :WaitForChild("Jolt"):WaitForChild("Utils")
+        :WaitForChild("Remotes"):WaitForChild("Jolt_Reliable")
+end)
+
+local CAN_BUFFER = (type(buffer) == "table" and type(buffer.fromstring) == "function")
+local function toWire(s)
+    if CAN_BUFFER then
+        local ok, b = pcall(buffer.fromstring, s)
+        if ok then return b end
+    end
+    return s
+end
+local function fireRaw(payload)
+    if not JoltReliable then return end
+    pcall(function() JoltReliable:FireServer(toWire(payload), {}) end)
+end
+
+-- ============================================================
+-- JOLT AUTO FARM (user method): the game's own Jolt component exposes Client("Deploy")/Client("ToLobby"), and the
+-- real M1 is a garbage-collected function named "usem1". We invoke Deploy, find usem1 via getgc, then bounce
+-- between on-map players spamming the hit + snapping onto them. Requires an executor with getgc + getinfo.
+-- ============================================================
+local JoltComp, joltDeploy, joltToLobby
+pcall(function()
+    JoltComp = require(RS:WaitForChild("Files",10):WaitForChild("Shared"):WaitForChild("Components"):WaitForChild("Jolt"))
+    if JoltComp and JoltComp.Client then
+        joltDeploy  = JoltComp.Client("Deploy")
+        joltToLobby = JoltComp.Client("ToLobby")
+    end
+end)
+local function joltDeployNow() if joltDeploy and joltDeploy.Invoke then pcall(function() joltDeploy:Invoke() end) end end
+-- find the "usem1" function once, cached
+local _fireHit
+local function getFireHit()
+    if _fireHit then return _fireHit end
+    if type(getgc)~="function" or type(getinfo)~="function" then return nil end
+    pcall(function()
+        for _,v in pairs(getgc(true)) do
+            if type(v)=="function" then
+                local ok,info = pcall(getinfo, v)
+                if ok and info and type(info.name)=="string" and info.name:lower():find("usem1",1,true) then _fireHit=v; break end
+            end
+        end
+    end)
+    return _fireHit
+end
+_G.AA_JOLTFARM_DEPLOY = joltDeployNow   -- exposed so Auto Respawn / manual deploy can reuse it
+
+local function nowStamp()
+    local t = 0
+    pcall(function() t = Workspace:GetServerTimeNow() end)
+    if t == 0 then pcall(function() t = os.clock() end) end
+    return string.pack("<d", t)
+end
+
+-- M1 packet. NOTE: old version had a stray byte (199) glued to the timestamp
+-- marker which corrupted every M1 - removed. Timestamp is exactly 8 bytes.
+local M1_HEAD = string.char(5).."UseM1"..string.char(65,16,3,9).."Timestamp"..string.char(2)
+local M1_TAIL = string.char(3,5).."Index"..string.char(17,32,3,4).."Hits"..string.char(16,0,0)
+local function buildM1() return M1_HEAD .. nowStamp() .. M1_TAIL end
+
+-- StartSkill packet, NEW format (taken from the One Shot Punch capture):
+-- \10 StartSkill \131\17\0 \3 <len><name> \16\3 \9 Timestamp \2 <8-byte time> \0
+local SK_HEAD = string.char(10).."StartSkill"..string.char(131,17,0,3)
+local SK_MID  = string.char(16,3,9).."Timestamp"..string.char(2)
+local function buildSkillNew(name)
+    return SK_HEAD .. string.char(#name) .. name .. SK_MID .. nowStamp() .. string.char(0)
+end
+
+-- legacy StartSkill format (kept as a fallback for direction skills like Dash)
+local function buildSkillOld(skill, direction)
+    direction = direction or "Forward"
+    return string.char(10).."StartSkillB"..string.char(3)..string.char(#skill)..skill
+        ..string.char(16,3,9).."Direction"..string.char(3)..string.char(#direction)..direction
+        ..string.char(3,9).."Timestamp"..string.char(2)..nowStamp()..string.char(0)
+end
+-- new format + a Direction field (best guess for dash on the new schema)
+local function buildSkillNewDir(skill, direction)
+    direction = direction or "Forward"
+    return SK_HEAD .. string.char(#skill) .. skill
+        ..string.char(16,3,9).."Direction"..string.char(3)..string.char(#direction)..direction
+        ..string.char(3,9).."Timestamp"..string.char(2)..nowStamp()..string.char(0)
+end
+
+-- DISABLED: firing this hand-crafted raw M1 packet at the Jolt remote is what got you KICKED
+-- the moment Auto M1 turned on (the server rejects/flags the crafted packet), and it dealt no
+-- damage anyway (empty "Hits" list). The auto features now rely ONLY on the legit
+-- VirtualInputManager click, which drives the game's own real M1 (no kick).
+local function fireM1() end
+
+-- ── M1 PACKET SPY (debug) ──────────────────────────────────────
+-- REMOVED: this used hookmetamethod(game,"__namecall",...). Ability Arena's anti-cheat has a
+-- "namecallInstance detector" that spots a hooked __namecall metamethod and 267-kicks you — and
+-- the old hook was NEVER uninstalled (toggling the feature off left the hook in place forever), so
+-- one use bricked every future session. It was only ever a debug capture tool, so we drop the hook
+-- entirely. If a raw remote logger is ever needed again, do it without touching the namecall
+-- metamethod (e.g. a per-remote OutgoingReplication signal), never a global __namecall hook.
+local function installM1Spy() return false end
+local function fireSkill(skill) fireRaw(buildSkillNew(skill)) end
+local function fireDash(direction)
+    fireRaw(buildSkillNewDir("Dash", direction))
+    fireRaw(buildSkillOld("Dash", direction))
+end
+
+-- ============================================================
+-- CLICKING (real M1s come from real clicks)
+-- ============================================================
+local function typingNow()
+    local ok, box = pcall(function() return UserInputService:GetFocusedTextBox() end)
+    return ok and box ~= nil
+end
+
+local function safeClickPoint(force)
+    local cam = Workspace.CurrentCamera
+    if not cam then return nil end
+    local vp = cam.ViewportSize
+    local candidates = {
+        Vector2.new(vp.X*0.50, vp.Y*0.62),
+        Vector2.new(vp.X*0.50, vp.Y*0.50),
+        Vector2.new(vp.X*0.35, vp.Y*0.55),
+        Vector2.new(vp.X*0.65, vp.Y*0.55),
+        Vector2.new(vp.X*0.50, vp.Y*0.40),
+        Vector2.new(vp.X*0.25, vp.Y*0.70),
+        Vector2.new(vp.X*0.75, vp.Y*0.70),
+        Vector2.new(vp.X*0.50, vp.Y*0.78),
+        Vector2.new(vp.X*0.40, vp.Y*0.35),
+        Vector2.new(vp.X*0.60, vp.Y*0.35),
+        Vector2.new(vp.X*0.90, vp.Y*0.88),
+        Vector2.new(vp.X*0.10, vp.Y*0.88),
+    }
+    local pg = LP:FindFirstChildOfClass("PlayerGui")
+    if not pg then return candidates[1] end
+    for _, pt in ipairs(candidates) do
+        local ok, objs = pcall(function() return pg:GetGuiObjectsAtPosition(pt.X, pt.Y) end)
+        if ok and objs and #objs == 0 then return pt end
+    end
+    -- Forced combat actions must still create a real game click when a large executor UI
+    -- covers every candidate. Non-forced/manual helpers continue to skip safely.
+    return force and Vector2.new(vp.X*0.5, vp.Y*0.5) or nil
+end
+
+local vimClickUntil = 0   -- injection marker: OUR OWN VIM clicks must not re-trigger the click-combat hooks (warp->click->warp = infinite loop)
+local function doClick(pt)
+    if not (AAR.alive and pt) then return end
+    vimClickUntil = tick() + 0.15
+    pcall(function()
+        VirtualInputManager:SendMouseButtonEvent(pt.X, pt.Y, 0, true,  game, 0)
+        task.wait(0.03)
+        VirtualInputManager:SendMouseButtonEvent(pt.X, pt.Y, 0, false, game, 0)
+    end)
+end
+
+-- true when the user's REAL cursor is over a GUI (the Rayfield menu etc.). The
+-- auto-clicker skips clicking then, so hovering the menu never fires a click.
+local function mouseOverGui()
+    local m = LP:GetMouse(); if not m then return false end
+    local conts = {}
+    local pg = LP:FindFirstChildOfClass("PlayerGui"); if pg then conts[#conts+1] = pg end
+    pcall(function() if gethui then conts[#conts+1] = gethui() end end)
+    pcall(function() conts[#conts+1] = game:GetService("CoreGui") end)
+    for _,c in ipairs(conts) do
+        local ok, objs = pcall(function() return c:GetGuiObjectsAtPosition(m.X, m.Y) end)
+        if ok and objs and #objs > 0 then return true end
+    end
+    return false
+end
+
+local function clickM1(force)
+    if typingNow() then return end
+    if not force and mouseOverGui() then return end
+    doClick(safeClickPoint(force))
+end
+
+local function clickAtTarget(target, force)
+    if typingNow() then return end
+    if not force and mouseOverGui() then return end
+    local char = target and target.Character
+    local tr   = char and charPart(char)
+    if not tr then doClick(safeClickPoint(force)); return end
+    local cam = Workspace.CurrentCamera
+    if not cam then return end
+    local sp, onScreen = cam:WorldToViewportPoint(tr.Position)
+    local pt = onScreen and Vector2.new(sp.X, sp.Y) or nil
+    if pt then
+        local pg = LP:FindFirstChildOfClass("PlayerGui")
+        if pg then
+            local ok, objs = pcall(function() return pg:GetGuiObjectsAtPosition(pt.X, pt.Y) end)
+            if ok and objs and #objs > 0 then pt = nil end
+        end
+    end
+    doClick(pt or safeClickPoint(force))
+end
+
+local function tapKey(kc)
+    if not AAR.alive or typingNow() then return end
+    pcall(function() VirtualInputManager:SendKeyEvent(true,  kc, false, game) end)
+    task.wait(0.06)
+    pcall(function() VirtualInputManager:SendKeyEvent(false, kc, false, game) end)
+end
+
+local Conns = {}
+local function bind(name, conn)
+    if Conns[name] then pcall(function() Conns[name]:Disconnect() end) end
+    Conns[name] = conn
+end
+
+-- Track every top-level event connection so Unload can fully disconnect them.
+local Listeners = {}
+local function hook(sig, fn) local c = sig:Connect(fn); Listeners[#Listeners+1] = c; return c end
+
+-- ============================================================
+-- TARGET HELPERS
+-- ============================================================
+local function enemiesInRange(range)
+    local out, root = {}, getRoot()
+    if not root then return out end
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p ~= LP and p.Character and isAlive(p.Character) then
+            local r = charPart(p.Character)
+            if r and (r.Position-root.Position).Magnitude <= range then
+                out[#out+1] = p
+            end
+        end
+    end
+    return out
+end
+local function nearestPlayer(range)
+    local best, dist, root = nil, range or math.huge, getRoot()
+    if not root then return nil end
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p ~= LP and p.Character and isAlive(p.Character) then
+            local r = charPart(p.Character)
+            if r then
+                local d = (r.Position-root.Position).Magnitude
+                if d < dist then best, dist = p, d end
+            end
+        end
+    end
+    return best
+end
+local function playerNames()
+    local n = {}
+    for _,p in ipairs(Players:GetPlayers()) do if p ~= LP then n[#n+1] = p.Name end end
+    return n
+end
+local function faceTo(pos)
+    local root = getRoot()
+    if root then root.CFrame = CFrame.new(root.Position, Vector3.new(pos.X, root.Position.Y, pos.Z)) end
+end
+local function faceToSmooth(pos, alpha)   -- gentle continuous turn (no hard snap) for the "hold on target" aim
+    local root = getRoot(); if not root then return end
+    local goal = CFrame.new(root.Position, Vector3.new(pos.X, root.Position.Y, pos.Z))
+    root.CFrame = root.CFrame:Lerp(goal, math.clamp(alpha or 0.3, 0.05, 1))
+end
+
+-- ============================================================
+-- HITBOX EXPANDERS (M1 + Ability). This game does CLIENT-SIDE hit
+-- detection (the M1 packet carries a "Hits" list), so growing the
+-- ENEMY hitbox on your client lets your real M1s + abilities reach
+-- them from much farther. Both expanders grow the enemy "Hitbox"
+-- part (+ HumanoidRootPart). Ability pulses 1.5x bigger on E. The
+-- enlarged hitbox is shown faint-red so you can SEE the reach.
+-- Targets via isAlive() (NOT a Humanoid - this game's chars lack one).
+-- ============================================================
+local hbOriginal = {}   -- keyed by the BasePart instance -> original props
+local abilityBurstUntil = 0
+local function restoreHitboxes()
+    for part, orig in pairs(hbOriginal) do
+        if part and part.Parent then pcall(function()
+            part.Size = orig.size; part.Transparency = orig.transp
+            part.CanCollide = orig.collide; part.Massless = orig.massless
+            part.CanTouch = orig.touch; part.CanQuery = orig.query
+            part.Color = orig.color; part.Material = orig.material
+            if orig.shape ~= nil and part:IsA("Part") then part.Shape = orig.shape end
+        end) end
+    end
+    hbOriginal = {}
+end
+
+local punchGrowUntil = 0   -- One Punch sets this while bursting: forces BOTH grow paths on for guaranteed hit-reg
+local function wantedHitboxSize()
+    local sz = 0
+    -- M1 Expand Hitbox grows the ENEMY hitbox (this is what actually lands the M1 — the game reads the overlap
+    -- client-side) AND your arms. The enemy grow is now INVISIBLE (no red boxes on everyone — the old complaint).
+    if S.M1Hitbox or tick() < punchGrowUntil then sz = math.max(sz, S.M1HitboxSize) end   -- Auto Farm/Play TP onto the target instead; One Punch forces this on during its burst
+    if S.HitboxAbility then
+        local a = S.HitboxAbilitySize
+        if tick() < abilityBurstUntil then a = a * 1.5 end
+        sz = math.max(sz, a)
+    end
+    return sz
+end
+
+-- Parts to grow on an enemy. Fixes the old bug where a Model "Hitbox" was
+-- skipped entirely (only direct BaseParts were grown). Optionally grows EVERY
+-- BasePart in the character for maximum reach.
+local function hitboxParts(char)
+    local out = {}
+    -- Check every case/name variant of the hit container (FindFirstChild is case-sensitive, so "Hitbox" and
+    -- "HitBox" are DIFFERENT lookups — missing a variant is why some enemies never grew). Ported from PE's
+    -- working hitbox, which checks all of these.
+    for _, nm in ipairs({ "Hitbox", "HitBox", "HitboxPart", "Hit" }) do
+        local hb = char:FindFirstChild(nm)
+        if hb then
+            if hb:IsA("BasePart") then out[#out+1] = hb
+            elseif hb:IsA("Model") or hb:IsA("Folder") or hb:IsA("Configuration") then   -- Bug 11: also dig Folder/Configuration containers
+                for _,d in ipairs(hb:GetDescendants()) do if d:IsA("BasePart") then out[#out+1] = d end end
+            end
+        end
+    end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp and hrp:IsA("BasePart") then out[#out+1] = hrp end
+    -- ONLY the dedicated hit parts (Hitbox/HRP) — these are invisible parts the game's M1 query reads.
+    -- We used to ALSO grow Head/Torso/arms/legs and hide them, but those ARE the person's visible body:
+    -- growing+hiding them made every enemy an invisible giant ("I can't see people") with a huge dark
+    -- blob on screen. The Hitbox part is what registers hits; the body adds nothing but blindness.
+    return out
+end
+-- Every enemy character to grow: players AND non-player models under workspace.Characters (training dummies /
+-- NPCs have no Player, so the players-only loop skipped them = "hitbox doesn't work on dummies"). PE scans the
+-- same way. Excludes YOU.
+local function hitboxTargets()
+    local out = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LP and p.Character and isAlive(p.Character) then out[#out+1] = p.Character end
+    end
+    local chars = Workspace:FindFirstChild("Characters")
+    if chars then
+        for _, m in ipairs(chars:GetChildren()) do
+            if m:IsA("Model") and m.Name ~= LP.Name and not Players:FindFirstChild(m.Name) and isAlive(m) then out[#out+1] = m end
+        end
+    end
+    return out
+end
+
+-- ============================================================
+-- ARM EXPANDER (Ability Arena's real fix). This game validates M1s server-side and the UseM1A packet carries
+-- encoded per-hit data (target id + hit position) we can't forge — BUT the game builds that packet itself from
+-- its own client-side detection off YOUR ARMS. So instead of (only) growing the enemy hitbox, we grow YOUR
+-- Left/Right Arm parts: the native detector then reaches far enemies and fires the correct UseM1A for us.
+-- We also clear YOUR HitLog (workspace.<You>.HitLog) so repeated swings keep landing on the same target.
+-- ============================================================
+-- Ability Arena uses CLIENT-SIDE hit registration (your client runs a GetPartBoundsInBox query off your REAL
+-- arm parts + their velocity, then sends the hit list to the server which trusts it). The old anchored
+-- MH_ArmReach follower parts failed for two reasons: (1) anchored parts get 0 AssemblyLinearVelocity in Jolt,
+-- so the game thought you weren't swinging and skipped detection; (2) the game only scans parts NAMED like real
+-- arms, not "MH_ArmReach". So we now resize the REAL arms. To stop Jolt flinging/resetting you (giant parts
+-- overlapping your torso/floor), we drop the arms into a collision group that collides with NOTHING, and keep
+-- CanCollide off + Massless on. CanQuery/CanTouch stay TRUE so the game's spatial query still registers the hit.
+local PhysicsService = game:GetService("PhysicsService")
+local HITBOX_GROUP = "MH_M1NoCollide"
+pcall(function() PhysicsService:RegisterCollisionGroup(HITBOX_GROUP) end)
+local function sweepCollisionGroups()   -- make our group collide with NOTHING (every registered group)
+    pcall(function()
+        PhysicsService:CollisionGroupSetCollidable(HITBOX_GROUP, "Default", false)
+        for _,g in ipairs(PhysicsService:GetRegisteredCollisionGroups()) do
+            pcall(function() PhysicsService:CollisionGroupSetCollidable(HITBOX_GROUP, g.name, false) end)
+        end
+    end)
+end
+sweepCollisionGroups()
+-- Bug 6: groups registered AFTER load (Projectiles/Abilities/DamageZones) would collide with our arms and
+-- fling/reset us. Re-sweep every 5s so newly-added groups are always made non-collidable.
+task.spawn(function() while AAR.alive do task.wait(5); if AAR.alive then sweepCollisionGroups() end end end)
+
+local realArmOriginals = {}   -- real arm part -> {size, group, collide, massless, query, touch}
+-- FORWARD PUSH: the arms are shoved out in front of you through the SHOULDER JOINT (Motor6D.C0), never by
+-- setting arm.CFrame — a welded limb's CFrame moves the WHOLE character, so that "offset" would rocket you
+-- across the map every frame. C0 shifts only the limb, relative to the torso, and animations still play.
+local armC0 = {}              -- Motor6D -> original C0
+local function armMotor(arm)
+    local char = LP.Character; if not char then return nil end
+    for _,j in ipairs(char:GetDescendants()) do
+        if j:IsA("Motor6D") and j.Part1 == arm then return j end
+    end
+end
+local function restoreArms()
+    for m, c0 in pairs(armC0) do pcall(function() if m and m.Parent then m.C0 = c0 end end) end
+    armC0 = {}
+    for arm, o in pairs(realArmOriginals) do
+        if arm and arm.Parent then
+            pcall(function()
+                arm.Size = o.size
+                pcall(function() arm.CollisionGroup = o.group end)
+                arm.CanCollide = o.collide
+                arm.Massless = o.massless
+                arm.CanQuery = o.query
+                arm.CanTouch = o.touch
+                arm.LocalTransparencyModifier = 0
+            end)
+        end
+    end
+    realArmOriginals = {}
+end
+-- Bug 3: grow ONLY the OUTERMOST arm part (R15 Hand, else R6 Arm) — growing the whole UpperArm->LowerArm->Hand
+-- chain and offsetting each joint makes an impossible kinematic chain that Jolt rejects/flings.
+local function myArmParts()
+    local out = {}
+    local char = LP.Character
+    if not char then return out end
+    for _, nm in ipairs({ "LeftHand","RightHand" }) do   -- R15 outermost first
+        local a = char:FindFirstChild(nm); if a and a:IsA("BasePart") then out[#out+1] = a end
+    end
+    if #out == 0 then   -- R6 fallback: the Arm parts ARE the outermost
+        for _, nm in ipairs({ "Left Arm","Right Arm","LeftArm","RightArm" }) do
+            local a = char:FindFirstChild(nm); if a and a:IsA("BasePart") then out[#out+1] = a end
+        end
+    end
+    return out
+end
+-- Bug 7: clear your HitLog only at the START of a swing (on M1 click), not every frame. Clearing 60x/sec
+-- made you re-hit the same target every frame (some servers flag that as too-fast repeat hits = kick).
+local function clearMyHitLog()
+    pcall(function()
+        local mine = Workspace:FindFirstChild(LP.Name)
+        local log = mine and mine:FindFirstChild("HitLog")
+        if log then for _,c in ipairs(log:GetChildren()) do c:Destroy() end end
+    end)
+end
+-- NOTE (the "nothing fires on click" bug): this game binds M1 through its own input system, so every
+-- click arrives with gameProcessedEvent=true. Bailing on gpe killed EVERY click-triggered feature
+-- (Dash Behind / M1 Warp / Fling / One Punch). None of these bail on gpe anymore — they use
+-- typingNow() + mouseOverGui() instead, which is the correct guard pair.
+-- ONE swing dispatcher, shared by the desktop click hook AND the mobile M1 button (so every click-combat
+-- feature works on phone too). Forward-declared here; the fling/one-punch bodies are filled in once their
+-- helpers exist further down.
+local doFlingPunch, doOnePunch   -- assigned after contactFling / firePunchOnce are defined
+local function doGodModeM1()
+    task.spawn(function()
+        local target = nearestPlayer(S.M1HitboxSize or 80)
+        if not (target and target.Character) then return end
+        local tr = charPart(target.Character)
+        local root = getRoot()
+        if not (tr and root) then return end
+        local savedCF = root.CFrame
+        pcall(function() root.CFrame = tr.CFrame * CFrame.new(0, 0, 3) end)
+        task.wait(0.05)
+        if S.CastE then tapKey(Enum.KeyCode.E) end
+        if S.CastQ then tapKey(Enum.KeyCode.Q) end
+        if S.CastR then tapKey(Enum.KeyCode.R) end
+        if S.CastT then tapKey(Enum.KeyCode.T) end
+        task.wait(0.2)
+        pcall(function() root.CFrame = savedCF; root.AssemblyLinearVelocity = Vector3.zero end)
+    end)
+end
+local function doM1Warp()
+    task.spawn(function()
+        local root = getRoot(); if not root then return end
+        local target = nearestPlayer(S.M1WarpRange or 60)
+        if not target or not target.Character then return end
+        local savedCF = root.CFrame
+        clearMyHitLog()
+        local t0 = tick(); local clicked = false
+        while tick() - t0 < 0.18 do
+            local r = getRoot()
+            local tr = target.Character and target.Character.Parent and charPart(target.Character)
+            if not (r and tr) then break end
+            pcall(function()
+                local behind = tr.Position - tr.CFrame.LookVector * 2   -- dead on their back, point-blank
+                r.CFrame = CFrame.new(behind, tr.Position)              -- facing them = the swing lands
+                r.AssemblyLinearVelocity = Vector3.zero
+            end)
+            if not clicked then clicked = true; clickM1(true) end       -- swing the instant you arrive
+            RunService.Heartbeat:Wait()
+        end
+        if S.M1WarpReturn then local r = getRoot(); if r then pcall(function() r.CFrame = savedCF; r.AssemblyLinearVelocity = Vector3.zero end) end end
+    end)
+end
+local function doDashBehind()
+    task.spawn(function()
+        local root = getRoot(); if not root then return end
+        local target = nearestPlayer(S.DashRange or 45)
+        if not target or not target.Character then return end
+        local tr = charPart(target.Character); if not tr then return end
+        local savedCF = root.CFrame
+        pcall(function() root.CFrame = tr.CFrame * CFrame.new(0, 0, 3) end)
+        task.wait(0.03); clearMyHitLog(); clickM1(true); task.wait(0.06)
+        fireDash("Forward"); tapKey(Enum.KeyCode.Q); task.wait(0.15)
+        pcall(function() root.CFrame = savedCF end)
+    end)
+end
+local function runSwingFeatures(mobileBaseClick)
+    if S.M1Hitbox or S.AutoFarm or S.AutoPlay then clearMyHitLog() end
+    -- ALWAYS fire a normal M1 click immediately (so the swing animation always plays)
+    local warpOrGod = S.M1Warp or S.DashBehind or S.GodMode
+    if not warpOrGod then
+        clearMyHitLog()
+        clickM1()
+    end
+    -- Then layer on the teleport / ability features
+    if S.GodMode then doGodModeM1() end
+    if S.M1Warp then doM1Warp()
+    elseif S.DashBehind then doDashBehind() end
+    if S.FlingPunch and doFlingPunch then doFlingPunch() end
+    if S.OnePunch and doOnePunch then doOnePunch() end
+    -- mobile tap: land base swing when no warp/god already did
+    if mobileBaseClick and not warpOrGod then clearMyHitLog(); clickM1(true) end
+end
+_G.AA_SWING = runSwingFeatures   -- exposed so the mobile M1 button can call it
+hook(UserInputService.InputBegan, function(i, _)
+    if typingNow() then return end
+    if tick() < vimClickUntil then return end   -- skip our own injected clicks (stops warp->click->warp recursion)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 then
+        runSwingFeatures(false)
+    end
+end)
+
+-- ============================================================
+-- ONE PUNCH — CAST THE GAME'S OWN ABILITY. Screenshot: "One Punch" is a real ability at
+-- ReplicatedStorage.Files.Shared.Core.Abilities["One Punch"]. The GAME already flings people with it
+-- server-side, so forging M1/velocity packets was the wrong path entirely — we just fire ITS StartSkill
+-- packet on each click. That's the exact wire the game itself sends, so the server runs the real fling.
+-- You must OWN / have One Punch equipped (use the Skills tab "Get Ability" on "One Punch" first). The
+-- ability name is overridable via the textbox in case the game renames it.
+-- ============================================================
+local function punchAbilityName()
+    local n = tostring(S.OnePunchGuid or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    return (n ~= "") and n or "One Punch"
+end
+-- Direct remote path too (belt-and-suspenders): the ability's own "One Punch" RemoteEvent, fired with no
+-- args, exactly as the game's ability module would. Cached; resolves lazily.
+local punchRemote
+local function resolvePunchRemote()
+    if punchRemote and punchRemote.Parent then return punchRemote end
+    punchRemote = nil
+    pcall(function()
+        local ab = RS:FindFirstChild("Files"); ab = ab and ab:FindFirstChild("Shared")
+        ab = ab and ab:FindFirstChild("Core"); ab = ab and ab:FindFirstChild("Abilities")
+        local op = ab and ab:FindFirstChild(punchAbilityName())
+        if op then
+            local re = op:FindFirstChild(punchAbilityName()) or op:FindFirstChildWhichIsA("RemoteEvent") or op:FindFirstChildWhichIsA("RemoteFunction")
+            if re and (re:IsA("RemoteEvent") or re:IsA("RemoteFunction")) then punchRemote = re end
+        end
+    end)
+    return punchRemote
+end
+-- Fire the game's One Punch ABILITY through every known path. NO movement here (movement is done once,
+-- cleanly, in doOnePunch) so repeated calls can't fight over your CFrame.
+local function firePunchOnce()
+    local name = punchAbilityName()
+    fireRaw(buildSkillNew(name))
+    fireRaw(buildSkillOld(name, "Forward"))
+    fireRaw(buildSkillNewDir(name, "Forward"))
+    local re = resolvePunchRemote()
+    if re then
+        pcall(function()
+            if re:IsA("RemoteEvent") then re:FireServer() else re:InvokeServer() end
+        end)
+    end
+    pcall(function()
+        local ab = RS:FindFirstChild("Files")
+        ab = ab and ab:FindFirstChild("Shared")
+        ab = ab and ab:FindFirstChild("Core")
+        ab = ab and ab:FindFirstChild("Abilities")
+        local op = ab and ab:FindFirstChild(name)
+        if op then
+            for _, d in ipairs(op:GetDescendants()) do
+                if d:IsA("RemoteEvent") then pcall(function() d:FireServer() end)
+                elseif d:IsA("RemoteFunction") then pcall(function() d:InvokeServer() end) end
+            end
+        end
+    end)
+end
+local onePunchCD = 0
+local onePunchBusy = false
+doOnePunch = function()   -- assigned to the forward-declared local used by runSwingFeatures
+    if tick() - onePunchCD < 0.35 or onePunchBusy then return end
+    onePunchCD = tick(); onePunchBusy = true
+    task.spawn(function()
+        pcall(function()
+            local target = nearestPlayer(100)
+            if not (target and target.Character) then comboStatus("One Punch: no target in range", Color3.fromRGB(235,180,70)); firePunchOnce(); return end
+            local tr = charPart(target.Character); local root = getRoot()
+            if not (tr and root) then firePunchOnce(); return end
+            local hp0, canRead = readHealth(target.Character)
+            -- POINT-BLANK KILL (expert diagnostic): NO teleporting (a 4-stud CFrame delta trips Jolt anti-teleport
+            -- = the server validates your M1 from your OLD position = 0 damage). NO 200-stud hitbox (it breaks
+            -- Jolt's broadphase = the query MISSES). NO client health edits (fake ghost only). Instead: stay put,
+            -- grow YOUR ARMS across the map (the M1Hitbox path, which overlaps their NORMAL uncorrupted hitbox),
+            -- give their hit parts a reasonable 60-stud CanCollide=false bump, and swing at the real 0.4s cadence
+            -- so the server accepts 100% of the hits. 3 validated hits >> 10 rejected spam hits.
+            firePunchOnce()               -- fire the One Punch ability packet (if owned)
+            punchGrowUntil = tick() + 4   -- grow YOUR arms across the map = they overlap the enemy in place, no teleport
+            local parts = hitboxParts(target.Character)
+            local origSizes = {}
+            for _, p in ipairs(parts) do
+                pcall(function()
+                    origSizes[p] = p.Size
+                    p.Size = Vector3.new(60, 60, 60)   -- reasonable: doesn't break Jolt's broadphase
+                    p.Transparency = 1                  -- invisible
+                    p.CanCollide = false                -- stops Jolt from flinging / breaking their character
+                end)
+            end
+            -- face them so your grown arms sweep across their hitbox, but DO NOT move your position
+            pcall(function() root.CFrame = CFrame.new(root.Position, Vector3.new(tr.Position.X, root.Position.Y, tr.Position.Z)) end)
+            local hits = math.clamp(tonumber(S.OnePunchHits) or 3, 1, 5)
+            for _ = 1, hits do
+                local c2 = target.Character
+                if not (c2 and c2.Parent and isAlive(c2)) then break end
+                clearMyHitLog()
+                clickAtTarget(target, true)   -- proven farm-damage click, aimed at the enemy (from where you STAND)
+                task.wait(0.4)                -- STRICT server swing cooldown = every hit is validated
+            end
+            punchGrowUntil = 0
+            for p, sz in pairs(origSizes) do pcall(function() if p and p.Parent then p.Size = sz; p.Transparency = 0; p.CanCollide = true end end) end
+            local hp1 = readHealth(target.Character)
+            if not (target.Character and target.Character.Parent) or not isAlive(target.Character) then
+                comboStatus("One Punch: KILLED " .. target.Name, Color3.fromRGB(90,235,120))
+            elseif canRead then
+                comboStatus(("One Punch: %s  HP %d -> %d  (%d hits)"):format(target.Name, math.floor(hp0), math.floor(hp1), hits),
+                    (hp1 < hp0) and Color3.fromRGB(120,220,255) or Color3.fromRGB(235,90,90))
+            else
+                comboStatus("One Punch: " .. hits .. " hits on " .. target.Name .. " (HP not readable)", Color3.fromRGB(200,200,210))
+            end
+        end)
+        onePunchBusy = false
+    end)
+end
+
+-- ============================================================
+-- FLING PUNCH — SAFE VELOCITY PUSH (expert diagnostic). Why every "contact" version failed in THIS engine:
+--  1) Jolt collision annihilation: stuffing your root inside their hitbox (even anchored) forces Jolt to
+--     resolve a catastrophic overlap every frame; the reaction force reads as massive collision damage on
+--     YOU = "the fling kills me".
+--  2) Anchor+CFrame deltas in 0.15s trip the server's anti-teleport = reset/damage.
+-- So: NEVER move the user. Apply the explosive velocity to the ENEMY from where you stand — Jolt lets a
+-- 1-2 frame injection slip through when applied right on a heartbeat. Plus one real M1 to register a hit.
+-- ============================================================
+local flingBusy = false
+local function contactFling(targetChar)
+    if flingBusy then return end
+    local root = getRoot(); local tr = charPart(targetChar)
+    if not (root and tr) then return end
+    if (tr.Position - root.Position).Magnitude > (S.FlingRange or 40) then return end
+    flingBusy = true
+    local startEnemyPos = tr.Position
+    task.spawn(function()
+        -- DO NOT MOVE THE USER. Stay exactly where you are.
+        local dir = (tr.Position - root.Position).Unit
+        local power = tonumber(S.FlingPower) or 850
+        -- Apply violent velocity to ALL their base parts on this exact frame to overwhelm Jolt's
+        -- 1-frame network-ownership bleed before the server reasserts control.
+        pcall(function()
+            for _, p in ipairs(targetChar:GetDescendants()) do
+                if p:IsA("BasePart") then
+                    p.AssemblyLinearVelocity = Vector3.new(dir.X * power, power * 1.5, dir.Z * power)
+                    p.AssemblyAngularVelocity = Vector3.new(math.random(-2000, 2000), math.random(-2000, 2000), math.random(-2000, 2000))
+                end
+            end
+        end)
+        -- Fire M1 since they are in range
+        clearMyHitLog()
+        clickM1(true)
+        task.wait(0.5)
+        -- REPORT whether they actually launched (visible on screen, no guessing)
+        pcall(function()
+            local t2 = targetChar and targetChar.Parent and charPart(targetChar)
+            local moved = t2 and (t2.Position - startEnemyPos).Magnitude or 0
+            if moved > 12 then comboStatus(("Fling: LAUNCHED (%d studs)"):format(math.floor(moved)), Color3.fromRGB(90,235,120))
+            else comboStatus("Fling: did not launch (velocity server-locked)", Color3.fromRGB(235,180,70)) end
+        end)
+        flingBusy = false
+    end)
+end
+doFlingPunch = function()   -- assigned to the forward-declared local used by runSwingFeatures
+    local p = nearestPlayer(S.FlingRange or 40)
+    if p and p.Character then contactFling(p.Character)
+    else comboStatus("Fling: no target in range", Color3.fromRGB(235,180,70)) end
+end
+
+-- (Old standalone M1 Warp hook REMOVED — M1 Warp now lives in the swing-start hook above with the
+--  warp -> forced M1 click -> return sequence, so two hooks can't fight over your CFrame on one click.)
+
+local armSpawnT = tick()   -- Bug 4: init to NOW so the 3s grace works even when the script loads mid-game
+hook(LP.CharacterAdded, function() armSpawnT = tick() end)
+if LP.Character then armSpawnT = tick() end
+hook(RunService.Heartbeat, function()
+    -- grow YOUR arms whenever M1 reach is wanted (this is the primary Ability-Arena mechanism now)
+    local armSz = 0
+    if S.M1Hitbox or tick() < punchGrowUntil then armSz = math.max(armSz, S.M1HitboxSize) end   -- One Punch forces the arm grow (the documented working damage path) during its burst
+    if tick() - armSpawnT < 3 then armSz = 0 end   -- 3s spawn grace: normal arms while the game places you
+    if armSz > 0 then
+        -- prune entries whose arm despawned (respawn) so we don't leak / restore onto a dead part
+        for arm in pairs(realArmOriginals) do if (not arm) or (not arm.Parent) then realArmOriginals[arm] = nil end end
+        for m in pairs(armC0) do if (not m) or (not m.Parent) then armC0[m] = nil end end
+        -- ELONGATED SPEAR ARMS (no more 22 cap): the FULL slider drives the forward length (1.5x), while the
+        -- side thickness is capped — a fat cube around your own arm engulfed your own hitbox and the game ate
+        -- the swing. Long + thin = the reach points AT the enemy and never swallows you.
+        local fwdLen = armSz * 1.5
+        local side   = math.min(armSz * 0.6, 14)
+        local targetSize = Vector3.new(side, side, fwdLen)
+        local fwdOff = fwdLen * 0.35   -- how far the shoulder joint shoves the arm out in front of you
+        for _,arm in ipairs(myArmParts()) do
+            local m = armMotor(arm)   -- Bug 2: only grow an arm we can push forward through its joint; else it
+            if m then                 -- would sit at the shoulder engulfing your OWN hitbox (self-hit / no hit).
+                local isNew = not realArmOriginals[arm]
+                if isNew then
+                    realArmOriginals[arm] = { size=arm.Size, group=arm.CollisionGroup, collide=arm.CanCollide, massless=arm.Massless, query=arm.CanQuery, touch=arm.CanTouch }
+                    armC0[m] = armC0[m] or m.C0
+                end
+                pcall(function()
+                    pcall(function() arm.CollisionGroup = HITBOX_GROUP end)   -- Jolt: this group hits nothing -> no fling/reset
+                    arm.CanCollide = false                                    -- primary fling-guard (works even if the group didn't register)
+                    arm.Massless   = true                                     -- no extra mass on the assembly = no catapult
+                    arm.CanQuery   = true                                     -- GetPartBoundsInBox reads this (this is what the game uses)
+                    arm.CanTouch   = false                                    -- MUST stay false: CanTouch=true let the main-map KILL BRICKS' .Touched fire on your giant arms = death on spawn. Queries don't need Touch.
+                    if (arm.Size - targetSize).Magnitude > 0.1 then arm.Size = targetSize end
+                    arm.LocalTransparencyModifier = 0.3                       -- clearly visible so you SEE your big arms swing
+                    -- Bug 1: refresh the forward push EVERY frame from the ORIGINAL C0, so changing the slider
+                    -- actually moves the arm forward (was set once = arm stretched inside itself on slider change).
+                    m.C0 = CFrame.new(0, 0, -fwdOff) * armC0[m]
+                end)
+            end
+        end
+        -- (Bug 7: per-frame clearMyHitLog removed — the log is now cleared on M1 click / swing start.)
+    elseif next(realArmOriginals) then restoreArms() end
+
+    local sz = wantedHitboxSize()
+    if sz <= 0 then
+        if next(hbOriginal) then restoreHitboxes() end
+        return
+    end
+    -- prune destroyed/removed parts so hbOriginal can't grow without bound
+    for part in pairs(hbOriginal) do
+        if not part or not part.Parent then hbOriginal[part] = nil end
+    end
+    local cube = Vector3.new(sz, sz, sz)
+    for _,char in ipairs(hitboxTargets()) do
+        for _,part in ipairs(hitboxParts(char)) do
+            if not hbOriginal[part] then
+                hbOriginal[part] = {
+                    size=part.Size, transp=part.Transparency,
+                    collide=part.CanCollide, massless=part.Massless,
+                    touch=part.CanTouch, query=part.CanQuery,
+                    color=part.Color, material=part.Material,
+                    shape=(part:IsA("Part") and part.Shape or nil)
+                }
+            end
+            local o = hbOriginal[part]
+            pcall(function()
+                part.Massless    = true
+                part.CanCollide  = false
+                part.CanQuery    = true                                   -- GetPartBoundsInBox reads this
+                part.CanTouch    = (o and o.touch) or false               -- Bug 9: keep the enemy's ORIGINAL CanTouch — forcing true let their Hitbox's touch-damage handler hurt YOU
+                -- KEEP the part's original shape (a Ball grown to sz already reaches sz/2 in every direction).
+                -- Bug 5: magnitude compare (float drift made == fail = a redundant write every frame).
+                if (part.Size - cube).Magnitude > 0.1 then part.Size = cube end
+                -- Bug 13: only write the visual props when they actually differ (was 180 writes/frame).
+                if S.HitboxVisible ~= false then
+                    if part.Transparency ~= 0.82 then part.Transparency = 0.82; part.Color = Color3.fromRGB(0, 220, 255); part.Material = Enum.Material.ForceField end
+                elseif o and part.Transparency ~= o.transp then
+                    part.Transparency = o.transp; part.Color = o.color; part.Material = o.material
+                end
+            end)
+        end
+    end
+end)
+
+-- pressing E pulses the Ability expand bigger for a moment
+hook(UserInputService.InputBegan, function(i, _)   -- no gpe bail: E is the game's cast key, so it's always game-processed
+    if typingNow() then return end
+    if i.KeyCode == Enum.KeyCode.E and S.HitboxAbility then
+        abilityBurstUntil = tick() + 0.6
+    end
+end)
+
+-- a faint ball on YOU so you can see your ability reach (visual only)
+local abilityHbPart = nil
+local function destroyAbilityHb()
+    if abilityHbPart then pcall(function() abilityHbPart:Destroy() end); abilityHbPart = nil end
+end
+task.spawn(function()
+    while AAR.alive and task.wait(0.2) do
+        if S.HitboxAbility then
+            local root = getRoot()
+            if root then
+                if not abilityHbPart or abilityHbPart.Parent == nil then
+                    destroyAbilityHb()
+                    abilityHbPart = Instance.new("Part")
+                    abilityHbPart.Name         = "MFHAbilityHB"
+                    abilityHbPart.Shape        = Enum.PartType.Ball
+                    abilityHbPart.Anchored     = false
+                    abilityHbPart.CanCollide   = false
+                    abilityHbPart.Massless     = true
+                    abilityHbPart.CastShadow   = false
+                    abilityHbPart.CanQuery     = false
+                    abilityHbPart.CanTouch     = false
+                    abilityHbPart.Transparency = 0.8
+                    abilityHbPart.Material     = Enum.Material.ForceField
+                    abilityHbPart.Color        = Color3.fromRGB(100, 200, 255)
+                    local w = Instance.new("Weld")
+                    w.Part0 = root; w.Part1 = abilityHbPart; w.Parent = abilityHbPart
+                    abilityHbPart.Parent = root.Parent
+                end
+                local sz = S.HitboxAbilitySize
+                if tick() < abilityBurstUntil then sz = sz * 1.5 end
+                pcall(function() abilityHbPart.Size = Vector3.new(sz, sz, sz) end)
+            end
+        else
+            destroyAbilityHb()
+        end
+    end
+end)
+
+-- ============================================================
+-- ABILITY GRABBER
+-- ============================================================
+local elementFolder
+local function findElementFolder()
+    if elementFolder and elementFolder.Parent then return elementFolder end
+    elementFolder = Workspace:FindFirstChild("ElementSelection", true)
+    return elementFolder
+end
+local function abilityPadPart(pad)
+    if not pad then return nil end
+    if pad:IsA("BasePart") then return pad end
+    return pad:FindFirstChildWhichIsA("BasePart", true)
+end
+local Grab = { busy=false, noclip=false, generation=0, root=nil, collisions={} }
+Grab.isPad = function(pad)
+    return pad and (pad:IsA("BasePart") or pad:IsA("Model") or pad:IsA("Folder")) and abilityPadPart(pad) ~= nil
+end
+local function findAbilityPad(name)
+    local f = findElementFolder()
+    if not (f and name and name ~= "") then return nil end
+    local direct = f:FindFirstChild(name)
+    if Grab.isPad(direct) then return direct end
+    for _, item in ipairs(f:GetDescendants()) do
+        if item.Name == name and Grab.isPad(item) then return item end
+    end
+    return nil
+end
+local function abilityNames()
+    local out, seen = {}, {}
+    local f = findElementFolder()
+    if f then
+        for _,c in ipairs(f:GetChildren()) do
+            if Grab.isPad(c) and not seen[c.Name] then seen[c.Name]=true; out[#out+1] = c.Name end
+        end
+        -- Newer pads (including tier-specific abilities such as Gamma) may be grouped
+        -- one folder deep instead of being direct ElementSelection children.
+        for _,c in ipairs(f:GetDescendants()) do
+            if c.Parent and c.Parent.Parent == f and Grab.isPad(c) and not seen[c.Name] then
+                seen[c.Name]=true; out[#out+1] = c.Name
+            end
+        end
+        table.sort(out)
+    end
+    return out
+end
+Grab.restore = function()
+    local root = getRoot() or Grab.root
+    if root then pcall(function() root.Anchored = false end) end
+    for part, canCollide in pairs(Grab.collisions) do
+        if part and part.Parent then pcall(function() part.CanCollide = canCollide end) end
+    end
+    Grab.root = nil
+    Grab.collisions = {}
+    Grab.noclip = false
+    Grab.busy = false
+end
+local function cancelAbilityGrab()
+    Grab.generation += 1
+    Grab.restore()
+end
+Grab.activate = function(pad, root)
+    local part = abilityPadPart(pad)
+    tapKey(Enum.KeyCode.E)
+    for _, d in ipairs(pad:GetDescendants()) do
+        if d:IsA("ProximityPrompt") and typeof(fireproximityprompt) == "function" then
+            pcall(function() fireproximityprompt(d) end)
+        elseif d:IsA("ClickDetector") and typeof(fireclickdetector) == "function" then
+            pcall(function() fireclickdetector(d) end)
+        end
+    end
+    if part and root and typeof(firetouchinterest) == "function" then
+        pcall(function()
+            firetouchinterest(root, part, 0)
+            task.wait()
+            firetouchinterest(root, part, 1)
+        end)
+    end
+end
+local function grabAbility(name)
+    if not AAR.alive or Grab.busy or not name or name == "" then return end
+    local f = findElementFolder()
+    if not f then
+        Rayfield:Notify({Title="Dream Hub", Content="ElementSelection not found - are you in the lobby?", Duration=4})
+        return
+    end
+    local pad = findAbilityPad(name); if not pad then
+        Rayfield:Notify({Title="Dream Hub", Content="Ability pad is not streamed in yet. Refresh the list and try again.", Duration=4})
+        return
+    end
+    local root = getRoot(); if not root then return end
+    local padPart = abilityPadPart(pad); if not padPart then return end
+    Grab.generation += 1
+    local myGeneration = Grab.generation
+    Grab.busy = true
+    task.spawn(function()
+        local backCF = root.CFrame
+        local ok = pcall(function()
+            Grab.root = root
+            Grab.collisions = {}
+            local char = getChar()
+            if char then for _, pt in ipairs(char:GetDescendants()) do
+                if pt:IsA("BasePart") then Grab.collisions[pt] = pt.CanCollide end
+            end end
+            Grab.noclip = true
+            root.CFrame = CFrame.new(padPart.Position + Vector3.new(0, 3, 0))
+            root.Anchored = true
+            task.wait(0.35)
+            if not AAR.alive or myGeneration ~= Grab.generation then return end
+            Grab.activate(pad, root)
+            task.wait(math.max(0.5, tonumber(S.GrabDelay) or 3))
+            if not AAR.alive or myGeneration ~= Grab.generation then return end
+            local r = getRoot() or root
+            if r then r.Anchored = false end
+            if S.GrabReturn and r then r.CFrame = backCF end
+            task.wait(0.15)
+        end)
+        if myGeneration == Grab.generation then
+            Grab.restore()
+            if not ok then Rayfield:Notify({Title="Dream Hub", Content="Ability grab stopped safely. Try Refresh Ability List.", Duration=4}) end
+        end
+    end)
+end
+
+-- ============================================================
+-- AURAS  (client-side visual: clones a VFX onto your arms and KEEPS it
+-- emitting so it stays on and you actually see the glow, not just the
+-- mesh. Shows on YOUR screen - a server-side aura everyone sees needs the
+-- equip remote remote-spied, same as the One Shot Punch capture.)
+-- ============================================================
+local function vfxFolder()
+    local a = RS:FindFirstChild("Assets");   if not a then return nil end
+    local v = a:FindFirstChild("VfxAssets"); if not v then return nil end
+    return v:FindFirstChild("AbilitiesVfx")
+end
+local function auraNames()
+    local out, f = {}, vfxFolder()
+    if f then
+        for _,c in ipairs(f:GetChildren()) do out[#out+1] = c.Name end
+        table.sort(out)
+    end
+    return out
+end
+
+-- turn EVERY visual component on (this is the fix for "I only see the physics":
+-- the emitters ship disabled because the game fires them on cast, so a plain
+-- clone showed just the solid part).
+local function enableVfx(inst)
+    local function on(d)
+        if d:IsA("ParticleEmitter") then
+            pcall(function() d.Enabled = true; if d.Rate < 1 then d.Rate = 25 end; d:Emit(40) end)
+        elseif d:IsA("Beam") or d:IsA("Trail") then
+            pcall(function() d.Enabled = true end)
+        elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
+            pcall(function() d.Enabled = true end)
+        elseif d:IsA("BasePart") then
+            pcall(function() d.CanCollide=false; d.CanQuery=false; d.Massless=true; d.Anchored=false end)
+        end
+    end
+    on(inst)
+    for _,d in ipairs(inst:GetDescendants()) do on(d) end
+end
+
+local activeAura = nil
+local auraParts = {}
+local function clearAura()
+    activeAura = nil
+    for _,inst in ipairs(auraParts) do pcall(function() inst:Destroy() end) end
+    auraParts = {}
+end
+local function auraMounts(char)
+    local mounts = {}
+    -- body centre first so the aura wraps you, then the game's own arm spots
+    for _,nm in ipairs({"Torso","UpperTorso","HumanoidRootPart"}) do
+        local part = char:FindFirstChild(nm)
+        if part and part:IsA("BasePart") then mounts[#mounts+1] = part; break end
+    end
+    for _,armName in ipairs({"Left Arm","Right Arm"}) do
+        local arm = char:FindFirstChild(armName)
+        if arm then
+            local fx   = arm:FindFirstChild("Effects")
+            local hand = fx and fx:FindFirstChild("Hand")
+            local m = hand or arm
+            if not m:IsA("BasePart") then m = m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart") end
+            if m then mounts[#mounts+1] = m end
+        end
+    end
+    if #mounts == 0 then local cp = charPart(char); if cp then mounts[1] = cp end end
+    return mounts
+end
+local function applyAuraNow(name)
+    local f = vfxFolder(); if not f then return end
+    local src = name and f:FindFirstChild(name); if not src then return end
+    local char = getChar(); if not char then return end
+    for _,mount in ipairs(auraMounts(char)) do
+        local clone = src:Clone()
+        clone.Name = "MFHAura"
+        pcall(function()
+            -- drop the non-visual bits (Interface GUIs, AbilitiesDesc config, scripts)
+            -- so only the actual VFX remain
+            local junk = {}
+            for _,d in ipairs(clone:GetDescendants()) do
+                if d:IsA("LayerCollector") or d:IsA("GuiObject") or d:IsA("GuiBase")
+                or d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ModuleScript") then
+                    junk[#junk+1] = d
+                end
+            end
+            for _,d in ipairs(junk) do pcall(function() d:Destroy() end) end
+            clone.Parent = mount
+            -- glue EVERY part to the mount so no VFX part is left stranded at world origin
+            local function glue(part)
+                pcall(function()
+                    part.CanCollide=false; part.CanQuery=false; part.Massless=true; part.Anchored=false
+                    part.CFrame = mount.CFrame
+                    local w = Instance.new("WeldConstraint"); w.Part0 = mount; w.Part1 = part; w.Parent = part
+                end)
+            end
+            if clone:IsA("BasePart") then glue(clone) end
+            for _,d in ipairs(clone:GetDescendants()) do if d:IsA("BasePart") then glue(d) end end
+            enableVfx(clone)
+        end)
+        auraParts[#auraParts+1] = clone
+    end
+end
+local function addAura(name)
+    local f = vfxFolder()
+    if not f then Rayfield:Notify({Title="Dream Hub", Content="VFX assets folder not found.", Duration=3}); return end
+    if not (name and f:FindFirstChild(name)) then Rayfield:Notify({Title="Dream Hub", Content="Pick an aura first.", Duration=3}); return end
+    clearAura()
+    activeAura = name
+    applyAuraNow(name)
+    Rayfield:Notify({Title="Dream Hub", Content="Aura '"..name.."' on - it stays until you Remove it.", Duration=4})
+end
+-- keep the aura alive + emitting so it "stands longer" (re-emits every 0.5s)
+task.spawn(function()
+    while AAR.alive and task.wait(0.5) do
+        if activeAura and #auraParts > 0 then
+            pcall(function()
+                for _,inst in ipairs(auraParts) do
+                    if inst and inst.Parent then enableVfx(inst) end
+                end
+            end)
+        end
+    end
+end)
+
+-- ============================================================
+-- VFX MAKER (client-side custom aura: shape/color/size/particles).
+-- Builds your own effect on your body. NOTE: client-side only - others won't
+-- see it (a server-side / "publish to everyone" VFX needs the game's broadcast
+-- remote, which isn't exposed here). "Publish" here = save/share the preset config.
+-- ============================================================
+local VFX_TEX = {
+    Sparkles = "rbxasset://textures/particles/sparkles_main.dds",
+    Fire     = "rbxasset://textures/particles/fire_main.dds",
+    Smoke    = "rbxasset://textures/particles/smoke_main.dds",
+    Square   = "",
+}
+local vfxObjs, vfxRings, vfxChar = {}, {}, nil
+local function clearCustomVFX()
+    for _, o in ipairs(vfxObjs) do pcall(function() o:Destroy() end) end
+    vfxObjs, vfxRings = {}, nil
+    vfxRings = {}
+end
+local function vfxMount()
+    local char = getChar(); if not char then return nil end
+    return char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+        or char:FindFirstChild("HumanoidRootPart") or charPart(char)
+end
+local function vfxColorSeq()
+    if (not S.VFXRainbow) and S.VFXColor2 then
+        return ColorSequence.new({ColorSequenceKeypoint.new(0, S.VFXColor), ColorSequenceKeypoint.new(1, S.VFXColor2)})
+    end
+    return ColorSequence.new(S.VFXColor)
+end
+local function applyCustomVFX()
+    clearCustomVFX()
+    local mount = vfxMount(); if not mount then return end
+    vfxChar = getChar()
+    -- core glowing shape
+    if S.VFXShapeOn then
+        local part = Instance.new("Part")
+        part.Name = "MFHVFXCore"
+        part.Shape = (S.VFXShape=="Block" and Enum.PartType.Block) or (S.VFXShape=="Cylinder" and Enum.PartType.Cylinder) or Enum.PartType.Ball
+        part.Size = Vector3.new(S.VFXSize, S.VFXSize, S.VFXSize)
+        part.Color = S.VFXColor; part.Material = Enum.Material.Neon; part.Transparency = S.VFXTransparency
+        part.CanCollide=false; part.CanQuery=false; part.Massless=true; part.Anchored=false
+        pcall(function() part.CFrame = mount.CFrame end); part.Parent = mount
+        local w = Instance.new("WeldConstraint"); w.Part0=mount; w.Part1=part; w.Parent=part
+        vfxObjs[#vfxObjs+1] = part
+    end
+    -- particles
+    if S.VFXParticles then
+        local att = Instance.new("Attachment", mount); vfxObjs[#vfxObjs+1] = att
+        local pe = Instance.new("ParticleEmitter", att)
+        pe.Texture = VFX_TEX[S.VFXTexture] or VFX_TEX.Sparkles
+        pe.Color = vfxColorSeq()
+        pe.Rate = S.VFXRate
+        pe.Lifetime = NumberRange.new(S.VFXSpeed > 0 and 0.5 or 0.4, math.max(0.6, S.VFXSize/3))
+        pe.Speed = NumberRange.new(S.VFXSpeed*0.4, S.VFXSpeed)
+        pe.SpreadAngle = Vector2.new(S.VFXSpread, S.VFXSpread)
+        pe.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, S.VFXPSize), NumberSequenceKeypoint.new(1, 0)})
+        pe.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0,0.15), NumberSequenceKeypoint.new(1,1)})
+        pe.LightEmission = 0.85; pe.LightInfluence = 0
+        pe.Rotation = NumberRange.new(0,360); pe.RotSpeed = NumberRange.new(-120,120)
+        vfxObjs[#vfxObjs+1] = pe
+    end
+    -- light
+    if S.VFXLight then
+        local lp = Instance.new("PointLight", mount)
+        lp.Color = S.VFXColor; lp.Brightness = S.VFXBrightness; lp.Range = math.max(8, S.VFXSize*2)
+        vfxObjs[#vfxObjs+1] = lp
+    end
+    -- spinning rings (neon discs orbiting you)
+    if S.VFXRings then
+        for i = 1, math.max(1, S.VFXRingCount) do
+            local ring = Instance.new("Part")
+            ring.Name="MFHVFXRing"; ring.Shape=Enum.PartType.Cylinder
+            ring.Size = Vector3.new(0.25, S.VFXSize*1.7, S.VFXSize*1.7)
+            ring.Color = (S.VFXColor2 and i%2==0) and S.VFXColor2 or S.VFXColor
+            ring.Material=Enum.Material.Neon; ring.Transparency=0.35
+            ring.CanCollide=false; ring.CanQuery=false; ring.Massless=true; ring.Anchored=true
+            ring.Parent = workspace
+            vfxObjs[#vfxObjs+1] = ring
+            vfxRings[#vfxRings+1] = {part=ring, phase=(i/S.VFXRingCount)*math.pi*2, tilt=i*35}
+        end
+    end
+    -- beams / pillars circling you
+    if S.VFXBeams then
+        for i = 1, 6 do
+            local b = Instance.new("Part")
+            b.Name="MFHVFXBeam"; b.Shape=Enum.PartType.Cylinder
+            b.Size = Vector3.new(S.VFXSize*1.6, 0.35, 0.35)
+            b.Color = (S.VFXColor2 and i%2==0) and S.VFXColor2 or S.VFXColor
+            b.Material=Enum.Material.Neon; b.Transparency=0.35
+            b.CanCollide=false; b.CanQuery=false; b.Massless=true; b.Anchored=true
+            b.Parent = workspace
+            vfxObjs[#vfxObjs+1] = b
+            vfxRings[#vfxRings+1] = {part=b, phase=(i/6)*math.pi*2, beam=true}
+        end
+    end
+    -- trail
+    if S.VFXTrail then
+        local a0=Instance.new("Attachment", mount); a0.Position=Vector3.new(0,-1.6,0)
+        local a1=Instance.new("Attachment", mount); a1.Position=Vector3.new(0,1.6,0)
+        local tr=Instance.new("Trail", mount)
+        tr.Attachment0=a0; tr.Attachment1=a1; tr.Lifetime=0.6; tr.LightEmission=0.85
+        tr.WidthScale=NumberSequence.new({NumberSequenceKeypoint.new(0,1), NumberSequenceKeypoint.new(1,0)})
+        tr.Color = vfxColorSeq()
+        vfxObjs[#vfxObjs+1]=a0; vfxObjs[#vfxObjs+1]=a1; vfxObjs[#vfxObjs+1]=tr
+    end
+end
+-- animation: rainbow hue cycle + spin rings/beams around you
+hook(RunService.RenderStepped, function()
+    if not S.VFXOn then return end
+    if S.VFXRainbow then
+        local col = Color3.fromHSV((tick()*0.2) % 1, 1, 1)
+        for _, o in ipairs(vfxObjs) do
+            if o:IsA("ParticleEmitter") then o.Color = ColorSequence.new(col)
+            elseif o:IsA("Trail") then o.Color = ColorSequence.new(col)
+            elseif o:IsA("PointLight") then o.Color = col
+            elseif o:IsA("Part") then o.Color = col end
+        end
+    end
+    local mount = vfxMount()
+    if mount and #vfxRings > 0 then
+        local t = tick() * S.VFXSpin
+        for _, r in ipairs(vfxRings) do
+            if r.part and r.part.Parent then
+                if r.beam then
+                    local ang = r.phase + t
+                    local off = Vector3.new(math.cos(ang)*S.VFXSize, 0, math.sin(ang)*S.VFXSize)
+                    r.part.CFrame = mount.CFrame * CFrame.new(off) * CFrame.Angles(0,0,math.rad(90))
+                else
+                    r.part.CFrame = mount.CFrame * CFrame.Angles(math.rad(r.tilt), r.phase + t, 0) * CFrame.Angles(0,0,math.rad(90))
+                end
+            end
+        end
+    end
+end)
+-- keep alive + re-apply on respawn
+task.spawn(function()
+    while AAR.alive and task.wait(0.5) do
+        if S.VFXOn then
+            if getChar() ~= vfxChar or not (vfxObjs[1] and vfxObjs[1].Parent) then pcall(applyCustomVFX) end
+        end
+    end
+end)
+
+-- ── VFX PRESETS (one-click aura looks) ─────────────────────────
+local VFX_PRESETS = {
+    Fire      = {Shape="Ball",Color=Color3.fromRGB(255,90,0),Color2=Color3.fromRGB(255,210,0),Texture="Fire",Rate=140,Speed=11,Spread=45,Light=true,Brightness=7,Rings=false,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=5,Transp=0.5},
+    Ice       = {Shape="Ball",Color=Color3.fromRGB(120,220,255),Color2=Color3.fromRGB(225,250,255),Texture="Sparkles",Rate=90,Speed=4,Spread=160,Light=true,Brightness=4,Rings=true,RingCount=2,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=5,Transp=0.5},
+    Lightning = {Shape="Ball",Color=Color3.fromRGB(120,180,255),Color2=Color3.fromRGB(255,255,255),Texture="Sparkles",Rate=170,Speed=16,Spread=180,Light=true,Brightness=9,Rings=false,Beams=true,Trail=false,Rainbow=false,ShapeOn=false,Size=4,Transp=0.5},
+    Galaxy    = {Shape="Ball",Color=Color3.fromRGB(150,60,255),Color2=Color3.fromRGB(60,160,255),Texture="Sparkles",Rate=110,Speed=3,Spread=200,Light=true,Brightness=5,Rings=true,RingCount=3,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=6,Transp=0.6},
+    Shadow    = {Shape="Ball",Color=Color3.fromRGB(70,0,100),Color2=Color3.fromRGB(20,20,30),Texture="Smoke",Rate=90,Speed=3,Spread=180,Light=true,Brightness=3,Rings=false,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=6,Transp=0.5},
+    Holy      = {Shape="Ball",Color=Color3.fromRGB(255,240,150),Color2=Color3.fromRGB(255,255,255),Texture="Sparkles",Rate=120,Speed=5,Spread=160,Light=true,Brightness=9,Rings=true,RingCount=2,Beams=true,Trail=false,Rainbow=false,ShapeOn=true,Size=5,Transp=0.6},
+    Toxic     = {Shape="Ball",Color=Color3.fromRGB(120,255,40),Color2=Color3.fromRGB(40,160,0),Texture="Smoke",Rate=90,Speed=4,Spread=170,Light=true,Brightness=4,Rings=false,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=5,Transp=0.5},
+    Rainbow   = {Shape="Ball",Texture="Sparkles",Rate=140,Speed=6,Spread=180,Light=true,Brightness=6,Rings=true,RingCount=3,Beams=false,Trail=true,Rainbow=true,ShapeOn=true,Size=5,Transp=0.4},
+    Void      = {Shape="Ball",Color=Color3.fromRGB(25,0,35),Color2=Color3.fromRGB(150,0,210),Texture="Smoke",Rate=110,Speed=2,Spread=200,Light=true,Brightness=4,Rings=true,RingCount=2,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=7,Transp=0.4},
+    Sakura    = {Shape="Ball",Color=Color3.fromRGB(255,150,200),Color2=Color3.fromRGB(255,215,235),Texture="Sparkles",Rate=80,Speed=3,Spread=200,Light=true,Brightness=3,Rings=false,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=5,Transp=0.6},
+    Nuke      = {Shape="Ball",Color=Color3.fromRGB(255,150,0),Color2=Color3.fromRGB(255,40,0),Texture="Fire",Rate=110,Speed=14,Spread=200,Light=true,Brightness=10,Rings=true,RingCount=2,Beams=true,Trail=false,Rainbow=false,ShapeOn=true,Size=8,Transp=0.3},
+    -- ── new auras ──
+    Inferno   = {Shape="Ball",Color=Color3.fromRGB(255,60,0),Color2=Color3.fromRGB(255,0,0),Texture="Fire",Rate=180,Speed=15,Spread=90,Light=true,Brightness=10,Rings=true,RingCount=3,Beams=true,Trail=true,Rainbow=false,ShapeOn=true,Size=7,Transp=0.35},
+    Frostbite = {Shape="Ball",Color=Color3.fromRGB(80,180,255),Color2=Color3.fromRGB(180,240,255),Texture="Sparkles",Rate=120,Speed=3,Spread=200,Light=true,Brightness=6,Rings=true,RingCount=3,Beams=true,Trail=true,Rainbow=false,ShapeOn=true,Size=6,Transp=0.45},
+    Blood     = {Shape="Ball",Color=Color3.fromRGB(150,0,0),Color2=Color3.fromRGB(255,40,40),Texture="Smoke",Rate=100,Speed=4,Spread=180,Light=true,Brightness=5,Rings=false,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=6,Transp=0.4},
+    Cursed    = {Shape="Ball",Color=Color3.fromRGB(120,0,0),Color2=Color3.fromRGB(20,0,0),Texture="Smoke",Rate=130,Speed=5,Spread=200,Light=true,Brightness=6,Rings=true,RingCount=2,Beams=true,Trail=true,Rainbow=false,ShapeOn=true,Size=7,Transp=0.35},
+    Storm     = {Shape="Ball",Color=Color3.fromRGB(90,120,200),Color2=Color3.fromRGB(230,240,255),Texture="Sparkles",Rate=200,Speed=18,Spread=200,Light=true,Brightness=9,Rings=false,Beams=true,Trail=false,Rainbow=false,ShapeOn=false,Size=6,Transp=0.4},
+    Emerald   = {Shape="Ball",Color=Color3.fromRGB(0,200,90),Color2=Color3.fromRGB(160,255,190),Texture="Sparkles",Rate=110,Speed=4,Spread=180,Light=true,Brightness=6,Rings=true,RingCount=2,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=5,Transp=0.45},
+    Phoenix   = {Shape="Ball",Color=Color3.fromRGB(255,120,0),Color2=Color3.fromRGB(255,220,60),Texture="Fire",Rate=160,Speed=13,Spread=120,Light=true,Brightness=9,Rings=true,RingCount=3,Beams=true,Trail=true,Rainbow=false,ShapeOn=true,Size=7,Transp=0.35},
+    Nebula    = {Shape="Ball",Color=Color3.fromRGB(190,80,255),Color2=Color3.fromRGB(60,120,255),Texture="Sparkles",Rate=130,Speed=3,Spread=210,Light=true,Brightness=6,Rings=true,RingCount=4,Beams=false,Trail=true,Rainbow=false,ShapeOn=true,Size=7,Transp=0.5},
+    Divine    = {Shape="Ball",Color=Color3.fromRGB(255,255,200),Color2=Color3.fromRGB(255,215,120),Texture="Sparkles",Rate=140,Speed=6,Spread=160,Light=true,Brightness=10,Rings=true,RingCount=3,Beams=true,Trail=true,Rainbow=false,ShapeOn=true,Size=6,Transp=0.5},
+    Cyber     = {Shape="Ball",Color=Color3.fromRGB(0,255,200),Color2=Color3.fromRGB(0,140,255),Texture="Sparkles",Rate=150,Speed=8,Spread=190,Light=true,Brightness=8,Rings=true,RingCount=3,Beams=true,Trail=true,Rainbow=false,ShapeOn=true,Size=6,Transp=0.4},
+}
+local function applyVFXPreset(name)
+    local pr = VFX_PRESETS[name]; if not pr then return end
+    S.VFXShape=pr.Shape or S.VFXShape; S.VFXShapeOn = pr.ShapeOn~=false
+    if pr.Color then S.VFXColor=pr.Color end
+    if pr.Color2 then S.VFXColor2=pr.Color2 end
+    S.VFXTexture=pr.Texture or S.VFXTexture; S.VFXRate=pr.Rate or S.VFXRate
+    S.VFXSpeed=pr.Speed or S.VFXSpeed; S.VFXSpread=pr.Spread or S.VFXSpread
+    S.VFXLight = pr.Light~=false; S.VFXBrightness=pr.Brightness or S.VFXBrightness
+    S.VFXRings = pr.Rings==true; S.VFXRingCount=pr.RingCount or S.VFXRingCount
+    S.VFXBeams = pr.Beams==true; S.VFXTrail = pr.Trail==true; S.VFXRainbow = pr.Rainbow==true
+    S.VFXSize=pr.Size or S.VFXSize; S.VFXTransparency=pr.Transp or S.VFXTransparency
+    S.VFXParticles = true
+    if S.VFXOn then applyCustomVFX() end
+end
+
+-- ============================================================
+-- SURVIVAL (anti ragdoll / push / void)
+-- ============================================================
+local BAD_STATES = {
+    Enum.HumanoidStateType.Ragdoll,
+    Enum.HumanoidStateType.FallingDown,
+    Enum.HumanoidStateType.Physics,
+    Enum.HumanoidStateType.PlatformStanding,
+}
+local function setRagdollStates(hum, enabled)
+    for _,st in ipairs(BAD_STATES) do
+        pcall(function() hum:SetStateEnabled(st, enabled) end)
+    end
+end
+
+local function applyCharacter(char)
+    local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 5)
+    if not hum then return end
+
+    bind("antiRag", hum.StateChanged:Connect(function(_, new)
+        if not S.AntiRagdoll then return end
+        if new == Enum.HumanoidStateType.Physics
+        or new == Enum.HumanoidStateType.PlatformStanding
+        or new == Enum.HumanoidStateType.FallingDown
+        or new == Enum.HumanoidStateType.Ragdoll then
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+        end
+    end))
+
+    bind("respawn", hum.Died:Connect(function()
+        if S.InstantRespawn then
+            task.delay(0.2, function() pcall(function() LP:LoadCharacter() end) end)
+        end
+    end))
+
+    if S.AntiRagdoll then setRagdollStates(hum, false) end
+    if S.SpeedHack   then pcall(function() hum.WalkSpeed = S.Speed end) end
+end
+
+-- Save-Health panic state - declared BEFORE CharacterAdded so the respawn reset
+-- below binds to THESE locals (declaring them later made it write a dead global).
+local healPanic = false
+local healSaveCF = nil
+local healPanicT = 0
+hook(LP.CharacterAdded, function(char)
+    destroyAbilityHb()
+    healPanic = false; AAR.manualHeal = false
+    task.wait(0.2)
+    pcall(applyCharacter, char)
+    -- PLUS/PREMIUM bypass: auto re-deploy into the fight after a respawn so Fly/Speed keeps you in play
+    if AAR.plus and (S.Fly or S.SpeedHack) then
+        pcall(function() char:WaitForChild("Humanoid", 5) end)
+        joltDeployNow()
+    end
+    if activeAura then task.wait(0.4); pcall(function() applyAuraNow(activeAura) end) end
+end)
+if LP.Character then pcall(applyCharacter, LP.Character) end
+
+local STUN_ATTRS = {"Ragdoll","Ragdolled","Stunned","Stun","Knocked","Knockback","KO","Downed"}
+local ragClock = 0
+hook(RunService.Heartbeat, function(dt)
+    if not S.AntiRagdoll then return end
+    local hum, char = getHum(), getChar()
+    if not (hum and char) then return end
+    pcall(function()
+        hum.PlatformStand = false
+        hum.Sit = false
+        local st = hum:GetState()
+        if st == Enum.HumanoidStateType.Physics or st == Enum.HumanoidStateType.Ragdoll
+        or st == Enum.HumanoidStateType.FallingDown or st == Enum.HumanoidStateType.PlatformStanding then
+            hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end
+    end)
+    ragClock += dt
+    if ragClock >= 0.5 then
+        ragClock = 0
+        setRagdollStates(hum, false)
+        for _,attr in ipairs(STUN_ATTRS) do
+            pcall(function()
+                if char:GetAttribute(attr) == true then char:SetAttribute(attr, false) end
+            end)
+        end
+        for _,d in ipairs(char:GetDescendants()) do
+            if d:IsA("BallSocketConstraint") then
+                pcall(function() d:Destroy() end)
+            elseif d:IsA("Motor6D") then
+                pcall(function() if d.Enabled == false then d.Enabled = true end end)
+            elseif d:IsA("BoolValue") then
+                local n = d.Name:lower()
+                if (n:find("ragdoll") or n:find("stun") or n:find("knock") or n:find("down")) and d.Value then
+                    pcall(function() d.Value = false end)
+                end
+            end
+        end
+    end
+end)
+
+hook(RunService.Stepped, function()
+    if S.Fly then return end
+    if not (S.AntiPush or S.AntiFling) then return end
+    local char, root, hum = getChar(), getRoot(), getHum()
+    if not (char and root) then return end
+    if S.AntiFling then
+        for _,pt in ipairs(char:GetDescendants()) do
+            if pt:IsA("BasePart") then
+                if pt.AssemblyAngularVelocity.Magnitude > 20 then
+                    pt.AssemblyAngularVelocity = Vector3.zero
+                end
+                if pt.AssemblyLinearVelocity.Magnitude > 130 then
+                    pt.AssemblyLinearVelocity = Vector3.zero
+                end
+            end
+        end
+    end
+    if S.AntiPush then
+        local v   = root.AssemblyLinearVelocity
+        local cap = ((hum and hum.WalkSpeed) or 16) * 2.5 + 25
+        local hv  = Vector3.new(v.X, 0, v.Z)
+        if hv.Magnitude > cap then
+            root.AssemblyLinearVelocity = Vector3.new(0, math.clamp(v.Y, -90, 60), 0)
+        end
+    end
+end)
+
+-- ══════════ ANTI-CHEAT BYPASS (PLUS / PREMIUM only) — user method ══════════
+-- Holds your position so the game's anti-teleport snapback can't yank you while Fly / Speed Hack is active.
+-- Every Heartbeat: if you moved MORE than 10 studs since the last frame, that's the server snapping you back —
+-- so we restore your last good pivot. Normal fly/speed steps stay well under 10 studs/frame, so they record
+-- freely and you keep moving. Only ever runs on the PLUS/PREMIUM tiers and only while Fly or Speed is on, so it
+-- never fights a deliberate teleport in the lobby.
+do
+    local BYPASS_OK = AAR.plus
+    if BYPASS_OK then
+        local lastGood
+        hook(RunService.Heartbeat, function()
+            if AAR.teleporting then lastGood=nil; return end
+            if not (S.Fly or S.SpeedHack) then lastGood = nil; return end
+            local ch = getChar(); if not ch then lastGood = nil; return end
+            local ok, piv = pcall(function() return ch:GetPivot() end)
+            if not ok or not piv then return end
+            if lastGood and (lastGood.Position - piv.Position).Magnitude > 10 then
+                pcall(function() ch:PivotTo(lastGood) end)
+            else
+                lastGood = piv
+            end
+        end)
+    end
+end
+
+local savedSpawnCF = nil
+local floatPart, lastSafeCF
+
+-- read the LOCAL player's health, with or without a standard Humanoid
+local function getHealth()
+    local char = getChar(); if not char then return nil end
+    local h = char:FindFirstChildOfClass("Humanoid")
+    if h and h.MaxHealth and h.MaxHealth > 0 then return h.Health, h.MaxHealth end
+    local cur = char:GetAttribute("Health")
+    if type(cur) == "number" then
+        local mx = char:GetAttribute("MaxHealth")
+        return cur, (type(mx) == "number" and mx > 0 and mx) or 100
+    end
+    local hv = char:FindFirstChild("Health")
+    if hv and (hv:IsA("NumberValue") or hv:IsA("IntValue")) then
+        local mv = char:FindFirstChild("MaxHealth")
+        local mx = (mv and (mv:IsA("NumberValue") or mv:IsA("IntValue")) and mv.Value) or 100
+        return hv.Value, (mx > 0 and mx) or 100
+    end
+    return nil
+end
+
+-- read ANY character's health the same way (used by ESP so the label is never
+-- blank for this game's Humanoid-less characters)
+local function getTargetHealth(char)
+    if not char then return nil end
+    local h = char:FindFirstChildOfClass("Humanoid")
+    if h and h.MaxHealth and h.MaxHealth > 0 then return h.Health, h.MaxHealth end
+    local cur = char:GetAttribute("Health")
+    if type(cur) == "number" then
+        local mx = char:GetAttribute("MaxHealth")
+        return cur, (type(mx) == "number" and mx > 0 and mx) or 100
+    end
+    local hv = char:FindFirstChild("Health")
+    if hv and (hv:IsA("NumberValue") or hv:IsA("IntValue")) then
+        local mv = char:FindFirstChild("MaxHealth")
+        local mx = (mv and (mv:IsA("NumberValue") or mv:IsA("IntValue")) and mv.Value) or 100
+        return hv.Value, (mx > 0 and mx) or 100
+    end
+    return nil
+end
+
+-- Best-effort: which ability/element a player has. This game exposes no
+-- guaranteed signal, so we try attributes, StringValue children, a child named
+-- like a known ability, then a Tool. Returns nil if it can't tell.
+local ABILITY_ATTRS = {"Element","Ability","Move","Class","Skill","Power","Weapon","Kit","Stand","Fruit","CurrentAbility","ActiveElement","ActiveAbility","SelectedAbility","EquippedAbility"}
+local _knownAbil, _knownAbilT = nil, 0
+local function knownAbilities()
+    if _knownAbil and (tick()-_knownAbilT) < 5 then return _knownAbil end
+    _knownAbil = {}; _knownAbilT = tick()
+    pcall(function() for _,n in ipairs(abilityNames()) do _knownAbil[n] = true end end)
+    pcall(function() for _,n in ipairs(auraNames())    do _knownAbil[n] = true end end)
+    return _knownAbil
+end
+local function getPlayerAbility(char)
+    if not char then return nil end
+    for _,k in ipairs(ABILITY_ATTRS) do
+        local v = char:GetAttribute(k); if type(v)=="string" and #v>0 then return v end
+    end
+    for _,k in ipairs(ABILITY_ATTRS) do
+        local sv = char:FindFirstChild(k)
+        if sv and sv:IsA("StringValue") and #sv.Value>0 then return sv.Value end
+    end
+    -- ObjectValue pointing at the ability, anywhere on the char (e.g. char.Stats.Ability.Value)
+    for _,k in ipairs(ABILITY_ATTRS) do
+        local ov = char:FindFirstChild(k, true)
+        if ov then
+            if ov:IsA("ObjectValue") and ov.Value then return ov.Value.Name end
+            if ov:IsA("StringValue") and #ov.Value>0 then return ov.Value end
+        end
+    end
+    local known = knownAbilities()
+    for _,c in ipairs(char:GetDescendants()) do
+        if (c:IsA("BasePart") or c:IsA("Model") or c:IsA("Folder") or c:IsA("ModuleScript")) and known[c.Name] then return c.Name end
+    end
+    local tool = char:FindFirstChildOfClass("Tool"); if tool then return tool.Name end
+    return nil
+end
+
+local function ensureFloat()
+    if not floatPart or floatPart.Parent == nil then
+        floatPart = Instance.new("Part")
+        floatPart.Name         = "MFHFloat"
+        floatPart.Size         = Vector3.new(16, 1, 16)
+        floatPart.Anchored     = true
+        floatPart.CanCollide   = true
+        floatPart.CanQuery     = false
+        floatPart.Material     = Enum.Material.ForceField
+        floatPart.Color        = Color3.fromRGB(120, 170, 255)
+        floatPart.Transparency = 0.6
+        floatPart.Parent       = Workspace
+    end
+    return floatPart
+end
+local function showFloat(pos)
+    local plat = ensureFloat()
+    plat.CanCollide   = true
+    plat.Transparency = 0.6
+    plat.Position     = pos
+end
+local function hideFloat()
+    if floatPart then floatPart.CanCollide = false; floatPart.Transparency = 1 end
+end
+local function isKillPart(inst)
+    if not inst then return false end
+    local kb = Workspace:FindFirstChild("KillBricks")
+    if kb and inst:IsDescendantOf(kb) then return true end
+    return tostring(inst.Name):lower():find("kill") ~= nil
+end
+
+hook(RunService.Heartbeat, function()
+    if not S.AntiVoid then
+        if floatPart then pcall(function() floatPart:Destroy() end); floatPart = nil end
+        return
+    end
+    if S.Fly or S.InfiniteJump or healPanic then hideFloat(); return end  -- don't yank you back while you're meant to be airborne (Fly / Inf Jump / Save-Health)
+    local root, char = getRoot(), getChar()
+    if not (root and char) then return end
+    local hum = getHum()  -- optional: this game's characters may have no Humanoid
+
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = {char, floatPart}
+    local hit = Workspace:Raycast(root.Position, Vector3.new(0, -2000, 0), params)
+
+    local overWater = hit ~= nil and hit.Instance ~= nil and hit.Instance:IsA("Terrain") and hit.Material == Enum.Material.Water
+    local overKill  = hit ~= nil and isKillPart(hit.Instance)
+    local overVoid  = (hit == nil)
+    local floor     = hum and hum.FloorMaterial or nil
+    local swimming  = (hum and hum:GetState() == Enum.HumanoidStateType.Swimming) or floor == Enum.Material.Water
+
+    -- remember the last solid, safe ground (works with NO Humanoid - pure raycast)
+    if hit and not overWater and not overKill and (root.Position.Y - hit.Position.Y) <= 14 then
+        lastSafeCF = root.CFrame
+    end
+
+    if swimming then
+        showFloat(Vector3.new(root.Position.X, root.Position.Y - 3.5, root.Position.Z))
+        root.CFrame = root.CFrame + Vector3.new(0, 4, 0)
+        root.AssemblyLinearVelocity = Vector3.zero
+        if hum then pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end) end
+    elseif overWater and (root.Position.Y - hit.Position.Y) < 12 then
+        showFloat(Vector3.new(root.Position.X, hit.Position.Y + 0.5, root.Position.Z))
+    elseif overVoid or overKill then
+        hideFloat()
+        local tpCF = savedSpawnCF or lastSafeCF
+        if tpCF then
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.CFrame = tpCF + Vector3.new(0, 5, 0)
+        else
+            showFloat(root.Position - Vector3.new(0, 6, 0))
+        end
+    else
+        hideFloat()
+    end
+
+    local killY = -480
+    pcall(function() killY = Workspace.FallenPartsDestroyHeight + 100 end)
+    if root.Position.Y < killY then
+        local tpCF = savedSpawnCF or lastSafeCF
+        if tpCF then
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.CFrame = tpCF + Vector3.new(0, 6, 0)
+        end
+    end
+end)
+
+-- ============================================================
+-- ANTI WATER BORDER + ANTI KILL BRICKS
+-- The map fences the water with invisible "Border Part"s under
+-- Workspace.Border.Water that shove you back / drown you, and KillBricks
+-- under Workspace.KillBricks insta-kill on touch. Removing them client-side
+-- is what actually makes "Anti Water" hold and stops the kill bricks. Both
+-- toggles destroy on enable AND re-clear every second (the server can
+-- re-stream the parts in, so a one-shot wouldn't be enough).
+-- ============================================================
+local function destroyWaterBorder()
+    local cleared = 0
+    local roots = {}
+    local border = Workspace:FindFirstChild("Border")
+    if border then
+        local w = border:FindFirstChild("Water")
+        if w then roots[#roots+1] = w end
+    end
+    local w2 = Workspace:FindFirstChild("Water")   -- in case it sits at the top level
+    if w2 then roots[#roots+1] = w2 end
+    for _,r in ipairs(roots) do
+        if r:IsA("BasePart") then pcall(function() r:Destroy() end); cleared += 1 end
+        for _,d in ipairs(r:GetDescendants()) do
+            if d:IsA("BasePart") then pcall(function() d:Destroy() end); cleared += 1 end
+        end
+    end
+    return cleared
+end
+
+local function destroyKillBricks()
+    local cleared = 0
+    local kb = Workspace:FindFirstChild("KillBricks")
+    if kb then
+        for _,d in ipairs(kb:GetDescendants()) do
+            if d:IsA("BasePart") then pcall(function() d:Destroy() end); cleared += 1 end
+        end
+        if kb:IsA("BasePart") then pcall(function() kb:Destroy() end); cleared += 1 end
+    end
+    return cleared
+end
+
+task.spawn(function()
+    while AAR.alive and task.wait(1) do
+        if S.RemoveWaterBorder then pcall(destroyWaterBorder) end
+        if S.AntiKillBricks    then pcall(destroyKillBricks) end
+        if S.FullBright        then pcall(function() setFullBright(true) end) end
+    end
+end)
+
+-- ============================================================
+-- SAVE HEALTH (panic): when HP drops below the threshold, fly you up into
+-- the sky and HOLD you there so nothing can reach you; when HP is back up
+-- (you finished healing), drop you back to exactly where you were.
+-- ============================================================
+hook(RunService.Heartbeat, function()
+    if not S.SaveHealth and not AAR.manualHeal then
+        if healPanic then               -- toggled off mid-panic: bring us back down
+            healPanic = false
+            local root = getRoot()
+            if root then pcall(function() root.Anchored = false end) end
+            if root and healSaveCF then pcall(function() root.CFrame = healSaveCF end) end
+        end
+        return
+    end
+    local root = getRoot(); if not root then return end
+    local cur, max = getHealth()
+    local pct = (cur and max and max > 0) and (cur / max * 100) or nil
+    if not healPanic and not pct then return end  -- not in panic and HP unreadable -> nothing to do
+
+    -- don't start a sky-escape while you're deliberately airborne (Fly / Inf Jump)
+    if not healPanic and pct and pct <= S.SaveHealthPct and not S.Fly and not S.InfiniteJump then
+        healPanic  = true
+        healSaveCF = root.CFrame
+        healPanicT = tick()
+    end
+
+    -- if you start flying / inf-jumping mid-panic, release so it can't hold you
+    if healPanic and (S.Fly or S.InfiniteJump) then
+        healPanic = false; AAR.manualHeal = false
+        pcall(function() root.Anchored = false end)
+        if healSaveCF then pcall(function() root.CFrame = healSaveCF + Vector3.new(0, 3, 0) end) end
+    end
+
+    if healPanic then
+        local base = (healSaveCF and healSaveCF.Position) or root.Position
+        pcall(function()
+            root.Anchored = true        -- anchored so knockback / abilities can't fling you out of the sky
+            root.CFrame = CFrame.new(base + Vector3.new(0, S.SaveHealthHeight, 0))
+            root.AssemblyLinearVelocity = Vector3.zero
+        end)
+        -- come down when HP recovers a margin ABOVE the trigger (a fixed 90% can be
+        -- unreachable if the game heals slowly / caps HP), OR after a 30s safety
+        -- timeout. The timeout works even if HP becomes unreadable, so you can
+        -- NEVER get stuck anchored in the sky.
+        local exitPct = AAR.manualHeal and 95 or math.min(95, S.SaveHealthPct + 25)
+        if (pct and pct >= exitPct) or (tick() - healPanicT) > 30 then
+            healPanic = false; AAR.manualHeal = false
+            pcall(function() root.Anchored = false end)
+            if healSaveCF then pcall(function() root.CFrame = healSaveCF + Vector3.new(0, 3, 0) end) end
+        end
+    end
+end)
+
+-- ============================================================
+-- INPUT EXTRAS
+-- ============================================================
+hook(UserInputService.JumpRequest, function()
+    if S.InfiniteJump then
+        local h = getHum()
+        if h then pcall(function() h:ChangeState(Enum.HumanoidStateType.Jumping) end) end
+    end
+end)
+
+-- Click TP moved to V (T is an ability key in this game - it was clashing)
+hook(UserInputService.InputBegan, function(i, gpe)
+    if gpe then return end
+    -- V on PC; on mobile (no keyboard) a screen TAP teleports to the tapped spot. gpe already filters GUI taps.
+    if S.ClickTP and (i.KeyCode == Enum.KeyCode.V or i.UserInputType == Enum.UserInputType.Touch) then
+        pcall(function()
+            local pos
+            if i.UserInputType == Enum.UserInputType.Touch then
+                local cam = Workspace.CurrentCamera
+                local ray = cam:ViewportPointToRay(i.Position.X, i.Position.Y)
+                local rp = RaycastParams.new(); rp.FilterType = Enum.RaycastFilterType.Exclude
+                rp.FilterDescendantsInstances = { LP.Character }
+                local res = Workspace:Raycast(ray.Origin, ray.Direction * 2000, rp)
+                if res then pos = res.Position end
+            else
+                local m = LP:GetMouse(); if m and m.Target and m.Hit then pos = m.Hit.Position end
+            end
+            if pos then tpTo(CFrame.new(pos + Vector3.new(0,4,0))) end
+        end)
+    end
+end)
+
+pcall(function()
+    hook(LP.Idled, function()
+        if not S.AntiAFK then return end
+        local vu = game:GetService("VirtualUser")
+        vu:CaptureController(); vu:ClickButton2(Vector2.new())
+    end)
+end)
+
+-- ============================================================
+-- MOVEMENT
+-- ============================================================
+local flyKeys = {W=false,A=false,S=false,D=false,Up=false,Down=false}
+local function stopFlyMovement()
+    for key in pairs(flyKeys) do flyKeys[key] = false end
+    local hum = getHum()
+    if hum then pcall(function()
+        hum.PlatformStand = false
+        hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+    end) end
+end
+hook(UserInputService.InputBegan, function(i, gpe)
+    if gpe then return end
+    local k=i.KeyCode
+    if     k==Enum.KeyCode.W           then flyKeys.W=true
+    elseif k==Enum.KeyCode.A           then flyKeys.A=true
+    elseif k==Enum.KeyCode.S           then flyKeys.S=true
+    elseif k==Enum.KeyCode.D           then flyKeys.D=true
+    elseif k==Enum.KeyCode.Space       then flyKeys.Up=true
+    elseif k==Enum.KeyCode.LeftControl then flyKeys.Down=true end
+end)
+hook(UserInputService.InputEnded, function(i)
+    local k=i.KeyCode
+    if     k==Enum.KeyCode.W           then flyKeys.W=false
+    elseif k==Enum.KeyCode.A           then flyKeys.A=false
+    elseif k==Enum.KeyCode.S           then flyKeys.S=false
+    elseif k==Enum.KeyCode.D           then flyKeys.D=false
+    elseif k==Enum.KeyCode.Space       then flyKeys.Up=false
+    elseif k==Enum.KeyCode.LeftControl then flyKeys.Down=false end
+end)
+hook(RunService.RenderStepped, function(dt)
+    if not S.Fly then return end
+    local root = getRoot(); if not root then return end
+    local hum = getHum()
+    if hum then
+        pcall(function()
+            hum.PlatformStand = true
+            hum:ChangeState(Enum.HumanoidStateType.Physics)
+        end)
+    end
+    local cam = Workspace.CurrentCamera
+    local dir = Vector3.zero
+    if flyKeys.W    then dir += cam.CFrame.LookVector end
+    if flyKeys.S    then dir -= cam.CFrame.LookVector end
+    if flyKeys.A    then dir -= cam.CFrame.RightVector end
+    if flyKeys.D    then dir += cam.CFrame.RightVector end
+    if flyKeys.Up   then dir += Vector3.yAxis end
+    if flyKeys.Down then dir -= Vector3.yAxis end
+    -- MOBILE: no keyboard, so drive horizontal fly from the thumbstick (Humanoid.MoveDirection is world-space).
+    -- Without this, enabling Fly on Delta/mobile strands you (PlatformStand on, but you can't move anywhere).
+    if hum then
+        local horiz = Vector3.new(dir.X, 0, dir.Z)
+        if horiz.Magnitude == 0 then
+            local md = hum.MoveDirection
+            if md.Magnitude > 0 then dir = Vector3.new(md.X, dir.Y, md.Z) end
+        end
+    end
+    pcall(function()
+        root.AssemblyLinearVelocity = Vector3.zero
+        if dir.Magnitude > 0 then
+            root.CFrame = root.CFrame + dir.Unit * S.FlySpeed * dt
+        end
+    end)
+end)
+-- ── MOBILE controls (Delta/touch) ── Fluriore's menu only reopens on RightShift, which a touchscreen has no
+-- way to press; and Fly's up/down are Space/LeftControl. So on touch devices we build a small on-screen panel:
+-- a MENU toggle (fires RightShift virtually so the UI shows/hides) + Fly ascend/descend buttons.
+if UserInputService.TouchEnabled then
+    pcall(function()
+        local mg = Instance.new("ScreenGui")
+        mg.Name = "DreamAA_Mobile"; mg.ResetOnSpawn = false; mg.IgnoreGuiInset = true; mg.DisplayOrder = 99998
+        mg.Parent = (gethui and gethui()) or game:GetService("CoreGui")
+        if not mg.Parent then mg.Parent = LP:WaitForChild("PlayerGui") end
+        AAR.owned.mobile = mg
+        -- LAYOUT FIX ("can't move when they click on the gui"): the old buttons sat at the LEFT-MIDDLE of the
+        -- screen — exactly where the dynamic movement thumbstick spawns on phones, so touches meant for
+        -- WALKING landed on our buttons and the thumbstick never engaged. Everything now lives at the TOP
+        -- edge (out of every control zone), the M1 button sits just above the jump button, and the fly
+        -- arrows only exist while Fly is actually on.
+        local function mkBtn(txt, pos)
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.fromOffset(44,44); b.Position = pos
+            b.BackgroundColor3 = Color3.fromRGB(16,16,16); b.BackgroundTransparency = 0.25
+            b.Text = txt; b.TextColor3 = Color3.fromRGB(255,60,60)
+            b.TextSize = 20; b.Font = Enum.Font.GothamBold; b.AutoButtonColor = true; b.Parent = mg
+            Instance.new("UICorner", b).CornerRadius = UDim.new(0,10)
+            local st = Instance.new("UIStroke"); st.Color = Color3.fromRGB(255,45,45); st.Thickness = 1.2; st.Parent = b
+            return b
+        end
+        local menuB = mkBtn("≡", UDim2.new(0.5, -110, 0, 8))          -- top-center strip: never a movement zone
+        hook(menuB.MouseButton1Click, function()
+            pcall(function() VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.RightShift, false, game); task.wait(); VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.RightShift, false, game) end)
+        end)
+        local upB = mkBtn("▲", UDim2.new(0.5, -58, 0, 8))
+        local dnB = mkBtn("▼", UDim2.new(0.5, -6, 0, 8))
+        -- press-and-slide-off leaves MouseButton1Up unfired -> the key stuck held = "stuck flying up".
+        -- InputEnded on the button catches BOTH clean release and slide-off, for touch and mouse alike.
+        hook(upB.InputBegan, function(i) if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then flyKeys.Up = true end end)
+        hook(upB.InputEnded, function() flyKeys.Up = false end)
+        hook(dnB.InputBegan, function(i) if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then flyKeys.Down = true end end)
+        hook(dnB.InputEnded, function() flyKeys.Down = false end)
+        task.spawn(function()   -- fly arrows exist ONLY while Fly is on: off = zero dead zones on screen
+            while mg.Parent do
+                local on = S.Fly and true or false
+                if upB.Visible ~= on then upB.Visible = on; dnB.Visible = on; if not on then flyKeys.Up = false; flyKeys.Down = false end end
+                task.wait(0.25)
+            end
+        end)
+        upB.Visible = false; dnB.Visible = false
+        -- MOBILE M1: runs the SAME swing dispatcher the desktop click does (M1 Warp / Dash / Fling /
+        -- One Punch / God-mode M1 + a base swing). Sits just ABOVE the jump button, clear of it.
+        local m1B = Instance.new("TextButton")
+        m1B.Size = UDim2.fromOffset(72,72); m1B.AnchorPoint = Vector2.new(1,1); m1B.Position = UDim2.new(1, -24, 1, -200)
+        m1B.BackgroundColor3 = Color3.fromRGB(200,40,40); m1B.BackgroundTransparency = 0.2
+        m1B.Text = "M1"; m1B.TextColor3 = Color3.fromRGB(255,255,255)
+        m1B.TextSize = 24; m1B.Font = Enum.Font.GothamBold; m1B.AutoButtonColor = true; m1B.Parent = mg
+        Instance.new("UICorner", m1B).CornerRadius = UDim.new(1,0)
+        hook(m1B.MouseButton1Click, function() if _G.AA_SWING then pcall(function() _G.AA_SWING(true) end) end end)
+    end)
+end
+task.spawn(function()
+    local wasFlying = false
+    while AAR.alive and task.wait(0.1) do
+        if S.Fly then
+            wasFlying = true
+        elseif wasFlying then
+            wasFlying = false
+            local hum = getHum()
+            if hum then
+                pcall(function()
+                    hum.PlatformStand = false
+                    hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+                end)
+            end
+        end
+    end
+    stopFlyMovement()
+end)
+
+hook(RunService.Stepped, function()
+    if not (S.Noclip or Grab.noclip) then return end
+    local c = getChar(); if not c then return end
+    for _,pt in ipairs(c:GetDescendants()) do
+        if pt:IsA("BasePart") and pt.CanCollide then pt.CanCollide = false end
+    end
+end)
+
+hook(RunService.RenderStepped, function()
+    if not S.CamLock then return end
+    local tgt = nearestPlayer(S.CamLockRange); if not tgt or not tgt.Character then return end
+    local head = tgt.Character:FindFirstChild("Head") or tgt.Character:FindFirstChild("HumanoidRootPart")
+    if not head then return end
+    local cam = Workspace.CurrentCamera
+    cam.CFrame = CFrame.new(cam.CFrame.Position, head.Position)
+end)
+
+-- ============================================================
+-- VISUALS
+-- ============================================================
+local highlights = {}
+local function clearHighlights()
+    for _,h in pairs(highlights) do pcall(function() h:Destroy() end) end
+    highlights = {}
+end
+hook(RunService.Heartbeat, function()
+    if not S.EnemyHighlight then if next(highlights) then clearHighlights() end return end
+    for name,h in pairs(highlights) do
+        local p = Players:FindFirstChild(name)
+        if not p or not p.Character or h.Parent==nil then
+            pcall(function() h:Destroy() end); highlights[name]=nil
+        end
+    end
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p ~= LP and p.Character and not highlights[p.Name] then
+            local hl = Instance.new("Highlight")
+            hl.FillColor = BrickColor.new(S.HighlightColor).Color
+            hl.FillTransparency = 0.6; hl.OutlineColor = Color3.new(1,1,1)
+            hl.Adornee = p.Character; hl.Parent = p.Character
+            highlights[p.Name] = hl
+        end
+    end
+end)
+
+local espPool = {}
+local hasDrawing = (typeof(Drawing) == "table") or (Drawing ~= nil)
+local function clearESP()
+    for _,d in pairs(espPool) do
+        pcall(function() d.bill:Destroy() end)
+        if d.line then pcall(function() d.line:Remove() end) end
+        if d.box  then pcall(function() d.box:Remove()  end) end
+    end
+    espPool = {}
+end
+local function hpColor(frac)
+    frac = math.clamp(frac, 0, 1)
+    return Color3.fromRGB(math.floor(255*(1-frac)), math.floor(255*frac), 55)
+end
+local function espLabel(parent, posY, sizeY, txtSize, bold)
+    local l = Instance.new("TextLabel")
+    l.BackgroundTransparency = 1
+    l.Position = UDim2.new(0,0,posY,0)
+    l.Size     = UDim2.new(1,0,0,sizeY)
+    l.Font     = bold and Enum.Font.GothamBold or Enum.Font.Gotham
+    l.TextSize = txtSize
+    l.TextColor3 = Color3.new(1,1,1)
+    l.TextStrokeTransparency = 0
+    l.Parent = parent
+    return l
+end
+local espTimer = 0
+hook(RunService.RenderStepped, function(dt)
+    if not (S.ESP or S.Tracers or S.ESPBox) then if next(espPool) then clearESP() end return end
+    espTimer += dt
+    if espTimer >= 0.3 then
+        espTimer = 0
+        for name,d in pairs(espPool) do
+            local p = Players:FindFirstChild(name)
+            if not p or not p.Character then
+                pcall(function() d.bill:Destroy() end)
+                if d.line then pcall(function() d.line:Remove() end) end
+                if d.box  then pcall(function() d.box:Remove()  end) end
+                espPool[name] = nil
+            end
+        end
+        for _,p in ipairs(Players:GetPlayers()) do
+            if p ~= LP and p.Character and p.Character:FindFirstChild("Head") and not espPool[p.Name] then
+                local head = p.Character.Head
+                local bill = Instance.new("BillboardGui")
+                bill.Name="MFHESP"; bill.Adornee=head; bill.Size=UDim2.new(0,210,0,58)
+                bill.StudsOffset=Vector3.new(0,3,0); bill.AlwaysOnTop=true
+                local nameLbl = espLabel(bill, 0.00, 16, 14, true)
+                local abilLbl = espLabel(bill, 0.27, 13, 13, true); abilLbl.TextColor3 = Color3.fromRGB(255,70,70)
+                local barBG = Instance.new("Frame")
+                barBG.Position=UDim2.new(0.1,0,0.54,0); barBG.Size=UDim2.new(0.8,0,0,7)
+                barBG.BackgroundColor3=Color3.fromRGB(15,15,15); barBG.BorderSizePixel=0
+                barBG.BackgroundTransparency=0.2; barBG.Parent=bill
+                local barFill = Instance.new("Frame")
+                barFill.Size=UDim2.new(1,0,1,0); barFill.BorderSizePixel=0
+                barFill.BackgroundColor3=Color3.fromRGB(0,200,0); barFill.Parent=barBG
+                local infoLbl = espLabel(bill, 0.74, 13, 11, false); infoLbl.TextColor3=Color3.fromRGB(215,215,215)
+                bill.Parent = head
+                local line, box
+                if hasDrawing then
+                    line = Drawing.new("Line");   line.Thickness=1.5; line.Transparency=1; line.Color=Color3.fromRGB(255,70,70)
+                    box  = Drawing.new("Square"); box.Thickness=1.5; box.Filled=false; box.Transparency=1; box.Color=Color3.fromRGB(255,70,70)
+                end
+                espPool[p.Name] = {bill=bill, nameLbl=nameLbl, abilLbl=abilLbl, barBG=barBG, barFill=barFill, infoLbl=infoLbl, line=line, box=box}
+            end
+        end
+    end
+    local cam = Workspace.CurrentCamera
+    local myRoot = getRoot()
+    for name,d in pairs(espPool) do
+        local p    = Players:FindFirstChild(name)
+        local char = p and p.Character
+        local head = char and char:FindFirstChild("Head")
+        local root = char and (char:FindFirstChild("HumanoidRootPart") or charPart(char))
+        local dist = (myRoot and root) and math.floor((root.Position-myRoot.Position).Magnitude) or 0
+        local within = (S.ESPMaxDist or 0) <= 0 or dist <= S.ESPMaxDist
+        local hp, maxHp = getTargetHealth(char)
+        local frac = (hp and maxHp and maxHp > 0) and math.clamp(hp/maxHp, 0, 1) or nil
+        local col  = (S.ESPColor and frac) and hpColor(frac) or Color3.fromRGB(255,70,70)
+        local showText = S.ESP and head ~= nil and within
+        d.bill.Enabled = showText
+        if showText then
+            d.nameLbl.Text = name; d.nameLbl.TextColor3 = col
+            d.abilLbl.Text = S.ESPAbility and (getPlayerAbility(char) or "?") or ""
+            if frac then
+                d.barBG.Visible = true
+                d.barFill.Size = UDim2.new(frac,0,1,0)
+                d.barFill.BackgroundColor3 = col
+                d.infoLbl.Text = string.format("%d/%d  -  %dm", math.floor(hp), math.floor(maxHp), dist)
+            else
+                d.barBG.Visible = false
+                d.infoLbl.Text = string.format("?? HP  -  %dm", dist)
+            end
+        end
+        if d.line then
+            if S.Tracers and root and within then
+                local sp, on = cam:WorldToViewportPoint(root.Position)
+                if on then
+                    d.line.Visible=true; d.line.Color=col
+                    d.line.From=Vector2.new(cam.ViewportSize.X/2, cam.ViewportSize.Y)
+                    d.line.To=Vector2.new(sp.X, sp.Y)
+                else d.line.Visible=false end
+            else d.line.Visible=false end
+        end
+        if d.box then
+            if S.ESPBox and head and root and within then
+                local topV = cam:WorldToViewportPoint(head.Position + Vector3.new(0,2,0))
+                local botV = cam:WorldToViewportPoint(root.Position - Vector3.new(0,3,0))
+                if topV.Z > 0 and botV.Z > 0 then
+                    local bh = math.abs(botV.Y - topV.Y); local bw = bh*0.6
+                    local cx = (topV.X + botV.X)/2; local topY = math.min(topV.Y, botV.Y)
+                    d.box.Visible=true; d.box.Color=col
+                    d.box.Size=Vector2.new(bw, bh); d.box.Position=Vector2.new(cx - bw/2, topY)
+                else d.box.Visible=false end
+            else d.box.Visible=false end
+        end
+    end
+end)
+
+-- ── VIEW PLAYER (spectate) - reuses Camera.CameraSubject ───────────────────
+local function viewPlayer(name)
+    local pl = name and Players:FindFirstChild(name); local char = pl and pl.Character
+    local subj = char and (char:FindFirstChildOfClass("Humanoid") or char:FindFirstChild("Head") or charPart(char))
+    local cam = Workspace.CurrentCamera
+    if subj and cam then
+        pcall(function() cam.CameraSubject = subj end); S.Viewing = name
+        Rayfield:Notify({Title="Dream Hub", Content="Now viewing "..name..".", Duration=3})
+    else
+        Rayfield:Notify({Title="Dream Hub", Content="Player not found.", Duration=3})
+    end
+end
+local function stopView()
+    local cam = Workspace.CurrentCamera; local me = getHum() or getRoot()
+    if cam and me then pcall(function() cam.CameraSubject = me end) end
+    S.Viewing = nil
+end
+hook(RunService.RenderStepped, function()           -- re-assert subject across respawns
+    if not S.Viewing then return end
+    local pl = Players:FindFirstChild(S.Viewing); local char = pl and pl.Character
+    local subj = char and (char:FindFirstChildOfClass("Humanoid") or char:FindFirstChild("Head"))
+    local cam = Workspace.CurrentCamera
+    if subj and cam and cam.CameraSubject ~= subj then pcall(function() cam.CameraSubject = subj end) end
+end)
+
+local function setFullBright(on)
+    pcall(function()
+        if on then
+            Lighting.Ambient=Color3.new(1,1,1); Lighting.OutdoorAmbient=Color3.new(1,1,1)
+            Lighting.Brightness=2; Lighting.FogEnd=1e9; Lighting.ClockTime=12; Lighting.GlobalShadows=false
+        else
+            Lighting.Ambient=Color3.fromRGB(70,70,70); Lighting.OutdoorAmbient=Color3.fromRGB(110,110,110)
+            Lighting.Brightness=1; Lighting.FogEnd=1e5; Lighting.ClockTime=14; Lighting.GlobalShadows=true
+        end
+    end)
+end
+
+hook(RunService.Heartbeat, function()
+    local h, root = getHum(), getRoot()
+    if not (h and root) then return end
+    if S.SpeedHack then
+        pcall(function() h.WalkSpeed = S.Speed end)
+        local mv = h.MoveDirection
+        if mv.Magnitude > 0.1 then
+            local vel = root.AssemblyLinearVelocity
+            root.AssemblyLinearVelocity = Vector3.new(mv.X * S.Speed, vel.Y, mv.Z * S.Speed)
+        end
+    end
+end)
+
+-- ============================================================
+-- COMBAT LOOPS (every body is pcall-wrapped so one error can
+-- never kill the loop - that crash is what broke Kill Aura)
+-- ============================================================
+-- (Kill Aura removed in v2.9.3 per request - use the hitbox expanders + your own M1.)
+
+task.spawn(function()
+    local lastSwing = 0
+    while AAR.alive and task.wait(0.05) do
+        if S.AutoM1 then
+            pcall(function()
+                -- AURA M1: only swing when someone is actually within range - no enemy near = no click.
+                local near = nearestPlayer(math.min(tonumber(S.AuraRange) or 60, tonumber(S.AuraHit) or 14))
+                if near and near.Character and tick() - lastSwing >= 0.28 then
+                    lastSwing = tick()
+                    clearMyHitLog()
+                    local tr = charPart(near.Character); local root = getRoot()
+                    if tr and root then pcall(function() root.CFrame = CFrame.new(root.Position, Vector3.new(tr.Position.X, root.Position.Y, tr.Position.Z)) end) end   -- face them so the swing connects
+                    clickM1(true)     -- FORCED: a non-forced click skips whenever the cursor sits on the menu (= "aura m1 dont work")
+                end
+            end)
+        end
+    end
+end)
+
+task.spawn(function()
+    while AAR.alive and task.wait(0.25) do
+        if S.AutoAbility then
+            pcall(function()
+                local enemy = nearestPlayer(S.AutoAbilityRange)
+                local r = enemy and enemy.Character and charPart(enemy.Character)
+                if not r then return end
+                faceTo(r.Position)
+                if S.CastE then tapKey(Enum.KeyCode.E) end
+                if S.CastQ then tapKey(Enum.KeyCode.Q) end
+                if S.CastR then tapKey(Enum.KeyCode.R) end
+                if S.CastT then tapKey(Enum.KeyCode.T) end
+            end)
+        end
+    end
+end)
+
+-- (Old Dash Behind hook REMOVED — the M1 Q Dash sequence now lives in the swing-start hook near the top
+--  of the combat section: snap behind -> forced M1 -> dash Q -> return. One hook per click, no fighting.)
+
+-- AUTO DASH: spam-dashes on a loop. Fires the dash remote AND taps the dash key
+-- you pick below (default Q). NO LeftShift, so it never touches your camera.
+local DASH_KEYS = {
+    Q=Enum.KeyCode.Q, E=Enum.KeyCode.E, F=Enum.KeyCode.F, R=Enum.KeyCode.R,
+    X=Enum.KeyCode.X, C=Enum.KeyCode.C, V=Enum.KeyCode.V, ["Left Shift"]=Enum.KeyCode.LeftShift,
+}
+task.spawn(function()
+    while AAR.alive do
+        if S.AutoDash then
+            pcall(function()
+                fireDash("Forward")
+                local kc = DASH_KEYS[S.AutoDashKey or "Q"]
+                if kc then tapKey(kc) end
+            end)
+            task.wait(math.max(0.1, S.AutoDashDelay or 0.6))
+        else
+            task.wait(0.1)
+        end
+    end
+end)
+
+-- ── ABILITY AIM ASSIST ─────────────────────────────────────────
+-- On a skill keypress, snap to face the nearest enemy (with simple velocity
+-- lead) so directional abilities land. Facing-based, same as Auto Ability.
+local AIM_KEYS = {
+    [Enum.KeyCode.E]=true, [Enum.KeyCode.Q]=true, [Enum.KeyCode.R]=true,
+    [Enum.KeyCode.T]=true, [Enum.KeyCode.F]=true,
+}
+hook(UserInputService.InputBegan, function(i, gpe)
+    if not S.AimAssist or typingNow() then return end   -- no gpe bail: combat keys/clicks are always game-processed here
+    local isSkill = AIM_KEYS[i.KeyCode]
+    local isM1 = (i.UserInputType == Enum.UserInputType.MouseButton1) and S.AimOnM1   -- also snap on your M1 so basic attacks land
+    if not (isSkill or isM1) then return end
+    local tgt = nearestPlayer(S.AimAssistRange)
+    local tr  = tgt and tgt.Character and charPart(tgt.Character)
+    if not tr then return end
+    local lead = tr.Position + tr.AssemblyLinearVelocity * (S.AimAssistLead or 0.12)
+    faceTo(lead)
+end)
+-- STRONG AIM (hold on target): while on, smoothly keep facing the nearest enemy (with prediction) EVERY frame, not
+-- just on a keypress — so both your M1s and directional abilities track them. Smoothed by the Aim Smoothness slider.
+hook(RunService.RenderStepped, function()
+    if not (S.AimAssist and S.AimStrong) or typingNow() then return end
+    local tgt = nearestPlayer(S.AimAssistRange)
+    local tr  = tgt and tgt.Character and charPart(tgt.Character)
+    if not tr then return end
+    local lead = tr.Position + tr.AssemblyLinearVelocity * (S.AimAssistLead or 0.12)
+    faceToSmooth(lead, S.AimSmooth or 0.35)
+end)
+
+-- Auto Farm / Auto Play: ORIGINAL v2.9.6 brute-force. Teleport your root to
+-- ~4 studs below the target's Hitbox CENTRE every 0.1s, which drops you INSIDE
+-- their hitbox (point-blank) so the M1 overlap lands; then spam click + M1 +
+-- abilities. (Distance-gating + cadence broke this by standing you outside.)
+task.spawn(function()
+    local abilT = 0
+    while AAR.alive and task.wait(0.05) do   -- FAST: ~20 swings/sec (user asked to hit them much faster)
+        if S.AutoFarm and S.FarmTarget then
+            pcall(function()
+                local t    = Players:FindFirstChild(S.FarmTarget)
+                local root = getRoot()
+                if t and t.Character and root then
+                    local tr = charPart(t.Character)
+                    if tr then
+                        local pos = tr.Position - tr.CFrame.LookVector * 2   -- point-blank behind them (no hitbox needed)
+                        pcall(function() root.CFrame = CFrame.new(pos, tr.Position) end)   -- face them so the M1 connects
+                        clearMyHitLog()
+                        clickAtTarget(t, true)   -- real M1, forced
+                        if tick() - abilT > 0.6 then   -- cycle abilities on a steadier beat so they actually cast
+                            abilT = tick()
+                            tapKey(Enum.KeyCode.E)
+                            tapKey(Enum.KeyCode.R)
+                            if S.CastQ then tapKey(Enum.KeyCode.Q) end
+                            if S.CastT then tapKey(Enum.KeyCode.T) end
+                        end
+                    end
+                end
+            end)
+        end
+    end
+end)
+
+task.spawn(function()
+    while AAR.alive and task.wait(0.1) do
+        if S.AutoPlay then
+            pcall(function()
+                local target = nearestPlayer(S.AutoPlayRange)
+                if not target or not target.Character then return end
+                local tr   = charPart(target.Character)
+                local root = getRoot()
+                if not (tr and root) then return end
+                local pos = tr.Position - Vector3.new(0, 4, 0)
+                pcall(function() root.CFrame = CFrame.new(pos) end)
+                clickAtTarget(target, true)
+                fireM1(); fireM1()
+                tapKey(Enum.KeyCode.E)
+            end)
+        end
+    end
+end)
+
+task.spawn(function()
+    while AAR.alive and task.wait() do
+        if S.SpinBot then
+            pcall(function()
+                local root = getRoot()
+                if root then
+                    root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(tick()*900 % 360), 0)
+                    root.AssemblyLinearVelocity = Vector3.new(0, 60, 0)
+                end
+            end)
+            task.wait(0.03)
+        end
+    end
+end)
+
+-- ============================================================
+-- TELEPORT HELPERS
+-- ============================================================
+-- Safe teleport: zero velocity AND hold the position for a short window so the
+-- game's anti-teleport can't rubber-band you back.
+local _holdCF, _holdUntil = nil, 0
+hook(RunService.RenderStepped, function()
+    if _holdCF and tick() < _holdUntil then
+        local root = getRoot()
+        if root then pcall(function() root.AssemblyLinearVelocity = Vector3.zero; root.CFrame = _holdCF end) end
+    elseif _holdCF then
+        _holdCF = nil
+        AAR.teleporting = false
+    end
+end)
+-- JJS-STYLE BYPASS TELEPORT: an instant snap leaves the SERVER thinking you're still at the old spot for a beat,
+-- so enemies keep hitting your old position ("i teleport but people can still hit me"). Instead we GLIDE there in
+-- speed-capped steps, zeroing velocity every frame and moving the WHOLE model — the server tracks each step, so your
+-- real (server) position actually moves with you. Then we HOLD the destination so it can't rubber-band back.
+local _tpGen = 0
+AAR.cancelTeleport = function()
+    _tpGen += 1
+    _holdCF, _holdUntil = nil, 0
+    AAR.teleporting = false
+end
+local function tpTo(cf, holdSec)
+    local root = getRoot(); if not (AAR.alive and root and cf) then return false end
+    local dest = cf.Position
+    _tpGen = _tpGen + 1; local gen = _tpGen
+    _holdCF, _holdUntil = nil, 0
+    AAR.teleporting = true
+    -- clear any body-movers that would drag you back
+    pcall(function() for _,v in ipairs(root:GetChildren()) do if v:IsA("BodyVelocity") or v:IsA("BodyPosition") or v:IsA("AlignPosition") or v:IsA("LinearVelocity") or v:IsA("VectorForce") then v:Destroy() end end end)
+    task.spawn(function()
+        local dt, t0 = 1/60, tick()
+        local rot = cf.Rotation
+        while tick() - t0 < 6 do                      -- glide up to 6s (far pads)
+            if not AAR.alive or _tpGen ~= gen then return end
+            local r = getRoot(); if not r then break end
+            local to = dest - r.Position; local d = to.Magnitude
+            if d < 3 then break end
+            local step = 140 * dt                     -- 140 studs/sec = fast but per-tick small enough that the server accepts each move
+            local stepCF = CFrame.new(r.Position + to.Unit * math.min(d, step)) * rot
+            pcall(function() r.CFrame = stepCF; r.AssemblyLinearVelocity = Vector3.zero; r.AssemblyAngularVelocity = Vector3.zero end)
+            local liveChar = getChar(); if liveChar then pcall(function() liveChar:PivotTo(stepCF) end) end
+            dt = RunService.Heartbeat:Wait()
+        end
+        if not AAR.alive or _tpGen ~= gen then return end
+        local r = getRoot()
+        if r then
+            pcall(function()
+                r.CFrame = cf
+                r.AssemblyLinearVelocity = Vector3.zero
+                r.AssemblyAngularVelocity = Vector3.zero
+            end)
+            local liveChar = getChar(); if liveChar then pcall(function() liveChar:PivotTo(cf) end) end
+            _holdCF = cf
+            _holdUntil = tick() + (holdSec or 0.45)
+        else
+            AAR.teleporting = false
+        end
+    end)
+    return true
+end
+local function tpToPlayer(name, behind)
+    local p = name and Players:FindFirstChild(name)
+    local char = p and p.Character
+    local tr = char and charPart(char)
+    if not (tr and getRoot()) then
+        Rayfield:Notify({Title="Dream Hub", Content="Target not found.", Duration=3})
+        return
+    end
+    local off = (behind and -1 or 1) * tr.CFrame.LookVector * 4 + Vector3.new(0,1,0)
+    -- look at the target so a follow-up M1 lands
+    tpTo(CFrame.new(tr.Position + off, tr.Position))
+end
+
+local function rejoin() pcall(function() TeleportService:Teleport(game.PlaceId, LP) end) end
+local function serverHop()
+    task.spawn(function()
+        local body
+        pcall(function()
+            local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(game.PlaceId)
+            body = game:HttpGet(url)
+        end)
+        if body then
+            local ok, data = pcall(function() return HttpService:JSONDecode(body) end)
+            if ok and data and data.data then
+                for _,sv in ipairs(data.data) do
+                    if sv.playing and sv.maxPlayers and sv.playing < sv.maxPlayers and sv.id ~= game.JobId then
+                        pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, sv.id, LP) end)
+                        return
+                    end
+                end
+            end
+        end
+        rejoin()
+    end)
+end
+
+-- ============================================================
+-- COMBAT PRO  (Legit Auto Play / Auto Dodge / Instant 1v1 Win / strong Aura M1)
+-- Enemy-M1 detector + the four toggles. Uses the hub's helpers. No fling.
+-- ============================================================
+do
+    local VIMp = game:GetService("VirtualInputManager")
+    -- held-key manager (for Legit Auto Play holding W)
+    local heldKeys = {}
+    local function holdKey(kc, isHolding)
+        if isHolding and not heldKeys[kc] then
+            local ok = pcall(function() VIMp:SendKeyEvent(true, kc, false, game) end)
+            if ok then heldKeys[kc] = true end
+        elseif not isHolding and heldKeys[kc] then
+            pcall(function() VIMp:SendKeyEvent(false, kc, false, game) end)
+            heldKeys[kc] = nil
+        end
+    end
+    local function releaseAllKeys() for kc in pairs(heldKeys) do pcall(function() VIMp:SendKeyEvent(false, kc, false, game) end) end heldKeys = {} end
+    _G.AA_RELEASEKEYS = releaseAllKeys
+
+    -- ── ENEMY M1 DETECTOR (velocity of their arm + their attack anims, facing you) ──
+    local EnemyAttacked = false
+    local trackedHumans = setmetatable({}, { __mode = "k" })
+    -- DODGE TARGET FILTER: S.DodgeTarget is "All" (default) or a specific username. When it's a name, only that
+    -- player's attacks trigger a dodge — so you can dodge just one person and ignore everyone else.
+    local function dodgeAllowed(p)
+        local t = S.DodgeTarget
+        if not t or t == "" or t == "All" then return true end
+        return p and (p.Name == t or p.DisplayName == t)
+    end
+    hook(RunService.Heartbeat, function()
+        local myRoot = getRoot(); if not myRoot then return end
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LP and p.Character and dodgeAllowed(p) then
+                local tr = p.Character:FindFirstChild("HumanoidRootPart") or charPart(p.Character)
+                if tr then
+                    if (tr.Position - myRoot.Position).Magnitude < 25 then
+                        local rArm = p.Character:FindFirstChild("Right Arm") or p.Character:FindFirstChild("RightHand")
+                        if rArm and rArm.AssemblyLinearVelocity.Magnitude > 30 then
+                            local dirToMe = (myRoot.Position - tr.Position)
+                            if dirToMe.Magnitude > 0 and tr.CFrame.LookVector:Dot(dirToMe.Unit) > 0.3 then
+                                EnemyAttacked = true; task.delay(0.4, function() EnemyAttacked = false end)
+                            end
+                        end
+                    end
+                    local hum = p.Character:FindFirstChildOfClass("Humanoid")
+                    if hum and not trackedHumans[hum] then
+                        trackedHumans[hum] = true
+                        local anim = hum:FindFirstChildOfClass("Animator")
+                        if anim then
+                            hook(anim.AnimationPlayed, function()
+                                if not (S.ProAutoDodge or S.LegitAutoPlay or S.AutoParry) then return end
+                                if not dodgeAllowed(p) then return end
+                                local myR = getRoot(); if not myR then return end
+                                local tr2 = p.Character and (p.Character:FindFirstChild("HumanoidRootPart") or charPart(p.Character))
+                                if tr2 and (tr2.Position - myR.Position).Magnitude < 35 then
+                                    local d = (myR.Position - tr2.Position)
+                                    if d.Magnitude > 0 and tr2.CFrame.LookVector:Dot(d.Unit) > 0.1 then
+                                        EnemyAttacked = true; task.delay(0.4, function() EnemyAttacked = false end)
+                                    end
+                                end
+                            end)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    -- ── AUTO DODGE: on an enemy M1, jump left/right a few studs ──
+    local dodgeBusy = false
+    hook(RunService.Heartbeat, function()
+        if not S.ProAutoDodge or dodgeBusy then return end
+        if EnemyAttacked then
+            dodgeBusy = true; EnemyAttacked = false
+            task.spawn(function()
+                local root = getRoot()
+                if root then
+                    local dir = ((tick() * 1000) % 2 < 1) and 1 or -1
+                    pcall(function() root.CFrame = root.CFrame * CFrame.new(dir * 12, 0, 0); root.AssemblyLinearVelocity = Vector3.zero end)
+                end
+                task.wait(0.2); dodgeBusy = false
+            end)
+        end
+    end)
+
+    -- ── AUTO PARRY: use a real configurable key when the same close-range
+    -- detector used by Auto Dodge sees an incoming M1. No raw remote is forged.
+    local PARRY_KEYS = {
+        F=Enum.KeyCode.F, Q=Enum.KeyCode.Q, E=Enum.KeyCode.E,
+        R=Enum.KeyCode.R, X=Enum.KeyCode.X, C=Enum.KeyCode.C,
+    }
+    local lastParry = 0
+    hook(RunService.Heartbeat, function()
+        if not S.AutoParry or not EnemyAttacked or tick() - lastParry < 0.45 then return end
+        lastParry = tick()
+        EnemyAttacked = false
+        local key = PARRY_KEYS[S.ParryKey or "F"] or Enum.KeyCode.F
+        task.spawn(function() tapKey(key) end)
+    end)
+
+    -- ── AURA M1 (close-range auto attack): NO hitbox/arm grow. When an enemy is CLOSE, face them and throw a
+    -- real M1 (+ ability spam). You close the distance (or use M1 Warp), then this clicks/attacks for you. This is
+    -- the legit swing the game registers itself — no arm expander, so no giant hitboxes.
+    task.spawn(function()
+        local lastSwing = 0
+        while AAR.alive do
+            if S.AuraM1Pro then
+                local root = getRoot(); local target = nearestPlayer(S.AuraRange or 60)
+                local tr = target and target.Character and (target.Character:FindFirstChild("HumanoidRootPart") or charPart(target.Character))
+                if root and tr then
+                    local close = (root.Position - tr.Position).Magnitude <= (tonumber(S.AuraHit) or 14)   -- only swing when you're in melee range
+                    if close and tick() - lastSwing >= 0.28 then
+                        lastSwing = tick()
+                        pcall(function() root.CFrame = CFrame.lookAt(root.Position, tr.Position) end)
+                        clearMyHitLog()
+                        clickAtTarget(target, true)
+                    end
+                end
+            end
+            task.wait(0.05)
+        end
+    end)
+
+    -- ── INSTANT 1v1 WIN: warp front/back + M1 + abilities ──
+    task.spawn(function()
+        while AAR.alive do
+            if S.Win1v1 then
+                local root = getRoot(); local target = nearestPlayer(50)
+                local tr = target and target.Character and (target.Character:FindFirstChild("HumanoidRootPart") or charPart(target.Character))
+                if root and tr then
+                    local offset = (S.Win1v1Pos == "Front") and -3 or 3
+                    local goal = tr.CFrame * CFrame.new(0, 0, offset)
+                    pcall(function() root.CFrame = CFrame.lookAt(goal.Position, tr.Position); root.AssemblyLinearVelocity = Vector3.zero end)
+                    clickM1(true); tapKey(Enum.KeyCode.E); tapKey(Enum.KeyCode.R); tapKey(Enum.KeyCode.T)
+                end
+            end
+            task.wait(0.03)
+        end
+    end)
+
+    -- ── LEGIT AUTO PLAY: real W/A/S/D input toward/around the nearest target,
+    -- then real M1s in melee range. Every path releases held keys.
+    local isDodging = false
+    task.spawn(function()
+        local strafeRight = false
+        local nextStrafe = 0
+        local lastSwing = 0
+        while AAR.alive do
+            if S.LegitAutoPlay then
+                local root = getRoot(); local hum = getHum(); local target = nearestPlayer(60)
+                local tr = target and target.Character and (target.Character:FindFirstChild("HumanoidRootPart") or charPart(target.Character))
+                if root and hum and tr then
+                    local dist = (tr.Position - root.Position).Magnitude
+                    if EnemyAttacked and not isDodging then
+                        isDodging = true; releaseAllKeys()
+                        task.spawn(function() tapKey(Enum.KeyCode.Q); task.wait(0.3); isDodging = false end)
+                    end
+                    if not isDodging then
+                        pcall(function() root.CFrame = CFrame.lookAt(root.Position, tr.Position) end)
+                        if tick() >= nextStrafe then
+                            strafeRight = not strafeRight
+                            nextStrafe = tick() + 0.8
+                        end
+                        holdKey(Enum.KeyCode.W, dist > 8)
+                        holdKey(Enum.KeyCode.S, dist < 4)
+                        holdKey(Enum.KeyCode.A, dist <= 14 and not strafeRight)
+                        holdKey(Enum.KeyCode.D, dist <= 14 and strafeRight)
+                        if dist <= (tonumber(S.AuraHit) or 14) and tick() - lastSwing >= 0.28 then
+                            lastSwing = tick()
+                            clearMyHitLog()
+                            clickAtTarget(target, true)
+                        end
+                    end
+                else releaseAllKeys() end
+            else releaseAllKeys() end
+            task.wait(0.03)
+        end
+        releaseAllKeys()
+    end)
+end
+
+-- ============================================================
+-- GUI
+-- ============================================================
+local Window = Rayfield:CreateWindow({
+    Name = "Dream Hub",
+    LoadingTitle = "Dream Hub",
+    LoadingSubtitle = "",
+    ConfigurationSaving = { Enabled = true, FolderName = "MoneyFreeHub", FileName = "AbilityArena" },
+    Discord = { Enabled = false },
+    KeySystem = false,
+    -- Original RED + VERY BLACK theme (near-pure-black bg, neon-red accents)
+    Theme = {
+        TextColor                    = Color3.fromRGB(235, 235, 235),
+        Background                   = Color3.fromRGB(0, 0, 0),
+        Topbar                       = Color3.fromRGB(8, 6, 7),
+        Shadow                       = Color3.fromRGB(0, 0, 0),
+
+        NotificationBackground       = Color3.fromRGB(6, 4, 5),
+        NotificationActionsBackground= Color3.fromRGB(120, 20, 22),   -- deep red so overlaid text stays legible
+
+        TabBackground                = Color3.fromRGB(12, 9, 10),
+        TabStroke                    = Color3.fromRGB(70, 22, 26),
+        TabBackgroundSelected        = Color3.fromRGB(255, 40, 40),   -- selected tab = neon red
+        TabTextColor                 = Color3.fromRGB(200, 190, 192),
+        SelectedTabTextColor         = Color3.fromRGB(15, 8, 9),      -- dark text on red for contrast
+
+        ElementBackground            = Color3.fromRGB(10, 7, 8),
+        ElementBackgroundHover       = Color3.fromRGB(22, 14, 16),
+        SecondaryElementBackground   = Color3.fromRGB(7, 5, 6),
+        ElementStroke                = Color3.fromRGB(58, 24, 28),
+        SecondaryElementStroke       = Color3.fromRGB(48, 20, 24),
+
+        SliderBackground             = Color3.fromRGB(90, 16, 20),    -- dark red track
+        SliderProgress               = Color3.fromRGB(255, 45, 45),   -- neon red fill
+        SliderStroke                 = Color3.fromRGB(255, 85, 85),
+
+        ToggleBackground             = Color3.fromRGB(20, 13, 15),
+        ToggleEnabled                = Color3.fromRGB(255, 45, 45),   -- neon red ON
+        ToggleDisabled               = Color3.fromRGB(120, 112, 114), -- grey OFF (visible on near-black)
+        ToggleEnabledStroke          = Color3.fromRGB(255, 95, 95),
+        ToggleDisabledStroke         = Color3.fromRGB(140, 134, 136),
+        ToggleEnabledOuterStroke     = Color3.fromRGB(180, 30, 34),
+        ToggleDisabledOuterStroke    = Color3.fromRGB(45, 40, 42),
+
+        DropdownSelected             = Color3.fromRGB(110, 34, 38),   -- red-tinted so the picked option is visible
+        DropdownUnselected           = Color3.fromRGB(9, 6, 7),
+
+        InputBackground              = Color3.fromRGB(12, 8, 9),
+        InputStroke                  = Color3.fromRGB(70, 30, 34),
+        PlaceholderColor             = Color3.fromRGB(150, 138, 140),
+    },
+})
+
+local HomeTab      = Window:CreateTab("Home",      "home")
+local CombatTab    = Window:CreateTab("Fight",     "swords")
+local AbilitiesTab = Window:CreateTab("Skills",    "sparkles")
+local TeleportsTab = Window:CreateTab("Teleport",  "navigation")
+local MovementTab  = Window:CreateTab("Movement",  "footprints")
+local VisualsTab   = Window:CreateTab("Auras",     "eye")
+local FarmTab      = Window:CreateTab("Farm",      "target")
+local UtilityTab   = Window:CreateTab("Misc",      "wrench")
+local RulesTab = Window:CreateTab("Rules", "list")
+RulesTab:CreateSection("Community Rules")
+RulesTab:CreateParagraph({Title="How this works", Content="Break a rule and the action listed applies. Staff decisions are final - appeal in the Discord."})
+RulesTab:CreateParagraph({Title="Rule 1", Content="No harassment, bullying, or targeting other players.   |   If broken: Kick  (repeat = Ban)"})
+RulesTab:CreateParagraph({Title="Rule 2", Content="No slurs, hate speech, racism, or discrimination.   |   If broken: Instant Ban"})
+RulesTab:CreateParagraph({Title="Rule 3", Content="No NSFW, gore, or inappropriate content of any kind.   |   If broken: Instant Ban"})
+RulesTab:CreateParagraph({Title="Rule 4", Content="No threats, doxxing, or sharing anyone's personal info.   |   If broken: Instant Ban"})
+RulesTab:CreateParagraph({Title="Rule 5", Content="No scamming, fake trades, or fake giveaways.   |   If broken: Ban"})
+RulesTab:CreateParagraph({Title="Rule 6", Content="Do not impersonate Dream Hub staff or other users.   |   If broken: Kick"})
+RulesTab:CreateParagraph({Title="Rule 7", Content="No advertising other hubs, servers, scripts, or discords.   |   If broken: Warn -> Kick"})
+RulesTab:CreateParagraph({Title="Rule 8", Content="No leaking, cracking, or reselling paid Dream Hub scripts.   |   If broken: Ban"})
+RulesTab:CreateParagraph({Title="Rule 9", Content="No spamming chat, sounds, tags, or requests.   |   If broken: Warn -> Kick"})
+RulesTab:CreateParagraph({Title="Rule 10", Content="Don't use bugs/glitches to grief or ruin others' games.   |   If broken: Kick"})
+RulesTab:CreateParagraph({Title="Rule 11", Content="No intentionally lagging, freezing, or crashing servers.   |   If broken: Kick -> Ban"})
+RulesTab:CreateParagraph({Title="Rule 12", Content="No evading a punishment with alt accounts.   |   If broken: Ban all alts"})
+RulesTab:CreateParagraph({Title="Rule 13", Content="Don't beg for admin, roles, or free premium.   |   If broken: Warn"})
+RulesTab:CreateParagraph({Title="Rule 14", Content="Respect staff decisions - appeal calmly in the Discord.   |   If broken: Warn"})
+RulesTab:CreateParagraph({Title="Rule 15", Content="Don't abuse the report system with false/joke reports.   |   If broken: Warn -> Kick"})
+
+
+-- \u2500\u2500 HOME (landing page) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+HomeTab:CreateSection("Welcome")
+HomeTab:CreateParagraph({Title="Dream Hub", Content="Ability Arena  -  v2.19.1\nPick a tab on the left to get started."})
+HomeTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
+HomeTab:CreateParagraph({Title="Best combo", Content="M1 Warp (every click snaps you behind them for the swing) or Dash Behind On Hit. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
+HomeTab:CreateSection("Credits")
+HomeTab:CreateParagraph({Title="Credits", Content="Dream Hub v2.19.1 - by Dream Hub Owner"})
+
+CombatTab:CreateSection("Survival")
+CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
+    S.AntiRagdoll=v
+    local h=getHum()
+    if h then setRagdollStates(h, not v) end
+end})
+CombatTab:CreateToggle({Name="Anti-Push (knockback)", CurrentValue=false, Flag="AntiPush", Callback=function(v) S.AntiPush=v end})
+CombatTab:CreateToggle({Name="Anti Void / Water (instant TP back)", CurrentValue=false, Flag="AntiVoid", Callback=function(v) S.AntiVoid=v end})
+CombatTab:CreateToggle({Name="Remove Water Border (makes Anti Water hold)", CurrentValue=false, Flag="RemoveWaterBorder", Callback=function(v)
+    S.RemoveWaterBorder=v
+    if v then
+        local n=destroyWaterBorder()
+        Rayfield:Notify({Title="Dream Hub", Content="Water border removed ("..n.." parts). Keeps clearing while on.", Duration=4})
+    end
+end})
+CombatTab:CreateToggle({Name="Anti Kill Bricks (remove them)", CurrentValue=false, Flag="AntiKillBricks", Callback=function(v)
+    S.AntiKillBricks=v
+    if v then
+        local n=destroyKillBricks()
+        Rayfield:Notify({Title="Dream Hub", Content="Kill bricks removed ("..n.." parts). Keeps clearing while on.", Duration=4})
+    end
+end})
+CombatTab:CreateToggle({Name="Save Health (low HP -> fly to sky, heal, drop back)", CurrentValue=false, Flag="SaveHealth", Callback=function(v) S.SaveHealth=v end})
+CombatTab:CreateSlider({Name="Save Health: trigger at HP %", Range={5,90}, Increment=5, Suffix="%", CurrentValue=35, Flag="SaveHealthPct", Callback=function(v) S.SaveHealthPct=v end})
+CombatTab:CreateSlider({Name="Save Health: sky height", Range={100,2000}, Increment=50, Suffix="studs", CurrentValue=700, Flag="SaveHealthHeight", Callback=function(v) S.SaveHealthHeight=v end})
+-- GOD MODE (the lobby trick, user-discovered): a LOBBY spawn keeps you at full/infinite health because you
+-- never entered the arena properly - and that state SURVIVES a teleport onto the map. So: stand in the
+-- LOBBY, flip this ON, and it teleports you straight to the fight. You cannot be hurt. The known trade-off
+-- of the trick itself: you also cannot M1 in that state (the game never armed your combat), so pair it with
+-- One Punch / abilities, or flip it while spectating to troll safely.
+-- GOD MODE: PLUS only. The free tier never even builds the toggle. AbilityArena_PLUS.lua sets _G.AA_PLUS.
+if AAR.plus then
+CombatTab:CreateToggle({Name="God Mode", CurrentValue=false, Flag="GodModeLobby", Callback=function(v)
+    S.GodMode=v
+    if not v then return end
+    -- only warn if they are NOT already in the lobby (far from the arena map). In the lobby = no notification.
+    local function inLobby()
+        local gm = Workspace:FindFirstChild("GameMap"); if not gm then return true end
+        local root = getRoot(); if not root then return true end
+        local nearest, n = math.huge, 0
+        for _, d in ipairs(gm:GetDescendants()) do
+            if d:IsA("BasePart") then
+                local dd = (d.Position - root.Position).Magnitude
+                if dd < nearest then nearest = dd end
+                if nearest < 300 then return false end
+                n = n + 1; if n > 400 then break end
+            end
+        end
+        return nearest > 300
+    end
+    if not inLobby() then
+        pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "God Mode", Text = "Must be in the LOBBY. Reset first, then turn this on.", Duration = 5 }) end)
+    end
+    task.spawn(function()
+        local root = getRoot(); if not root then return end
+        local dest
+        pcall(function()
+            local gm = Workspace:FindFirstChild("GameMap")
+            local sp = gm and gm:FindFirstChild("Spawns")
+            if sp then
+                local parts = {}
+                for _, c in ipairs(sp:GetChildren()) do if c:IsA("BasePart") then parts[#parts+1] = c end end
+                if #parts == 0 then for _, c in ipairs(sp:GetDescendants()) do if c:IsA("BasePart") then parts[#parts+1] = c end end end
+                if #parts > 0 then
+                    local part = parts[(tick() // 1) % #parts + 1]
+                    dest = part.Position + Vector3.new(0, 4, 0)
+                end
+            end
+        end)
+        if not dest then
+            local p = nearestPlayer(math.huge)
+            local tr = p and p.Character and charPart(p.Character)
+            if tr then dest = tr.Position + Vector3.new(4, 3, 0) end
+        end
+        if dest then
+            pcall(function() root.CFrame = CFrame.new(dest); root.AssemblyLinearVelocity = Vector3.zero end)
+        end
+    end)
+end})
+-- AUTO HEAL (PLUS/PREMIUM): stay on the current map and reuse Save Health's bounded safe-retreat cycle. No lobby,
+-- reset, death, deploy button, or CharacterAdded dependency. The shared heartbeat always unanchors and returns to
+-- the saved position on recovery, cancellation, unload, or the 30-second safety timeout.
+local autoRespawnConn
+if AAR.plus then
+CombatTab:CreateButton({Name="Auto Heal (stay on map)", Callback=function()
+    local function say(t) pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "Auto Heal", Text = t, Duration = 5 }) end) end
+    if AAR.manualHeal or healPanic then say("Auto Heal is already running.") return end
+    if S.Fly or S.InfiniteJump then say("Turn Fly/Infinite Jump off first.") return end
+    local root = getRoot(); if not root then say("No deployed character to heal.") return end
+    local cur,max = getHealth()
+    if cur and max and max>0 and cur/max>=0.95 then say("Health is already full.") return end
+    healSaveCF=root.CFrame; healPanicT=tick(); AAR.manualHeal=true; healPanic=true
+    say("On-map heal retreat started. You will return automatically.")
+end})
+end
+-- AUTO RESPAWN (PLUS + PREMIUM): the moment you die and your new character spawns, it presses the game's Deploy
+-- button for you — instantly back in the fight, no lobby sitting. Toggle off = the connection is dropped cleanly.
+do
+    CombatTab:CreateToggle({Name="Auto Respawn", CurrentValue=false, Flag="AutoRespawn", Callback=function(v)
+        S.AutoRespawn=v
+        if autoRespawnConn then pcall(function() autoRespawnConn:Disconnect() end); autoRespawnConn=nil end
+        if not v then return end
+        if typeof(firesignal) ~= "function" then
+            pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "Auto Respawn", Text = "Your executor doesn't support Auto Respawn.", Duration = 5 }) end)
+            return
+        end
+        autoRespawnConn = LP.CharacterAdded:Connect(function(ch)
+            task.spawn(function()
+                pcall(function() ch:WaitForChild("Humanoid", 8) end)
+                local gi = LP:FindFirstChild("PlayerGui") and LP.PlayerGui:FindFirstChild("Game Interface")
+                local main = gi and gi:FindFirstChild("Main_HUD"); main = main and main:FindFirstChild("Main")
+                local deploy = main and main:FindFirstChild("Play")
+                if deploy then pcall(function() firesignal(deploy.Activated) end) end
+            end)
+        end)
+        Listeners[#Listeners+1] = autoRespawnConn
+    end})
+end
+end
+
+CombatTab:CreateSection("Combat Pro")
+CombatTab:CreateToggle({Name="Legit Auto Play", CurrentValue=false, Flag="LegitAutoPlay", Callback=function(v) S.LegitAutoPlay=v; if not v and _G.AA_RELEASEKEYS then _G.AA_RELEASEKEYS() end end})
+CombatTab:CreateToggle({Name="Auto Parry", CurrentValue=false, Flag="AutoParry", Callback=function(v) S.AutoParry=v end})
+CombatTab:CreateDropdown({Name="Parry Key", Options={"F","Q","E","R","X","C"}, CurrentOption={"F"}, Flag="ParryKey", Callback=function(o) S.ParryKey=(type(o)=="table" and o[1]) or o or "F" end})
+-- Auto Dodge / Instant 1v1 Win / M1 Warp — PLUS + PREMIUM ONLY. The FREE build never builds these toggles, and
+-- their settings are forced off there so nothing that references them can run. (AbilityArena_PLUS.lua sets AA_PLUS;
+-- the Premium loader sets it too, so both paid tiers get them; Free does not.)
+local dodgeDrop   -- hoisted: refreshPlayerDrops() (below) references it; built only in the Plus block
+if AAR.plus then
+	CombatTab:CreateToggle({Name="Auto Dodge", CurrentValue=false, Flag="ProAutoDodge", Callback=function(v) S.ProAutoDodge=v end})
+	-- Dodge only a chosen player, or everyone. "All" = dodge any attacker; pick a name = dodge ONLY that player.
+	S.DodgeTarget = S.DodgeTarget or "All"
+	dodgeDrop = CombatTab:CreateDropdown({Name="Dodge Player", Options=(function() local t={"All"} for _,n in ipairs(playerNames()) do t[#t+1]=n end return t end)(), CurrentOption={"All"}, Flag="DodgeTargetSel", Callback=function(o) S.DodgeTarget=(type(o)=="table" and o[1]) or o or "All" end})
+	CombatTab:CreateButton({Name="Refresh Dodge List", Callback=function() pcall(function() dodgeDrop:Refresh((function() local t={"All"} for _,n in ipairs(playerNames()) do t[#t+1]=n end return t end)()) end) end})
+	CombatTab:CreateToggle({Name="Instant 1v1 Win", CurrentValue=false, Flag="Win1v1", Callback=function(v) S.Win1v1=v end})
+	CombatTab:CreateDropdown({Name="1v1 Win Position", Options={"Back","Front"}, CurrentOption={"Back"}, Flag="Win1v1Pos", Callback=function(o) S.Win1v1Pos=(type(o)=="table" and o[1]) or o end})
+	CombatTab:CreateSection("M1 Warp (Plus)")
+	CombatTab:CreateToggle({Name="M1 Warp", CurrentValue=false, Flag="M1Warp", Callback=function(v) S.M1Warp=v end})
+	CombatTab:CreateSlider({Name="M1 Warp Range", Range={10,200}, Increment=5, Suffix="studs", CurrentValue=60, Flag="M1WarpRange", Callback=function(v) S.M1WarpRange=v end})
+	CombatTab:CreateToggle({Name="Warp Back After Swing", CurrentValue=true, Flag="M1WarpReturn", Callback=function(v) S.M1WarpReturn=v end})
+else
+	S.ProAutoDodge=false; S.Win1v1=false; S.M1Warp=false   -- FREE: never on
+end
+
+CombatTab:CreateSection("Auto")
+CombatTab:CreateToggle({Name="Aura M1", CurrentValue=false, Flag="AuraM1Pro", Callback=function(v) S.AuraM1Pro=v end})
+CombatTab:CreateSlider({Name="Aura M1 Range", Range={5,120}, Increment=5, Suffix="studs", CurrentValue=60, Flag="AuraRange", Callback=function(v) S.AuraRange=v end})
+CombatTab:CreateSlider({Name="Aura M1 Attack Distance", Range={4,20}, Increment=1, Suffix="studs", CurrentValue=14, Flag="AuraHit", Callback=function(v) S.AuraHit=v end})
+CombatTab:CreateToggle({Name="Ability Assistant", CurrentValue=false, Flag="AutoAbility", Callback=function(v) S.AutoAbility=v end})
+CombatTab:CreateSlider({Name="Auto Ability Range", Range={5,80}, Increment=1, Suffix="studs", CurrentValue=25, Flag="AutoAbilityRange", Callback=function(v) S.AutoAbilityRange=v end})
+CombatTab:CreateToggle({Name="Cast E", CurrentValue=true,  Flag="CastE", Callback=function(v) S.CastE=v end})
+CombatTab:CreateToggle({Name="Cast Q", CurrentValue=false, Flag="CastQ", Callback=function(v) S.CastQ=v end})
+CombatTab:CreateToggle({Name="Cast R", CurrentValue=false, Flag="CastR", Callback=function(v) S.CastR=v end})
+CombatTab:CreateToggle({Name="Cast T", CurrentValue=false, Flag="CastT", Callback=function(v) S.CastT=v end})
+CombatTab:CreateToggle({Name="Dash Behind On Hit", CurrentValue=false, Flag="DashBehind", Callback=function(v) S.DashBehind=v end})
+CombatTab:CreateSlider({Name="Dash Behind Range", Range={10,80}, Increment=1, Suffix="studs", CurrentValue=45, Flag="DashRange", Callback=function(v) S.DashRange=v end})
+CombatTab:CreateToggle({Name="Auto Dash", CurrentValue=false, Flag="AutoDash", Callback=function(v) S.AutoDash=v end})
+CombatTab:CreateDropdown({Name="Dash Key (whatever key dashes in-game)", Options={"Q","E","F","R","X","C","V","Left Shift"}, CurrentOption={"Q"}, Flag="AutoDashKey", Callback=function(o) S.AutoDashKey=(type(o)=="table" and o[1]) or o end})
+CombatTab:CreateSlider({Name="Auto Dash Speed (lower = faster)", Range={1,20}, Increment=1, Suffix="x0.1s", CurrentValue=6, Flag="AutoDashTenths", Callback=function(v) S.AutoDashDelay=v/10 end})
+
+CombatTab:CreateSection("Aim")
+CombatTab:CreateToggle({Name="Camera Lock", CurrentValue=false, Flag="CamLock", Callback=function(v) S.CamLock=v end})
+CombatTab:CreateSlider({Name="Cam Lock Range", Range={20,300}, Increment=5, Suffix="studs", CurrentValue=120, Flag="CamLockRange", Callback=function(v) S.CamLockRange=v end})
+CombatTab:CreateToggle({Name="Ability Aim Assist", CurrentValue=false, Flag="AimAssist", Callback=function(v) S.AimAssist=v end})
+CombatTab:CreateToggle({Name="Strong Aim", CurrentValue=false, Flag="AimStrong", Callback=function(v) S.AimStrong=v end})
+CombatTab:CreateToggle({Name="Aim on M1", CurrentValue=true, Flag="AimOnM1", Callback=function(v) S.AimOnM1=v end})
+CombatTab:CreateSlider({Name="Aim Smoothness (lower = smoother)", Range={5,100}, Increment=5, Suffix="%", CurrentValue=35, Flag="AimSmooth100", Callback=function(v) S.AimSmooth=v/100 end})
+CombatTab:CreateSlider({Name="Aim Assist Range", Range={20,400}, Increment=10, Suffix="studs", CurrentValue=140, Flag="AimAssistRange", Callback=function(v) S.AimAssistRange=v end})
+CombatTab:CreateSlider({Name="Aim Assist Lead (prediction)", Range={0,50}, Increment=1, Suffix="x0.01s", CurrentValue=12, Flag="AimAssistLead100", Callback=function(v) S.AimAssistLead=v/100 end})
+
+AbilitiesTab:CreateSection("Ability Grabber")
+AbilitiesTab:CreateParagraph({Title="Ability Grabber", Content="Pick any ability from the list to equip it instantly. Raise Grab Delay if an ability needs a moment longer to register."})
+AbilitiesTab:CreateSlider({Name="Grab Delay (sec)", Range={1,8}, Increment=1, Suffix="sec", CurrentValue=3, Flag="GrabDelay", Callback=function(v) S.GrabDelay=v end})
+AbilitiesTab:CreateToggle({Name="Return to map spawn after grab", CurrentValue=true, Flag="GrabReturn", Callback=function(v) S.GrabReturn=v end})
+local selectedAbility = nil
+local abilityDrop = AbilitiesTab:CreateDropdown({Name="Ability", Options=abilityNames(), CurrentOption={}, Flag="AbilityPick", Callback=function(o)
+    selectedAbility = (type(o)=="table" and o[1]) or o
+    grabAbility(selectedAbility)
+end})
+AbilitiesTab:CreateButton({Name="Get Ability Again", Callback=function() grabAbility(selectedAbility) end})
+AbilitiesTab:CreateButton({Name="Refresh Ability List", Callback=function()
+    elementFolder = nil
+    pcall(function() abilityDrop:Refresh(abilityNames()) end)
+end})
+
+TeleportsTab:CreateSection("Players")
+local tpDrop = TeleportsTab:CreateDropdown({Name="Teleport Target", Options=playerNames(), CurrentOption={}, Flag="TPTarget", Callback=function(o)
+    S.TPTarget = (type(o)=="table" and o[1]) or o
+end})
+TeleportsTab:CreateButton({Name="TP To Target (in front)", Callback=function() tpToPlayer(S.TPTarget, false) end})
+TeleportsTab:CreateButton({Name="TP Behind Target", Callback=function() tpToPlayer(S.TPTarget, true) end})
+TeleportsTab:CreateButton({Name="TP Behind Nearest Player", Callback=function()
+    local p = nearestPlayer()
+    if p then tpToPlayer(p.Name, true)
+    else Rayfield:Notify({Title="Dream Hub", Content="No players nearby.", Duration=3}) end
+end})
+TeleportsTab:CreateButton({Name="Refresh Player List", Callback=function()
+    pcall(function() tpDrop:Refresh(playerNames()) end)
+end})
+
+TeleportsTab:CreateSection("Places")
+TeleportsTab:CreateButton({Name="TP To Ability Pads (lobby)", Callback=function()
+    local f = findElementFolder()
+    local root = getRoot()
+    if f and root then
+        local names = abilityNames()
+        local pad = names[1] and findAbilityPad(names[1])
+        local part = abilityPadPart(pad)
+        if part then tpTo(CFrame.new(part.Position + Vector3.new(0, 5, 0)))
+        else Rayfield:Notify({Title="Dream Hub", Content="No streamed ability pad found. Refresh and try again.", Duration=3}) end
+    else
+        Rayfield:Notify({Title="Dream Hub", Content="Ability pads not found - are you in the lobby?", Duration=3})
+    end
+end})
+TeleportsTab:CreateToggle({Name="Click Teleport  [V]", CurrentValue=false, Flag="ClickTP", Callback=function(v) S.ClickTP=v end})
+
+TeleportsTab:CreateSection("Safe Spawn")
+TeleportsTab:CreateButton({Name="Set Safe Spawn (save position)", Callback=function()
+    local root = getRoot()
+    if root then
+        savedSpawnCF = root.CFrame
+        Rayfield:Notify({Title="Dream Hub", Content="Safe spawn saved!", Duration=4})
+    end
+end})
+TeleportsTab:CreateButton({Name="TP to Safe Spawn", Callback=function()
+    local tpCF = savedSpawnCF or lastSafeCF
+    if tpCF then
+        healPanic = false                     -- cancel any Save Health sky-anchor first
+        local r = getRoot(); if r then pcall(function() r.Anchored = false end) end
+        tpTo(tpCF + Vector3.new(0, 3, 0))
+    else
+        Rayfield:Notify({Title="Dream Hub", Content="No safe spawn set yet.", Duration=4})
+    end
+end})
+TeleportsTab:CreateButton({Name="Clear Safe Spawn", Callback=function()
+    savedSpawnCF = nil
+    Rayfield:Notify({Title="Dream Hub", Content="Safe spawn cleared.", Duration=3})
+end})
+
+do
+    local BYPASS_OK = AAR.plus
+    MovementTab:CreateToggle({Name="Fly (WASD + Space/Ctrl)"..(BYPASS_OK and "  [bypass]" or ""), CurrentValue=false, Flag="Fly", Callback=function(v) S.Fly=v; if not v then stopFlyMovement() end end})
+    MovementTab:CreateSlider({Name="Fly Speed", Range={10,250}, Increment=5, Suffix="spd", CurrentValue=60, Flag="FlySpeed", Callback=function(v) S.FlySpeed=v end})
+    if BYPASS_OK then MovementTab:CreateParagraph({Title="Anti-cheat bypass ACTIVE", Content="Fly + Speed Hack hold your position so the game can't snap you back. Auto re-deploys after respawn. (Plus/Premium)"}) end
+end
+MovementTab:CreateToggle({Name="Noclip", CurrentValue=false, Flag="Noclip", Callback=function(v)
+    S.Noclip=v
+    if not v then
+        local c=getChar()
+        if c then for _,p in ipairs(c:GetDescendants()) do
+            if p:IsA("BasePart") and p.Name~="HumanoidRootPart" then pcall(function() p.CanCollide=true end) end
+        end end
+    end
+end})
+MovementTab:CreateToggle({Name="Speed Hack", CurrentValue=false, Flag="SpeedHack", Callback=function(v)
+    S.SpeedHack=v
+    if not v then local h=getHum(); if h then pcall(function() h.WalkSpeed=16 end) end end
+end})
+MovementTab:CreateSlider({Name="Walk Speed", Range={16,300}, Increment=1, Suffix="spd", CurrentValue=16, Flag="Speed", Callback=function(v) S.Speed=v end})
+MovementTab:CreateToggle({Name="Infinite Jump", CurrentValue=false, Flag="InfiniteJump", Callback=function(v) S.InfiniteJump=v end})
+MovementTab:CreateToggle({Name="Spin Bot", CurrentValue=false, Flag="SpinBot", Callback=function(v) S.SpinBot=v end})
+MovementTab:CreateToggle({Name="Anti-Fling", CurrentValue=false, Flag="AntiFling", Callback=function(v) S.AntiFling=v end})
+
+VisualsTab:CreateToggle({Name="Player ESP", CurrentValue=false, Flag="ESP", Callback=function(v) S.ESP=v end})
+VisualsTab:CreateToggle({Name="Color By HP", CurrentValue=true, Flag="ESPColor", Callback=function(v) S.ESPColor=v end})
+VisualsTab:CreateToggle({Name="Tracers", CurrentValue=false, Flag="Tracers", Callback=function(v) S.Tracers=v end})
+VisualsTab:CreateToggle({Name="ESP Boxes (2D)", CurrentValue=false, Flag="ESPBox", Callback=function(v) S.ESPBox=v end})
+VisualsTab:CreateToggle({Name="Show Ability on ESP", CurrentValue=true, Flag="ESPAbility", Callback=function(v) S.ESPAbility=v end})
+VisualsTab:CreateSlider({Name="ESP Max Distance (0 = unlimited)", Range={0,2000}, Increment=10, Suffix="studs", CurrentValue=0, Flag="ESPMaxDist", Callback=function(v) S.ESPMaxDist=v end})
+VisualsTab:CreateToggle({Name="Enemy Highlight", CurrentValue=false, Flag="EnemyHighlight", Callback=function(v) S.EnemyHighlight=v end})
+VisualsTab:CreateDropdown({Name="Highlight Color", Options={"Bright blue","Bright red","Lime green","New Yeller","White","Magenta"}, CurrentOption={"Bright blue"}, Flag="HighlightColor", Callback=function(o)
+    S.HighlightColor = (type(o)=="table" and o[1]) or o
+    clearHighlights()
+end})
+VisualsTab:CreateToggle({Name="Full Bright", CurrentValue=false, Flag="FullBright", Callback=function(v) S.FullBright=v; setFullBright(v) end})
+
+VisualsTab:CreateSection("View Player")
+local viewDrop = VisualsTab:CreateDropdown({Name="Spectate Target", Options=playerNames(), CurrentOption={}, Flag="ViewTarget", Callback=function(o)
+    S.ViewTarget = (type(o)=="table" and o[1]) or o
+end})
+VisualsTab:CreateButton({Name="View Player", Callback=function() viewPlayer(S.ViewTarget) end})
+VisualsTab:CreateButton({Name="Stop Viewing", Callback=stopView})
+
+VisualsTab:CreateSection("Auras")
+VisualsTab:CreateParagraph({Title="Add Aura", Content="Pick any aura and click Add Aura to wear its effect. Use Remove Aura to take it off."})
+local selAura = nil
+local auraDrop = VisualsTab:CreateDropdown({Name="Aura", Options=auraNames(), CurrentOption={}, Flag="AuraPick", Callback=function(o)
+    selAura = (type(o)=="table" and o[1]) or o
+end})
+VisualsTab:CreateButton({Name="Add Aura", Callback=function() addAura(selAura) end})
+VisualsTab:CreateButton({Name="Remove Aura", Callback=clearAura})
+VisualsTab:CreateButton({Name="Refresh Aura List", Callback=function() pcall(function() auraDrop:Refresh(auraNames()) end) end})
+
+VisualsTab:CreateSection("AURA / VFX MAKER")
+VisualsTab:CreateParagraph({Title="Aura Maker", Content="Build your own aura like the Aura games - presets, dual colour / rainbow, particles, light, spinning rings, beams, trail. Client-side (only you see it)."})
+local function reVFX() if S.VFXOn then applyCustomVFX() end end
+VisualsTab:CreateToggle({Name="Apply My Aura", CurrentValue=false, Flag="VFXOn", Callback=function(v) S.VFXOn=v; if v then applyCustomVFX() else clearCustomVFX() end end})
+VisualsTab:CreateDropdown({Name="Preset", Options={"Fire","Ice","Lightning","Galaxy","Shadow","Holy","Toxic","Rainbow","Void","Sakura","Nuke","Inferno","Frostbite","Blood","Cursed","Storm","Emerald","Phoenix","Nebula","Divine","Cyber"}, CurrentOption={}, Flag="VFXPreset", Callback=function(o)
+    local nm; if type(o)=="table" then nm=o[1] else nm=o end   -- empty table -> nm=nil (Fluriore fires this on creation)
+    if not nm or nm=="" then return end                        -- so no red aura applies on spawn
+    applyVFXPreset(nm); S.VFXOn=true; applyCustomVFX()
+end})
+
+VisualsTab:CreateSection("Aura - Core")
+VisualsTab:CreateToggle({Name="Core Shape", CurrentValue=true, Flag="VFXShapeOn", Callback=function(v) S.VFXShapeOn=v; reVFX() end})
+VisualsTab:CreateDropdown({Name="Shape", Options={"Ball","Block","Cylinder"}, CurrentOption={"Ball"}, Flag="VFXShape", Callback=function(o) S.VFXShape=(type(o)=="table" and o[1]) or o; reVFX() end})
+VisualsTab:CreateColorPicker({Name="Color 1", Color=Color3.fromRGB(255,40,40), Flag="VFXColor", Callback=function(c) S.VFXColor=c; reVFX() end})
+VisualsTab:CreateColorPicker({Name="Color 2 (gradient)", Color=Color3.fromRGB(255,180,40), Flag="VFXColor2", Callback=function(c) S.VFXColor2=c; reVFX() end})
+VisualsTab:CreateToggle({Name="Rainbow (animated)", CurrentValue=false, Flag="VFXRainbow", Callback=function(v) S.VFXRainbow=v; reVFX() end})
+VisualsTab:CreateSlider({Name="Size", Range={1,30}, Increment=1, Suffix="studs", CurrentValue=6, Flag="VFXSize", Callback=function(v) S.VFXSize=v; reVFX() end})
+VisualsTab:CreateSlider({Name="Transparency", Range={0,100}, Increment=5, Suffix="%", CurrentValue=40, Flag="VFXTransp", Callback=function(v) S.VFXTransparency=v/100; reVFX() end})
+
+VisualsTab:CreateSection("Aura - Particles")
+VisualsTab:CreateToggle({Name="Particles", CurrentValue=true, Flag="VFXParticles", Callback=function(v) S.VFXParticles=v; reVFX() end})
+VisualsTab:CreateDropdown({Name="Particle Texture", Options={"Sparkles","Fire","Smoke","Square"}, CurrentOption={"Sparkles"}, Flag="VFXTexture", Callback=function(o) S.VFXTexture=(type(o)=="table" and o[1]) or o; reVFX() end})
+VisualsTab:CreateSlider({Name="Particle Rate", Range={0,300}, Increment=5, Suffix="/s", CurrentValue=80, Flag="VFXRate", Callback=function(v) S.VFXRate=v; reVFX() end})
+VisualsTab:CreateSlider({Name="Particle Speed", Range={0,30}, Increment=1, Suffix="spd", CurrentValue=6, Flag="VFXSpeed", Callback=function(v) S.VFXSpeed=v; reVFX() end})
+VisualsTab:CreateSlider({Name="Particle Spread", Range={0,360}, Increment=10, Suffix="deg", CurrentValue=180, Flag="VFXSpread", Callback=function(v) S.VFXSpread=v; reVFX() end})
+VisualsTab:CreateSlider({Name="Particle Size", Range={1,20}, Increment=1, Suffix="x0.1", CurrentValue=12, Flag="VFXPSize", Callback=function(v) S.VFXPSize=v/10; reVFX() end})
+
+VisualsTab:CreateSection("Aura - Extras")
+VisualsTab:CreateToggle({Name="Light Glow", CurrentValue=true, Flag="VFXLight", Callback=function(v) S.VFXLight=v; reVFX() end})
+VisualsTab:CreateSlider({Name="Light Brightness", Range={0,15}, Increment=1, Suffix="", CurrentValue=5, Flag="VFXBrightness", Callback=function(v) S.VFXBrightness=v; reVFX() end})
+VisualsTab:CreateToggle({Name="Spinning Rings", CurrentValue=false, Flag="VFXRings", Callback=function(v) S.VFXRings=v; reVFX() end})
+VisualsTab:CreateSlider({Name="Ring Count", Range={1,5}, Increment=1, Suffix="", CurrentValue=2, Flag="VFXRingCount", Callback=function(v) S.VFXRingCount=v; reVFX() end})
+VisualsTab:CreateSlider({Name="Spin Speed", Range={0,10}, Increment=1, Suffix="", CurrentValue=2, Flag="VFXSpin", Callback=function(v) S.VFXSpin=v end})
+VisualsTab:CreateToggle({Name="Beams / Pillars", CurrentValue=false, Flag="VFXBeams", Callback=function(v) S.VFXBeams=v; reVFX() end})
+VisualsTab:CreateToggle({Name="Trail", CurrentValue=true, Flag="VFXTrail", Callback=function(v) S.VFXTrail=v; reVFX() end})
+VisualsTab:CreateButton({Name="Save / Copy Preset", Callback=function()
+    local function rgb(c) return math.floor(c.R*255)..","..math.floor(c.G*255)..","..math.floor(c.B*255) end
+    local preset = string.format("shape=%s|c1=%s|c2=%s|size=%d|transp=%d|tex=%s|rate=%d|speed=%d|spread=%d|rainbow=%s|light=%s|bright=%d|rings=%s|ringc=%d|beams=%s|trail=%s",
+        S.VFXShape, rgb(S.VFXColor), rgb(S.VFXColor2), S.VFXSize, math.floor(S.VFXTransparency*100), S.VFXTexture, S.VFXRate, S.VFXSpeed, S.VFXSpread,
+        tostring(S.VFXRainbow), tostring(S.VFXLight), S.VFXBrightness, tostring(S.VFXRings), S.VFXRingCount, tostring(S.VFXBeams), tostring(S.VFXTrail))
+    pcall(function() if writefile then writefile("DreamAura.txt", preset) end end)
+    pcall(function() if setclipboard then setclipboard(preset) end end)
+    Rayfield:Notify({Title="Aura Maker", Content="Preset saved + copied. Share the text to let others rebuild your aura.", Duration=5})
+end})
+
+FarmTab:CreateSection("Auto Play")
+FarmTab:CreateToggle({Name="Auto Play (fight nearest enemy automatically)", CurrentValue=false, Flag="AutoPlay", Callback=function(v) S.AutoPlay=v end})
+FarmTab:CreateSlider({Name="Auto Play Search Range", Range={10,300}, Increment=5, Suffix="studs", CurrentValue=100, Flag="AutoPlayRange", Callback=function(v) S.AutoPlayRange=v end})
+
+FarmTab:CreateSection("Auto Farm")
+FarmTab:CreateToggle({Name="Auto Farm Target", CurrentValue=false, Flag="AutoFarm", Callback=function(v)
+    if v and not S.FarmTarget then
+        Rayfield:Notify({Title="Dream Hub", Content="Pick a target first.", Duration=3})
+        v=false
+    end
+    S.AutoFarm=v
+end})
+local farmDrop = FarmTab:CreateDropdown({Name="Target Player", Options=playerNames(), CurrentOption={}, Flag="FarmTarget", Callback=function(o)
+    S.FarmTarget = (type(o)=="table" and o[1]) or o
+end})
+FarmTab:CreateButton({Name="Refresh Player List", Callback=function()
+    pcall(function() farmDrop:Refresh(playerNames()) end)
+end})
+
+-- JOLT AUTO FARM (Plus + Premium): the user's method — deploy via Jolt, then bounce between on-map players
+-- spamming the real usem1 hit and snapping onto each. Fights EVERYONE deployed, not a single picked target.
+if AAR.plus then
+    FarmTab:CreateSection("Jolt Auto Farm (Plus)")
+    FarmTab:CreateToggle({Name="Jolt Auto Farm (hit everyone on the map)", CurrentValue=false, Flag="JoltFarm", Callback=function(v)
+        S.JoltFarm=v
+        if v then
+            if type(getgc)~="function" then
+                S.JoltFarm=false
+                pcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title="Jolt Auto Farm", Text="Your executor lacks getgc — this method can't find the hit function.", Duration=6 }) end)
+                return
+            end
+            joltDeployNow()
+        end
+    end})
+    FarmTab:CreateSlider({Name="Time per target (sec)", Range={0.2,3}, Increment=0.1, Suffix="s", CurrentValue=0.5, Flag="JoltFarmDwell", Callback=function(v) S.JoltFarmDwell=v end})
+
+    -- ON-MAP = deployed. The snippet uses char():GetPivot().Z < -250; keep that check.
+    local function onMap(plr)
+        local c = plr and plr.Character
+        if not c then return false end
+        local ok, piv = pcall(function() return c:GetPivot() end)
+        return ok and piv and piv.Position.Z < -250
+    end
+    local function randomOnMapPlayer()
+        local pool = {}
+        for _,p in ipairs(Players:GetPlayers()) do if p~=LP and onMap(p) then pool[#pool+1]=p end end
+        if #pool==0 then return nil end
+        return pool[math.random(1,#pool)]
+    end
+    FarmTab:CreateToggle({Name="Hit & Run (don't sit on them — safest)", CurrentValue=true, Flag="JoltFarmHitRun", Callback=function(v) S.JoltFarmHitRun=v end})
+    FarmTab:CreateSlider({Name="Retreat & heal at HP %", Range={0,90}, Increment=5, Suffix="%", CurrentValue=55, Flag="JoltFarmHealAt", Callback=function(v) S.JoltFarmHealAt=v end})
+    -- my current HP fraction (0..1); 1 if we can't read it
+    local function myHPFrac()
+        local c=LP.Character; if not c then return 1 end
+        local h=c:FindFirstChildOfClass("Humanoid")
+        if h and h.MaxHealth>0 then return h.Health/h.MaxHealth end
+        return 1
+    end
+    -- LOW HP: use the same on-map bounded retreat as Auto Heal. Never reset, visit the lobby, or kill the farmer.
+    local function retreatHeal()
+        local root=getRoot()
+        if root and not healPanic then healSaveCF=root.CFrame; healPanicT=tick(); AAR.manualHeal=true; healPanic=true end
+        local untilT=tick()+31
+        while AAR.alive and S.JoltFarm and AAR.manualHeal and tick()<untilT do task.wait(0.2) end
+    end
+    -- snap you to a SAFE perch high above the target (out of any melee reach) between hits
+    local function perchAbove(tc)
+        local me=LP.Character; if not (me and tc) then return end
+        pcall(function() me:PivotTo(tc:GetPivot() * CFrame.new(0, 45, 0)) end)   -- 45 studs straight up
+    end
+    task.spawn(function()
+        while AAR.alive do
+            if S.JoltFarm and onMap(LP) then
+                local healAt = (tonumber(S.JoltFarmHealAt) or 55)/100
+                if healAt>0 and myHPFrac() <= healAt then
+                    retreatHeal()
+                else
+                    local fireHit = getFireHit()
+                    local target = randomOnMapPlayer()
+                    if fireHit and target then
+                        local start = tick()
+                        local dwell = tonumber(S.JoltFarmDwell) or 0.5
+                        repeat
+                            local me = LP.Character
+                            local tc = target.Character
+                            if me and tc then
+                                if S.JoltFarmHitRun then
+                                    -- HIT & RUN: drop in behind, fire ONCE, immediately perch high out of reach.
+                                    pcall(function() me:PivotTo(tc:GetPivot() * CFrame.new(0, 1.5, 3)) end)
+                                    pcall(function() task.spawn(fireHit) end)
+                                    perchAbove(tc)          -- leave their melee range instantly
+                                    task.wait(0.12)
+                                else
+                                    -- STAY-ON (aggressive, riskier): sit behind them and spam.
+                                    RunService.Heartbeat:Wait()
+                                    pcall(function() task.spawn(fireHit) end)
+                                    pcall(function() me:PivotTo(tc:GetPivot() * CFrame.new(0, 1.5, 3)) end)
+                                end
+                            else
+                                RunService.Heartbeat:Wait()
+                            end
+                        until (tick()-start > dwell)
+                            or not S.JoltFarm
+                            or (healAt>0 and myHPFrac() <= healAt)   -- bail to heal mid-target too
+                            or not (target.Character and target.Character:FindFirstChild("Humanoid"))
+                            or (target.Character.Humanoid.Health < 1)
+                    else
+                        task.wait(0.2)
+                    end
+                end
+            else
+                task.wait(0.3)
+            end
+        end
+    end)
+end
+
+-- Keep the Teleport + Farm target lists current as players join/leave.
+local function refreshPlayerDrops()
+    pcall(function() tpDrop:Refresh(playerNames()) end)
+    pcall(function() farmDrop:Refresh(playerNames()) end)
+    pcall(function() viewDrop:Refresh(playerNames()) end)
+    if dodgeDrop then pcall(function() dodgeDrop:Refresh((function() local t={"All"} for _,n in ipairs(playerNames()) do t[#t+1]=n end return t end)()) end) end
+end
+hook(Players.PlayerAdded,    function() task.delay(0.3, refreshPlayerDrops) end)
+hook(Players.PlayerRemoving, function() task.delay(0.3, refreshPlayerDrops) end)
+
+UtilityTab:CreateToggle({Name="Anti-AFK", CurrentValue=false, Flag="AntiAFK", Callback=function(v) S.AntiAFK=v end})
+UtilityTab:CreateToggle({Name="Instant Respawn", CurrentValue=false, Flag="InstantRespawn", Callback=function(v) S.InstantRespawn=v end})
+UtilityTab:CreateButton({Name="Rejoin Server", Callback=rejoin})
+UtilityTab:CreateButton({Name="Server Hop", Callback=serverHop})
+
+UtilityTab:CreateSection("Debug")
+UtilityTab:CreateParagraph({Title="Dump Player Data", Content="Prints every player's character attributes + value-objects to the executor console (F9 / your console). Paste it back so the ESP ability + god-mode flag can be wired exactly."})
+UtilityTab:CreateButton({Name="Dump Player Data (to console)", Callback=function()
+    local function dump(char, tag)
+        if not char then return end
+        print("=====", tag, char.Name, "=====")
+        local attrs = char:GetAttributes()
+        for k,v in pairs(attrs) do print("  Attr:", k, "=", tostring(v), "("..typeof(v)..")") end
+        for _,d in ipairs(char:GetDescendants()) do
+            if d:IsA("StringValue") or d:IsA("ObjectValue") or d:IsA("NumberValue") or d:IsA("IntValue") or d:IsA("BoolValue") then
+                local val = d:IsA("ObjectValue") and (d.Value and d.Value.Name or "nil") or tostring(d.Value)
+                print("  Value:", d:GetFullName(), "=", val)
+            end
+        end
+    end
+    dump(LP.Character, "SELF")
+    for _,pl in ipairs(Players:GetPlayers()) do if pl ~= LP then dump(pl.Character, "PLAYER") end end
+    Rayfield:Notify({Title="Dream Hub", Content="Dumped to console (open F9 / executor console).", Duration=5})
+end})
+
+UtilityTab:CreateToggle({Name="Spy M1 Packets  [removed - anti-cheat safe]", CurrentValue=false, Flag="M1Spy", Callback=function(v)
+    -- Hard-disabled: the packet spy required a __namecall hook, which Ability Arena's anti-cheat
+    -- detects ("namecallInstance detector" -> 267 kick). The toggle is kept as a no-op so old saved
+    -- configs with M1Spy=true don't error; it never installs a hook now.
+    S.M1Spy = false
+    if v then Rayfield:Notify({Title="Dream Hub", Content="M1 Packet Spy is disabled — it used a namecall hook that got you kicked (Error 267). The hub no longer hooks anything.", Duration=8}) end
+end})
+
+UtilityTab:CreateSection("Admin")
+local unloading = false
+local function unloadHub()
+    if unloading then return end
+    unloading = true
+    AAR.alive = false
+    for k in pairs(S) do if type(S[k])=="boolean" then S[k]=false end end
+
+    -- Release/cancel state before disconnecting Heartbeat/Input hooks. Otherwise Fly,
+    -- Save Health, Ability Grab, or Legit Auto Play can leave the character immobile.
+    pcall(function() if _G.AA_RELEASEKEYS then _G.AA_RELEASEKEYS() end end)
+    pcall(AAR.cancelTeleport)
+    pcall(cancelAbilityGrab)
+    pcall(stopFlyMovement)
+    healPanic = false; AAR.manualHeal = false
+    local root = getRoot()
+    if root then pcall(function() root.Anchored = false end) end
+    local h=getHum()
+    if h then pcall(function() h.PlatformStand=false; h.WalkSpeed=16; setRagdollStates(h, true) end) end
+
+    for _,c in pairs(Conns) do pcall(function() c:Disconnect() end) end
+    for _,c in ipairs(Listeners) do pcall(function() c:Disconnect() end) end
+    pcall(function() setFullBright(false) end)
+    pcall(function() stopView() end)
+    pcall(clearESP); pcall(clearHighlights); pcall(restoreHitboxes); pcall(restoreArms)
+    pcall(destroyAbilityHb); pcall(clearAura); pcall(clearCustomVFX)
+    if floatPart then pcall(function() floatPart:Destroy() end); floatPart=nil end
+    for name, instance in pairs(AAR.owned) do
+        if instance then pcall(function() instance:Destroy() end) end
+        AAR.owned[name] = nil
+    end
+    _cbStatus=nil
+    _G.AA_RELEASEKEYS, _G.AA_SWING, _G.AA_JOLTFARM_DEPLOY = nil, nil, nil
+    if _G.__DREAM_AA_UNLOAD == unloadHub then _G.__DREAM_AA_UNLOAD = nil end
+    pcall(function() Rayfield:Destroy() end)
+end
+_G.__DREAM_AA_UNLOAD = unloadHub
+UtilityTab:CreateButton({Name="Unload Dream Hub", Callback=unloadHub})
+
+
+-- session integrity watcher
+do
+    local Plrs = game:GetService("Players"); local me = Plrs.LocalPlayer
+    -- add YOUR OWN account name(s) here (lowercase) so you can run spy/dev tools on your own copy without it unloading
+    local WL = { }   -- e.g. { ["unskibidyy"]=true }
+    -- known remote-spy / explorer / decompiler / save-instance tool signatures (globals + GUI names)
+    local G  = {"SimpleSpy","RemoteSpy","Dex","DarkDex","DarkDexV3","Hydroxide","SaveInstance","RemoteLogger","SimpleSpyExecutionList","Hydroxgen","Decompiler","IY_LOADED","Serpent","BytecodeInspector"}
+    local NS = {"simplespy","remotespy","remote spy","darkdex","dex explorer","dex v","hydroxide","saveinstance","script spy","server spy","spy v","remote logger","decompile","bytecode","dumper"}
+    local function bail(sig)
+        pcall(unloadHub)
+        pcall(function() me:Kick("\226\154\160") end)   -- best-effort hard kick so the tool can't keep logging
+    end
+    local function scan()
+        if WL[tostring(me.Name):lower()] then return end
+        local ok,genv = pcall(getgenv); if ok and type(genv)=="table" then for _,s in ipairs(G) do if rawget(genv,s)~=nil then return bail(s) end end end
+        if type(shared)=="table" then for _,s in ipairs({"Hydroxide","SimpleSpy"}) do local o=pcall(function() return shared[s] end); if o and shared[s]~=nil then return bail(s) end end end
+        local roots={}
+        pcall(function() if gethui then roots[#roots+1]=gethui() end end)
+        pcall(function() roots[#roots+1]=game:GetService("CoreGui") end)
+        pcall(function() local pg=me:FindFirstChildOfClass("PlayerGui"); if pg then roots[#roots+1]=pg end end)
+        for _,r in ipairs(roots) do
+            local ok2,kids=pcall(function() return r:GetChildren() end)
+            if ok2 then for _,g in ipairs(kids) do local n=tostring(g.Name):lower()
+                for _,s in ipairs(NS) do if n:find(s,1,true) then return bail(g.Name) end end
+            end end
+        end
+    end
+    task.spawn(function() task.wait(4); while AAR.alive do pcall(scan); task.wait(3) end end)   -- settle, then poll
+end
+
+-- INSURANCE: Fluriore fires element callbacks on creation, which can flip the aura on during build.
+-- After the GUI settles, force the aura OFF so you always spawn clean (no red sphere).
+task.delay(1.2, function() S.VFXOn=false; pcall(clearCustomVFX) end)
+
+-- ═══ DREAM LOGO BUTTON (Plus + Premium) ═══ Black & white floating Dream badge — tap hides/shows the menu, drag
+-- to move it. Same look as the PE hub. Toggles the Fluriore window (CoreGui.HirimiGui) Enabled state.
+if AAR.plus then
+    task.delay(1.5, function()
+        pcall(function()
+            local CoreGui = game:GetService("CoreGui")
+            local parentGui = (gethui and gethui()) or CoreGui
+            local old = parentGui:FindFirstChild("Dream_Logo")
+            if old then old:Destroy() end
+            local tg = Instance.new("ScreenGui")
+            tg.Name = "Dream_Logo"; tg.ResetOnSpawn = false; tg.IgnoreGuiInset = true; tg.DisplayOrder = 10050
+            pcall(function() tg.Parent = parentGui end)
+            AAR.owned.logo = tg
+            local btn = Instance.new("ImageButton")
+            btn.Size = UDim2.fromOffset(46,46); btn.Position = UDim2.new(0,14,0.30,0)
+            btn.BackgroundColor3 = Color3.fromRGB(10,10,10); btn.AutoButtonColor = true; btn.ZIndex = 50
+            btn.Image = "rbxthumb://type=Asset&id=82151574125055&w=150&h=150"
+            btn.ImageTransparency = 1; btn.ImageColor3 = Color3.fromRGB(255,255,255); btn.ScaleType = Enum.ScaleType.Fit
+            btn.Parent = tg
+            local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(1,0); corner.Parent = btn
+            local st = Instance.new("UIStroke"); st.Color = Color3.fromRGB(255,255,255); st.Transparency = 0.35; st.Thickness = 1.6; st.Parent = btn
+            local tl = Instance.new("TextLabel")
+            tl.Size = UDim2.fromScale(1,1); tl.BackgroundTransparency = 1; tl.Text = "DREAM"
+            tl.TextColor3 = Color3.fromRGB(255,255,255); tl.Font = Enum.Font.GothamBlack; tl.TextScaled = true; tl.ZIndex = 51; tl.Parent = btn
+            local pd = Instance.new("UIPadding"); pd.PaddingLeft = UDim.new(0,5); pd.PaddingRight = UDim.new(0,5); pd.PaddingTop = UDim.new(0,15); pd.PaddingBottom = UDim.new(0,15); pd.Parent = tl
+            task.spawn(function()   -- swap DREAM text for the real logo only once it actually loads (never a blank circle)
+                for _=1,40 do if not btn.Parent then return end if btn.IsLoaded then break end task.wait(0.15) end
+                if btn.Parent and btn.IsLoaded then pcall(function() btn.ImageTransparency=0; tl.Visible=false end)
+                else pcall(function() btn.BackgroundColor3=Color3.fromRGB(180,30,30) end) end   -- fallback: red badge with DREAM
+            end)
+            local function toggleMenu()
+                pcall(function()
+                    local hg = ((gethui and gethui()) or CoreGui):FindFirstChild("HirimiGui") or CoreGui:FindFirstChild("HirimiGui")
+                    if hg then hg.Enabled = not hg.Enabled end
+                end)
+            end
+            -- tap = toggle, drag = reposition (tell them apart by movement)
+            local dragging, dragStart, startPos, moved = false, nil, nil, false
+            hook(btn.InputBegan, function(i)
+                if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
+                    dragging=true; moved=false; dragStart=i.Position; startPos=btn.Position
+                end
+            end)
+            hook(UserInputService.InputChanged, function(i)
+                if dragging and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then
+                    local d=i.Position-dragStart
+                    if (math.abs(d.X)+math.abs(d.Y))>6 then moved=true end
+                    btn.Position=UDim2.new(startPos.X.Scale, startPos.X.Offset+d.X, startPos.Y.Scale, startPos.Y.Offset+d.Y)
+                end
+            end)
+            hook(UserInputService.InputEnded, function(i)
+                if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
+                    if dragging and not moved then toggleMenu() end
+                    dragging=false
+                end
+            end)
+        end)
+    end)
+end
+
+pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
+
+-- ═══ ADMIN TAB (whitelisted user only) ═══
+;(function()
+    local ADM = { ["chloeflash9563"]=true, ["bruckner_tempest"]=true, ["hvdkssl25"]=true, ["real_revvybxnned11"]=true, ["babbage_sparse"]=true }
+    if ADM[string.lower(LP.Name)] or ADM[string.lower(LP.DisplayName or "")] then
+        local AdminTab = Window:CreateTab("Admin","shield")
+        local sel
+        local function names() local t={ LP.Name.."  (you)" } for _,pl in ipairs(Players:GetPlayers()) do if pl~=LP then t[#t+1]=pl.Name end end return t end
+        local function targ() if not sel then return nil end local nm=tostring(sel):gsub("%s+%(you%)$",""); return Players:FindFirstChild(nm) end
+        local function spectate(pl) local cam=workspace.CurrentCamera; local c=pl.Character; local h=c and c:FindFirstChildOfClass("Humanoid"); if cam and h then cam.CameraSubject=h; return true end local pt=c and c:FindFirstChildWhichIsA("BasePart"); if cam and pt then cam.CameraSubject=pt; return true end return false end
+        local function toast(m) pcall(function() game:GetService("StarterGui"):SetCore("SendNotification",{Title="Admin",Text=m,Duration=4}) end) end
+        local function sendChat(txt) local ok=false
+            pcall(function() local TCS=game:GetService("TextChatService"); local order={}; local tc=TCS:FindFirstChild("TextChannels"); if tc then local g=tc:FindFirstChild("RBXGeneral"); if g then order[#order+1]=g end end; for _,d in ipairs(TCS:GetDescendants()) do if d:IsA("TextChannel") and d~=order[1] then order[#order+1]=d end end; for _,ch in ipairs(order) do local sent=pcall(function() ch:SendAsync(txt) end); if sent then ok=true break end end end)
+            if not ok then pcall(function() local ev=game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents"); local say=ev and ev:FindFirstChild("SayMessageRequest"); if say then say:FireServer(txt,"All"); ok=true end end) end
+            return ok end
+        local warnMsg="Follow the rules or you'll be removed."
+        AdminTab:CreateSection("Load User")
+        local dd = AdminTab:CreateDropdown({Name="Load User", Options=names(), CurrentOption={}, Callback=function(o) sel=(type(o)=="table" and o[1]) or o end})
+        AdminTab:CreateButton({Name="Refresh Players", Callback=function() pcall(function() dd:Refresh(names()) end) end})
+        AdminTab:CreateSection("Actions")
+        AdminTab:CreateParagraph({Title="Warn", Content="Send Warn pops a standard warning on their screen. Custom message: type  ?warn username your text  in the live chat."})
+        AdminTab:CreateButton({Name="Send Warn", Callback=function() local p=targ(); if not p then toast("Load a user first.") return end if _G.__DreamWarnSend then _G.__DreamWarnSend(p.Name, warnMsg); toast("Warning sent to "..p.Name.." (popup on their screen if they run Dream Hub).") else toast("Warn relay not ready yet - try again in a few seconds.") end end})
+        AdminTab:CreateButton({Name="Teleport To User", Callback=function() local p=targ(); if not p then toast("Load a user first.") return end
+            local okg=false; pcall(function() local mc=LP.Character; local mr=mc and (mc:FindFirstChild("HumanoidRootPart") or mc.PrimaryPart or mc:FindFirstChildWhichIsA("BasePart")); local tc=p.Character; local tr=tc and (tc:FindFirstChild("HumanoidRootPart") or tc.PrimaryPart or tc:FindFirstChildWhichIsA("BasePart")); if mr and tr then mr.CFrame=tr.CFrame*CFrame.new(0,0,-4); okg=true end end)
+            if not okg then pcall(function() tpToPlayer(p.Name, false) end) end
+            toast("Teleported to "..p.Name) end})
+        AdminTab:CreateButton({Name="View Player", Callback=function() local p=targ(); if not p then toast("Load a user first.") return end toast(spectate(p) and ("Viewing "..p.Name) or "They aren't loaded in.") end})
+        AdminTab:CreateButton({Name="Stop Viewing", Callback=function() local cam=workspace.CurrentCamera; local mc=LP.Character; local h=mc and mc:FindFirstChildOfClass("Humanoid"); if cam then pcall(function() cam.CameraSubject=h end) end toast("Camera back on you.") end})
+        AdminTab:CreateToggle({Name="Fly", CurrentValue=false, Callback=function(v) S.Fly=v; if not v then stopFlyMovement() end end})
+        AdminTab:CreateSection("Their Roblox Identity")
+        AdminTab:CreateButton({Name="Copy Username", Callback=function() local p=targ(); if not p then toast("Load a user first.") return end pcall(function() setclipboard(p.Name) end) toast("Copied @"..p.Name) end})
+        AdminTab:CreateButton({Name="Copy UserId", Callback=function() local p=targ(); if not p then toast("Load a user first.") return end pcall(function() setclipboard(tostring(p.UserId)) end) toast("Copied "..p.UserId) end})
+        AdminTab:CreateButton({Name="Copy Profile Link", Callback=function() local p=targ(); if not p then toast("Load a user first.") return end pcall(function() setclipboard("https://www.roblox.com/users/"..p.UserId.."/profile") end) toast("Copied profile link.") end})
+        AdminTab:CreateSection("Report to Discord")
+        local reason,proof="",""
+        AdminTab:CreateInput({Name="Put reason here", PlaceholderText="what they did", Callback=function(t) reason=t or "" end})
+        AdminTab:CreateInput({Name="Proof image link (imgur/gyazo/medal)", PlaceholderText="https://...", Callback=function(t) proof=t or "" end})
+        AdminTab:CreateButton({Name="Send Report", Callback=function()
+            local p=targ(); if not p then toast("Load a user first.") return end
+            if #tostring(reason):gsub("%s","")<2 then toast("Type a reason first.") return end
+            local hook=type(_G.__DreamReportWebhook)=="string" and _G.__DreamReportWebhook or ""
+            local req=(typeof(syn)=="table" and syn.request) or http_request or (typeof(fluxus)=="table" and fluxus.request) or request
+            if hook=="" then toast("Reporting disabled. Set _G.__DreamReportWebhook before loading.") return end
+            if not req then toast("No http on this executor.") return end
+            task.spawn(function() local okc=false pcall(function() local emb={title="Player Reported",color=14689068,fields={{name="Target",value=p.DisplayName.." (@"..p.Name..")  ["..tostring(p.UserId).."]",inline=false},{name="Profile",value="https://www.roblox.com/users/"..p.UserId.."/profile",inline=false},{name="Reason",value=string.sub(tostring(reason),1,1500),inline=false},{name="Reported by",value=LP.Name,inline=false}}}; local pf=tostring(proof); if #pf:gsub("%s","")>4 then table.insert(emb.fields,{name="Proof",value=string.sub(pf,1,400),inline=false}); if pf:match("^https?://%S+%.png") or pf:match("^https?://%S+%.jpg") or pf:match("^https?://%S+%.jpeg") or pf:match("^https?://%S+%.gif") then emb.image={url=pf} end end local FUNNY={"https://dev.plasmii.vip/folk-images/FyileRBHGM.png","https://dev.plasmii.vip/folk-images/7iHoNdXEZx.png","https://dev.plasmii.vip/folk-images/e7OU2vjjwy.png","https://dev.plasmii.vip/folk-images/zRugC3azOS.png","https://dev.plasmii.vip/folk-images/PdNAVfd1Xs.png","https://dev.plasmii.vip/folk-images/Gooning_folk.png","https://dev.plasmii.vip/folk-images/bvFh6jNwfg.png","https://dev.plasmii.vip/folk-images/3DpT2iqGIf.png","https://dev.plasmii.vip/folk-images/0p4BngFJ14.png","https://dev.plasmii.vip/folk-images/Fa8WC5QRLO.png","https://dev.plasmii.vip/folk-images/Gooner_folk.png","https://dev.plasmii.vip/folk-images/V1Lk4YW2hB.png","https://dev.plasmii.vip/folk-images/5qdmyDpxVm.png","https://dev.plasmii.vip/folk-images/folk.png","https://dev.plasmii.vip/folk-images/BmgbC2AbEY.png","https://dev.plasmii.vip/folk-images/Test.png"} local funpick=FUNNY[math.random(#FUNNY)] if emb.image then emb.thumbnail={url=funpick} else emb.image={url=funpick} end local body=game:GetService("HttpService"):JSONEncode({username="Dream Mod",embeds={emb}}) local res=req({Url=hook,Method="POST",Headers={["Content-Type"]="application/json"},Body=body}); if res and ((res.StatusCode and res.StatusCode>=200 and res.StatusCode<300) or res.Success) then okc=true end if not okc then local res2=req({Url=(hook:gsub("^https://discord%.com","https://webhook.lewisakura.moe")),Method="POST",Headers={["Content-Type"]="application/json"},Body=body}) if res2 and ((res2.StatusCode and res2.StatusCode>=200 and res2.StatusCode<300) or res2.Success) then okc=true end end end) toast(okc and ("Reported "..p.Name..".") or "Send failed.") end)
+        end})
+    end
+end)()
+
+Rayfield:Notify({Title="Dream Hub", Content="Loaded.", Duration=5})
+
