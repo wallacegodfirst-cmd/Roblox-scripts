@@ -5482,7 +5482,7 @@ __gg.MH_autoHitM1=function(target)
 	return ok
 end
 task.spawn(function() while RUNNING do
-	if CFG.AlwaysDamage and alive() then
+	if CFG.AlwaysDamage and not CFG.AutoHit and alive() then
 		local me=hrp()
 		if me then
 			-- FIND TARGETS FIRST — collect every enemy inside DamageRange. If there's NOBODY in range we do NOTHING
@@ -5510,7 +5510,7 @@ end end)
 -- AUTO HIT: conditional real input. It does nothing with no visible dinosaur in range; when one is detected, it
 -- performs the local M1 for the user at that dinosaur's selected bone.
 task.spawn(function() while RUNNING do
-	if CFG.AutoHit and not CFG.AlwaysDamage and not CFG.SilentAim and alive() then
+	if CFG.AutoHit and alive() then
 		local target=__gg.MH_autoHitTarget()
 		if target then __gg.MH_autoHitM1(target) end
 		task.wait(1/math.max(1,tonumber(CFG.DamageRate) or 4))
@@ -5808,7 +5808,7 @@ conn(RunService.RenderStepped:Connect(function()
 end))
 -- SILENT AIM: silently fire the captured Attack remote at the locked target (no camera movement). This is what
 -- makes Silent Aim genuinely "silent" — your view never snaps, but the nearest dino takes hits.
-task.spawn(function() while RUNNING do if CFG.SilentAim and alive() then local t=aimTarget or nearestTarget(math.max(tonumber(CFG.DamageRange) or 120,(tonumber(CFG.HitboxSize) or 35)*0.5+16), true); if t then MHCOMBAT.sequence(t) end; task.wait(1/math.max(1,tonumber(CFG.DamageRate) or 4)) else task.wait(0.15) end end end)
+task.spawn(function() while RUNNING do if CFG.SilentAim and not CFG.AutoHit and alive() then local t=aimTarget or nearestTarget(math.max(tonumber(CFG.DamageRange) or 120,(tonumber(CFG.HitboxSize) or 35)*0.5+16), true); if t then MHCOMBAT.sequence(t) end; task.wait(1/math.max(1,tonumber(CFG.DamageRate) or 4)) else task.wait(0.15) end end end)
 -- NO GRAB WEIGHT LIMIT — the strong version from the decompiled LIVEGrab module (3k-line build). The "above your
 -- weight limit!" check is CLIENT-side: CanBind() calls CharacterState.Grab:MeetsWeightLimit() and each grab ability
 -- has a WeightLimit (% of YOUR Weight). We patch MeetsWeightLimit -> always true AND set every grab ability's
