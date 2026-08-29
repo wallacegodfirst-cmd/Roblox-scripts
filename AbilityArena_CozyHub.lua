@@ -1,5 +1,7 @@
--- Dream Hub | Ability Arena | v2.19.0
+-- Dream Hub | Ability Arena | v2.19.1
 -- by Dream Hub Owner
+-- v2.19.1: Premium and Plus are now exclusive tiers. AA_PREM takes priority and never
+--          enters an AA_PLUS feature block, including when a stale Plus flag exists.
 -- v2.19.0: Auto Heal and Jolt Farm low-HP retreat now stay on the live map. They share
 --          one bounded safe-retreat state and always restore position/movement without a reset.
 -- v2.18.1: Executor register-limit fix. The late Admin/VIP UI now compiles in its own
@@ -93,7 +95,7 @@ do
     end
     local requestedTier = tostring(readTierFlag("AA_TIER") or ""):upper()
     AAR.prem = requestedTier == "PREMIUM" or readTierFlag("AA_PREM") == true
-    AAR.plus = AAR.prem or requestedTier == "PLUS" or readTierFlag("AA_PLUS") == true
+    AAR.plus = not AAR.prem and (requestedTier == "PLUS" or readTierFlag("AA_PLUS") == true)
 
     -- Capture the new loader's tier first, then clean up the previous run.
     pcall(function()
@@ -3868,11 +3870,11 @@ RulesTab:CreateParagraph({Title="Rule 15", Content="Don't abuse the report syste
 
 -- \u2500\u2500 HOME (landing page) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 HomeTab:CreateSection("Welcome")
-HomeTab:CreateParagraph({Title="Dream Hub", Content="Ability Arena  -  v2.19.0\nPick a tab on the left to get started."})
+HomeTab:CreateParagraph({Title="Dream Hub", Content="Ability Arena  -  v2.19.1\nPick a tab on the left to get started."})
 HomeTab:CreateParagraph({Title="Status", Content = JoltReliable and "Ready." or "Not ready - rejoin and retry."})
 HomeTab:CreateParagraph({Title="Best combo", Content="M1 Warp (every click snaps you behind them for the swing) or Dash Behind On Hit. Anti-Ragdoll + Anti Void + Remove Water Border + Anti Kill Bricks for survival. Auras on the Visuals tab. Click TP is on V (T is an ability key)."})
 HomeTab:CreateSection("Credits")
-HomeTab:CreateParagraph({Title="Credits", Content="Dream Hub v2.19.0 - by Dream Hub Owner"})
+HomeTab:CreateParagraph({Title="Credits", Content="Dream Hub v2.19.1 - by Dream Hub Owner"})
 
 CombatTab:CreateSection("Survival")
 CombatTab:CreateToggle({Name="Anti-Ragdoll (hard)", CurrentValue=false, Flag="AntiRagdoll", Callback=function(v)
