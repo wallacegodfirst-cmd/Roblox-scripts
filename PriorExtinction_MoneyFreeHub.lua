@@ -9,6 +9,8 @@ local __gg = (typeof(getgenv)=="function") and getgenv() or _G
 __gg.MH_releaseSyntheticMovement=function()
 	if __gg.MH_botInputOwned and type(__gg.MH_botReleaseKeys)=="function" then pcall(__gg.MH_botReleaseKeys) end
 	__gg.MH_botInputOwned=false
+	if type(__gg.MH_autoHitHeld)=="table" then for name,held in pairs(__gg.MH_autoHitHeld) do if held then local kc=Enum.KeyCode[name]; if kc then pcall(function() game:GetService("VirtualInputManager"):SendKeyEvent(false,kc,false,game) end) end end end end
+	__gg.MH_autoHitHeld={}
 	if __gg.MH_stamShiftHeld then pcall(function() game:GetService("VirtualInputManager"):SendKeyEvent(false,Enum.KeyCode.LeftShift,false,game) end); __gg.MH_stamShiftHeld=false end
 	if __gg.MH_foodSyntheticE then pcall(function() game:GetService("VirtualInputManager"):SendKeyEvent(false,Enum.KeyCode.E,false,game) end); __gg.MH_foodSyntheticE=false end
 end
@@ -29,7 +31,7 @@ __gg.MH_foodSourceRevision=0; __gg.MH_foodSourceKinds="none"; __gg.MH_foodResolv
 __gg.MH_growthState="waiting"; __gg.MH_growthValue=nil; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_growthBase=nil; __gg.MH_stamBoostSpeed=0; __gg.MH_stamPinState="waiting"; __gg.MH_stamReportState="waiting"
 __gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_stamInputHeld=false; __gg.MH_stamRunRequested=false; __gg.MH_stamDriveSpeed=0; __gg.MH_stamSyncAt=0; __gg.MH_nativeRunSpeed=0; __gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_healthPacket=nil; __gg.MH_guardLastHP=nil
 pcall(function() if __gg.MH_autoHitHighlight then __gg.MH_autoHitHighlight:Destroy() end end)
-__gg.MH_runPacket=nil; __gg.MH_nativeRunActive=false; __gg.MH_runShielded=0; __gg.MH_autoHitClicking=false; __gg.MH_autoHitLocked=nil; __gg.MH_autoHitHighlight=nil; __gg.MH_autoHitSelect=false; __gg.MH_autoHitQuery=nil; __gg.MH_autoHitStatus="No target"; __gg.MH_autoHitTrackBone=nil; __gg.MH_autoHitTrackUntil=0
+__gg.MH_runPacket=nil; __gg.MH_nativeRunActive=false; __gg.MH_runShielded=0; __gg.MH_autoHitClicking=false; __gg.MH_autoHitLocked=nil; __gg.MH_autoHitHighlight=nil; __gg.MH_autoHitSelect=false; __gg.MH_autoHitQuery=nil; __gg.MH_autoHitStatus="No target"; __gg.MH_autoHitTrackBone=nil; __gg.MH_autoHitTrackUntil=0; __gg.MH_autoHitHeld={}
 __gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil; __gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
 -- Every captured packet below is valid only for one playable dinosaur. Character, species, or verified replica
 -- changes invalidate food-source ids, combat/sound templates, need reports, and protection high-water state together.
@@ -46,6 +48,7 @@ __gg.MH_clearDinoCaches=function(identityKey)
 	__gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_stamInputHeld=false; __gg.MH_stamRunRequested=false; __gg.MH_stamDriveSpeed=0; __gg.MH_stamSyncAt=0; __gg.MH_nativeRunSpeed=0; __gg.MH_healthPacket=nil; __gg.MH_healthReportAt=nil
 	pcall(function() if __gg.MH_autoHitHighlight then __gg.MH_autoHitHighlight:Destroy() end end)
 	__gg.MH_runPacket=nil; __gg.MH_nativeRunActive=false; __gg.MH_runShielded=0; __gg.MH_autoHitClicking=false; __gg.MH_autoHitLocked=nil; __gg.MH_autoHitHighlight=nil; __gg.MH_autoHitSelect=false; __gg.MH_autoHitQuery=nil; __gg.MH_autoHitStatus="No target"; __gg.MH_autoHitTrackBone=nil; __gg.MH_autoHitTrackUntil=0
+	if type(__gg.MH_autoHitReleaseMovement)=="function" then pcall(__gg.MH_autoHitReleaseMovement) else __gg.MH_autoHitHeld={} end
 	__gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_guardLastHP=nil; __gg.MH_guardMax=nil
 	__gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
 	if type(MHNEED)=="table" then MHNEED.refs={food={},stamina={}}; MHNEED.max={food=nil,stamina=nil}; MHNEED.maxSource={food=nil,stamina=nil}; MHNEED.hasPaired={food=false,stamina=false}; MHNEED.at=0; MHNEED.root=nil; MHNEED.character=nil; MHNEED.capRoot=nil; MHNEED.capacity=nil end
@@ -888,7 +891,7 @@ local CFG = {
 	GodMode=false, AutoFarmGem=false, GemRange=1000000,
 	FarmReach=200, FarmTeleport=true, FarmSpeed=55, TpBiome="(scan)",
 	AutoEatFood=true, FoodEatRange=120, FoodEatSpeed=3,
-	AlwaysDamage=false, AutoHit=false, AutoHitTargetName="", AutoHitDistance=45, AutoHitRate=1, DamageRange=120, DamageRate=4, DamagePart="Auto", NoGrabLimit=false,
+	AlwaysDamage=false, AutoHit=false, AutoHitFollow=false, AutoHitFollowDistance=8, AutoHitRightClick=false, AutoHitTargetName="", AutoHitDistance=45, AutoHitRate=1, DamageRange=120, DamageRate=4, DamagePart="Auto", NoGrabLimit=false,
 }
 
 FILE = "PriorExtinction_Config.json"
@@ -916,6 +919,7 @@ CFG.ProFoodEatAt=math.clamp(math.floor(tonumber(CFG.ProFoodEatAt) or 40),1,100)
 CFG.ProFoodDrop=math.clamp(math.floor(tonumber(CFG.ProFoodDrop) or 3),1,50)
 CFG.AutoHitDistance=math.clamp(math.floor(tonumber(CFG.AutoHitDistance) or 45),5,400)
 CFG.AutoHitRate=math.clamp(tonumber(CFG.AutoHitRate) or 1,1,6)
+CFG.AutoHitFollowDistance=math.clamp(tonumber(CFG.AutoHitFollowDistance) or 8,3,30)
 if CFG.InfFoodDiet~="Herbivore" and CFG.InfFoodDiet~="Carnivore" then CFG.InfFoodDiet="Auto" end
 MS("1 config ok")
 CFG.Keybinds = CFG.Keybinds or {}
@@ -934,7 +938,7 @@ if not (tonumber(CFG.FarmReach) and CFG.FarmReach>=30 and CFG.FarmReach<=120) th
 for _,key in ipairs({
 		"Aimbot","SilentAim","LockOn","HitboxExpand","BoneProtect","TurnHack","Fly","SpeedHack","DeathFix","RespawnDeathPoint","Noclip","InfJump",
 	"InfFood","FoodMultiplier","InfWater","InfStam","InfOxygen","SaveDino","AutoFarmPlayer","AutoFarmFossil","AutoFarmGem","AutoPlayBot",
-	"ESPPlayers","ESPCorpses","FoodESP","FishESP","GemESP","AlertEnabled","CarnMeatTP","ProFood","FullBright","NightVision","NoDarkWater","WaterClear","NoClouds","AlwaysDamage","AutoHit","NoGrabLimit","RemoveTrees","Radar",
+	"ESPPlayers","ESPCorpses","FoodESP","FishESP","GemESP","AlertEnabled","CarnMeatTP","ProFood","FullBright","NightVision","NoDarkWater","WaterClear","NoClouds","AlwaysDamage","AutoHit","AutoHitFollow","AutoHitRightClick","NoGrabLimit","RemoveTrees","Radar",
 	"Float","GodMode","InfLight","UnlockFOV","InfZoom","AntiDrown","WalkWater","AutoClean","AntiFracture","AntiBleed","Invis",
 	"AntiBreakHead","AntiBreakNeck","AntiBreakLeg","AntiBreakTail","AntiBreakTorso","NoSleep","AntiAFK","UnlockMouse","__SpyOn",
 	"AutoClick","AutoEatFood","DebugPanel","LogRemotes","BypassTP","SafeTP",
@@ -974,6 +978,10 @@ __gg.MH_featureToggleChanged=function(key,value)
 	if key=="AutoHit" then
 		if value then __gg.MH_autoHitQuery=nil
 		elseif type(__gg.MH_autoHitClear)=="function" then pcall(__gg.MH_autoHitClear,false) end
+		if not value and type(__gg.MH_autoHitReleaseMovement)=="function" then pcall(__gg.MH_autoHitReleaseMovement) end
+	end
+	if key=="AutoHitFollow" and not value and type(__gg.MH_autoHitReleaseMovement)=="function" then
+		pcall(__gg.MH_autoHitReleaseMovement)
 	end
 	local gens=__gg.MH_tpFeatureGen
 	if type(gens)=="table" and gens[key]~=nil then
@@ -2178,6 +2186,26 @@ function MHNEED.pin(kind)
 		end
 	end
 	return globalMax,changed
+end
+-- Stamina appears in several live layouts that the generic ref list can briefly miss while a dinosaur streams:
+-- Stats.Stamina, PlayerData.Stamina, or Stamina.Delta/Max. Pin those concrete numeric fields too, but never a
+-- Max/Cost/Drain/Rate setting. This is local bar/state protection; the exact SetProperty report below handles the
+-- same verified character replica and the Run=false shield prevents a new authoritative sprint drain from starting.
+function MHNEED.pinStamina()
+	local mx,changed=MHNEED.pin("stamina"); if not (mx and mx>0) then return mx,changed end
+	local seen={}
+	local function sweep(tb,path,depth)
+		if type(tb)~="table" or seen[tb] or depth>5 then return end; seen[tb]=true
+		for key,value in pairs(tb) do
+			local childPath=path.."."..tostring(key)
+			if type(value)=="number" and MHNEED.kindFor(key,path)=="stamina" and value<mx then
+				local ok=pcall(function() tb[key]=mx end); if ok then changed=true end
+			elseif type(value)=="table" then sweep(value,childPath,depth+1) end
+		end
+	end
+	local rep=csReplica(); pcall(function() sweep(rep and rep.Data,"Replica.Data",0); sweep(CharacterState,"CharacterState",0) end)
+	__gg.MH_stamAuthoritativeMax=mx
+	return mx,changed
 end
 function MHNEED.report(kind, force)
 	local packet=__gg.MH_needPackets and __gg.MH_needPackets[kind]; local mx=packet and MHNEED.maxForProperty(kind,packet[3]); local id=MHNEED.replicaId()
@@ -3512,16 +3540,19 @@ do local p=Pages["Combat"]
 	mkToggle(a,"Silent Aim","SilentAim",1)
 	mkToggle(a,"Lock On","LockOn",2)
 	mkToggle(a,"Auto Hit (no click)","AutoHit",3)
-	mkTextbox(a,"Auto Hit username","AutoHitTargetName",4,false)
-	mkBtn(a,"Click a dinosaur to lock",function() __gg.MH_autoHitSelect=true; __gg.MH_autoHitStatus="Click a dinosaur"; pcall(function() notify("Auto Hit","Click the dinosaur you want to lock.") end) end,5)
-	mkBtn(a,"Clear Auto Hit target",function() if __gg.MH_autoHitClear then __gg.MH_autoHitClear(true) else CFG.AutoHitTargetName=""; saveCfg() end end,6)
-	mkSlider(a,"Auto Hit lock distance","AutoHitDistance",5,400,7,5)
-	mkSlider(a,"Auto Hit clicks / sec","AutoHitRate",1,6,8,1)
-	mkDropdown(a,"Auto Hit Bone", function() return {"Auto","Head","Neck","Spine","Body","Hip","Leg","Tail"} end, function() return CFG.DamagePart~="" and CFG.DamagePart or "Auto" end, function(opt) CFG.DamagePart=opt; saveCfg() end, 9)
-	__gg.MH_autoHitStatusLabel=mkStatus(a,"Auto Hit target",10)
-	mkDropdown(a,"Aim Part", function() return {"Hitbox","Head","Spine","Neck","Hip","Body","Leg","Tail"} end, function() return CFG.AimPart~="" and CFG.AimPart or "Hitbox" end, function(opt) CFG.AimPart=opt; saveCfg() end, 11)
-	mkSlider(a,"Aim Smoothness","AimSmooth",0,1,12)
-	mkLabel(a,"Type a username, click a dinosaur, or leave the name blank to lock the first visible dinosaur inside your distance. The red outline stays on that one target.",13)
+	mkToggle(a,"Follow locked bone with WASD","AutoHitFollow",4)
+	mkSlider(a,"Follow stop distance","AutoHitFollowDistance",3,30,5,1)
+	mkToggle(a,"Extra M2 / right-click","AutoHitRightClick",6)
+	mkTextbox(a,"Auto Hit username","AutoHitTargetName",7,false)
+	mkBtn(a,"Click a dinosaur to lock",function() __gg.MH_autoHitSelect=true; __gg.MH_autoHitStatus="Click a dinosaur"; pcall(function() notify("Auto Hit","Click the dinosaur you want to lock.") end) end,8)
+	mkBtn(a,"Clear Auto Hit target",function() if __gg.MH_autoHitClear then __gg.MH_autoHitClear(true) else CFG.AutoHitTargetName=""; saveCfg() end end,9)
+	mkSlider(a,"Auto Hit lock distance","AutoHitDistance",5,400,10,5)
+	mkSlider(a,"Auto Hit clicks / sec","AutoHitRate",1,6,11,1)
+	mkDropdown(a,"Auto Hit Bone", function() return {"Auto","Head","Neck","Spine","Body","Hip","Leg","Tail"} end, function() return CFG.DamagePart~="" and CFG.DamagePart or "Auto" end, function(opt) CFG.DamagePart=opt; saveCfg() end, 12)
+	__gg.MH_autoHitStatusLabel=mkStatus(a,"Auto Hit target",13)
+	mkDropdown(a,"Aim Part", function() return {"Hitbox","Head","Spine","Neck","Hip","Body","Leg","Tail"} end, function() return CFG.AimPart~="" and CFG.AimPart or "Hitbox" end, function(opt) CFG.AimPart=opt; saveCfg() end, 14)
+	mkSlider(a,"Aim Smoothness","AimSmooth",0,1,15)
+	mkLabel(a,"Follow uses normal camera-relative W/A/S/D and releases every synthetic key when stopped. Extra M2 right-clicks the same live bone after M1.",16)
 end
 do local p=Pages["PvP"]
 	local _,d=mkSec(p,"Damage",1)
@@ -4198,7 +4229,7 @@ task.spawn(function()
 				for _,row in ipairs({{"stamina",CFG.InfStam}}) do
 					local kind,on=row[1],row[2]
 					if on then
-						MHNEED.pin(kind)
+						if kind=="stamina" then MHNEED.pinStamina() else MHNEED.pin(kind) end
 						local reported=MHNEED.report(kind,not wasOn[kind])
 						-- Once the resolver has an exact live Food/Stamina field (including CharacterState.PlayerData), use the
 						-- game's own throttled SetProperty route as a fallback. Captured exact packets still take priority.
@@ -4536,7 +4567,7 @@ conn(RunService.Heartbeat:Connect(function()
 		__gg.MH_stamShiftHeld=false; __gg.MH_stamRunRequested=false; __gg.MH_stamDriveSpeed=0; __gg.MH_stamBoostSpeed=0; return
 	end
 	pcall(function()
-		local mx,changed=MHNEED.pin("stamina"); __gg.MH_stamPinState=mx and ("max "..tostring(mx)..(changed and " pinned" or " held")) or "no stamina field/max found"
+		local mx,changed=MHNEED.pinStamina(); __gg.MH_stamPinState=mx and ("max "..tostring(mx)..(changed and " pinned" or " held")) or "no stamina field/max found"
 		local rep=csReplica(); local data=rep and rep.Data; local stats=select(1,csStats())
 		for _,tb in pairs({stats,data and data.State,data and data.Movement,CharacterState and CharacterState.Movement,CharacterState and CharacterState.PlayerData}) do
 			if type(tb)=="table" then for _,k in ipairs({"Exhausted","Exhaustion","Fatigued","Tired"}) do
@@ -5546,9 +5577,29 @@ __gg.MH_autoHitSetStatus=function(value)
 	__gg.MH_autoHitStatus=value
 	pcall(function() if __gg.MH_autoHitStatusLabel then __gg.MH_autoHitStatusLabel.Text=value end end)
 end
+__gg.MH_autoHitReleaseMovement=function()
+	__gg.MH_autoHitHeld=__gg.MH_autoHitHeld or {}
+	for name,held in pairs(__gg.MH_autoHitHeld) do if held then local kc=Enum.KeyCode[name]; if kc then pcall(function() VIM:SendKeyEvent(false,kc,false,game) end) end end; __gg.MH_autoHitHeld[name]=nil end
+end
+__gg.MH_autoHitDriveMovement=function(target)
+	if not (CFG.AutoHit and CFG.AutoHitFollow and alive() and target and target.Parent) then __gg.MH_autoHitReleaseMovement(); return end
+	local me=hrp(); local bone=__gg.MH_autoHitAim(target); local position=partPos(bone); local cam=workspace.CurrentCamera
+	if not (me and position and cam) then __gg.MH_autoHitReleaseMovement(); return end
+	local delta=Vector3.new(position.X-me.Position.X,0,position.Z-me.Position.Z); local stop=math.clamp(tonumber(CFG.AutoHitFollowDistance) or 8,3,30)
+	if delta.Magnitude<=stop then __gg.MH_autoHitReleaseMovement(); return end
+	local direction=delta.Unit; local forward=Vector3.new(cam.CFrame.LookVector.X,0,cam.CFrame.LookVector.Z); local right=Vector3.new(cam.CFrame.RightVector.X,0,cam.CFrame.RightVector.Z)
+	if forward.Magnitude<=0 or right.Magnitude<=0 then __gg.MH_autoHitReleaseMovement(); return end; forward=forward.Unit; right=right.Unit
+	local fd=direction:Dot(forward); local rd=direction:Dot(right); local desired={W=fd>0.18,S=fd< -0.18,D=rd>0.18,A=rd< -0.18}
+	__gg.MH_autoHitHeld=__gg.MH_autoHitHeld or {}
+	for _,name in ipairs({"W","A","S","D"}) do local down=desired[name]==true
+		if (__gg.MH_autoHitHeld[name]==true)~=down then __gg.MH_autoHitHeld[name]=down or nil; pcall(function() VIM:SendKeyEvent(down,Enum.KeyCode[name],false,game) end) end
+	end
+	__gg.MH_autoHitTrackBone=bone; __gg.MH_autoHitTrackUntil=tick()+0.2
+end
 __gg.MH_autoHitDrop=function()
 	pcall(function() if __gg.MH_autoHitHighlight then __gg.MH_autoHitHighlight:Destroy() end end)
 	__gg.MH_autoHitHighlight=nil; __gg.MH_autoHitLocked=nil; __gg.MH_autoHitTrackBone=nil; __gg.MH_autoHitTrackUntil=0
+	if __gg.MH_autoHitReleaseMovement then __gg.MH_autoHitReleaseMovement() end
 end
 __gg.MH_autoHitClear=function(clearName)
 	__gg.MH_autoHitDrop(); __gg.MH_autoHitSelect=false
@@ -5629,11 +5680,15 @@ __gg.MH_autoHitM1=function(target)
 	local cam=workspace.CurrentCamera; local aim=__gg.MH_autoHitAim(target); local position=partPos(aim)
 	if not (cam and position) then return false end
 	local screen,visible=cam:WorldToViewportPoint(position); if not visible or screen.Z<=0 then return false end
-	__gg.MH_autoHitClicking=true; __gg.MH_autoHitTrackBone=aim; __gg.MH_autoHitTrackUntil=tick()+0.55
+	__gg.MH_autoHitClicking=true; __gg.MH_autoHitTrackBone=aim; __gg.MH_autoHitTrackUntil=tick()+0.8
 	pcall(function() VIM:SendMouseMoveEvent(screen.X,screen.Y,game) end)
 	local ok=pcall(function()
 		VIM:SendMouseButtonEvent(screen.X,screen.Y,0,true,game,0); task.wait(0.035)
 		VIM:SendMouseButtonEvent(screen.X,screen.Y,0,false,game,0)
+		if CFG.AutoHitRightClick then
+			task.wait(0.045); position=partPos(aim); screen,visible=cam:WorldToViewportPoint(position or Vector3.zero)
+			if position and visible and screen.Z>0 then VIM:SendMouseMoveEvent(screen.X,screen.Y,game); VIM:SendMouseButtonEvent(screen.X,screen.Y,1,true,game,0); task.wait(0.035); VIM:SendMouseButtonEvent(screen.X,screen.Y,1,false,game,0) end
+		end
 	end)
 	__gg.MH_autoHitClicking=false
 	return ok,aim
@@ -5641,11 +5696,17 @@ end
 -- Follow the SAME animated bone from mouse-down through RegisterAttack and the hit report. This is especially
 -- important for `Hitbox.Head.Head`, Physics.Part.Neck.00x, and MeshModel RootPart bones that move every frame.
 conn(RunService.RenderStepped:Connect(function()
-	if not CFG.AutoHit or tick()>(__gg.MH_autoHitTrackUntil or 0) then __gg.MH_autoHitTrackBone=nil; return end
-	local bone=__gg.MH_autoHitTrackBone; local cam=workspace.CurrentCamera; local position=partPos(bone)
+	if not CFG.AutoHit then __gg.MH_autoHitTrackBone=nil; return end
+	local bone=__gg.MH_autoHitTrackBone
+	if CFG.AutoHitFollow and __gg.MH_autoHitLocked and __gg.MH_autoHitLocked.Parent then bone=__gg.MH_autoHitAim(__gg.MH_autoHitLocked); __gg.MH_autoHitTrackBone=bone
+	elseif tick()>(__gg.MH_autoHitTrackUntil or 0) then __gg.MH_autoHitTrackBone=nil; return end
+	local cam=workspace.CurrentCamera; local position=partPos(bone)
 	if not (bone and bone.Parent and cam and position) then return end
 	local screen,visible=cam:WorldToViewportPoint(position)
 	if visible and screen.Z>0 then pcall(function() VIM:SendMouseMoveEvent(screen.X,screen.Y,game) end) end
+end))
+conn(RunService.Heartbeat:Connect(function()
+	if CFG.AutoHit and CFG.AutoHitFollow then pcall(__gg.MH_autoHitDriveMovement,__gg.MH_autoHitLocked) elseif next(__gg.MH_autoHitHeld or {}) then pcall(__gg.MH_autoHitReleaseMovement) end
 end))
 task.spawn(function() while RUNNING do
 	if CFG.AlwaysDamage and not CFG.AutoHit and alive() then
@@ -7204,12 +7265,20 @@ local function espColor(def)
 	if c and M[c] then return M[c] end
 	return def
 end
-local function addESP(model, color, label, hpFrac, stamFrac)
-	if ESP.objs[model] then return end
-	local r=getHitbox(model) or rootOf(model); if not r then return end
+local function addESP(subject, color, label, hpFrac, stamFrac)
+	if not subject or ESP.objs[subject] then return false end
+	-- Corpses and fish are not consistently Models. PE can stream them as a Folder containing a ragdoll, a loose
+	-- MeshPart, or a nested Visual/Hitbox model. Resolve every shape to one renderable subject + one real adornee.
+	local model=subject:IsA("Model") and subject or subject:FindFirstAncestorWhichIsA("Model")
+	local r
+	if subject:IsA("BasePart") or subject:IsA("Attachment") then r=subject
+	elseif model then r=getHitbox(model) or rootOf(model) or model:FindFirstChildWhichIsA("BasePart",true)
+	else r=subject:FindFirstChildWhichIsA("BasePart",true) end
+	if not r then return false end
+	local adornee=model or (subject:IsA("BasePart") and subject) or r
 	color = espColor(color)
 	-- Highlight MUST be parented into the workspace/model to render — inside a ScreenGui it shows NOTHING (that was the bug).
-	local h = Instance.new("Highlight"); h.FillColor=color; h.OutlineColor=Color3.new(1,1,1); h.FillTransparency=0.6; h.OutlineTransparency=0; h.DepthMode=Enum.HighlightDepthMode.AlwaysOnTop; h.Adornee=model; h.Parent=model
+	local h = Instance.new("Highlight"); h.FillColor=color; h.OutlineColor=Color3.new(1,1,1); h.FillTransparency=0.6; h.OutlineTransparency=0; h.DepthMode=Enum.HighlightDepthMode.AlwaysOnTop; h.Adornee=adornee; h.Parent=adornee
 	local lines=1; for _ in label:gmatch("\n") do lines=lines+1 end
 	local barH = (hpFrac and 7 or 0) + (stamFrac and 6 or 0)   -- room for HEALTH bar (+ STAMINA bar if we have it)
 	local bb = Instance.new("BillboardGui"); bb.Adornee=r; bb.Size=UDim2.fromOffset(180, 13*lines+6+barH); bb.AlwaysOnTop=true; bb.StudsOffset=Vector3.new(0,3,0); bb.Parent=ESP.folder
@@ -7229,7 +7298,8 @@ local function addESP(model, color, label, hpFrac, stamFrac)
 		local sfill=Instance.new("Frame"); sfill.Size=UDim2.new(sf,0,1,0); sfill.BorderSizePixel=0; sfill.BackgroundColor3=Color3.fromRGB(245,215,60); sfill.Parent=sbg
 		local uc4=Instance.new("UICorner"); uc4.CornerRadius=UDim.new(0,2); uc4.Parent=sfill
 	end
-	ESP.objs[model]={h,bb,tl,fill}
+	ESP.objs[subject]={h,bb,tl,fill}
+	return true
 end
 -- RAINBOW animation: re-colour every active ESP highlight + label each frame while Rainbow is selected.
 task.spawn(function() while RUNNING do
@@ -7301,12 +7371,12 @@ local function readDinoInfo(model)   -- (exposed as __gg.MH_readDino below — t
 	return species,growth,health,stam,bleed,hpFrac,stamFrac
 end
 __gg.MH_readDino = readDinoInfo   -- the Target profile calls this at runtime (guarded) — same reader the ESP uses
--- ESP is throttled (1.6s) and HARD-CAPPED at 60 objects, and the whole rebuild is pcall-wrapped,
+-- ESP is throttled (1.6s) and hard-capped, and the whole rebuild is pcall-wrapped,
 -- so Fish ESP (which used to scan the entire workspace every 0.6s) can no longer lag you out or kill the menu.
 task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
 	destroyESP(); local me=hrp()
 	if not me or not (CFG.ESPPlayers or CFG.ESPCorpses or CFG.FoodESP or CFG.FishESP or CFG.GemESP) then return end
-	local MAX=60; local count=0
+	local MAX=180; local count=0
 	if CFG.ESPPlayers then
 		local chars = WS:FindFirstChild("Characters")
 		if chars then
@@ -7337,15 +7407,25 @@ task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
 	-- CORPSES (RED): use the SAME authoritative source as Carnivore Meat TP — the CorpseSpawns DinosaurSpawn markers
 	-- that actually have a body spawned in them — PLUS "Corpse_..." models and "Investigate" prompts as a fallback.
 	if CFG.ESPCorpses then
-		local corpseSeen={}
+		local corpseSeen={}; local corpseAdded=0
 		local function markCorpse(source,label)
 			if count>=MAX or not source then return end
 			local model=source:IsA("Model") and source or source:FindFirstAncestorWhichIsA("Model")
-			local part=(model and (getHitbox(model) or rootOf(model))) or (source:IsA("BasePart") and source)
-			if not (model and part and not corpseSeen[model]) then return end
+			local part=(source:IsA("BasePart") and source) or (model and (getHitbox(model) or rootOf(model) or model:FindFirstChildWhichIsA("BasePart",true))) or source:FindFirstChildWhichIsA("BasePart",true)
+			local subject=model or part; if not (subject and part and not corpseSeen[subject]) then return end
 			local dd=dist(me.Position,part.Position); if dd>CFG.ESPRange then return end
-			corpseSeen[model]=true; addESP(model,Color3.fromRGB(235,60,60),(label or "Corpse").." ["..math.floor(dd).."m]"); count+=1
+			corpseSeen[subject]=true; if addESP(subject,Color3.fromRGB(235,60,60),(label or "Corpse").." ["..math.floor(dd).."m]") then count+=1; corpseAdded+=1 end
 		end
+		local okParts,parts=pcall(function() return __gg.MH_collectCorpses and __gg.MH_collectCorpses() end)
+		if okParts and type(parts)=="table" then for _,part in ipairs(parts) do if count>=MAX then break end; markCorpse(part,"Corpse / spawn") end end
+		-- Reuse the diet resolver that Pro Food/Corpse TP already trusts. It understands dead Characters,
+		-- LeftCharacters, SpawnedMeat, ragdolls, bone piles, and populated DinosaurSpawn markers.
+		local okExact,exact=pcall(function() return __gg.MH_collectInfFoodTargets and __gg.MH_collectInfFoodTargets("Carnivore") end)
+		if okExact and type(exact)=="table" then for _,fd in ipairs(exact) do
+			if count>=MAX then break end
+			local kind=tostring(fd.kind or "corpse"):lower()
+			if not kind:find("fish",1,true) and (kind:find("corpse",1,true) or kind:find("dead",1,true) or kind:find("ragdoll",1,true) or kind:find("bone",1,true) or kind:find("meat",1,true)) then markCorpse(fd.model or fd.part,fd.kind) end
+		end end
 		-- Dead player/dinosaur models can remain in Characters briefly before PE reparents them. Include them immediately.
 		local characters=WS:FindFirstChild("Characters"); if characters then for _,model in ipairs(characters:GetChildren()) do
 			if model:IsA("Model") and model~=getMyModel() and (modelDead(model) or isScentCorpse(model)) then markCorpse(model,"Dead dinosaur") end
@@ -7380,6 +7460,7 @@ task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
 			end
 			if model and not ESP.objs[model] then markCorpse(model,"Corpse") end
 		end
+		__gg.MH_lastCorpseESPCount=corpseAdded
 	end
 	-- GEM + FOSSIL ESP: highlight every gemstone / fossil node (GemstoneSpawns>Spawned>Topaz_## / SpawnedFossils>##).
 	if CFG.GemESP then
@@ -7397,14 +7478,27 @@ task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
 	-- folder DIRECTLY so Fish ESP catches every fish regardless of name. (Plants/corpses still use the name scan below.)
 	if CFG.FishESP then
 		local ci=WS:FindFirstChild("CharacterIgnore"); local sai=ci and ci:FindFirstChild("SpawnedAI")
-		local fishF=sai and (sai:FindFirstChild("Fish") or sai)
-		if fishF then for _,m in ipairs(fishF:GetDescendants()) do
-			if count>=MAX then break end
-			if m:IsA("Model") then
-				local r=getHitbox(m) or rootOf(m)
-				if r then local d=dist(me.Position,r.Position); if d<=CFG.ESPRange then addESP(m, Color3.fromRGB(90,210,255), "Fish: "..m.Name.." ["..math.floor(d).."m]"); count+=1 end end
+		local roots={}; local function fishRoot(root) if root then roots[#roots+1]=root end end
+		fishRoot(sai and sai:FindFirstChild("Fish")); fishRoot(sai); fishRoot(ci and ci:FindFirstChild("Fish")); fishRoot(WS:FindFirstChild("SpawnedAI")); fishRoot(WS:FindFirstChild("Fish")); fishRoot(WS:FindFirstChild("Fishes"))
+		local fishSeen={}; local scanned=0; local fishAdded=0
+		local function markFish(item,root)
+			if count>=MAX or not item then return end
+			local model=item:IsA("Model") and item or item:FindFirstAncestorWhichIsA("Model")
+			local part=(item:IsA("BasePart") and item) or (model and (getHitbox(model) or rootOf(model) or model:FindFirstChildWhichIsA("BasePart",true)))
+			local subject=model or part; if not (subject and part and not fishSeen[subject]) then return end
+			local named=isFishName(subject.Name) or isFishName(item.Name)
+			local inFishFolder=item:FindFirstAncestor("Fish") or item:FindFirstAncestor("Fishes") or (root and (root.Name=="Fish" or root.Name=="Fishes"))
+			if not (named or inFishFolder) then return end
+			local d=dist(me.Position,part.Position); if d>CFG.ESPRange then return end
+			fishSeen[subject]=true; if addESP(subject,Color3.fromRGB(90,210,255),"Fish: "..subject.Name.." ["..math.floor(d).."m]") then count+=1; fishAdded+=1 end
+		end
+		for _,root in ipairs(roots) do if root and count<MAX then
+			markFish(root,root)
+			for _,item in ipairs(root:GetDescendants()) do scanned+=1; if count>=MAX or scanned>12000 then break end
+				if item:IsA("Model") or item:IsA("BasePart") then markFish(item,root) end
 			end
 		end end
+		__gg.MH_lastFishESPCount=fishAdded
 	end
 	if CFG.FoodESP or CFG.FishESP then
 		local scanned=0
@@ -7751,6 +7845,7 @@ G.__PRIOR_EXT_HUB = function()
 	pcall(function() if type(__gg.MH_syncRun)=="function" then __gg.MH_syncRun(UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift)) end end)
 	__gg.MH_stamRunRequested=false; __gg.MH_stamDriveSpeed=0
 	pcall(function() if __gg.MH_autoHitDrop then __gg.MH_autoHitDrop() end end)
+	pcall(function() if __gg.MH_autoHitReleaseMovement then __gg.MH_autoHitReleaseMovement() end end)
 	pcall(function() if type(__gg.MH_stopProFood)=="function" then __gg.MH_stopProFood() end end)
 	pcall(__gg.MH_releaseSyntheticMovement)
 	if __gg.MH_foodSyntheticE then pcall(function() VIM:SendKeyEvent(false,Enum.KeyCode.E,false,game) end); __gg.MH_foodSyntheticE=false end
@@ -7774,4 +7869,4 @@ end
 MS("5 DONE - all tabs built, menu ready")
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
-print("[Dream Hub · Prior Extinction v8.4 PE-v4] Loaded — live-bone Auto Hit, point-drop Pro Food, corpse ESP, physics-safe stamina")
+print("[Dream Hub · Prior Extinction v8.5 PE-v4] Loaded — corpse/fish ESP, stamina hard-pin, WASD bone follow, optional M2")
