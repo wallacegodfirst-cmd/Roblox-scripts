@@ -29,7 +29,7 @@ if ENV.__PE_DEV_FOOD_MULT and ENV.__PE_DEV_FOOD_MULT.unload then
 	pcall(ENV.__PE_DEV_FOOD_MULT.unload)
 end
 
-local state = {enabled=false, sending=false, burst=false, generation=0, sent=0, amount=1000, lastCapture=nil}
+local state = {enabled=false, sending=false, burst=false, generation=0, sent=0, amount=1000, lastCapture=nil, hookReady=false, hookCapturedAt=0}
 local connections = {}
 ENV.__PE_DEV_FOOD_MULT = state
 
@@ -103,7 +103,9 @@ local status=label("Waiting",158,20,12,Color3.fromRGB(153,162,177))
 local function parseAmount()
 	local raw=string.lower(amountBox.Text:gsub("%s+",""))
 	if raw=="inf" or raw=="infinity" or raw=="infinite" or raw=="∞" then return math.huge,"INF" end
-	local value=math.floor(tonumber(raw) or 1)
+	local scale=1; local suffix=raw:sub(-1)
+	if suffix=="k" then scale=1000; raw=raw:sub(1,-2) elseif suffix=="m" then scale=1000000; raw=raw:sub(1,-2) end
+	local value=math.floor((tonumber(raw) or 1)*scale)
 	value=math.clamp(value,1,1000000)
 	return value,tostring(value)
 end
@@ -129,6 +131,7 @@ local function copyPacket(source)
 	local out={n=source.n or #source}; for i=1,out.n do out[i]=source[i] end; return out
 end
 local function remoteFor(packet)
+	if packet and packet.instance and packet.instance.Parent then return packet.instance end
 	local events=ReplicatedStorage:FindFirstChild("RemoteEvents")
 	return events and events:FindFirstChild(packet.remote or "ReplicaSignal")
 end
@@ -146,13 +149,13 @@ local function beginBurst(remote,args,captureKey)
 	task.defer(function()
 		local sent=0
 		while state.enabled and state.generation==generation and remote.Parent and (not identity or ENV.MH_identityKey==identity) and (identity or LP.Character==character) and (bonus==math.huge or sent<bonus) do
-			state.sending=true
+			state.sending=true; ENV.MH_devFoodSending=true
 			local ok=pcall(function() remote:FireServer(table.unpack(args,1,args.n)) end)
-			state.sending=false
+			state.sending=false; ENV.MH_devFoodSending=false
 			if ok then sent+=1; state.sent+=1 end
 			if sent%3==0 then task.wait(0.025) end
 		end
-		state.sending=false
+		state.sending=false; ENV.MH_devFoodSending=false
 		if state.generation==generation then
 			state.burst=false
 			status.Text=state.enabled and (bonus==math.huge and ("INF stopped · "..tostring(sent).." sent") or ("Finished · +"..tostring(sent))) or "Stopped"
@@ -168,18 +171,22 @@ local hookmeta=hookmetamethod
 local getnamecall=getnamecallmethod
 if typeof(hookmeta)=="function" and typeof(getnamecall)=="function" then
 	local oldNamecall
-	oldNamecall=hookmeta(game,"__namecall",function(self,...)
-		local method=getnamecall()
-		if method=="FireServer" and not state.sending and state.enabled and not state.burst and (self.Name=="ReplicaSignal" or self.Name=="ReplicaSignalUnreliable") then
-			local args=table.pack(...)
-			if args[2]=="Bite" and args.n>=3 then
-				local result=oldNamecall(self,...)
-				beginBurst(self,args,"hook:"..tostring(args[1])..":"..tostring(args[3]))
-				return result
+	local installed,installError=pcall(function()
+		oldNamecall=hookmeta(game,"__namecall",function(self,...)
+			local method=getnamecall()
+			if method=="FireServer" and not state.sending and state.enabled and not state.burst and (self.Name=="ReplicaSignal" or self.Name=="ReplicaSignalUnreliable") then
+				local args=table.pack(...)
+				if args[2]=="Bite" and args.n>=3 then
+					local result=oldNamecall(self,...)
+					state.hookCapturedAt=tick(); beginBurst(self,args,"hook:"..tostring(args[1])..":"..tostring(args[3]))
+					return result
+				end
 			end
-		end
-		return oldNamecall(self,...)
+			return oldNamecall(self,...)
+		end)
 	end)
+	state.hookReady=installed and oldNamecall~=nil
+	if not state.hookReady then status.Text="Hook rejected · PE Plus capture fallback ready"; state.hookError=tostring(installError) end
 else
 	status.Text="Hook unavailable · PE Plus capture fallback ready"
 end
@@ -188,7 +195,7 @@ end
 -- the developer multiplier still works when this executor misses chained hooks or reports caller ownership wrong.
 task.spawn(function()
 	while gui.Parent do
-		if state.enabled and not state.burst then
+		if state.enabled and not state.burst and (not state.hookReady or tick()-(state.hookCapturedAt or 0)>0.5) then
 			local captured=ENV.MH_lastEatCall
 			if type(captured)=="table" and captured[2]=="Bite" and (captured.n or #captured)>=3 and (captured.identity==nil or captured.identity==ENV.MH_identityKey) then
 				local key="plus:"..tostring(captured.identity)..":"..tostring(captured.capturedAt)..":"..tostring(captured[1])
@@ -215,7 +222,7 @@ function state.unload()
 	state.enabled=false
 	state.generation+=1
 	state.burst=false
-	state.sending=false
+	state.sending=false; ENV.MH_devFoodSending=false
 	for _,connection in ipairs(connections) do pcall(function() connection:Disconnect() end) end
 	pcall(function() gui:Destroy() end)
 end

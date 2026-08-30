@@ -27,7 +27,7 @@ __gg.MH_identityKey=nil; __gg.MH_dietCache=nil; __gg.MH_foodDirectAt=nil; __gg.M
 __gg.MH_infFoodTargetsCache=nil; __gg.MH_foodTargetCount=0; __gg.MH_foodTargetKind="none"; __gg.MH_foodTargetPath="none"; __gg.MH_foodTargetReplicaCount=0; __gg.MH_foodDietReplicaState=nil; __gg.MH_foodDietReplicaCount=0; __gg.MH_foodMatchedReplicaCount=0
 __gg.MH_foodSourceRevision=0; __gg.MH_foodSourceKinds="none"; __gg.MH_foodResolvedDiet="unresolved"; __gg.MH_foodBufferMode="none"; __gg.MH_foodVisibleBefore=nil; __gg.MH_foodVisibleAfter=nil; __gg.MH_foodVisibleDelta=nil; __gg.MH_foodAcceptance="unobserved"; __gg.MH_foodLastFailure="not run"
 __gg.MH_growthState="waiting"; __gg.MH_growthValue=nil; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_growthBase=nil; __gg.MH_stamBoostSpeed=0; __gg.MH_stamPinState="waiting"; __gg.MH_stamReportState="waiting"
-__gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_healthPacket=nil; __gg.MH_guardLastHP=nil
+__gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_stamRunRequested=false; __gg.MH_stamDriveSpeed=0; __gg.MH_stamSyncAt=0; __gg.MH_nativeRunSpeed=0; __gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_healthPacket=nil; __gg.MH_guardLastHP=nil
 pcall(function() if __gg.MH_autoHitHighlight then __gg.MH_autoHitHighlight:Destroy() end end)
 __gg.MH_runPacket=nil; __gg.MH_nativeRunActive=false; __gg.MH_runShielded=0; __gg.MH_autoHitClicking=false; __gg.MH_autoHitLocked=nil; __gg.MH_autoHitHighlight=nil; __gg.MH_autoHitSelect=false; __gg.MH_autoHitQuery=nil; __gg.MH_autoHitStatus="No target"
 __gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil; __gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
@@ -43,7 +43,7 @@ __gg.MH_clearDinoCaches=function(identityKey)
 	__gg.MH_infFoodTargetsCache=nil; __gg.MH_foodTargetCount=0; __gg.MH_foodTargetKind="none"; __gg.MH_foodTargetPath="none"; __gg.MH_foodTargetReplicaCount=0; __gg.MH_foodDietReplicaState=nil; __gg.MH_foodDietReplicaCount=0; __gg.MH_foodMatchedReplicaCount=0
 	__gg.MH_foodSourceRevision=(__gg.MH_foodSourceRevision or 0)+1; __gg.MH_foodSourceKinds="none"; __gg.MH_foodResolvedDiet="unresolved"; __gg.MH_foodBufferMode="none"; __gg.MH_foodVisibleBefore=nil; __gg.MH_foodVisibleAfter=nil; __gg.MH_foodVisibleDelta=nil; __gg.MH_foodAcceptance="unobserved"; __gg.MH_foodLastFailure="identity changed"
 	__gg.MH_growthState="waiting"; __gg.MH_growthValue=nil; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_growthBase=nil; __gg.MH_stamBoostSpeed=0; __gg.MH_stamPinState="waiting"; __gg.MH_stamReportState="waiting"
-	__gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_healthPacket=nil; __gg.MH_healthReportAt=nil
+	__gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_stamRunRequested=false; __gg.MH_stamDriveSpeed=0; __gg.MH_stamSyncAt=0; __gg.MH_nativeRunSpeed=0; __gg.MH_healthPacket=nil; __gg.MH_healthReportAt=nil
 	pcall(function() if __gg.MH_autoHitHighlight then __gg.MH_autoHitHighlight:Destroy() end end)
 	__gg.MH_runPacket=nil; __gg.MH_nativeRunActive=false; __gg.MH_runShielded=0; __gg.MH_autoHitClicking=false; __gg.MH_autoHitLocked=nil; __gg.MH_autoHitHighlight=nil; __gg.MH_autoHitSelect=false; __gg.MH_autoHitQuery=nil; __gg.MH_autoHitStatus="No target"
 	__gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_guardLastHP=nil; __gg.MH_guardMax=nil
@@ -908,10 +908,10 @@ loadCfg()
 -- reactivate its former background controller. Pro Food and the passive Bite multiplier are the supported paths.
 CFG.InfFood=false
 CFG.AfkEat=false
--- InfStamSpeed is retained only so older config files still decode. Infinite Stamina never applies a custom speed;
--- PE's own walk/run controller remains the sole movement owner.
+-- InfStamSpeed is retained only so older config files still decode. Infinite Stamina resolves speed automatically
+-- from the live dinosaur and does not expose a manual speed control.
 CFG.InfStamSpeed=15
-CFG.FoodMultiplierX=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 10),1,1000)
+CFG.FoodMultiplierX=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 10),1,1000000)
 CFG.ProFoodEatAt=math.clamp(math.floor(tonumber(CFG.ProFoodEatAt) or 40),1,100)
 CFG.AutoHitDistance=math.clamp(math.floor(tonumber(CFG.AutoHitDistance) or 45),5,400)
 CFG.AutoHitRate=math.clamp(tonumber(CFG.AutoHitRate) or 1,1,6)
@@ -950,18 +950,22 @@ __gg.MH_tpFeatureGen={CarnMeatTP=0,ProFood=0,AutoFarmFossil=0,AutoFarmGem=0}
 __gg.MH_featureToggleChanged=function(key,value)
 	if key=="InfFood" then __gg.MH_foodGen=(__gg.MH_foodGen or 0)+1; __gg.MH_infFoodTargetsCache=nil; __gg.MH_foodDietReplicaState=nil end
 	if key=="FoodMultiplier" then
+		CFG.FoodMultiplierX=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 1),1,1000000)
 		__gg.MH_foodMultGen=(__gg.MH_foodMultGen or 0)+1; __gg.MH_foodMultBurst=false; __gg.MH_foodMultSending=false
 		__gg.MH_foodMultAt=0; __gg.MH_foodMultState=value and "waiting for a normal Bite" or "off"
 	end
 	if key=="InfStam" then
 		__gg.MH_stamShiftHeld=false
+		local physicalShift=UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift)
+		__gg.MH_stamRunRequested=value and physicalShift or false
 		if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end
 		task.defer(function()
 			if value and MHNEED then pcall(function() MHNEED.refresh(true); MHNEED.pin("stamina"); MHNEED.report("stamina",true); MHNEED.reportKnown("stamina",true) end) end
-			-- Never report Run=false when the player is genuinely running: PE uses that server action for native sprint
-			-- speed. Reassert the captured active state only when needed; stamina itself is handled by the need pin/report.
+			-- Infinite Stamina owns only the Run action while enabled. The server sees Run=false so it cannot start the
+			-- authoritative drain; the heartbeat drive below restores this dinosaur's observed/native speed only while
+			-- Shift AND a movement direction are held. Turning the feature off restores the real physical Shift state.
 			if type(__gg.MH_syncRun)=="function" then
-				if __gg.MH_nativeRunActive then pcall(__gg.MH_syncRun,true) end
+				pcall(__gg.MH_syncRun,value and false or physicalShift)
 			end
 			if __gg.MH_restoreMovementState then pcall(__gg.MH_restoreMovementState) end
 		end)
@@ -1254,7 +1258,7 @@ local function installHook()
 					if sa.n>=2 and tostring(sa[1]):lower()=="pvp" and tostring(sa[2]):lower():find("attack",1,true) then
 						local snap={n=sa.n,identity=__gg.MH_identityKey}; for i=1,sa.n do snap[i]=sa[i] end; __gg.MH_soundTemplate=snap
 					end
-				elseif (self.Name=="ReplicaSignal" or self.Name=="ReplicaSignalUnreliable") and not checkcaller() then
+				elseif (self.Name=="ReplicaSignal" or self.Name=="ReplicaSignalUnreliable") and not __gg.MH_foodMultSending and not __gg.MH_devFoodSending and (not checkcaller() or select(2,...)=="Bite") then
 				local a = table.pack(...)
 				local id, action = a[1], a[2]
 				-- ReplicaSignal also carries client-owned physics for OTHER replicas. In the supplied trace those are
@@ -1309,11 +1313,11 @@ local function installHook()
 							for i,c in ipairs(__gg.MH_biteCalls) do if c.key==key then snap.key=key; __gg.MH_biteCalls[i]=snap; replaced=true; break end end
 							if not replaced then snap.key=key; table.insert(__gg.MH_biteCalls, snap); if #__gg.MH_biteCalls>3 then table.remove(__gg.MH_biteCalls,1) end end
 							-- FOOD MULTIPLIER: one genuine Bite is sent normally, then the exact same remote/id/buffer is replayed
-							-- up to 999 more times. Replays are bounded, spread across frames, tied to this dinosaur identity,
+							-- up to 999,999 more times. Replays are bounded, spread across frames, tied to this dinosaur identity,
 							-- and marked so executors without checkcaller cannot recursively multiply our own calls.
 							if CFG.FoodMultiplier and not __gg.MH_foodMultSending and not __gg.MH_foodMultBurst and tick()-(__gg.MH_foodMultAt or 0)>=0.18 then
 								__gg.MH_foodMultAt=tick(); __gg.MH_foodMultSource=id; __gg.MH_foodMultState="captured source "..tostring(id).."; sending bonus Bites"
-								local remote=self; local identity=snap.identity; local bonus=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 10),1,1000)-1
+								local remote=self; local identity=snap.identity; local bonus=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 10),1,1000000)-1
 								if bonus<=0 then __gg.MH_foodMultState="x1: normal Bite only" end
 								if bonus>0 then __gg.MH_foodMultGen=(__gg.MH_foodMultGen or 0)+1; __gg.MH_foodMultBurst=true end
 								local generation=__gg.MH_foodMultGen
@@ -1343,14 +1347,17 @@ local function installHook()
 					print("[MH REMOTE] id="..tostring(id).."  "..action.."  ["..table.concat(ex,", ").."]")
 				end
 				if typeof(action)=="string" then
-						-- Capture PE's exact (selfId,"SetAction","Run",bool) lifecycle, but always pass it unchanged.
-						-- The previous Run=true -> false rewrite did keep the drain action off, but the server also uses that
-						-- same state for sprint speed, which caused the reported slow walk. Need pin/report owns stamina;
-						-- Run remains fully native so stopping, walking, and sprint speed stay normal.
+						-- Capture PE's exact (selfId,"SetAction","Run",bool) lifecycle. With Infinite Stamina enabled,
+						-- remember the player's requested Shift state but report Run=false to prevent the authoritative drain.
+						-- The isolated heartbeat driver restores movement only while Shift plus a real direction are held.
 						if selfCall and action=="SetAction" and a[3]=="Run" and typeof(a[4])=="boolean" then
 							local snap={n=a.n,remote=self.Name,instance=self,identity=__gg.MH_identityKey}; for i=1,a.n do snap[i]=a[i] end
 							__gg.MH_runPacket=snap; __gg.MH_nativeRunActive=a[4]
-							if CFG.InfStam then __gg.MH_stamReportState=a[4] and "native Run active + stamina pinned" or "native Run stopped + stamina pinned" end
+							if CFG.InfStam then
+								__gg.MH_stamRunRequested=a[4]; __gg.MH_runShielded=(__gg.MH_runShielded or 0)+1
+								a[4]=false; __gg.MH_stamReportState=__gg.MH_stamRunRequested and "Run drain shielded + speed drive ready" or "Run released"
+								return oldNC(self,table.unpack(a,1,a.n))
+							end
 						end
 						-- Anti-Fall: report every fall as a harmless 0.1 so the server deals no fall damage.
 						if selfCall and action=="Fall" and CFG.AntiFall and typeof(a[3])=="number" then
@@ -2674,8 +2681,8 @@ local function fireAttack(targetModel, skipSound, clickedPart, sequence)
 	-- target, register the hit on THAT exact bone — its real name + position + mapped group. This is what makes
 	-- "click a bone to hit it" work: click the head → Head hit, click a leg → Leg hit, etc.
 	local clickedAim=false
-	if clickedPart and clickedPart:IsA("BasePart") and clickedPart:IsDescendantOf(targetModel) then
-		local p=clickedPart.Position
+	if clickedPart and (clickedPart:IsA("BasePart") or clickedPart:IsA("Bone") or clickedPart:IsA("Attachment")) and clickedPart:IsDescendantOf(targetModel) then
+		local p=_bonePos(clickedPart)
 		if p then group, boneName, targetPos = boneGroupFor(clickedPart.Name), clickedPart.Name, p; clickedAim=true end
 	end
 	local want = (CFG.HitboxBone and CFG.HitboxBone~="All" and CFG.HitboxBone~="") and CFG.HitboxBone or CFG.DamagePart
@@ -3612,8 +3619,8 @@ do local p=Pages["Growth"]
 		mkDropdown(g,"Stop at age", function() return {"Off","Juvenile","Teen","Adolescent","Sub Adult","Adult","Elder"} end, function() return CFG.ProFoodStopAge~="" and CFG.ProFoodStopAge or "Off" end, function(opt) CFG.ProFoodStopAge=opt; saveCfg() end, 2)
 		local _,fw=mkSec(p,"Food & Water",2)
 		mkToggle(fw,"Food Multiplier (learn my Bite)","FoodMultiplier",2)
-		mkSlider(fw,"Food multiplier","FoodMultiplierX",1,1000,3,1)
-		mkLabel(fw,"Set 1-1000x, then press E normally near food. It never takes over E; it only repeats the exact Bite the game accepted.")
+		mkTextbox(fw,"Food multiplier (1-1M)","FoodMultiplierX",3,true)
+		mkLabel(fw,"Type 1-1000000, then press E normally near food. It never takes over E; it only repeats the exact Bite the game accepted.")
 		mkDropdown(fw,"Pro Food diet",function() return {"Auto","Herbivore","Carnivore"} end,function() return CFG.InfFoodDiet or "Auto" end,function(opt) CFG.InfFoodDiet=opt; __gg.MH_foodProbeCursor=0; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_infFoodTargetsCache=nil; __gg.MH_foodDietReplicaState=nil; saveCfg() end,4)
 		mkToggle(fw,"INF Water","InfWater",7)
 		mkToggle(fw,"Carnivore Meat TP","CarnMeatTP",8)
@@ -4476,12 +4483,35 @@ local function startFly()
 end
 -- SPEED HACK ONLY drives the body by velocity. INF Stamina never enters this path and leaves native movement alone.
 conn(RunService.Heartbeat:Connect(function() if CFG.SpeedHack and alive() and not CFG.Fly then local r=hrp(); if r then local spd=CFG.SpeedVal; local dir=Vector3.zero; local cf=workspace.CurrentCamera and workspace.CurrentCamera.CFrame or CFrame.new() if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end if dir.Magnitude<=0 then local hh=hum(); local md=hh and hh.MoveDirection; if md and md.Magnitude>0 then dir=md end end if dir.Magnitude>0 then dir=Vector3.new(dir.X,0,dir.Z).Unit*spd; r.AssemblyLinearVelocity=Vector3.new(dir.X,r.AssemblyLinearVelocity.Y,dir.Z) end end end end))
--- INF STAMINA: pin the exact resolved stamina references every physics frame so a 60 Hz replica update cannot drain
--- between the old 20 Hz passes. This clears exhaustion mirrors and records native speed only; it never writes velocity,
--- CFrame, WalkSpeed, Run/Shift input, BodyMovers, or movement state.
+-- INF STAMINA speed resolver. Prefer a live Run/SprintSpeed field, then this dinosaur's speed observed before the
+-- toggle was enabled, then Humanoid WalkSpeed. It is cached and never exposes a separate speed slider.
+__gg.MH_stamResolveSpeed=function()
+	if (__gg.MH_stamSpeedAt or 0)+0.75>tick() and (__gg.MH_stamResolvedSpeed or 0)>0 then return __gg.MH_stamResolvedSpeed end
+	local best=tonumber(__gg.MH_nativeRunSpeed) or 0
+	local h=hum(); if h and tonumber(h.WalkSpeed) and h.WalkSpeed>0 then best=math.max(best,h.WalkSpeed*1.5) end
+	local rep=csReplica(); local root=rep and rep.Data; local seen={}; local scanned=0
+	local function walk(tb,depth)
+		if type(tb)~="table" or seen[tb] or depth>5 or scanned>900 then return end; seen[tb]=true
+		for key,value in pairs(tb) do scanned+=1; if scanned>900 then break end
+			local name=tostring(key):lower():gsub("[^%w]","")
+			if type(value)=="number" and value>=4 and value<=180 and ((name:find("run",1,true) or name:find("sprint",1,true) or name:find("trot",1,true)) and name:find("speed",1,true)) then best=math.max(best,value)
+			elseif type(value)=="table" then walk(value,depth+1) end
+		end
+	end
+	pcall(function() walk(root,0); walk(CharacterState,0) end)
+	best=math.clamp(best>0 and best or 24,8,180); __gg.MH_stamResolvedSpeed=best; __gg.MH_stamSpeedAt=tick(); return best
+end
+-- INF STAMINA: the exact need references are still pinned every physics frame. While Shift is physically held, the
+-- captured Run=true is shielded as Run=false and this drive restores normal dino running speed. It never presses a
+-- key, never moves without W/A/S/D (or a real Humanoid MoveDirection), and only mirrors the current CFrame to PE's
+-- genuine physics replica to reduce correction/rubber-banding.
 conn(RunService.Heartbeat:Connect(function()
 	if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end
-	if not (CFG.InfStam and alive() and not CFG.Fly) then __gg.MH_stamShiftHeld=false; __gg.MH_stamBoostSpeed=0; return end
+	local shiftDown=UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift)
+	if not (CFG.InfStam and alive() and not CFG.Fly and not CFG.SpeedHack) then
+		if alive() and shiftDown and not CFG.Fly and not CFG.SpeedHack then local r=hrp(); if r then local v=r.AssemblyLinearVelocity; local speed=Vector3.new(v.X,0,v.Z).Magnitude; if speed>=4 and speed<=180 then __gg.MH_nativeRunSpeed=math.max(tonumber(__gg.MH_nativeRunSpeed) or 0,speed); __gg.MH_stamResolvedSpeed=nil end end end
+		__gg.MH_stamShiftHeld=false; __gg.MH_stamRunRequested=false; __gg.MH_stamDriveSpeed=0; __gg.MH_stamBoostSpeed=0; return
+	end
 	pcall(function()
 		local mx,changed=MHNEED.pin("stamina"); __gg.MH_stamPinState=mx and ("max "..tostring(mx)..(changed and " pinned" or " held")) or "no stamina field/max found"
 		local rep=csReplica(); local data=rep and rep.Data; local stats=select(1,csStats())
@@ -4490,8 +4520,20 @@ conn(RunService.Heartbeat:Connect(function()
 				if type(tb[k])=="boolean" then tb[k]=false elseif type(tb[k])=="number" then tb[k]=0 end
 			end end
 		end
-		local r=hrp(); if r then local v=r.AssemblyLinearVelocity; __gg.MH_stamBoostSpeed=Vector3.new(v.X,0,v.Z).Magnitude else __gg.MH_stamBoostSpeed=0 end
-		__gg.MH_stamShiftHeld=false
+		if not shiftDown then __gg.MH_stamRunRequested=false end
+		local drive=shiftDown and (__gg.MH_stamRunRequested or shiftDown)
+		local r=hrp(); if not (drive and r) then __gg.MH_stamDriveSpeed=0; __gg.MH_stamBoostSpeed=0; return end
+		local cam=workspace.CurrentCamera; local forward=cam and cam.CFrame.LookVector or r.CFrame.LookVector; local right=cam and cam.CFrame.RightVector or r.CFrame.RightVector
+		forward=Vector3.new(forward.X,0,forward.Z); right=Vector3.new(right.X,0,right.Z); if forward.Magnitude>0 then forward=forward.Unit end; if right.Magnitude>0 then right=right.Unit end
+		local dir=Vector3.zero
+		if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=forward end; if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=forward end
+		if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=right end; if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=right end
+		local h=hum(); if dir.Magnitude<=0.05 and h and h.MoveDirection.Magnitude>0.05 then dir=Vector3.new(h.MoveDirection.X,0,h.MoveDirection.Z) end
+		if dir.Magnitude<=0.05 then __gg.MH_stamDriveSpeed=0; __gg.MH_stamBoostSpeed=0; return end
+		local speed=__gg.MH_stamResolveSpeed(); dir=dir.Unit; local velocity=r.AssemblyLinearVelocity
+		r.AssemblyLinearVelocity=Vector3.new(dir.X*speed,velocity.Y,dir.Z*speed); __gg.MH_stamDriveSpeed=speed; __gg.MH_stamBoostSpeed=speed; __gg.MH_stamRunRequested=true
+		local now=tick(); if now-(__gg.MH_stamRunFalseAt or 0)>=0.35 then __gg.MH_stamRunFalseAt=now; pcall(__gg.MH_syncRun,false) end
+		if type(__gg.MH_hopFire)=="function" and now-(__gg.MH_stamSyncAt or 0)>=0.08 then __gg.MH_stamSyncAt=now; pcall(__gg.MH_hopFire,r.CFrame) end
 	end)
 end))
 -- FLOAT: a Y-only BodyVelocity HOLDS you in the air — plain velocity writes don't hold a CFrame-driven PE dino
@@ -5446,9 +5488,9 @@ __gg.MH_primeCombat=function(target)
 		if cam and old then cam.CFrame=old end
 	end)
 end
--- Find the nearest live dinosaur whose selected bone is actually visible on-screen. Auto Hit then moves the virtual
--- mouse to that bone and sends a genuine local MouseButton1 press/release. No RegisterAttack/Attack packet is replayed
--- by this feature, so the game itself owns the attack animation, cooldown, and hit registration exactly like a click.
+-- Find the nearest live dinosaur whose selected bone is actually visible on-screen. Auto Hit moves the virtual mouse
+-- to that exact live bone for the native animation, then submits the currently captured RegisterAttack/Attack sequence
+-- with that same bone instance. This prevents the old cursor-only click from landing on the model root instead.
 __gg.MH_autoHitAim=function(model)
 	if not model then return nil end
 	local want=CFG.DamagePart; local list=(want and want~="" and want~="Auto" and ATK_GROUPS[want]) or ATK_GROUPS.Auto
@@ -5559,7 +5601,7 @@ __gg.MH_autoHitM1=function(target)
 		VIM:SendMouseButtonEvent(screen.X,screen.Y,0,false,game,0)
 	end)
 	__gg.MH_autoHitClicking=false
-	return ok
+	return ok,aim
 end
 task.spawn(function() while RUNNING do
 	if CFG.AlwaysDamage and not CFG.AutoHit and alive() then
@@ -5587,12 +5629,19 @@ task.spawn(function() while RUNNING do
 		task.wait(1/math.max(1,CFG.DamageRate))
 	else task.wait(0.15) end
 end end)
--- AUTO HIT: conditional real input. It does nothing with no visible dinosaur in range; when one is detected, it
--- performs the local M1 for the user at that dinosaur's selected bone.
+-- AUTO HIT: one locked target, one selected live bone. The genuine M1 preserves animation/cooldown and learns the
+-- current dinosaur's packet; the exact captured combat sequence then reports that same bone instead of a root hit.
 task.spawn(function() while RUNNING do
 	if CFG.AutoHit and alive() then
 		local target=__gg.MH_autoHitTarget()
-		if target then __gg.MH_autoHitM1(target); task.wait(1/math.max(1,tonumber(CFG.AutoHitRate) or 1)) else task.wait(0.12) end
+		if target then
+			local clicked,aim=__gg.MH_autoHitM1(target); RunService.Heartbeat:Wait()
+			if clicked and __gg.MH_combatReady() then
+				local hit=MHCOMBAT.sequence(target,aim)
+				if hit then __gg.MH_autoHitSetStatus("Locked: "..target.Name.." | bone hit: "..tostring(aim and aim.Name or CFG.DamagePart)) end
+			elseif clicked then __gg.MH_autoHitSetStatus("Locked: "..target.Name.." | learning this dinosaur's attack") end
+			task.wait(1/math.max(1,tonumber(CFG.AutoHitRate) or 1))
+		else task.wait(0.12) end
 	else task.wait(0.15) end
 end end)
 -- CLICK TO DAMAGE (fix: "can't click/damage" with Hitbox on) — PE damage fires through the captured Attack remote +
@@ -7066,7 +7115,7 @@ task.spawn(function() while RUNNING do task.wait(0.3); pcall(function()
 		lines[#lines+1]="Food failure: "..tostring(__gg.MH_foodLastFailure or "none")
 		lines[#lines+1]="Growth: "..tostring(__gg.MH_growthState or "waiting").." | value "..tostring(__gg.MH_growthValue or "?").." | delta "..tostring(__gg.MH_growthDelta or "?").." | mass "..tostring(__gg.MH_growthMass or "?")
 		lines[#lines+1]="Wellbeing replica: "..(__gg.MH_wellbeingFound and "found" or "waiting")
-		lines[#lines+1]="Native movement speed: "..string.format("%.2f",tonumber(__gg.MH_stamBoostSpeed) or 0).." | stamina-only pin"
+		lines[#lines+1]="Stamina drive speed: "..string.format("%.2f",tonumber(__gg.MH_stamBoostSpeed) or 0).." | Run shielded "..tostring(__gg.MH_runShielded or 0).."x"
 		lines[#lines+1]="Stamina frame pin: "..tostring(__gg.MH_stamPinState or "waiting").." | report "..tostring(__gg.MH_stamReportState or "waiting")
 	lines[#lines+1]="Sound: "..(getSoundRemote() and "found" or "MISSING")
 	local tg=nearestTarget(300,true); lines[#lines+1]="Target: "..(tg and tg.Name or "none")
@@ -7641,7 +7690,8 @@ end) end end)
 -- CLEANUP
 G.__PRIOR_EXT_HUB = function()
 	RUNNING=false
-	pcall(function() if __gg.MH_nativeRunActive and type(__gg.MH_syncRun)=="function" then __gg.MH_syncRun(true) end end)
+	pcall(function() if type(__gg.MH_syncRun)=="function" then __gg.MH_syncRun(UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift)) end end)
+	__gg.MH_stamRunRequested=false; __gg.MH_stamDriveSpeed=0
 	pcall(function() if __gg.MH_autoHitDrop then __gg.MH_autoHitDrop() end end)
 	pcall(function() if type(__gg.MH_stopProFood)=="function" then __gg.MH_stopProFood() end end)
 	pcall(__gg.MH_releaseSyntheticMovement)
@@ -7666,4 +7716,4 @@ end
 MS("5 DONE - all tabs built, menu ready")
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
-print("[Dream Hub · Prior Extinction v8.2 PE-v4] Loaded — native-speed stamina, locked Auto Hit, repaired dev Bite capture")
+print("[Dream Hub · Prior Extinction v8.3 PE-v4] Loaded — bone-confirmed Auto Hit, 1M food multiplier, shielded-run stamina")
