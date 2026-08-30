@@ -29,7 +29,7 @@ if ENV.__PE_DEV_FOOD_MULT and ENV.__PE_DEV_FOOD_MULT.unload then
 	pcall(ENV.__PE_DEV_FOOD_MULT.unload)
 end
 
-local state = {enabled=false, sending=false, burst=false, generation=0, sent=0, amount=1000, lastCapture=nil, hookReady=false, hookCapturedAt=0}
+local state = {enabled=false, sending=false, burst=false, generation=0, sent=0, amount=1000, lastCapture=nil, hookReady=false, hookCapturedAt=0, cached=nil, cachedKey=nil}
 local connections = {}
 ENV.__PE_DEV_FOOD_MULT = state
 
@@ -110,6 +110,7 @@ local function parseAmount()
 	return value,tostring(value)
 end
 
+local beginBurst
 local function setEnabled(on)
 	state.generation+=1
 	state.enabled=on
@@ -119,6 +120,7 @@ local function setEnabled(on)
 	toggle.Text=on and "ON · bite once normally" or "OFF"
 	toggle.BackgroundColor3=on and Color3.fromRGB(40,181,98) or Color3.fromRGB(49,55,66)
 	status.Text=on and "Waiting for a genuine Bite" or "Stopped"
+	if on and state.cached and beginBurst then task.defer(function() if state.enabled and not state.burst then beginBurst(state.cached.remote,state.cached.args,state.cachedKey) end end) end
 end
 
 toggle.MouseButton1Click:Connect(function() setEnabled(not state.enabled) end)
@@ -135,7 +137,7 @@ local function remoteFor(packet)
 	local events=ReplicatedStorage:FindFirstChild("RemoteEvents")
 	return events and events:FindFirstChild(packet.remote or "ReplicaSignal")
 end
-local function beginBurst(remote,args,captureKey)
+beginBurst=function(remote,args,captureKey)
 	if not (state.enabled and not state.burst and remote and remote.Parent and args and args[2]=="Bite" and (args.n or #args)>=3) then return false end
 	state.lastCapture=captureKey or tostring(args[1])..":"..tostring(args[3])
 	state.generation+=1
@@ -174,11 +176,14 @@ if typeof(hookmeta)=="function" and typeof(getnamecall)=="function" then
 	local installed,installError=pcall(function()
 		oldNamecall=hookmeta(game,"__namecall",function(self,...)
 			local method=getnamecall()
-			if method=="FireServer" and not state.sending and state.enabled and not state.burst and (self.Name=="ReplicaSignal" or self.Name=="ReplicaSignalUnreliable") then
+			if method=="FireServer" and not state.sending and not state.burst and (self.Name=="ReplicaSignal" or self.Name=="ReplicaSignalUnreliable") then
 				local args=table.pack(...)
 				if args[2]=="Bite" and args.n>=3 then
 					local result=oldNamecall(self,...)
-					state.hookCapturedAt=tick(); beginBurst(self,args,"hook:"..tostring(args[1])..":"..tostring(args[3]))
+					local shared=ENV.MH_lastEatCall; local key
+					if type(shared)=="table" and shared[1]==args[1] and shared[2]=="Bite" then key="capture:"..tostring(shared.capturedAt)..":"..tostring(args[1]) else key="hook:"..tostring(tick())..":"..tostring(args[1]) end
+					state.hookCapturedAt=tick(); state.cached={remote=self,args=copyPacket(args)}; state.cachedKey=key
+					if state.enabled then beginBurst(self,args,key) else status.Text="Bite cached · turn ON to replay" end
 					return result
 				end
 			end
@@ -195,19 +200,18 @@ end
 -- the developer multiplier still works when this executor misses chained hooks or reports caller ownership wrong.
 task.spawn(function()
 	while gui.Parent do
-		if state.enabled and not state.burst and (not state.hookReady or tick()-(state.hookCapturedAt or 0)>0.5) then
-			local captured=ENV.MH_lastEatCall
-			if type(captured)=="table" and captured[2]=="Bite" and (captured.n or #captured)>=3 and (captured.identity==nil or captured.identity==ENV.MH_identityKey) then
-				local key="plus:"..tostring(captured.identity)..":"..tostring(captured.capturedAt)..":"..tostring(captured[1])
-				if key~=state.lastCapture then beginBurst(remoteFor(captured),copyPacket(captured),key) end
-			end
+		local captured=ENV.MH_lastEatCall
+		if type(captured)=="table" and captured[2]=="Bite" and (captured.n or #captured)>=3 and (captured.identity==nil or captured.identity==ENV.MH_identityKey) then
+			local key="capture:"..tostring(captured.capturedAt)..":"..tostring(captured[1])
+			if key~=state.cachedKey then state.cachedKey=key; state.cached={remote=remoteFor(captured),args=copyPacket(captured)}; if not state.enabled then status.Text="Bite cached · turn ON to replay" end end
+			if state.enabled and not state.burst and key~=state.lastCapture and (not state.hookReady or tick()-(state.hookCapturedAt or 0)>0.5) then beginBurst(state.cached.remote,state.cached.args,key) end
 		end
 		task.wait(0.08)
 	end
 end)
 
 local function cancelForDinosaurChange()
-	state.generation+=1; state.burst=false; state.sending=false
+	state.generation+=1; state.burst=false; state.sending=false; state.cached=nil; state.cachedKey=nil; state.lastCapture=nil
 	if state.enabled then status.Text="Dinosaur changed · bite normally" end
 end
 connections[#connections+1]=LP.CharacterAdded:Connect(cancelForDinosaurChange)

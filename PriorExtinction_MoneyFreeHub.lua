@@ -27,9 +27,9 @@ __gg.MH_identityKey=nil; __gg.MH_dietCache=nil; __gg.MH_foodDirectAt=nil; __gg.M
 __gg.MH_infFoodTargetsCache=nil; __gg.MH_foodTargetCount=0; __gg.MH_foodTargetKind="none"; __gg.MH_foodTargetPath="none"; __gg.MH_foodTargetReplicaCount=0; __gg.MH_foodDietReplicaState=nil; __gg.MH_foodDietReplicaCount=0; __gg.MH_foodMatchedReplicaCount=0
 __gg.MH_foodSourceRevision=0; __gg.MH_foodSourceKinds="none"; __gg.MH_foodResolvedDiet="unresolved"; __gg.MH_foodBufferMode="none"; __gg.MH_foodVisibleBefore=nil; __gg.MH_foodVisibleAfter=nil; __gg.MH_foodVisibleDelta=nil; __gg.MH_foodAcceptance="unobserved"; __gg.MH_foodLastFailure="not run"
 __gg.MH_growthState="waiting"; __gg.MH_growthValue=nil; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_growthBase=nil; __gg.MH_stamBoostSpeed=0; __gg.MH_stamPinState="waiting"; __gg.MH_stamReportState="waiting"
-__gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_stamRunRequested=false; __gg.MH_stamDriveSpeed=0; __gg.MH_stamSyncAt=0; __gg.MH_nativeRunSpeed=0; __gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_healthPacket=nil; __gg.MH_guardLastHP=nil
+__gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_stamInputHeld=false; __gg.MH_stamRunRequested=false; __gg.MH_stamDriveSpeed=0; __gg.MH_stamSyncAt=0; __gg.MH_nativeRunSpeed=0; __gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_healthPacket=nil; __gg.MH_guardLastHP=nil
 pcall(function() if __gg.MH_autoHitHighlight then __gg.MH_autoHitHighlight:Destroy() end end)
-__gg.MH_runPacket=nil; __gg.MH_nativeRunActive=false; __gg.MH_runShielded=0; __gg.MH_autoHitClicking=false; __gg.MH_autoHitLocked=nil; __gg.MH_autoHitHighlight=nil; __gg.MH_autoHitSelect=false; __gg.MH_autoHitQuery=nil; __gg.MH_autoHitStatus="No target"
+__gg.MH_runPacket=nil; __gg.MH_nativeRunActive=false; __gg.MH_runShielded=0; __gg.MH_autoHitClicking=false; __gg.MH_autoHitLocked=nil; __gg.MH_autoHitHighlight=nil; __gg.MH_autoHitSelect=false; __gg.MH_autoHitQuery=nil; __gg.MH_autoHitStatus="No target"; __gg.MH_autoHitTrackBone=nil; __gg.MH_autoHitTrackUntil=0
 __gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil; __gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
 -- Every captured packet below is valid only for one playable dinosaur. Character, species, or verified replica
 -- changes invalidate food-source ids, combat/sound templates, need reports, and protection high-water state together.
@@ -43,9 +43,9 @@ __gg.MH_clearDinoCaches=function(identityKey)
 	__gg.MH_infFoodTargetsCache=nil; __gg.MH_foodTargetCount=0; __gg.MH_foodTargetKind="none"; __gg.MH_foodTargetPath="none"; __gg.MH_foodTargetReplicaCount=0; __gg.MH_foodDietReplicaState=nil; __gg.MH_foodDietReplicaCount=0; __gg.MH_foodMatchedReplicaCount=0
 	__gg.MH_foodSourceRevision=(__gg.MH_foodSourceRevision or 0)+1; __gg.MH_foodSourceKinds="none"; __gg.MH_foodResolvedDiet="unresolved"; __gg.MH_foodBufferMode="none"; __gg.MH_foodVisibleBefore=nil; __gg.MH_foodVisibleAfter=nil; __gg.MH_foodVisibleDelta=nil; __gg.MH_foodAcceptance="unobserved"; __gg.MH_foodLastFailure="identity changed"
 	__gg.MH_growthState="waiting"; __gg.MH_growthValue=nil; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_growthBase=nil; __gg.MH_stamBoostSpeed=0; __gg.MH_stamPinState="waiting"; __gg.MH_stamReportState="waiting"
-	__gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_stamRunRequested=false; __gg.MH_stamDriveSpeed=0; __gg.MH_stamSyncAt=0; __gg.MH_nativeRunSpeed=0; __gg.MH_healthPacket=nil; __gg.MH_healthReportAt=nil
+	__gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_stamInputHeld=false; __gg.MH_stamRunRequested=false; __gg.MH_stamDriveSpeed=0; __gg.MH_stamSyncAt=0; __gg.MH_nativeRunSpeed=0; __gg.MH_healthPacket=nil; __gg.MH_healthReportAt=nil
 	pcall(function() if __gg.MH_autoHitHighlight then __gg.MH_autoHitHighlight:Destroy() end end)
-	__gg.MH_runPacket=nil; __gg.MH_nativeRunActive=false; __gg.MH_runShielded=0; __gg.MH_autoHitClicking=false; __gg.MH_autoHitLocked=nil; __gg.MH_autoHitHighlight=nil; __gg.MH_autoHitSelect=false; __gg.MH_autoHitQuery=nil; __gg.MH_autoHitStatus="No target"
+	__gg.MH_runPacket=nil; __gg.MH_nativeRunActive=false; __gg.MH_runShielded=0; __gg.MH_autoHitClicking=false; __gg.MH_autoHitLocked=nil; __gg.MH_autoHitHighlight=nil; __gg.MH_autoHitSelect=false; __gg.MH_autoHitQuery=nil; __gg.MH_autoHitStatus="No target"; __gg.MH_autoHitTrackBone=nil; __gg.MH_autoHitTrackUntil=0
 	__gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_guardLastHP=nil; __gg.MH_guardMax=nil
 	__gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
 	if type(MHNEED)=="table" then MHNEED.refs={food={},stamina={}}; MHNEED.max={food=nil,stamina=nil}; MHNEED.maxSource={food=nil,stamina=nil}; MHNEED.hasPaired={food=false,stamina=false}; MHNEED.at=0; MHNEED.root=nil; MHNEED.character=nil; MHNEED.capRoot=nil; MHNEED.capacity=nil end
@@ -877,7 +877,7 @@ local CFG = {
 	ESPPlayers=false, ESPCorpses=false, FoodESP=false, FishESP=false, GemESP=false, ESPRange=900, ESPColor="Default",
 	RemoveTrees=false, Radar=false, RadarRange=450, RadarDeath=true,
 	AlertEnabled=false, AlertDino="", AlertRange=350, CarnMeatTP=false,
-	ProFood=false, ProFoodEatAt=40, ProFoodStopAge="Off", CarnYesHold=false,
+	ProFood=false, ProFoodEatAt=40, ProFoodDrop=3, ProFoodStopAge="Off", CarnYesHold=false,
 	FullBright=false, NightVision=false, NoDarkWater=true, InfLight=false, UnlockMouse=false,
 	SkinDino="", SkinName="", SkinWet=false, ProgSlot="",
 	Waypoints={}, TPName="", TPX=0, TPY=0, TPZ=0,
@@ -913,6 +913,7 @@ CFG.AfkEat=false
 CFG.InfStamSpeed=15
 CFG.FoodMultiplierX=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 10),1,1000000)
 CFG.ProFoodEatAt=math.clamp(math.floor(tonumber(CFG.ProFoodEatAt) or 40),1,100)
+CFG.ProFoodDrop=math.clamp(math.floor(tonumber(CFG.ProFoodDrop) or 3),1,50)
 CFG.AutoHitDistance=math.clamp(math.floor(tonumber(CFG.AutoHitDistance) or 45),5,400)
 CFG.AutoHitRate=math.clamp(tonumber(CFG.AutoHitRate) or 1,1,6)
 if CFG.InfFoodDiet~="Herbivore" and CFG.InfFoodDiet~="Carnivore" then CFG.InfFoodDiet="Auto" end
@@ -957,7 +958,7 @@ __gg.MH_featureToggleChanged=function(key,value)
 	if key=="InfStam" then
 		__gg.MH_stamShiftHeld=false
 		local physicalShift=UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift)
-		__gg.MH_stamRunRequested=value and physicalShift or false
+		__gg.MH_stamInputHeld=physicalShift; __gg.MH_stamRunRequested=value and physicalShift or false
 		if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end
 		task.defer(function()
 			if value and MHNEED then pcall(function() MHNEED.refresh(true); MHNEED.pin("stamina"); MHNEED.report("stamina",true); MHNEED.reportKnown("stamina",true) end) end
@@ -1304,7 +1305,7 @@ local function installHook()
 						-- fast, forever. We keep a LIST of the last several DIFFERENT bites, so the more different things you
 						-- eat, the more Bite calls the spam loop fires per pass = faster growth. Bite is the one that fills the bar.
 						if action=="Bite" then
-							local snap={n=a.n,remote=self.Name,identity=__gg.MH_identityKey,capturedAt=tick()} for i=1,a.n do snap[i]=a[i] end
+							local snap={n=a.n,remote=self.Name,instance=self,identity=__gg.MH_identityKey,capturedAt=tick()} for i=1,a.n do snap[i]=a[i] end
 							__gg.MH_lastEatCall=snap; __gg.MH_lastEatT=tick()
 							__gg.MH_biteCalls = __gg.MH_biteCalls or {}
 							-- One current call per source. tostring(buffer) contains an allocation address, so using it
@@ -1790,6 +1791,17 @@ __gg.MH_deathDinoIdentity=function(model)
 			elseif type(source)=="table" then pcall(function() value=source[key] end) end
 			if value~=nil and tostring(value)~="" then return tostring(value) end
 		end end end
+		-- CharacterState frequently nests the save slot/species below PlayerData or a selected-slot table. Search only
+		-- tables, to a small depth, so respawn identity becomes available without scanning the whole Workspace.
+		local wanted={}; for _,key in ipairs(keys) do wanted[tostring(key):lower():gsub("[^%w]","")]=true end
+		local seen={}; local function deep(tb,depth)
+			if type(tb)~="table" or seen[tb] or depth>4 then return nil end; seen[tb]=true
+			for key,value in pairs(tb) do
+				if wanted[tostring(key):lower():gsub("[^%w]","")] and value~=nil and type(value)~="table" and tostring(value)~="" then return tostring(value) end
+			end
+			for _,value in pairs(tb) do if type(value)=="table" then local found=deep(value,depth+1); if found then return found end end end
+		end
+		for index=1,6 do if type(sources[index])=="table" then local found=deep(sources[index],0); if found then return found end end end
 	end
 	local out={
 		id=pick({"SaveSlot","Slot","SlotId","SlotID","CharacterId","CharacterID","DinosaurId","DinoId","PlayableId","SaveId","UUID","Guid"}),
@@ -1798,17 +1810,19 @@ __gg.MH_deathDinoIdentity=function(model)
 		stage=pick({"GrowthStage","Stage","LifeStage"}),
 	}
 	if not out.stage and type(data)=="table" and type(data.Growth)=="table" then out.stage=tostring(data.Growth.Stage or data.GrowthStage or ""); if out.stage=="" then out.stage=nil end end
+	if not out.species and type(__gg.MH_readDino)=="function" and model then pcall(function() out.species=select(1,__gg.MH_readDino(model)) end) end
 	if not out.id and not out.species then return nil end
 	return out
 end
 __gg.MH_sameDeathDino=function(saved,current)
 	if type(saved)~="table" or type(current)~="table" then return nil end
+	local function normalized(value) return tostring(value or ""):lower():gsub("^%s+",""):gsub("%s+$",""):gsub("[^%w]","") end
 	-- A matching stable save-slot id is conclusive. If one side has not replicated its id yet, fall back to the
 	-- species signature instead of waiting forever. Growth stage is intentionally ignored because it can advance.
-	if saved.id and current.id then return saved.id==current.id end
+	if saved.id and current.id then return normalized(saved.id)==normalized(current.id) end
 	if saved.species and current.species then
-		if saved.species~=current.species then return false end
-		for _,key in ipairs({"variant","skin","gender"}) do if saved[key] and current[key] and saved[key]~=current[key] then return false end end
+		if normalized(saved.species)~=normalized(current.species) then return false end
+		for _,key in ipairs({"variant","skin","gender"}) do if saved[key] and current[key] and normalized(saved[key])~=normalized(current[key]) then return false end end
 		return true
 	end
 	return nil
@@ -2584,13 +2598,13 @@ end
 -- Names match the REAL hit-PARTS inside model.Hitbox (the lowercase container, per the Explorer screenshots):
 -- Head, Neck/.001-.004, Spine/.001/.002, LegIK.L/R, Tail/.00x, Hip — each a BasePart at that bone's world position.
 ATK_GROUPS = {
-	Auto = {{g="Body",n="Spine.001"},{g="Head",n="Head"},{g="Body",n="Spine"},{g="Body",n="Spine.002"},{g="Neck",n="Neck.001"},{g="Neck",n="Neck"},{g="Body",n="Hip"},{g="Leg",n="LegIK.L"},{g="Leg",n="LegIK.R"}},
+	Auto = {{g="Head",n="Head"},{g="Body",n="Spine.001"},{g="Body",n="Spine"},{g="Body",n="Spine.002"},{g="Neck",n="Neck.001"},{g="Neck",n="Neck"},{g="Body",n="Hip"},{g="Leg",n="knee.L"},{g="Leg",n="lowerleg.L"},{g="Leg",n="LegIK.L"},{g="Tail",n="Tail"}},
 	Head = {{g="Head",n="Head"},{g="Head",n="Jaw"},{g="Head",n="Skull"}},
 	Neck = {{g="Neck",n="Neck.001"},{g="Neck",n="Neck.002"},{g="Neck",n="Neck"},{g="Neck",n="Neck.003"},{g="Neck",n="Neck.004"}},
 	Spine = {{g="Body",n="Spine.001"},{g="Body",n="Spine"},{g="Body",n="Spine.002"}},
 	Body = {{g="Body",n="Spine"},{g="Body",n="Spine.001"},{g="Body",n="Spine.002"},{g="Body",n="Hip"}},
-	Leg = {{g="Leg",n="LegIK.L"},{g="Leg",n="LegIK.R"},{g="Leg",n="Femur.R"},{g="Leg",n="Femur.L"},{g="Leg",n="Tibia.R"},{g="Leg",n="Tibia.L"}},
-	Tail = {{g="Tail",n="Tail"},{g="Tail",n="Tail.001"},{g="Tail",n="Tail.002"},{g="Tail",n="Tail.003"},{g="Tail",n="Tail.004"}},
+	Leg = {{g="Leg",n="knee.L"},{g="Leg",n="knee.R"},{g="Leg",n="lowerleg.L"},{g="Leg",n="lowerleg.R"},{g="Leg",n="LegIK.L"},{g="Leg",n="LegIK.R"},{g="Leg",n="Femur.R"},{g="Leg",n="Femur.L"},{g="Leg",n="Tibia.R"},{g="Leg",n="Tibia.L"},{g="Leg",n="Ankle.L"},{g="Leg",n="Ankle.R"}},
+	Tail = {{g="Tail",n="Tail"},{g="Tail",n="Taill"},{g="Tail",n="Tail.001"},{g="Tail",n="Tail.002"},{g="Tail",n="Tail.003"},{g="Tail",n="Tail.004"},{g="Tail",n="Tail.010"}},
 	Hip = {{g="Body",n="Hip"},{g="Body",n="Pelvis"}},
 	Arm = {{g="Arm",n="ArmIK.L"},{g="Arm",n="ArmIK.R"},{g="Arm",n="Hand.L"},{g="Arm",n="Hand.R"},{g="Arm",n="Humerus.L"},{g="Arm",n="Humerus.R"},{g="Arm",n="Claw.L"},{g="Arm",n="Claw.R"}},
 }
@@ -2622,25 +2636,24 @@ local function _findIn(model, name)
 	-- MATCHING IS FUZZY NOW (why Always Damage was inconsistent): the real rig bones carry suffixed / different-case
 	-- names ("Spine.002", "NECK"), so an exact case-sensitive compare missed them and the hit got a dummy position
 	-- the server rejected. Exact (case-insensitive) name wins; else a prefix match ("Spine" -> "Spine.002").
-	local want=tostring(name):lower()
-	local best
-	local function scan(root)
-		if root:IsA("BasePart") or root:IsA("Bone") then local rn=root.Name:lower(); if rn==want then return root elseif rn:sub(1,#want)==want then best=root end end
-		for _,d in ipairs(root:GetDescendants()) do
-			if (d:IsA("BasePart") or d:IsA("Bone")) then
-				local dn=d.Name:lower()
-				if dn==want then return d end
-				if not best and dn:sub(1,#want)==want then best=d end
-			end
+	local want=tostring(name):lower(); local best,bestScore=nil,-1
+	local function scan(root,containerBonus)
+		local function consider(item)
+			if not (item:IsA("BasePart") or item:IsA("Bone") or item:IsA("Attachment")) then return end
+			local actual=item.Name:lower(); local exact=actual==want; local prefix=not exact and actual:sub(1,#want)==want
+			if not (exact or prefix) then return end
+			-- `Hitbox.Head.Head` has an outer cube and an animated child with the same name. Prefer the animated
+			-- Bone/Attachment so every frame and every Attack packet follows the live pose, not the container centre.
+			local classBonus=(item:IsA("Bone") or item:IsA("Attachment")) and 45 or 20
+			local duplicateChild=item:IsA("BasePart") and item:FindFirstChild(item.Name)
+			local score=(exact and 300 or 170)+classBonus+(containerBonus or 0)-(duplicateChild and 35 or 0)
+			if score>bestScore then best,bestScore=item,score end
 		end
-		return nil
+		consider(root); for _,item in ipairs(root:GetDescendants()) do consider(item) end
 	end
-	local hb=findHitboxContainer(model)
-	if hb then local e=scan(hb); if e then return e end end
-	if best then return best end   -- a Hitbox prefix match beats searching other containers (real hit parts live there)
-	local mm=model:FindFirstChild("MeshModel"); if mm then local e=scan(mm); if e then return e end end
-	local e=scan(model); if e then return e end
-	return best
+	local hb=findHitboxContainer(model); if hb then scan(hb,60) end
+	local mm=model:FindFirstChild("MeshModel"); if mm then scan(mm,30) end
+	scan(model,0); return best
 end
 local function _bonePos(b)
 	if not b then return nil end
@@ -2661,7 +2674,7 @@ local function boneGroupFor(name)
 	if n:find("head",1,true) or n:find("jaw",1,true) or n:find("skull",1,true) then return "Head" end
 	if n:find("neck",1,true) then return "Neck" end
 	if n:find("tail",1,true) then return "Tail" end
-	if n:find("leg",1,true) or n:find("femur",1,true) or n:find("tibia",1,true) or n:find("foot",1,true) or n:find("toe",1,true) then return "Leg" end
+	if n:find("leg",1,true) or n:find("knee",1,true) or n:find("ankle",1,true) or n:find("femur",1,true) or n:find("tibia",1,true) or n:find("foot",1,true) or n:find("toe",1,true) then return "Leg" end
 	if n:find("arm",1,true) or n:find("hand",1,true) or n:find("humerus",1,true) or n:find("claw",1,true) or n:find("finger",1,true) then return "Arm" end
 	return "Body"   -- spine/hip/pelvis/chest/torso and anything unrecognized all report as Body
 end
@@ -2708,7 +2721,7 @@ local function fireAttack(targetModel, skipSound, clickedPart, sequence)
 	-- resolve on THIS dino's rig, search its parts/bones for ANY name in the selected region, reporting that real name
 	-- so the server accepts it (bone naming varies per dino — this is why "aim a body part" missed on some of them).
 	if not targetPos and want and want~="" and want~="Auto" then
-		local KW=({Head={"head","skull","jaw","crani","maxill","mandib","frontal"},Neck={"neck"},Spine={"spine","body","torso","chest"},Body={"spine","body","torso","chest","hip","ilium"},Leg={"leg","femur","tibia","thigh","foot","shin","toe"},Tail={"tail"},Hip={"hip","ilium","pelvis"},Arm={"arm","hand","claw","humer","wing","finger"}})[want]
+		local KW=({Head={"head","skull","jaw","crani","maxill","mandib","frontal"},Neck={"neck"},Spine={"spine","body","torso","chest"},Body={"spine","body","torso","chest","hip","ilium"},Leg={"leg","knee","lowerleg","ankle","femur","tibia","thigh","foot","shin","toe"},Tail={"tail","taill"},Hip={"hip","ilium","pelvis"},Arm={"arm","hand","claw","humer","wing","finger"}})[want]
 		if KW then local scanned=0
 			for _,d in ipairs(targetModel:GetDescendants()) do scanned+=1; if scanned>600 then break end
 				if d:IsA("BasePart") or d:IsA("Bone") then local dn=d.Name:lower()
@@ -3614,8 +3627,8 @@ do local p=Pages["Growth"]
 	if not _G.PE_HIDE_LITE then
 		local _,g=mkSec(p,"Pro Food",1)
 		mkToggle(g,"Pro Food","ProFood",1)
-		mkSlider(g,"Eat when food reaches %","ProFoodEatAt",1,100,2,1)
-		mkLabel(g,"Locks a safe corpse or plant, circles around it while food is above your number, then eats it until full.")
+		mkSlider(g,"Eat after food drops by","ProFoodDrop",1,50,2,1)
+		mkLabel(g,"Scans your current bar first. Example: 34/44 with drop 3 circles until 31, then eats until full and recalibrates.")
 		mkDropdown(g,"Stop at age", function() return {"Off","Juvenile","Teen","Adolescent","Sub Adult","Adult","Elder"} end, function() return CFG.ProFoodStopAge~="" and CFG.ProFoodStopAge or "Off" end, function(opt) CFG.ProFoodStopAge=opt; saveCfg() end, 2)
 		local _,fw=mkSec(p,"Food & Water",2)
 		mkToggle(fw,"Food Multiplier (learn my Bite)","FoodMultiplier",2)
@@ -4501,13 +4514,23 @@ __gg.MH_stamResolveSpeed=function()
 	pcall(function() walk(root,0); walk(CharacterState,0) end)
 	best=math.clamp(best>0 and best or 24,8,180); __gg.MH_stamResolvedSpeed=best; __gg.MH_stamSpeedAt=tick(); return best
 end
+conn(UIS.InputBegan:Connect(function(input,gp)
+	if gp or (input.KeyCode~=Enum.KeyCode.LeftShift and input.KeyCode~=Enum.KeyCode.RightShift) then return end
+	__gg.MH_stamInputHeld=true
+	if CFG.InfStam then __gg.MH_stamRunRequested=true; pcall(__gg.MH_syncRun,false) end
+end))
+conn(UIS.InputEnded:Connect(function(input)
+	if input.KeyCode~=Enum.KeyCode.LeftShift and input.KeyCode~=Enum.KeyCode.RightShift then return end
+	__gg.MH_stamInputHeld=false; __gg.MH_stamRunRequested=false
+	if CFG.InfStam then pcall(__gg.MH_syncRun,false) end
+end))
 -- INF STAMINA: the exact need references are still pinned every physics frame. While Shift is physically held, the
 -- captured Run=true is shielded as Run=false and this drive restores normal dino running speed. It never presses a
 -- key, never moves without W/A/S/D (or a real Humanoid MoveDirection), and only mirrors the current CFrame to PE's
 -- genuine physics replica to reduce correction/rubber-banding.
 conn(RunService.Heartbeat:Connect(function()
 	if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end
-	local shiftDown=UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift)
+	local shiftDown=__gg.MH_stamInputHeld or UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift)
 	if not (CFG.InfStam and alive() and not CFG.Fly and not CFG.SpeedHack) then
 		if alive() and shiftDown and not CFG.Fly and not CFG.SpeedHack then local r=hrp(); if r then local v=r.AssemblyLinearVelocity; local speed=Vector3.new(v.X,0,v.Z).Magnitude; if speed>=4 and speed<=180 then __gg.MH_nativeRunSpeed=math.max(tonumber(__gg.MH_nativeRunSpeed) or 0,speed); __gg.MH_stamResolvedSpeed=nil end end end
 		__gg.MH_stamShiftHeld=false; __gg.MH_stamRunRequested=false; __gg.MH_stamDriveSpeed=0; __gg.MH_stamBoostSpeed=0; return
@@ -5126,7 +5149,10 @@ local function MH_hopFire(goalCF)
 	if not CFG.BypassTP then return false end
 	local sent=false; local ok=pcall(function()
 		local re=RS:FindFirstChild("RemoteEvents"); re=re and re:FindFirstChild("ReplicaSignalUnreliable")
-		local id=MHNEED and MHNEED.replicaId and MHNEED.replicaId()
+		-- Body CFrame uses a separate physics replica. CharacterState's action id is NOT a movement id; sending
+		-- CFrame through it caused the server to correct/teleport the dinosaur back. Fail closed until a genuine local
+		-- CFrame packet has identified the current physics replica.
+		local id=(tick()-(__gg.MH_physicsSeenAt or 0)<4) and __gg.MH_physicsReplicaId or nil
 		if re and id then re:FireServer(id,"CFrame",goalCF); sent=true end
 	end)
 	return ok and sent
@@ -5317,12 +5343,12 @@ do
 		local ti=stageIdx(t); local ci=curStage()
 		return (ti and ci and ci>=ti) or false
 	end
-	local function foodFrac()
+	local function foodLevel()
 		local s,m=csStats()
-		if s and m then for _,k in ipairs({"Food","Hunger","Nutrition","Fullness"}) do local cv=tonumber(s[k]); local mv=tonumber(m[k]); if cv and mv and mv>0 then return cv/mv end end end
+		if s and m then for _,k in ipairs({"Food","Hunger","Nutrition","Fullness"}) do local cv=tonumber(s[k]); local mv=tonumber(m[k]); if cv and mv and mv>0 then return cv,mv end end end
 		local cv=MHNEED and MHNEED.current and MHNEED.current("food",true); local mv=MHNEED and MHNEED.maxFor and MHNEED.maxFor("food")
-		if cv and mv and mv>0 then return math.clamp(cv/mv,0,1) end
-		return nil
+		if cv and mv and mv>0 then return cv,mv end
+		return nil,nil
 	end
 	-- Pick one diet-correct corpse/plant with no other living dinosaur within 30 studs. The shared resolver follows
 	-- late-spawned corpses, meat, fish, dead players, and herbivore plants, so Pro Food no longer has a corpse-only path.
@@ -5366,8 +5392,10 @@ do
 		end end
 	end
 	local function stopCircle()
+		local owned=PRO.circling==true
 		PRO.circling=false
 		releaseWASD()
+		if owned then pcall(function() local r=hrp(); if r then local velocity=r.AssemblyLinearVelocity; r.AssemblyLinearVelocity=Vector3.new(0,velocity.Y,0) end end) end
 	end
 	__gg.MH_stopProFood=stopCircle
 	local function circle(centerPart)   -- one orbit step around the locked food while hunger remains above the threshold
@@ -5386,32 +5414,39 @@ do
 		if CFG.ProFood and alive() and tick()>=(__gg.MH_spawnGrace or 0) then
 			local token=__gg.MH_tpFeatureGen and __gg.MH_tpFeatureGen.ProFood
 			local function active() return CFG.ProFood==true and type(__gg.MH_tpFeatureGen)=="table" and __gg.MH_tpFeatureGen.ProFood==token end
-			if PRO.token~=token then stopCircle(); PRO.cur=nil; PRO.fd=nil; PRO.feeding=false; PRO.token=token end
+			if PRO.token~=token then stopCircle(); PRO.cur=nil; PRO.fd=nil; PRO.feeding=false; PRO.baseline=nil; PRO.threshold=nil; PRO.token=token end
 			if reachedAge() then stopCircle(); if __gg.MH_setToggle then __gg.MH_setToggle("ProFood",false) else CFG.ProFood=false; if __gg.MH_featureToggleChanged then __gg.MH_featureToggleChanged("ProFood",false) end end; pcall(function() notify("Pro Food","Reached "..tostring(CFG.ProFoodStopAge).." — growth stopped.") end)
 			else
-				local ff = foodFrac(); local r = hrp(); local threshold=math.clamp(tonumber(CFG.ProFoodEatAt) or 40,1,100)/100
+				local food,foodMax=foodLevel(); local r=hrp(); local drop=math.clamp(math.floor(tonumber(CFG.ProFoodDrop) or 3),1,50)
+				if not (food and foodMax) then
+					stopCircle(); __gg.MH_proFoodState="scanning food bar"; task.wait(0.25)
+				else
+					if not PRO.baseline then PRO.baseline=food end
+					if food>PRO.baseline then PRO.baseline=food end
+					PRO.threshold=math.max(0,PRO.baseline-drop)
 				if not (PRO.cur and PRO.cur.Parent and PRO.fd) then
 					stopCircle(); PRO.cur=nil; PRO.fd=pickSafeFood(); PRO.cur=PRO.fd and PRO.fd[2] or nil; PRO.feeding=false
-					if PRO.cur then PRO.lastFood=ff; PRO.foodT=tick(); if r and (PRO.cur.Position-r.Position).Magnitude>18 and __gg.MH_tpToCorpse then pcall(function() __gg.MH_tpToCorpse(PRO.cur,"ProFood",token) end); task.wait(0.9) end
+					if PRO.cur then PRO.lastFood=food; PRO.foodT=tick(); if r and (PRO.cur.Position-r.Position).Magnitude>18 and __gg.MH_tpToCorpse then pcall(function() __gg.MH_tpToCorpse(PRO.cur,"ProFood",token) end); task.wait(0.9) end
 					else __gg.MH_proFoodState="waiting for a safe "..tostring(CFG.InfFoodDiet or "food"); task.wait(0.5) end
 				elseif r and (PRO.cur.Position-r.Position).Magnitude>65 then
 					stopCircle(); pcall(function() __gg.MH_tpToCorpse(PRO.cur,"ProFood",token) end); task.wait(0.9)
 				else
-					if ff and ff<=threshold then PRO.feeding=true end
+					if food<=PRO.threshold then PRO.feeding=true end
 					if PRO.feeding then
-						stopCircle(); __gg.MH_proFoodState="eating "..tostring(PRO.fd.kind or "food").." at "..tostring(math.floor((ff or 0)*100)).."%"
-						if ff and (not PRO.lastFood or ff>PRO.lastFood+0.001) then PRO.lastFood=ff; PRO.foodT=tick() end
-						if ff and ff>=0.995 then PRO.feeding=false; PRO.lastFood=ff; PRO.foodT=tick()
+						stopCircle(); __gg.MH_proFoodState="eating "..tostring(PRO.fd.kind or "food").." at "..tostring(math.floor(food)).." / "..tostring(math.floor(foodMax))
+						if not PRO.lastFood or food>PRO.lastFood+0.001 then PRO.lastFood=food; PRO.foodT=tick() end
+						if food>=foodMax-0.05 then PRO.feeding=false; PRO.lastFood=food; PRO.baseline=food; PRO.threshold=math.max(0,food-drop); PRO.foodT=tick()
 						elseif PRO.foodT and tick()-PRO.foodT>6 then PRO.cur=nil; PRO.fd=nil; PRO.feeding=false
 						else eat(PRO.fd); task.wait(0.4) end
 					else
-						__gg.MH_proFoodState="circling "..tostring(PRO.fd.kind or "food").." until "..tostring(math.floor(threshold*100)).."%"
+						__gg.MH_proFoodState="circling "..tostring(PRO.fd.kind or "food").." | "..tostring(math.floor(food)).." / "..tostring(math.floor(foodMax)).." -> eat at "..tostring(math.floor(PRO.threshold))
 						circle(PRO.cur); task.wait(0.1)
 					end
 				end
+				end
 			end
 		else
-			PRO.cur=nil; PRO.fd=nil; PRO.feeding=false
+			PRO.cur=nil; PRO.fd=nil; PRO.feeding=false; PRO.baseline=nil; PRO.threshold=nil
 			if PRO.token~=nil or PRO.circling then PRO.token=nil; stopCircle() end
 			task.wait(0.2)
 		end
@@ -5513,7 +5548,7 @@ __gg.MH_autoHitSetStatus=function(value)
 end
 __gg.MH_autoHitDrop=function()
 	pcall(function() if __gg.MH_autoHitHighlight then __gg.MH_autoHitHighlight:Destroy() end end)
-	__gg.MH_autoHitHighlight=nil; __gg.MH_autoHitLocked=nil
+	__gg.MH_autoHitHighlight=nil; __gg.MH_autoHitLocked=nil; __gg.MH_autoHitTrackBone=nil; __gg.MH_autoHitTrackUntil=0
 end
 __gg.MH_autoHitClear=function(clearName)
 	__gg.MH_autoHitDrop(); __gg.MH_autoHitSelect=false
@@ -5594,7 +5629,7 @@ __gg.MH_autoHitM1=function(target)
 	local cam=workspace.CurrentCamera; local aim=__gg.MH_autoHitAim(target); local position=partPos(aim)
 	if not (cam and position) then return false end
 	local screen,visible=cam:WorldToViewportPoint(position); if not visible or screen.Z<=0 then return false end
-	__gg.MH_autoHitClicking=true
+	__gg.MH_autoHitClicking=true; __gg.MH_autoHitTrackBone=aim; __gg.MH_autoHitTrackUntil=tick()+0.55
 	pcall(function() VIM:SendMouseMoveEvent(screen.X,screen.Y,game) end)
 	local ok=pcall(function()
 		VIM:SendMouseButtonEvent(screen.X,screen.Y,0,true,game,0); task.wait(0.035)
@@ -5603,6 +5638,15 @@ __gg.MH_autoHitM1=function(target)
 	__gg.MH_autoHitClicking=false
 	return ok,aim
 end
+-- Follow the SAME animated bone from mouse-down through RegisterAttack and the hit report. This is especially
+-- important for `Hitbox.Head.Head`, Physics.Part.Neck.00x, and MeshModel RootPart bones that move every frame.
+conn(RunService.RenderStepped:Connect(function()
+	if not CFG.AutoHit or tick()>(__gg.MH_autoHitTrackUntil or 0) then __gg.MH_autoHitTrackBone=nil; return end
+	local bone=__gg.MH_autoHitTrackBone; local cam=workspace.CurrentCamera; local position=partPos(bone)
+	if not (bone and bone.Parent and cam and position) then return end
+	local screen,visible=cam:WorldToViewportPoint(position)
+	if visible and screen.Z>0 then pcall(function() VIM:SendMouseMoveEvent(screen.X,screen.Y,game) end) end
+end))
 task.spawn(function() while RUNNING do
 	if CFG.AlwaysDamage and not CFG.AutoHit and alive() then
 		local me=hrp()
@@ -5742,7 +5786,7 @@ local function boneMatch(name)
 	if sel=="Head" then return n:find("head",1,true) or n:find("jaw",1,true) or n:find("skull",1,true) end
 	if sel=="Neck" then return n:find("neck",1,true) end
 	if sel=="Arm"  then return n:find("arm",1,true) or n:find("hand",1,true) or n:find("claw",1,true) or n:find("finger",1,true) or n:find("humerus",1,true) or n:find("wing",1,true) end
-	if sel=="Leg"  then return n:find("leg",1,true) or n:find("foot",1,true) or n:find("femur",1,true) or n:find("tibia",1,true) or n:find("thigh",1,true) or n:find("toe",1,true) end
+	if sel=="Leg"  then return n:find("leg",1,true) or n:find("knee",1,true) or n:find("lowerleg",1,true) or n:find("ankle",1,true) or n:find("foot",1,true) or n:find("femur",1,true) or n:find("tibia",1,true) or n:find("thigh",1,true) or n:find("toe",1,true) end
 	if sel=="Body" then return n:find("spine",1,true) or n:find("body",1,true) or n:find("hip",1,true) or n:find("torso",1,true) or n:find("chest",1,true) or n:find("tail",1,true) end
 	if sel=="Tail" then return n:find("tail",1,true) end
 	if sel=="Hip"  then return n:find("hip",1,true) or n:find("pelvis",1,true) end
@@ -5766,7 +5810,7 @@ local function expandPart(p)
 	end)
 end
 function HBX.expandSource(source,model)
-	if not (source and (source:IsA("Bone") or source:IsA("BasePart")) and model) then return nil end
+	if not (source and (source:IsA("Bone") or source:IsA("Attachment") or source:IsA("BasePart")) and model) then return nil end
 	local p=HBX.boneToPart[source]
 	if not (p and p.Parent) then
 		local folder=model:FindFirstChild("__MH_BoneHitboxes")
@@ -5800,7 +5844,7 @@ local function expandModel(m)
 		if n:find("neck",1,true) then return 2 end
 		if n:find("spine",1,true) or n:find("chest",1,true) then return 3 end
 		if n:find("hip",1,true) or n:find("pelvis",1,true) or n:find("body",1,true) or n:find("torso",1,true) then return 4 end
-		if n:find("leg",1,true) or n:find("femur",1,true) or n:find("tibia",1,true) or n:find("foot",1,true) then return 5 end
+		if n:find("leg",1,true) or n:find("knee",1,true) or n:find("ankle",1,true) or n:find("femur",1,true) or n:find("tibia",1,true) or n:find("foot",1,true) then return 5 end
 		if n:find("arm",1,true) or n:find("hand",1,true) or n:find("claw",1,true) then return 6 end
 		if n:find("tail",1,true) then return 7 end
 		return 20
@@ -5808,12 +5852,12 @@ local function expandModel(m)
 	local function grow(d)
 		if d:IsA("BasePart") then
 			if HBX.partToBone[d] then return end
-			if boneMatch(d.Name) and sourceCount<32 then sourceCount+=1; if HBX.expandSource(d,m) then grewAny=true end end
-		elseif d:IsA("Bone") and boneMatch(d.Name) and not boneSeen[d] then boneSeen[d]=true; bones[#bones+1]=d end
+			if boneMatch(d.Name) and sourceCount<96 then sourceCount+=1; if HBX.expandSource(d,m) then grewAny=true end end
+		elseif (d:IsA("Bone") or d:IsA("Attachment")) and boneMatch(d.Name) and not boneSeen[d] then boneSeen[d]=true; bones[#bones+1]=d end
 	end
 	local function flushBones()
 		table.sort(bones,function(a,b) local pa,pb=bonePriority(a),bonePriority(b); if pa==pb then return a.Name<b.Name end; return pa<pb end)
-		for i=1,math.min(#bones,16) do if HBX.expandBone(bones[i],m) then grewAny=true end end
+		for i=1,math.min(#bones,64) do if HBX.expandBone(bones[i],m) then grewAny=true end end
 	end
 	do local inst=findHitboxContainer(m)
 		if inst then
@@ -5830,8 +5874,8 @@ local function expandModel(m)
 		local cnt=0
 		for _,d in ipairs(m:GetDescendants()) do
 			cnt+=1; if cnt>400 then break end
-			if d:IsA("BasePart") and d~=hrp2 and not HBX.partToBone[d] and boneMatch(d.Name) and sourceCount<32 then sourceCount+=1; if HBX.expandSource(d,m) then grewAny=true end end
-			if d:IsA("Bone") and boneMatch(d.Name) and not boneSeen[d] then boneSeen[d]=true; bones[#bones+1]=d end
+			if d:IsA("BasePart") and d~=hrp2 and not HBX.partToBone[d] and boneMatch(d.Name) and sourceCount<96 then sourceCount+=1; if HBX.expandSource(d,m) then grewAny=true end end
+			if (d:IsA("Bone") or d:IsA("Attachment")) and boneMatch(d.Name) and not boneSeen[d] then boneSeen[d]=true; bones[#bones+1]=d end
 		end
 		flushBones()
 	end
@@ -5840,7 +5884,7 @@ local function expandModel(m)
 	local wanted=CFG.HitboxBone or "All"; local source
 	if wanted~="All" then for _,name in ipairs(AIM_BONES[wanted] or {wanted}) do source=_findIn(m,name); if source then break end end end
 	if not source then source=getHitbox(m) or rootOf(m) end
-	if source and (source:IsA("Bone") or source:IsA("BasePart")) then local proxy=HBX.expandSource(source,m); if proxy then HBX.modelProxy[m]=proxy; grewAny=true end end
+	if source and (source:IsA("Bone") or source:IsA("Attachment") or source:IsA("BasePart")) then local proxy=HBX.expandSource(source,m); if proxy then HBX.modelProxy[m]=proxy; grewAny=true end end
 end
 -- (Bone Protection NO LONGER shrinks your hitbox — that broke your M1. It now clears the chosen bone's break/
 -- fracture STATUS via the antiInjurySweep loop above. The expander below only touches ENEMY hitboxes.)
@@ -7293,6 +7337,25 @@ task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
 	-- CORPSES (RED): use the SAME authoritative source as Carnivore Meat TP — the CorpseSpawns DinosaurSpawn markers
 	-- that actually have a body spawned in them — PLUS "Corpse_..." models and "Investigate" prompts as a fallback.
 	if CFG.ESPCorpses then
+		local corpseSeen={}
+		local function markCorpse(source,label)
+			if count>=MAX or not source then return end
+			local model=source:IsA("Model") and source or source:FindFirstAncestorWhichIsA("Model")
+			local part=(model and (getHitbox(model) or rootOf(model))) or (source:IsA("BasePart") and source)
+			if not (model and part and not corpseSeen[model]) then return end
+			local dd=dist(me.Position,part.Position); if dd>CFG.ESPRange then return end
+			corpseSeen[model]=true; addESP(model,Color3.fromRGB(235,60,60),(label or "Corpse").." ["..math.floor(dd).."m]"); count+=1
+		end
+		-- Dead player/dinosaur models can remain in Characters briefly before PE reparents them. Include them immediately.
+		local characters=WS:FindFirstChild("Characters"); if characters then for _,model in ipairs(characters:GetChildren()) do
+			if model:IsA("Model") and model~=getMyModel() and (modelDead(model) or isScentCorpse(model)) then markCorpse(model,"Dead dinosaur") end
+		end end
+		-- PE's longer-lived corpse stores: player corpses, ragdolls, bone piles, and ordinary corpse/dead-body folders.
+		local ci0=WS:FindFirstChild("CharacterIgnore"); local stores={}
+		local function store(folder,label) if folder then stores[#stores+1]={folder,label} end end
+		store(ci0 and ci0:FindFirstChild("LeftCharacters"),"Dead player/dinosaur"); store(ci0 and ci0:FindFirstChild("DinosaurRagdolls"),"Corpse")
+		for _,name in ipairs({"DinosaurRagdolls","Bonepiles","Corpses","DeadBodies"}) do store(WS:FindFirstChild(name),"Corpse") end
+		for _,entry in ipairs(stores) do for _,corpse in ipairs(entry[1]:GetChildren()) do if count>=MAX then break end; markCorpse(corpse,entry[2]) end end
 		-- 1) CorpseSpawns.DinosaurSpawn markers with a real body inside (the parts the user pointed us at)
 		local ci=WS:FindFirstChild("CharacterIgnore"); local cs=ci and ci:FindFirstChild("CorpseSpawns")
 		if cs then for _,dsp in ipairs(cs:GetChildren()) do
@@ -7303,9 +7366,7 @@ task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
 				elseif x:IsA("MeshPart") and x.Transparency<0.95 then body=x; break
 				elseif x:IsA("Model") and x~=dsp then body=rootOf(x) or x:FindFirstChildWhichIsA("BasePart"); if body then break end end
 			end
-			if body then local dd=dist(me.Position, body.Position); if dd<=CFG.ESPRange then
-				local mdl=body:FindFirstAncestorWhichIsA("Model") or (body.Parent and body.Parent:IsA("Model") and body.Parent) or (dsp:IsA("Model") and dsp) or body
-				addESP(mdl, Color3.fromRGB(235,60,60), "Corpse ["..math.floor(dd).."m]"); count+=1 end end
+			if body then local mdl=body:FindFirstAncestorWhichIsA("Model") or (body.Parent and body.Parent:IsA("Model") and body.Parent) or (dsp:IsA("Model") and dsp); markCorpse(mdl,"Corpse") end
 		end end
 		-- 2) fallback: named Corpse_ models + Investigate prompts anywhere else
 		local scanned=0
@@ -7317,10 +7378,7 @@ task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
 			elseif d:IsA("ProximityPrompt") then local at=(d.ActionText or ""):lower(); local nm=(d.Name or ""):lower()
 				if at:find("investigate") or nm:find("investigate") or nm:find("corpse") then local p=d.Parent; model=(p and p:IsA("Model")) and p or (p and p:FindFirstAncestorWhichIsA("Model")) or p end
 			end
-			if model and not ESP.objs[model] then
-				local part=getHitbox(model) or rootOf(model) or (model:IsA("BasePart") and model)
-				if part then local dd=dist(me.Position, part.Position); if dd<=CFG.ESPRange then addESP(model, Color3.fromRGB(235,60,60), "Corpse ["..math.floor(dd).."m]"); count+=1 end end
-			end
+			if model and not ESP.objs[model] then markCorpse(model,"Corpse") end
 		end
 	end
 	-- GEM + FOSSIL ESP: highlight every gemstone / fossil node (GemstoneSpawns>Spawned>Topaz_## / SpawnedFossils>##).
@@ -7716,4 +7774,4 @@ end
 MS("5 DONE - all tabs built, menu ready")
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
-print("[Dream Hub · Prior Extinction v8.3 PE-v4] Loaded — bone-confirmed Auto Hit, 1M food multiplier, shielded-run stamina")
+print("[Dream Hub · Prior Extinction v8.4 PE-v4] Loaded — live-bone Auto Hit, point-drop Pro Food, corpse ESP, physics-safe stamina")
