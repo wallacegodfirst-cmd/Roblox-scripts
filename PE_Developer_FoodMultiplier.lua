@@ -6,6 +6,7 @@
 
 local Players = game:GetService("Players")
 local CoreGui = game:GetService("CoreGui")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LP = Players.LocalPlayer
 local ENV = (typeof(getgenv)=="function" and getgenv()) or _G
 
@@ -28,7 +29,7 @@ if ENV.__PE_DEV_FOOD_MULT and ENV.__PE_DEV_FOOD_MULT.unload then
 	pcall(ENV.__PE_DEV_FOOD_MULT.unload)
 end
 
-local state = {enabled=false, sending=false, burst=false, generation=0, sent=0, amount=1000}
+local state = {enabled=false, sending=false, burst=false, generation=0, sent=0, amount=1000, lastCapture=nil}
 local connections = {}
 ENV.__PE_DEV_FOOD_MULT = state
 
@@ -124,44 +125,78 @@ amountBox.FocusLost:Connect(function()
 	if state.enabled then state.generation+=1; state.burst=false; status.Text="New amount saved; bite normally" end
 end)
 
-local hookmeta=hookmetamethod
-local getnamecall=getnamecallmethod
-local check=checkcaller or function() return false end
-if typeof(hookmeta)~="function" or typeof(getnamecall)~="function" then
-	status.Text="Executor does not support hooks"
-	toggle.Active=false
-	return
+local function copyPacket(source)
+	local out={n=source.n or #source}; for i=1,out.n do out[i]=source[i] end; return out
+end
+local function remoteFor(packet)
+	local events=ReplicatedStorage:FindFirstChild("RemoteEvents")
+	return events and events:FindFirstChild(packet.remote or "ReplicaSignal")
+end
+local function beginBurst(remote,args,captureKey)
+	if not (state.enabled and not state.burst and remote and remote.Parent and args and args[2]=="Bite" and (args.n or #args)>=3) then return false end
+	state.lastCapture=captureKey or tostring(args[1])..":"..tostring(args[3])
+	state.generation+=1
+	local generation=state.generation
+	local identity=ENV.MH_identityKey
+	local character=LP.Character
+	local amount=state.amount
+	local bonus=amount==math.huge and math.huge or math.max(amount-1,0)
+	state.burst=true
+	status.Text="Bite captured · sending "..(bonus==math.huge and "INF" or tostring(bonus))
+	task.defer(function()
+		local sent=0
+		while state.enabled and state.generation==generation and remote.Parent and (not identity or ENV.MH_identityKey==identity) and (identity or LP.Character==character) and (bonus==math.huge or sent<bonus) do
+			state.sending=true
+			local ok=pcall(function() remote:FireServer(table.unpack(args,1,args.n)) end)
+			state.sending=false
+			if ok then sent+=1; state.sent+=1 end
+			if sent%3==0 then task.wait(0.025) end
+		end
+		state.sending=false
+		if state.generation==generation then
+			state.burst=false
+			status.Text=state.enabled and (bonus==math.huge and ("INF stopped · "..tostring(sent).." sent") or ("Finished · +"..tostring(sent))) or "Stopped"
+		end
+	end)
+	return true
 end
 
-local oldNamecall
-oldNamecall=hookmeta(game,"__namecall",function(self,...)
-	local method=getnamecall()
-	if method=="FireServer" and not check() and not state.sending and state.enabled and (self.Name=="ReplicaSignal" or self.Name=="ReplicaSignalUnreliable") then
-		local args=table.pack(...)
-		if args[2]=="Bite" and args.n>=3 and not state.burst then
-			local result=oldNamecall(self,...)
-			state.generation+=1
-			local generation=state.generation
-			local character=LP.Character
-			local amount=state.amount
-			state.burst=true
-			status.Text="Bite accepted · sending "..(amount==math.huge and "INF" or tostring(math.max(amount-1,0)))
-			task.defer(function()
-				local sent=0
-				while state.enabled and state.generation==generation and self.Parent and LP.Character==character and (amount==math.huge or sent<amount-1) do
-					state.sending=true
-					local ok=pcall(function() self:FireServer(table.unpack(args,1,args.n)) end)
-					state.sending=false
-					if ok then sent+=1; state.sent+=1 end
-					if sent%3==0 then task.wait(0.025) end
-				end
-				state.sending=false
-				if state.generation==generation then state.burst=false; status.Text=state.enabled and ("Finished · +"..tostring(sent)) or "Stopped" end
-			end)
-			return result
+-- Primary capture. Do not depend on checkcaller(): Volt and several mobile executors report genuine game-originated
+-- namecalls as caller-owned, which made the old hook ignore every real Bite. Our own replays are explicitly guarded
+-- by state.sending, and state.burst prevents another script's replay from starting a second burst.
+local hookmeta=hookmetamethod
+local getnamecall=getnamecallmethod
+if typeof(hookmeta)=="function" and typeof(getnamecall)=="function" then
+	local oldNamecall
+	oldNamecall=hookmeta(game,"__namecall",function(self,...)
+		local method=getnamecall()
+		if method=="FireServer" and not state.sending and state.enabled and not state.burst and (self.Name=="ReplicaSignal" or self.Name=="ReplicaSignalUnreliable") then
+			local args=table.pack(...)
+			if args[2]=="Bite" and args.n>=3 then
+				local result=oldNamecall(self,...)
+				beginBurst(self,args,"hook:"..tostring(args[1])..":"..tostring(args[3]))
+				return result
+			end
 		end
+		return oldNamecall(self,...)
+	end)
+else
+	status.Text="Hook unavailable · PE Plus capture fallback ready"
+end
+
+-- PE Plus independently records the exact genuine Bite in getgenv(). Polling that packet is a second capture route:
+-- the developer multiplier still works when this executor misses chained hooks or reports caller ownership wrong.
+task.spawn(function()
+	while gui.Parent do
+		if state.enabled and not state.burst then
+			local captured=ENV.MH_lastEatCall
+			if type(captured)=="table" and captured[2]=="Bite" and (captured.n or #captured)>=3 and (captured.identity==nil or captured.identity==ENV.MH_identityKey) then
+				local key="plus:"..tostring(captured.identity)..":"..tostring(captured.capturedAt)..":"..tostring(captured[1])
+				if key~=state.lastCapture then beginBurst(remoteFor(captured),copyPacket(captured),key) end
+			end
+		end
+		task.wait(0.08)
 	end
-	return oldNamecall(self,...)
 end)
 
 local function cancelForDinosaurChange()
