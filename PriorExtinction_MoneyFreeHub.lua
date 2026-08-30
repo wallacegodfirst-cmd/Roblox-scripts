@@ -22,7 +22,8 @@ __gg.__PRIOR_EXT_HUB = nil
 -- Captured replica/source ids are scoped to one server session. Reusing them after a re-execute or server hop
 -- prevents Pro Food or the passive multiplier from replaying dead source ids after a dinosaur switch.
 __gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0
-__gg.MH_foodMultAt=0; __gg.MH_foodMultSending=false; __gg.MH_foodMultSource=nil; __gg.MH_foodMultSent=0; __gg.MH_foodMultState="waiting for a normal Bite"
+__gg.MH_foodMultGen=(__gg.MH_foodMultGen or 0)+1; __gg.MH_foodMultBurst=false; __gg.MH_foodMultSending=false; __gg.MH_foodMultPending=nil; __gg.MH_foodMultCaptureKey=nil
+__gg.MH_foodMultAt=0; __gg.MH_foodMultSource=nil; __gg.MH_foodMultSent=0; __gg.MH_foodMultState="waiting for a normal Bite"
 __gg.MH_attackTemplate=nil; __gg.MH_registerTemplate=nil; __gg.MH_pendingRegister=nil; __gg.MH_attackSequence=nil; __gg.MH_soundTemplate=nil; __gg.MH_hbMade=nil; __gg.MH_hbBuildAt=nil
 __gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_verifiedReplicaId=nil; __gg.MH_wellbeing=nil
 __gg.MH_identityKey=nil; __gg.MH_dietCache=nil; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0; __gg.MH_foodCycleAttempts=0; __gg.MH_foodCycleBusy=false; __gg.MH_foodCycleStarted=0; __gg.MH_foodPhase="idle"; __gg.MH_foodPromptName="none"; __gg.MH_foodPromptAction="none"; __gg.MH_foodPromptCandidate=nil
@@ -38,7 +39,8 @@ __gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil; __gg.MH_foodGen=(__g
 __gg.MH_clearDinoCaches=function(identityKey)
 	__gg.MH_identityKey=identityKey; __gg.MH_dietCache=nil
 	__gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0; __gg.MH_foodProbeCursor=0
-	__gg.MH_foodMultAt=0; __gg.MH_foodMultSending=false; __gg.MH_foodMultSource=nil; __gg.MH_foodMultSent=0; __gg.MH_foodMultState="waiting for a normal Bite"
+	__gg.MH_foodMultGen=(__gg.MH_foodMultGen or 0)+1; __gg.MH_foodMultBurst=false; __gg.MH_foodMultSending=false; __gg.MH_foodMultPending=nil; __gg.MH_foodMultCaptureKey=nil
+	__gg.MH_foodMultAt=0; __gg.MH_foodMultSource=nil; __gg.MH_foodMultSent=0; __gg.MH_foodMultState="waiting for a normal Bite"
 	__gg.MH_attackTemplate=nil; __gg.MH_registerTemplate=nil; __gg.MH_pendingRegister=nil; __gg.MH_attackSequence=nil; __gg.MH_soundTemplate=nil
 	__gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_hbBuildAt=nil
 	__gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0; __gg.MH_foodCycleAttempts=0; __gg.MH_foodCycleBusy=false; __gg.MH_foodCycleStarted=0; __gg.MH_foodPhase="idle"; __gg.MH_foodPromptName="none"; __gg.MH_foodPromptAction="none"; __gg.MH_foodPromptCandidate=nil
@@ -877,7 +879,7 @@ local CFG = {
 	SaveDino=false, SaveHP=30, NoSleep=true, AutoHealBlood=false, AfkEat=false, BotPvP=true,
 	AutoFarmPlayer=false, FarmPlayerRange=120, AutoFarmFossil=false, FarmFossilRange=1000000, FossilSlow=1.2,
 	TargetUser="", TargetTrack=false,
-	ESPPlayers=false, ESPCorpses=false, FoodESP=false, FishESP=false, GemESP=false, ESPRange=900, ESPColor="Default",
+	ESPPlayers=false, FoodESP=false, FishESP=false, GemESP=false, ESPRange=900, ESPColor="Default",
 	RemoveTrees=false, Radar=false, RadarRange=450, RadarDeath=true,
 	AlertEnabled=false, AlertDino="", AlertRange=350, CarnMeatTP=false,
 	ProFood=false, ProFoodEatAt=40, ProFoodDrop=3, ProFoodStopAge="Off", CarnYesHold=false,
@@ -920,6 +922,7 @@ CFG.ProFoodDrop=math.clamp(math.floor(tonumber(CFG.ProFoodDrop) or 3),1,50)
 CFG.AutoHitDistance=math.clamp(math.floor(tonumber(CFG.AutoHitDistance) or 45),5,400)
 CFG.AutoHitRate=math.clamp(tonumber(CFG.AutoHitRate) or 1,1,6)
 CFG.AutoHitFollowDistance=math.clamp(tonumber(CFG.AutoHitFollowDistance) or 8,3,30)
+CFG.AutoHitReverseHead=true
 if CFG.InfFoodDiet~="Herbivore" and CFG.InfFoodDiet~="Carnivore" then CFG.InfFoodDiet="Auto" end
 MS("1 config ok")
 CFG.Keybinds = CFG.Keybinds or {}
@@ -938,7 +941,7 @@ if not (tonumber(CFG.FarmReach) and CFG.FarmReach>=30 and CFG.FarmReach<=120) th
 for _,key in ipairs({
 		"Aimbot","SilentAim","LockOn","HitboxExpand","BoneProtect","TurnHack","Fly","SpeedHack","DeathFix","RespawnDeathPoint","Noclip","InfJump",
 	"InfFood","FoodMultiplier","InfWater","InfStam","InfOxygen","SaveDino","AutoFarmPlayer","AutoFarmFossil","AutoFarmGem","AutoPlayBot",
-	"ESPPlayers","ESPCorpses","FoodESP","FishESP","GemESP","AlertEnabled","CarnMeatTP","ProFood","FullBright","NightVision","NoDarkWater","WaterClear","NoClouds","AlwaysDamage","AutoHit","AutoHitFollow","AutoHitReverseHead","AutoHitRightClick","NoGrabLimit","RemoveTrees","Radar",
+	"ESPPlayers","FoodESP","FishESP","GemESP","AlertEnabled","CarnMeatTP","ProFood","FullBright","NightVision","NoDarkWater","WaterClear","NoClouds","AlwaysDamage","AutoHit","AutoHitFollow","AutoHitRightClick","NoGrabLimit","RemoveTrees","Radar",
 	"Float","GodMode","InfLight","UnlockFOV","InfZoom","AntiDrown","WalkWater","AutoClean","AntiFracture","AntiBleed","Invis",
 	"AntiBreakHead","AntiBreakNeck","AntiBreakLeg","AntiBreakTail","AntiBreakTorso","NoSleep","AntiAFK","UnlockMouse","__SpyOn",
 	"AutoClick","AutoEatFood","DebugPanel","LogRemotes","BypassTP","SafeTP",
@@ -958,6 +961,12 @@ __gg.MH_featureToggleChanged=function(key,value)
 		CFG.FoodMultiplierX=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 1),1,10000000)
 		__gg.MH_foodMultGen=(__gg.MH_foodMultGen or 0)+1; __gg.MH_foodMultBurst=false; __gg.MH_foodMultSending=false
 		__gg.MH_foodMultAt=0; __gg.MH_foodMultState=value and "waiting for a normal Bite" or "off"
+		-- A genuine Bite may have been learned before the toggle was enabled. Reuse only that same-dinosaur capture,
+		-- so Food Multiplier starts immediately instead of making the player bite a second time.
+		local cached=__gg.MH_lastEatCall
+		if value and type(__gg.MH_startFoodMultiplier)=="function" and type(cached)=="table" and cached.identity==__gg.MH_identityKey then
+			task.defer(__gg.MH_startFoodMultiplier,cached)
+		end
 	end
 	if key=="InfStam" then
 		__gg.MH_stamShiftHeld=false
@@ -965,7 +974,7 @@ __gg.MH_featureToggleChanged=function(key,value)
 		__gg.MH_stamInputHeld=physicalShift; __gg.MH_stamRunRequested=value and physicalShift or false
 		if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end
 		task.defer(function()
-			if value and MHNEED then pcall(function() MHNEED.refresh(true); MHNEED.pinStamina(); MHNEED.report("stamina",true); MHNEED.reportKnown("stamina",true) end) end
+			if value and MHNEED then pcall(function() MHNEED.refresh(true); MHNEED.pinStamina(); MHNEED.report("stamina",true); MHNEED.reportKnown("stamina",true); if MHNEED.reportStaminaAll then MHNEED.reportStaminaAll(true) end end) end
 			-- Preserve the player's real Shift state exactly once. Infinite Stamina no longer substitutes Run=false or
 			-- writes velocity/CFrame; native movement is what prevents the server correction/teleport-back cycle.
 			if type(__gg.MH_syncRun)=="function" then pcall(__gg.MH_syncRun,physicalShift) end
@@ -1208,6 +1217,44 @@ seenSet = {}
 local function noteReplicaId(id)
 	if typeof(id)=="number" then myReplicaId=id end
 end
+-- FOOD MULTIPLIER owns a generation-scoped replay worker. A new genuine Bite cancels an older/stale burst and
+-- immediately becomes the source; enabling the toggle can also reuse the last Bite captured for this same dinosaur.
+-- Every replay keeps the exact remote, source id, buffer, and argument count that PE itself sent.
+__gg.MH_startFoodMultiplier=function(seed)
+	if not (RUNNING and CFG.FoodMultiplier and type(seed)=="table" and seed.n and seed[2]=="Bite" and seed.identity==__gg.MH_identityKey) then return false end
+	local remote=(seed.instance and seed.instance.Parent and seed.instance) or (RS:FindFirstChild("RemoteEvents") and RS.RemoteEvents:FindFirstChild(seed.remote or "ReplicaSignal"))
+	if not remote then __gg.MH_foodMultState="captured Bite remote disappeared"; return false end
+	local amount=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 1),1,10000000); local bonus=amount-1
+	__gg.MH_foodMultGen=(__gg.MH_foodMultGen or 0)+1; local generation=__gg.MH_foodMultGen
+	__gg.MH_foodMultBurst=bonus>0; __gg.MH_foodMultSending=false; __gg.MH_foodMultFailures=0; __gg.MH_foodMultSource=seed[1]; __gg.MH_foodMultAt=tick()
+	__gg.MH_foodMultCaptureKey=tostring(seed.identity)..":"..tostring(seed[1])..":"..tostring(seed.capturedAt or tick())
+	if bonus<=0 then __gg.MH_foodMultState="x1: normal Bite only"; return true end
+	__gg.MH_foodMultState="captured source "..tostring(seed[1]).."; sending x"..tostring(amount)
+	task.defer(function()
+		local sent=0; local cursor=0
+		while sent<bonus do
+			if not (RUNNING and CFG.FoodMultiplier and generation==__gg.MH_foodMultGen and seed.identity==__gg.MH_identityKey) then break end
+			-- Cycle only current-dinosaur Bite captures. The newest seed remains a fallback while the list streams.
+			local calls={seed}
+			for _,call in ipairs(__gg.MH_biteCalls or {}) do if call~=seed and type(call)=="table" and call.n and call[2]=="Bite" and call.identity==__gg.MH_identityKey and call.instance and call.instance.Parent then calls[#calls+1]=call end end
+			cursor=(cursor%#calls)+1; local call=calls[cursor]
+			local callRemote=(call.instance and call.instance.Parent and call.instance) or remote
+			if not (callRemote and callRemote.Parent) then break end
+			__gg.MH_foodMultSending=true
+			local ok=pcall(function() callRemote:FireServer(table.unpack(call,1,call.n)) end)
+			__gg.MH_foodMultSending=false
+			if ok then sent+=1; __gg.MH_foodMultSent=(__gg.MH_foodMultSent or 0)+1; __gg.MH_foodMultFailures=0 else __gg.MH_foodMultFailures=(__gg.MH_foodMultFailures or 0)+1; if __gg.MH_foodMultFailures>=5 then break end end
+			-- Twelve exact calls per scheduler slice is fast enough to fill/grow without freezing the executor.
+			if sent%12==0 or not ok then task.wait() end
+		end
+		__gg.MH_foodMultSending=false
+		if generation==__gg.MH_foodMultGen then
+			__gg.MH_foodMultBurst=false
+			__gg.MH_foodMultState=sent>0 and ("last Bite +"..tostring(sent).." sent") or "bonus burst stopped"
+		end
+	end)
+	return true
+end
 -- Shared region matcher for both the outgoing injury gate and the local path-aware cleanup. A selected bone never
 -- authorizes a generic whole-body fracture clear unless the selection is explicitly "All".
 __gg.MH_protectBoneMatches=function(path)
@@ -1318,28 +1365,10 @@ local function installHook()
 							local key=tostring(id); local replaced=false
 							for i,c in ipairs(__gg.MH_biteCalls) do if c.key==key then snap.key=key; __gg.MH_biteCalls[i]=snap; replaced=true; break end end
 							if not replaced then snap.key=key; table.insert(__gg.MH_biteCalls, snap); if #__gg.MH_biteCalls>3 then table.remove(__gg.MH_biteCalls,1) end end
-							-- FOOD MULTIPLIER: one genuine Bite is sent normally, then the exact same remote/id/buffer is replayed
-							-- up to 999,999 more times. Replays are bounded, spread across frames, tied to this dinosaur identity,
-							-- and marked so executors without checkcaller cannot recursively multiply our own calls.
-							if CFG.FoodMultiplier and not __gg.MH_foodMultSending and not __gg.MH_foodMultBurst and tick()-(__gg.MH_foodMultAt or 0)>=0.18 then
-								__gg.MH_foodMultAt=tick(); __gg.MH_foodMultSource=id; __gg.MH_foodMultState="captured source "..tostring(id).."; sending bonus Bites"
-								local remote=self; local identity=snap.identity; local bonus=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 10),1,10000000)-1
-								if bonus<=0 then __gg.MH_foodMultState="x1: normal Bite only" end
-								if bonus>0 then __gg.MH_foodMultGen=(__gg.MH_foodMultGen or 0)+1; __gg.MH_foodMultBurst=true end
-								local generation=__gg.MH_foodMultGen
-								task.defer(function()
-									local sent=0
-									for extra=1,bonus do
-										if not (RUNNING and CFG.FoodMultiplier and generation==__gg.MH_foodMultGen and identity==__gg.MH_identityKey and remote and remote.Parent) then break end
-										__gg.MH_foodMultSending=true
-										local ok=pcall(function() remote:FireServer(table.unpack(snap,1,snap.n)) end)
-										__gg.MH_foodMultSending=false
-										if ok then sent+=1; __gg.MH_foodMultSent=(__gg.MH_foodMultSent or 0)+1 end
-										if extra%3==0 then task.wait(0.025) end
-									end
-									__gg.MH_foodMultSending=false
-									if generation==__gg.MH_foodMultGen then __gg.MH_foodMultBurst=false; __gg.MH_foodMultState=sent>0 and ("last Bite +"..tostring(sent).." sent") or (bonus<=0 and "x1: normal Bite only" or "bonus burst stopped") end
-								end)
+							-- Start from every genuine Bite. The generation worker cancels a stale burst and follows the newest
+							-- source/buffer, which is required when PE rotates food ids or the dinosaur changes what it is eating.
+							if CFG.FoodMultiplier and not __gg.MH_foodMultSending and type(__gg.MH_startFoodMultiplier)=="function" then
+								task.defer(__gg.MH_startFoodMultiplier,snap)
 							end
 						end
 					elseif selfCall then
@@ -2234,6 +2263,39 @@ function MHNEED.reportKnown(kind,force)
 	if not force and now-last<(kind=="stamina" and 0.25 or 0.9) then return false end
 	__gg.MH_needReportAt[stamp]=now
 	return pcall(function() rep:FireServer("SetProperty",property,mx) end)
+end
+-- Stamina can be exposed locally as Stamina.Delta/Max while the replica setter expects the parent property name.
+-- Report every concrete CURRENT alias actually found on this dinosaur (plus the inferred Stamina parent for a
+-- generic Delta/Current field). This never edits movement, Run state, velocity, or CFrame.
+function MHNEED.reportStaminaAll(force)
+	MHNEED.refresh(); local mx=MHNEED.max.stamina; local source=MHNEED.maxSource and MHNEED.maxSource.stamina
+	if not (mx and mx>0 and (source=="paired" or source=="hud" or source=="highwater")) then return false end
+	local rep=csReplica(); local id=MHNEED.replicaId(); if not (rep and id and rep.FireServer) then return false end
+	local stamp="stamina:all"; local now=tick(); local last=__gg.MH_needReportAt[stamp] or 0
+	if not force and now-last<0.08 then return false end; __gg.MH_needReportAt[stamp]=now
+	local properties={}; local used={}
+	local function add(name)
+		if type(name)~="string" or name=="" then return end
+		local low=name:lower(); if low:find("max",1,true) or low:find("rate",1,true) or low:find("drain",1,true) or low:find("cost",1,true) then return end
+		if not used[low] then used[low]=true; properties[#properties+1]=name end
+	end
+	local packet=__gg.MH_needPackets and __gg.MH_needPackets.stamina; if type(packet)=="table" and packet[1]==id then add(packet[3]) end
+	for _,ref in ipairs(MHNEED.refs.stamina or {}) do
+		local key=ref.key or (ref.inst and ref.inst.Name); local nk=MHNEED.norm(key); local path=tostring(ref.path or ""):lower()
+		local generic=nk=="current" or nk=="cur" or nk=="value" or nk=="amount" or nk=="level" or nk=="delta"
+		if generic then
+			if path:find("stam",1,true) then add("Stamina") elseif path:find("energy",1,true) then add("Energy") elseif path:find("endur",1,true) then add("Endurance") end
+		elseif MHNEED.kindFor(key,ref.path)=="stamina" then add(key) end
+	end
+	-- PE's current live layouts consistently name the parent meter Stamina even when only Delta is enumerable.
+	add("Stamina")
+	local sent=0
+	for index,property in ipairs(properties) do
+		if index>4 then break end
+		if pcall(function() rep:FireServer("SetProperty",property,mx) end) then sent+=1 end
+	end
+	__gg.MH_stamReportState=sent>0 and ("hard-pin "..tostring(sent).." stamina path(s) / "..tostring(source)) or "stamina report failed"
+	return sent>0
 end
 -- Character/species/verified-replica changes can occur without a CharacterAdded event. Watch only the cheap identity
 -- tuple and invalidate all diet, Bite, combat/sound, need, and blood caches before any old packet can be replayed.
@@ -3535,7 +3597,7 @@ do local p=Pages["Combat"]
 	mkToggle(a,"Silent Aim","SilentAim",1)
 	mkToggle(a,"Lock On","LockOn",2)
 	mkToggle(a,"Auto Hit (no click)","AutoHit",3)
-	mkToggle(a,"Follow locked bone with WASD","AutoHitFollow",4)
+	mkToggle(a,"Follow animated Head with W/A/S/D","AutoHitFollow",4)
 	mkSlider(a,"Follow stop distance","AutoHitFollowDistance",3,30,5,1)
 	mkToggle(a,"Reverse with S after passing head","AutoHitReverseHead",6)
 	mkToggle(a,"Extra M2 / right-click","AutoHitRightClick",7)
@@ -3544,11 +3606,10 @@ do local p=Pages["Combat"]
 	mkBtn(a,"Clear Auto Hit target",function() if __gg.MH_autoHitClear then __gg.MH_autoHitClear(true) else CFG.AutoHitTargetName=""; saveCfg() end end,10)
 	mkSlider(a,"Auto Hit lock distance","AutoHitDistance",5,400,11,5)
 	mkSlider(a,"Auto Hit clicks / sec","AutoHitRate",1,6,12,1)
-	mkDropdown(a,"Auto Hit Bone", function() return {"Auto","Head","Neck","Spine","Body","Hip","Leg","Tail"} end, function() return CFG.DamagePart~="" and CFG.DamagePart or "Auto" end, function(opt) CFG.DamagePart=opt; saveCfg() end, 13)
-	__gg.MH_autoHitStatusLabel=mkStatus(a,"Auto Hit target",14)
-	mkDropdown(a,"Aim Part", function() return {"Hitbox","Head","Spine","Neck","Hip","Body","Leg","Tail"} end, function() return CFG.AimPart~="" and CFG.AimPart or "Hitbox" end, function(opt) CFG.AimPart=opt; saveCfg() end, 15)
-	mkSlider(a,"Aim Smoothness","AimSmooth",0,1,16)
-	mkLabel(a,"Follow uses normal W/A/S/D. If you pass the selected head and it is behind your dinosaur, Reverse Head holds S until you return to the stop distance.",17)
+	__gg.MH_autoHitStatusLabel=mkStatus(a,"Auto Hit target",13)
+	mkDropdown(a,"Aim Part", function() return {"Hitbox","Head","Spine","Neck","Hip","Body","Leg","Tail"} end, function() return CFG.AimPart~="" and CFG.AimPart or "Hitbox" end, function(opt) CFG.AimPart=opt; saveCfg() end, 14)
+	mkSlider(a,"Aim Smoothness","AimSmooth",0,1,15)
+	mkLabel(a,"Auto Hit is Head-only: it tracks the animated inner Head, runs continuously while far away, and holds S if you pass the Head.",16)
 end
 do local p=Pages["PvP"]
 	local _,d=mkSec(p,"Damage",1)
@@ -4017,11 +4078,10 @@ end
 do local p=Pages["Visuals"]
 	local _,e=mkSec(p,"ESP",1)
 	mkToggle(e,"ESP Creatures + Players","ESPPlayers",1)
-	mkToggle(e,"ESP Corpses","ESPCorpses",2)
-	mkToggle(e,"Plant ESP","FoodESP",3)
-	mkToggle(e,"Fish ESP","FishESP",4)
-	mkToggle(e,"Gem + Fossil ESP","GemESP",5)
-	mkSlider(e,"ESP Range","ESPRange",100,3000,6,50)
+	mkToggle(e,"Plant ESP","FoodESP",2)
+	mkToggle(e,"Fish ESP","FishESP",3)
+	mkToggle(e,"Gem + Fossil ESP","GemESP",4)
+	mkSlider(e,"ESP Range","ESPRange",100,3000,5,50)
 	mkDropdown(e,"ESP Color", function() return {"Default","Rainbow","Red","Green","Blue","Yellow","Purple","Cyan","Orange","Pink","White"} end, function() return CFG.ESPColor~="" and CFG.ESPColor or "Default" end, function(opt) CFG.ESPColor=opt; saveCfg() end, 6)
 	local _,l=mkSec(p,"World",2)
 	mkToggle(l,"Full Bright","FullBright",1)
@@ -4230,7 +4290,8 @@ task.spawn(function()
 						-- Once the resolver has an exact live Food/Stamina field (including CharacterState.PlayerData), use the
 						-- game's own throttled SetProperty route as a fallback. Captured exact packets still take priority.
 						local known=false; if not reported then known=MHNEED.reportKnown(kind,not wasOn[kind]) end
-						if kind=="stamina" and not reported then
+						local hard=false; if kind=="stamina" and MHNEED.reportStaminaAll then hard=MHNEED.reportStaminaAll(not wasOn[kind]) end
+						if kind=="stamina" and not reported and not hard then
 							local packet=__gg.MH_needPackets and __gg.MH_needPackets.stamina
 							__gg.MH_stamReportState=known and "known-property fallback sent" or (packet and "exact packet waiting for trusted max" or "waiting for exact stamina packet")
 						end
@@ -4566,7 +4627,7 @@ conn(RunService.Heartbeat:Connect(function()
 			end end
 		end
 		local now=tick(); if now-(__gg.MH_stamHardReportAt or 0)>=0.1 then
-			__gg.MH_stamHardReportAt=now; local exact=MHNEED.report("stamina",true); if not exact then MHNEED.reportKnown("stamina",true) end
+			__gg.MH_stamHardReportAt=now; local exact=MHNEED.report("stamina",true); if not exact then MHNEED.reportKnown("stamina",true) end; if MHNEED.reportStaminaAll then MHNEED.reportStaminaAll(true) end
 		end
 	end)
 end))
@@ -5534,23 +5595,28 @@ __gg.MH_primeCombat=function(target)
 		if cam and old then cam.CFrame=old end
 	end)
 end
--- Find the nearest live dinosaur whose selected bone is actually visible on-screen. Auto Hit moves the virtual mouse
--- to that exact live bone for the native animation, then submits the currently captured RegisterAttack/Attack sequence
--- with that same bone instance. This prevents the old cursor-only click from landing on the model root instead.
-__gg.MH_autoHitAim=function(model)
+-- AUTO HIT is intentionally HEAD-ONLY. Resolve the animated inner Head Bone/Attachment first (for example
+-- Hitbox.Head.Head or MeshModel.RootPart...Head), then a literal Head part only if no animated child exists.
+-- Generic Hitbox/root fallbacks are forbidden: waiting for a streamed Head is safer than attacking the wrong bone.
+__gg.MH_autoHitHead=function(model)
 	if not model then return nil end
-	local want=CFG.DamagePart; local list=(want and want~="" and want~="Auto" and ATK_GROUPS[want]) or ATK_GROUPS.Auto
-	for _,entry in ipairs(list or {}) do local bone=_findIn(model,entry.n); if _bonePos(bone) then return bone end end
-	if want and want~="" and want~="Auto" then
-		local words=({Head={"head","skull","jaw","crani"},Neck={"neck"},Spine={"spine","body","torso","chest"},Body={"spine","body","torso","chest","hip"},Leg={"leg","femur","tibia","foot","toe"},Tail={"tail"},Hip={"hip","pelvis","ilium"}})[want]
-		if words then local scanned=0; for _,item in ipairs(model:GetDescendants()) do scanned+=1; if scanned>600 then break end
-			if item:IsA("BasePart") or item:IsA("Bone") or item:IsA("Attachment") then local name=item.Name:lower()
-				for _,word in ipairs(words) do if name:find(word,1,true) and _bonePos(item) then return item end end
-			end
-		end end
+	local best,bestScore=nil,-1; local scanned=0
+	local function consider(item)
+		if not (item:IsA("BasePart") or item:IsA("Bone") or item:IsA("Attachment")) then return end
+		local name=item.Name:lower():gsub("[^%w]",""); if name~="head" and name:sub(1,4)~="head" then return end
+		local position=partPos(item); if not position then return end
+		local score=(name=="head" and 500 or 320)+((item:IsA("Bone") or item:IsA("Attachment")) and 220 or 40)
+		local parent=item.Parent; if parent and parent.Name:lower()=="head" then score+=100 end
+		local p=item.Parent; local inMesh=false; local inHitbox=false
+		for _=1,8 do if not p or p==model.Parent then break end; local n=p.Name:lower(); if n=="meshmodel" then inMesh=true elseif n=="hitbox" or n=="hitboxpart" then inHitbox=true end; p=p.Parent end
+		if inMesh then score+=90 end; if inHitbox and (item:IsA("Bone") or item:IsA("Attachment")) then score+=70 end
+		if item:IsA("BasePart") and item:FindFirstChild(item.Name) then score-=260 end
+		if score>bestScore then best,bestScore=item,score end
 	end
-	return getAimPart(model) or getHitbox(model) or rootOf(model)
+	consider(model); for _,item in ipairs(model:GetDescendants()) do scanned+=1; if scanned>1200 then break end; consider(item) end
+	return best
 end
+__gg.MH_autoHitAim=function(model) return __gg.MH_autoHitHead(model) end
 __gg.MH_autoHitSetStatus=function(value)
 	value=tostring(value or "No target")
 	if __gg.MH_autoHitStatus==value then return end
@@ -5564,7 +5630,7 @@ __gg.MH_autoHitReleaseMovement=function()
 end
 __gg.MH_autoHitDriveMovement=function(target)
 	if not (CFG.AutoHit and CFG.AutoHitFollow and alive() and target and target.Parent) then __gg.MH_autoHitReleaseMovement(); return end
-	local me=hrp(); local bone=__gg.MH_autoHitAim(target); local position=partPos(bone); local cam=workspace.CurrentCamera
+	local me=hrp(); local bone=__gg.MH_autoHitHead(target); local position=partPos(bone); local cam=workspace.CurrentCamera
 	if not (me and position and cam) then __gg.MH_autoHitReleaseMovement(); return end
 	local delta=Vector3.new(position.X-me.Position.X,0,position.Z-me.Position.Z); local stop=math.clamp(tonumber(CFG.AutoHitFollowDistance) or 8,3,30)
 	if delta.Magnitude<=stop then __gg.MH_autoHitReleaseMovement(); return end
@@ -5574,11 +5640,10 @@ __gg.MH_autoHitDriveMovement=function(target)
 	-- Overshoot recovery requested for head hits: if the selected live head has moved behind our dinosaur after we
 	-- passed it, use an explicit S-only retreat until the head is back inside the stop distance. Nearby heads already
 	-- returned above, so this never backs away while correctly positioned for the bite.
-	local rel=me.CFrame:PointToObjectSpace(position); local boneName=tostring(bone and bone.Name or ""):lower()
-	local followsHead=CFG.DamagePart=="Auto" or CFG.DamagePart=="Head" or boneName:find("head",1,true) or boneName:find("skull",1,true)
-	if CFG.AutoHitReverseHead and followsHead and rel.Z>math.max(1,stop*0.2) then desired={W=false,A=false,D=false,S=true}; __gg.MH_autoHitReverseActive=true else __gg.MH_autoHitReverseActive=false end
+	local rel=me.CFrame:PointToObjectSpace(position); local run=delta.Magnitude>math.max(stop+12,25)
+	if CFG.AutoHitReverseHead and rel.Z>math.max(1,stop*0.2) then desired={W=false,A=false,D=false,S=true,LeftShift=run}; __gg.MH_autoHitReverseActive=true else desired.LeftShift=run; __gg.MH_autoHitReverseActive=false end
 	__gg.MH_autoHitHeld=__gg.MH_autoHitHeld or {}
-	for _,name in ipairs({"W","A","S","D"}) do local down=desired[name]==true
+	for _,name in ipairs({"W","A","S","D","LeftShift"}) do local down=desired[name]==true
 		if (__gg.MH_autoHitHeld[name]==true)~=down then __gg.MH_autoHitHeld[name]=down or nil; pcall(function() VIM:SendKeyEvent(down,Enum.KeyCode[name],false,game) end) end
 	end
 	__gg.MH_autoHitTrackBone=bone; __gg.MH_autoHitTrackUntil=tick()+0.2
@@ -5721,8 +5786,8 @@ task.spawn(function() while RUNNING do
 		task.wait(1/math.max(1,CFG.DamageRate))
 	else task.wait(0.15) end
 end end)
--- AUTO HIT: one locked target, one selected live bone. The genuine M1 preserves animation/cooldown and learns the
--- current dinosaur's packet; the exact captured combat sequence then reports that same bone instead of a root hit.
+-- AUTO HIT: one locked target, one literal animated Head. The genuine M1 preserves animation/cooldown and learns the
+-- current dinosaur's packet; the exact captured combat sequence then reports that Head instead of a root/hitbox hit.
 task.spawn(function() while RUNNING do
 	if CFG.AutoHit and alive() then
 		local target=__gg.MH_autoHitTarget()
@@ -7364,7 +7429,7 @@ __gg.MH_readDino = readDinoInfo   -- the Target profile calls this at runtime (g
 -- so Fish ESP (which used to scan the entire workspace every 0.6s) can no longer lag you out or kill the menu.
 task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
 	destroyESP(); local me=hrp()
-	if not me or not (CFG.ESPPlayers or CFG.ESPCorpses or CFG.FoodESP or CFG.FishESP or CFG.GemESP) then return end
+	if not me or not (CFG.ESPPlayers or CFG.FoodESP or CFG.FishESP or CFG.GemESP) then return end
 	local MAX=180; local count=0
 	if CFG.ESPPlayers then
 		local chars = WS:FindFirstChild("Characters")
@@ -7392,47 +7457,6 @@ task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
 				end
 			end
 		end
-	end
-	-- CORPSES (RED), strict sources only: confirmed dead models, LeftCharacters, and a REAL body/prompt inside
-	-- CharacterIgnore.CorpseSpawns. Empty DinosaurSpawn markers, generic red objects, meat, bones, fish, and broad
-	-- workspace name scans are deliberately excluded so the map can never be highlighted as a corpse again.
-	if CFG.ESPCorpses then
-		local corpseSeen={}; local corpseAdded=0
-		local function markCorpse(source,label)
-			if count>=MAX or not source then return end
-			local subject=source; local part
-			if source:IsA("Model") then part=getHitbox(source) or rootOf(source) or source:FindFirstChildWhichIsA("BasePart",true)
-			elseif source:IsA("BasePart") or source:IsA("Attachment") then part=source
-			else
-				local child=source:FindFirstChildWhichIsA("Model",true); if child then subject=child; part=getHitbox(child) or rootOf(child) or child:FindFirstChildWhichIsA("BasePart",true) else part=source:FindFirstChildWhichIsA("BasePart",true); subject=part end
-			end
-			if not (subject and part and not corpseSeen[subject]) then return end
-			local dd=dist(me.Position,part.Position); if dd>CFG.ESPRange then return end
-			corpseSeen[subject]=true; if addESP(subject,Color3.fromRGB(235,60,60),(label or "Corpse").." ["..math.floor(dd).."m]") then count+=1; corpseAdded+=1 end
-		end
-		local characters=WS:FindFirstChild("Characters"); if characters then for _,model in ipairs(characters:GetChildren()) do
-			if model:IsA("Model") and model~=getMyModel() and modelDead(model) then markCorpse(model,"Dead player/dinosaur") end
-		end end
-		local ci=WS:FindFirstChild("CharacterIgnore"); local left=ci and ci:FindFirstChild("LeftCharacters")
-		if left then for _,dead in ipairs(left:GetChildren()) do if count>=MAX then break end; markCorpse(dead,"Dead player/dinosaur") end end
-		local spawns=ci and ci:FindFirstChild("CorpseSpawns")
-		if spawns then for _,spawn in ipairs(spawns:GetChildren()) do
-			if count>=MAX then break end
-			local subject
-			for _,item in ipairs(spawn:GetDescendants()) do
-				if item:IsA("ProximityPrompt") then
-					local text=(tostring(item.ActionText or "").." "..tostring(item.ObjectText or "").." "..item.Name):lower()
-					if text:find("investigate",1,true) or text:find("examine",1,true) or text:find("corpse",1,true) then subject=item.Parent; break end
-				elseif item:IsA("Humanoid") and item.Health<=0 then subject=item.Parent; break
-				elseif item:IsA("Model") and item~=spawn then
-					local body=rootOf(item) or item:FindFirstChildWhichIsA("BasePart",true); if body then subject=item; break end
-				elseif item:IsA("BasePart") and item~=spawn then
-					local visible=false; pcall(function() visible=item.Transparency<0.95 and item.Size.Magnitude>0.35 end); if visible then subject=item; break end
-				end
-			end
-			if subject then markCorpse(subject,"Corpse") end
-		end end
-		__gg.MH_lastCorpseESPCount=corpseAdded
 	end
 	-- GEM + FOSSIL ESP: highlight every gemstone / fossil node (GemstoneSpawns>Spawned>Topaz_## / SpawnedFossils>##).
 	if CFG.GemESP then
@@ -7482,7 +7506,7 @@ task.spawn(function() while RUNNING do task.wait(1.6); pcall(function()
 				local hit,color,tag
 				if CFG.FishESP and isFishName(n) then hit=true; color=Color3.fromRGB(90,210,255); tag="Fish: "..m.Name
 				elseif CFG.FoodESP and isFoodName(n) then
-					-- PLANT ESP: herbivore plants ONLY, always GREEN. Skip meat/corpse/fish (those are Corpse ESP's job).
+					-- PLANT ESP: herbivore plants ONLY, always GREEN. Skip meat/corpse/fish.
 					local meat=(n:find("meat") or n:find("corpse") or n:find("carcass") or n:find("carrion") or n:find("chunk") or n:find("rotten") or n:find("flesh") or n:find("remains") or isFishName(n))
 					if not meat then hit=true; color=Color3.fromRGB(70,235,70); tag="Plant: "..m.Name end
 				end
@@ -7841,4 +7865,4 @@ end
 MS("5 DONE - all tabs built, menu ready")
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
-print("[Dream Hub · Prior Extinction v8.6 PE-v4] Loaded — strict corpse ESP, native-movement stamina pin, reverse-head follow, 10M food")
+print("[Dream Hub · Prior Extinction v8.7 PE-v4] Loaded — animated-head chase, multi-path stamina pin, repaired food replay, corpse ESP removed")
