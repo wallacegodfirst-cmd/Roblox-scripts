@@ -71,7 +71,7 @@ local function label(text,y,height,size,color)
 end
 
 label("PE Developer · Food Multiplier"..(recognizedDeveloper and "" or " · private loader"),12,24,17,Color3.fromRGB(93,235,145))
-label("Enter 1, any number, or INF",40,20,12,Color3.fromRGB(153,162,177))
+label("Enter 1-10M, or INF",40,20,12,Color3.fromRGB(153,162,177))
 
 local amountBox=Instance.new("TextBox")
 amountBox.Position=UDim2.fromOffset(16,68)
@@ -106,7 +106,7 @@ local function parseAmount()
 	local scale=1; local suffix=raw:sub(-1)
 	if suffix=="k" then scale=1000; raw=raw:sub(1,-2) elseif suffix=="m" then scale=1000000; raw=raw:sub(1,-2) end
 	local value=math.floor((tonumber(raw) or 1)*scale)
-	value=math.clamp(value,1,1000000)
+	value=math.clamp(value,1,10000000)
 	return value,tostring(value)
 end
 
