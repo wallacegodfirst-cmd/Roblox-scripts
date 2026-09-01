@@ -25,14 +25,15 @@ __gg.__PRIOR_EXT_HUB = nil
 -- prevents Pro Food or the passive multiplier from replaying dead source ids after a dinosaur switch.
 __gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0
 __gg.MH_foodMultGen=(__gg.MH_foodMultGen or 0)+1; __gg.MH_foodMultBurst=false; __gg.MH_foodMultSending=false; __gg.MH_foodMultPending=nil; __gg.MH_foodMultCaptureKey=nil
-__gg.MH_foodMultAt=0; __gg.MH_foodMultSource=nil; __gg.MH_foodMultSent=0; __gg.MH_foodMultState="waiting for a normal Bite"; __gg.MH_foodMultSafetyCap=240
+__gg.MH_foodMultAt=0; __gg.MH_foodMultSource=nil; __gg.MH_foodMultSent=0; __gg.MH_foodMultState="waiting for a normal Bite"; __gg.MH_foodMultSafetyCap=48; __gg.MH_foodMultCooldownUntil=0
+__gg.MH_drainFoodState="off"; __gg.MH_drainFoodAt=0
 __gg.MH_attackTemplate=nil; __gg.MH_registerTemplate=nil; __gg.MH_pendingRegister=nil; __gg.MH_attackSequence=nil; __gg.MH_soundTemplate=nil; __gg.MH_hbMade=nil; __gg.MH_hbBuildAt=nil
 __gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_verifiedReplicaId=nil; __gg.MH_wellbeing=nil
 __gg.MH_identityKey=nil; __gg.MH_dietCache=nil; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0; __gg.MH_foodCycleAttempts=0; __gg.MH_foodCycleBusy=false; __gg.MH_foodCycleStarted=0; __gg.MH_foodPhase="idle"; __gg.MH_foodPromptName="none"; __gg.MH_foodPromptAction="none"; __gg.MH_foodPromptCandidate=nil
 __gg.MH_infFoodTargetsCache=nil; __gg.MH_foodTargetCount=0; __gg.MH_foodTargetKind="none"; __gg.MH_foodTargetPath="none"; __gg.MH_foodTargetReplicaCount=0; __gg.MH_foodDietReplicaState=nil; __gg.MH_foodDietReplicaCount=0; __gg.MH_foodMatchedReplicaCount=0
 __gg.MH_foodSourceRevision=0; __gg.MH_foodSourceKinds="none"; __gg.MH_foodResolvedDiet="unresolved"; __gg.MH_foodBufferMode="none"; __gg.MH_foodVisibleBefore=nil; __gg.MH_foodVisibleAfter=nil; __gg.MH_foodVisibleDelta=nil; __gg.MH_foodAcceptance="unobserved"; __gg.MH_foodLastFailure="not run"
 __gg.MH_growthState="waiting"; __gg.MH_growthValue=nil; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_growthBase=nil; __gg.MH_stamBoostSpeed=0; __gg.MH_stamPinState="waiting"; __gg.MH_stamReportState="waiting"
-__gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_stamInputHeld=false; __gg.MH_stamRunRequested=false; __gg.MH_stamDriveSpeed=0; __gg.MH_stamSyncAt=0; __gg.MH_stamMaskCount=0; __gg.MH_nativeRunSpeed=0; __gg.MH_stamObservedCurrent=nil; __gg.MH_stamObservedAt=0; __gg.MH_stamGenericProperty=nil; __gg.MH_stamGenericCandidates={}; __gg.MH_eatRecoveryAt=0; __gg.MH_eatRecoveryUntil=0; __gg.MH_eatRecoveryGen=(__gg.MH_eatRecoveryGen or 0)+1; __gg.MH_moveMultiplierPackets={}; __gg.MH_moveMultiplierBaseline={}; __gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_healthPacket=nil; __gg.MH_guardLastHP=nil
+__gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_stamInputHeld=false; __gg.MH_stamRunRequested=false; __gg.MH_stamDriveSpeed=0; __gg.MH_stamForcedSpeed=16; __gg.MH_stamSyncAt=0; __gg.MH_stamPhysicsSyncAt=0; __gg.MH_stamMaskCount=0; __gg.MH_nativeRunSpeed=0; __gg.MH_stamObservedCurrent=nil; __gg.MH_stamObservedAt=0; __gg.MH_stamGenericProperty=nil; __gg.MH_stamGenericCandidates={}; __gg.MH_stamSavedHumanoid=nil; __gg.MH_stamSavedWalkSpeed=nil; __gg.MH_eatRecoveryAt=0; __gg.MH_eatRecoveryUntil=0; __gg.MH_eatRecoveryGen=(__gg.MH_eatRecoveryGen or 0)+1; __gg.MH_moveMultiplierPackets={}; __gg.MH_moveMultiplierBaseline={}; __gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_healthPacket=nil; __gg.MH_guardLastHP=nil
 pcall(function() if __gg.MH_autoHitHighlight then __gg.MH_autoHitHighlight:Destroy() end; if __gg.MH_autoHitDriveBV then __gg.MH_autoHitDriveBV:Destroy() end; if __gg.MH_autoHitDriveBG then __gg.MH_autoHitDriveBG:Destroy() end; if __gg.MH_stamBV then __gg.MH_stamBV:Destroy() end end)
 __gg.MH_runPacket=nil; __gg.MH_nativeRunActive=false; __gg.MH_runShielded=0; __gg.MH_autoHitClicking=false; __gg.MH_autoHitLocked=nil; __gg.MH_autoHitHighlight=nil; __gg.MH_autoHitSelect=false; __gg.MH_autoHitQuery=nil; __gg.MH_autoHitManualClear=false; __gg.MH_autoHitStatus="No target"; __gg.MH_autoHitTrackBone=nil; __gg.MH_autoHitTrackUntil=0; __gg.MH_autoHitLastHeadPos=nil; __gg.MH_autoHitHeadBone=nil; __gg.MH_autoHitHeadModel=nil; __gg.MH_autoHitHeadAt=0; __gg.MH_autoHitDriveBV=nil; __gg.MH_autoHitDriveBG=nil; __gg.MH_autoHitHeld={}; __gg.MH_autoHitNativeReportAt=0; __gg.MH_autoHitNativeReportTarget=nil; __gg.MH_autoHitInputRoute=1; __gg.MH_autoHitClickMethod="waiting"
 __gg.MH_releasePacket=nil; __gg.MH_escapeLastBlocked=0; __gg.MH_escapeState=nil; __gg.MH_escapeStatus="waiting"
@@ -40,17 +41,20 @@ __gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil; __gg.MH_foodGen=(__g
 -- Every captured packet below is valid only for one playable dinosaur. Character, species, or verified replica
 -- changes invalidate food-source ids, combat/sound templates, need reports, and protection high-water state together.
 __gg.MH_clearDinoCaches=function(identityKey)
+	if type(__gg.MH_stamStopOwnedVelocity)=="function" then pcall(__gg.MH_stamStopOwnedVelocity) end
+	if type(__gg.MH_stamRestoreWalkSpeed)=="function" then pcall(__gg.MH_stamRestoreWalkSpeed) end
 	__gg.MH_identityKey=identityKey; __gg.MH_dietCache=nil
 	__gg.MH_lastEatCall=nil; __gg.MH_lastEatT=nil; __gg.MH_biteCalls={}; __gg.MH_foodIds={}; __gg.MH_eat=nil; __gg.MH_eatBuf=nil; __gg.MH_foodCursor=0; __gg.MH_foodProbeCursor=0
 	__gg.MH_foodMultGen=(__gg.MH_foodMultGen or 0)+1; __gg.MH_foodMultBurst=false; __gg.MH_foodMultSending=false; __gg.MH_foodMultPending=nil; __gg.MH_foodMultCaptureKey=nil
-	__gg.MH_foodMultAt=0; __gg.MH_foodMultSource=nil; __gg.MH_foodMultSent=0; __gg.MH_foodMultState="waiting for a normal Bite"; __gg.MH_foodMultSafetyCap=240
+	__gg.MH_foodMultAt=0; __gg.MH_foodMultSource=nil; __gg.MH_foodMultSent=0; __gg.MH_foodMultState="waiting for a normal Bite"; __gg.MH_foodMultSafetyCap=48; __gg.MH_foodMultCooldownUntil=0
+	__gg.MH_drainFoodState="off"; __gg.MH_drainFoodAt=0
 	__gg.MH_attackTemplate=nil; __gg.MH_registerTemplate=nil; __gg.MH_pendingRegister=nil; __gg.MH_attackSequence=nil; __gg.MH_soundTemplate=nil
 	__gg.MH_attackBoneCache=setmetatable({}, {__mode="k"}); __gg.MH_hbBuildAt=nil
 	__gg.MH_needPackets={}; __gg.MH_needReportAt={}; __gg.MH_needHighWater={food=nil,stamina=nil}; __gg.MH_foodDirectAt=nil; __gg.MH_growthResumeAt=nil; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_foodReplicaCursor=0; __gg.MH_foodBitesSent=0; __gg.MH_foodCycleAttempts=0; __gg.MH_foodCycleBusy=false; __gg.MH_foodCycleStarted=0; __gg.MH_foodPhase="idle"; __gg.MH_foodPromptName="none"; __gg.MH_foodPromptAction="none"; __gg.MH_foodPromptCandidate=nil
 	__gg.MH_infFoodTargetsCache=nil; __gg.MH_foodTargetCount=0; __gg.MH_foodTargetKind="none"; __gg.MH_foodTargetPath="none"; __gg.MH_foodTargetReplicaCount=0; __gg.MH_foodDietReplicaState=nil; __gg.MH_foodDietReplicaCount=0; __gg.MH_foodMatchedReplicaCount=0
 	__gg.MH_foodSourceRevision=(__gg.MH_foodSourceRevision or 0)+1; __gg.MH_foodSourceKinds="none"; __gg.MH_foodResolvedDiet="unresolved"; __gg.MH_foodBufferMode="none"; __gg.MH_foodVisibleBefore=nil; __gg.MH_foodVisibleAfter=nil; __gg.MH_foodVisibleDelta=nil; __gg.MH_foodAcceptance="unobserved"; __gg.MH_foodLastFailure="identity changed"
 	__gg.MH_growthState="waiting"; __gg.MH_growthValue=nil; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_growthBase=nil; __gg.MH_stamBoostSpeed=0; __gg.MH_stamPinState="waiting"; __gg.MH_stamReportState="waiting"
-	__gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_stamInputHeld=false; __gg.MH_stamRunRequested=false; __gg.MH_stamDriveSpeed=0; __gg.MH_stamSyncAt=0; __gg.MH_stamMaskCount=0; __gg.MH_nativeRunSpeed=0; __gg.MH_stamObservedCurrent=nil; __gg.MH_stamObservedAt=0; __gg.MH_stamGenericProperty=nil; __gg.MH_stamGenericCandidates={}; __gg.MH_eatRecoveryAt=0; __gg.MH_eatRecoveryUntil=0; __gg.MH_eatRecoveryGen=(__gg.MH_eatRecoveryGen or 0)+1; __gg.MH_moveMultiplierPackets={}; __gg.MH_moveMultiplierBaseline={}; __gg.MH_healthPacket=nil; __gg.MH_healthReportAt=nil
+	__gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_stamInputHeld=false; __gg.MH_stamRunRequested=false; __gg.MH_stamDriveSpeed=0; __gg.MH_stamForcedSpeed=16; __gg.MH_stamSyncAt=0; __gg.MH_stamPhysicsSyncAt=0; __gg.MH_stamMaskCount=0; __gg.MH_nativeRunSpeed=0; __gg.MH_stamObservedCurrent=nil; __gg.MH_stamObservedAt=0; __gg.MH_stamGenericProperty=nil; __gg.MH_stamGenericCandidates={}; __gg.MH_stamSavedHumanoid=nil; __gg.MH_stamSavedWalkSpeed=nil; __gg.MH_eatRecoveryAt=0; __gg.MH_eatRecoveryUntil=0; __gg.MH_eatRecoveryGen=(__gg.MH_eatRecoveryGen or 0)+1; __gg.MH_moveMultiplierPackets={}; __gg.MH_moveMultiplierBaseline={}; __gg.MH_healthPacket=nil; __gg.MH_healthReportAt=nil
 	pcall(function() if __gg.MH_autoHitHighlight then __gg.MH_autoHitHighlight:Destroy() end end)
 	__gg.MH_runPacket=nil; __gg.MH_nativeRunActive=false; __gg.MH_runShielded=0; __gg.MH_autoHitClicking=false; __gg.MH_autoHitLocked=nil; __gg.MH_autoHitHighlight=nil; __gg.MH_autoHitSelect=false; __gg.MH_autoHitQuery=nil; __gg.MH_autoHitManualClear=false; __gg.MH_autoHitStatus="No target"; __gg.MH_autoHitTrackBone=nil; __gg.MH_autoHitTrackUntil=0; __gg.MH_autoHitLastHeadPos=nil; __gg.MH_autoHitHeadBone=nil; __gg.MH_autoHitHeadModel=nil; __gg.MH_autoHitHeadAt=0; __gg.MH_autoHitNativeReportAt=0; __gg.MH_autoHitNativeReportTarget=nil; __gg.MH_autoHitInputRoute=1; __gg.MH_autoHitClickMethod="waiting"
 	__gg.MH_releasePacket=nil; __gg.MH_escapeLastBlocked=0; __gg.MH_escapeState=nil; __gg.MH_escapeStatus="waiting"
@@ -878,7 +882,7 @@ local CFG = {
 	TurnHack=false, TurnSpeed=30,
 	Fly=false, FlySpeed=80, SpeedHack=false, SpeedVal=70, DeathFix=false, RespawnDeathPoint=false, Noclip=false, Invis=false,
 	InfJump=false, BypassTP=true,
-	InfFood=false, FoodMultiplier=false, FoodMultiplierX=10, InfFoodDiet="Auto", InfWater=false, InfStam=false, InfStamSpeed=15, InfOxygen=false,
+	InfFood=false, FoodMultiplier=false, FoodMultiplierX=10, DrainFood=false, InfFoodDiet="Auto", InfWater=false, InfStam=false, InfStamSpeed=16, InfOxygen=false,
 	AntiDrown=true, AntiDrownRise=14, AntiFracture=true, AntiBleed=true, AutoEscape=false, WalkWater=false, AutoClean=false, HeadDmgReduce=100,
 	SaveDino=false, SaveHP=30, NoSleep=true, AutoHealBlood=false, AfkEat=false, BotPvP=true,
 	AutoFarmPlayer=false, FarmPlayerRange=120, AutoFarmFossil=false, FarmFossilRange=1000000, FossilSlow=1.2,
@@ -917,16 +921,16 @@ loadCfg()
 -- reactivate its former background controller. Pro Food and the passive Bite multiplier are the supported paths.
 CFG.InfFood=false
 CFG.AfkEat=false
--- InfStamSpeed is retained only so older config files still decode. Infinite Stamina resolves speed automatically
--- from the live dinosaur and does not expose a manual speed control.
-CFG.InfStamSpeed=15
+-- InfStamSpeed is retained only so older config files still decode. v8.13 deliberately fixes it at the requested
+-- bounded speed of 16 and does not expose a manual speed control.
+CFG.InfStamSpeed=16
 CFG.FoodMultiplierX=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 10),1,10000000)
 CFG.ProFoodEatAt=math.clamp(math.floor(tonumber(CFG.ProFoodEatAt) or 40),1,100)
 CFG.ProFoodDrop=math.clamp(math.floor(tonumber(CFG.ProFoodDrop) or 3),1,50)
 CFG.AutoHitDistance=math.clamp(math.floor(tonumber(CFG.AutoHitDistance) or 45),5,400)
 CFG.AutoHitRate=math.clamp(tonumber(CFG.AutoHitRate) or 1,1,6)
 CFG.AutoHitFollowDistance=math.clamp(tonumber(CFG.AutoHitFollowDistance) or 4,2,6)
-CFG.AutoHitReverseHead=false -- legacy setting retired: Auto Hit never owns S or a physics glide mover
+CFG.AutoHitReverseHead=false -- legacy toggle retired: keyboard S is selected automatically only after passing the bone
 CFG.AutoHitFollow=true
 if type(CFG.AutoHitColor)~="table" then CFG.AutoHitColor={r=255,g=35,b=35} end
 CFG.AutoHitColor.r=math.clamp(math.floor(tonumber(CFG.AutoHitColor.r) or 255),0,255)
@@ -949,7 +953,7 @@ if not (tonumber(CFG.FarmReach) and CFG.FarmReach>=30 and CFG.FarmReach<=120) th
 -- still persist — only the boolean feature toggles (incl. protections) are forced off here.
 for _,key in ipairs({
 		"Aimbot","SilentAim","LockOn","HitboxExpand","BoneProtect","TurnHack","Fly","SpeedHack","DeathFix","RespawnDeathPoint","Noclip","InfJump",
-	"InfFood","FoodMultiplier","InfWater","InfStam","InfOxygen","SaveDino","AutoFarmPlayer","AutoFarmFossil","AutoFarmGem","AutoPlayBot",
+	"InfFood","FoodMultiplier","DrainFood","InfWater","InfStam","InfOxygen","SaveDino","AutoFarmPlayer","AutoFarmFossil","AutoFarmGem","AutoPlayBot",
 	"ESPPlayers","FoodESP","FishESP","GemESP","AlertEnabled","CarnMeatTP","ProFood","FullBright","NightVision","NoDarkWater","WaterClear","NoClouds","AlwaysDamage","AutoHit","AutoHitFollow","AutoHitRightClick","NoGrabLimit","RemoveTrees","Radar",
 	"Float","GodMode","InfLight","UnlockFOV","InfZoom","AntiDrown","WalkWater","AutoClean","AntiFracture","AntiBleed","AutoEscape","Invis",
 	"AntiBreakHead","AntiBreakNeck","AntiBreakLeg","AntiBreakTail","AntiBreakTorso","NoSleep","AntiAFK","UnlockMouse","__SpyOn",
@@ -978,6 +982,10 @@ __gg.MH_featureToggleChanged=function(key,value)
 		end
 		if not value and type(__gg.MH_restoreAfterEating)=="function" then task.defer(__gg.MH_restoreAfterEating); task.delay(0.6,__gg.MH_restoreAfterEating) end
 	end
+	if key=="DrainFood" then
+		__gg.MH_drainFoodAt=0; __gg.MH_drainFoodState=value and "scanning current food" or "off"
+		if value and MHNEED then task.defer(function() pcall(function() MHNEED.refresh(true) end) end) end
+	end
 	if key=="InfStam" then
 		__gg.MH_stamShiftHeld=false
 		local physicalShift=UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift)
@@ -985,9 +993,11 @@ __gg.MH_featureToggleChanged=function(key,value)
 		if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end
 		task.defer(function()
 			if value and MHNEED then pcall(function() MHNEED.refresh(true); MHNEED.pinStamina(); MHNEED.report("stamina",true); if MHNEED.reportStaminaAll then MHNEED.reportStaminaAll(true) else MHNEED.reportKnownStamina(true) end end) end
-			-- Keep PE's native Run state authoritative. Replacing Run=true with false and forcing client velocity caused
-			-- both snapback and the slow-walk state. Infinite Stamina now rewrites only PE's exact observed stamina packet.
-			if type(__gg.MH_syncRun)=="function" then pcall(__gg.MH_syncRun,physicalShift) end
+			-- v8.13 keeps the server-side Run action false and supplies a capped, input-only speed of 16. Disabling the
+			-- feature restores the physical Shift state and the Humanoid speed that existed before the force was applied.
+			if type(__gg.MH_syncRun)=="function" then pcall(__gg.MH_syncRun,value and false or physicalShift) end
+			if not value and type(__gg.MH_stamStopOwnedVelocity)=="function" then pcall(__gg.MH_stamStopOwnedVelocity) end
+			if not value and type(__gg.MH_stamRestoreWalkSpeed)=="function" then pcall(__gg.MH_stamRestoreWalkSpeed) end
 			if __gg.MH_restoreMovementState then pcall(__gg.MH_restoreMovementState) end
 		end)
 	end
@@ -1235,17 +1245,23 @@ __gg.MH_startFoodMultiplier=function(seed)
 	if not (RUNNING and CFG.FoodMultiplier and type(seed)=="table" and seed.n and seed[2]=="Bite" and seed.identity==__gg.MH_identityKey) then return false end
 	local remote=(seed.instance and seed.instance.Parent and seed.instance) or (RS:FindFirstChild("RemoteEvents") and RS.RemoteEvents:FindFirstChild(seed.remote or "ReplicaSignal"))
 	if not remote then __gg.MH_foodMultState="captured Bite remote disappeared"; return false end
+	local now=tick()
+	if now<(__gg.MH_foodMultCooldownUntil or 0) then
+		__gg.MH_foodMultState="normal Bite accepted; safety cooldown "..string.format("%.1fs",math.max(0,(__gg.MH_foodMultCooldownUntil or 0)-now))
+		return true
+	end
+	__gg.MH_foodMultCooldownUntil=now+2
 	local amount=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 1),1,10000000); local requested=amount-1
-	-- A textbox value such as 10M used to create a worker that could run for hours, continuously keeping PE in its
-	-- eating slow-state. Keep the public range, but bound each genuine Bite to one short server-safe pulse.
-	local bonus=math.min(requested,math.clamp(math.floor(tonumber(__gg.MH_foodMultSafetyCap) or 240),24,400))
+	-- High textbox values are represented by a short pulse, never by an unbounded replay loop. Forty-eight is enough
+	-- to amplify a real Bite while leaving time for PE to close Consuming and restore its locomotion multiplier.
+	local bonus=math.min(requested,math.clamp(math.floor(tonumber(__gg.MH_foodMultSafetyCap) or 48),8,80))
 	__gg.MH_foodMultGen=(__gg.MH_foodMultGen or 0)+1; local generation=__gg.MH_foodMultGen
 	__gg.MH_foodMultBurst=bonus>0; __gg.MH_foodMultSending=false; __gg.MH_foodMultFailures=0; __gg.MH_foodMultSource=seed[1]; __gg.MH_foodMultAt=tick()
 	__gg.MH_foodMultCaptureKey=tostring(seed.identity)..":"..tostring(seed[1])..":"..tostring(seed.capturedAt or tick())
 	if bonus<=0 then __gg.MH_foodMultState="x1: normal Bite only"; return true end
 	__gg.MH_foodMultState="source "..tostring(seed[1]).."; safe pulse +"..tostring(bonus)..(requested>bonus and (" of requested +"..tostring(requested)) or "")
 	task.defer(function()
-		local sent=0; local cursor=0; local deadline=tick()+2.5
+		local sent=0; local cursor=0; local deadline=tick()+3
 		while sent<bonus do
 			if tick()>=deadline or not (RUNNING and CFG.FoodMultiplier and generation==__gg.MH_foodMultGen and seed.identity==__gg.MH_identityKey) then break end
 			-- Cycle only current-dinosaur Bite captures. The newest seed remains a fallback while the list streams.
@@ -1258,17 +1274,18 @@ __gg.MH_startFoodMultiplier=function(seed)
 			local ok=pcall(function() callRemote:FireServer(table.unpack(call,1,call.n)) end)
 			__gg.MH_foodMultSending=false
 			if ok then sent+=1; __gg.MH_foodMultSent=(__gg.MH_foodMultSent or 0)+1; __gg.MH_foodMultFailures=0 else __gg.MH_foodMultFailures=(__gg.MH_foodMultFailures or 0)+1; if __gg.MH_foodMultFailures>=5 then break end end
-			-- Six calls per 0.035 s keeps the pulse bounded and yields often enough for PE's movement controller.
-			if sent%6==0 or not ok then task.wait(0.035) end
+			-- Two calls per yield prevents the game's eat/interaction queue from stacking a long-lived slow state.
+			if sent%2==0 or not ok then task.wait(0.08) end
 		end
 		__gg.MH_foodMultSending=false
 		if generation==__gg.MH_foodMultGen then
 			__gg.MH_foodMultBurst=false
 			__gg.MH_foodMultState=sent>0 and ("last Bite +"..tostring(sent).." sent safely") or "bonus pulse stopped"
 		end
-		-- Replayed Bite packets do not always emit PE's normal Consuming=false lifecycle. Run the same bounded
-		-- movement recovery used by native eating so a completed multiplier burst cannot leave slow walk behind.
-		for _,delay in ipairs({0.12,0.65,1.4}) do task.delay(delay,function() if type(__gg.MH_restoreAfterEating)=="function" then pcall(__gg.MH_restoreAfterEating) end end) end
+		-- Replayed Bite packets do not always emit PE's normal Consuming=false lifecycle. One recovery starts its own
+		-- two-second repair window; a second pass catches a delayed server multiplier without creating stacked workers.
+		task.defer(function() if type(__gg.MH_restoreAfterEating)=="function" then pcall(__gg.MH_restoreAfterEating) end end)
+		task.delay(1.1,function() if type(__gg.MH_restoreAfterEating)=="function" then pcall(__gg.MH_restoreAfterEating) end end)
 	end)
 	return true
 end
@@ -1426,18 +1443,19 @@ local function installHook()
 								return oldNC(self,table.unpack(a,1,a.n))
 							end
 						end
-						-- Capture PE's exact native Run lifecycle. Never rewrite Run=true: PE's server uses it to authorize
-						-- species-specific sprint speed, and a false Run plus local velocity is what caused snapback/slow walking.
+						-- Capture PE's exact native Run lifecycle. Infinite Stamina deliberately reports Run=false even while
+						-- Shift is held, then the bounded movement controller supplies speed 16 without consuming sprint stamina.
 						if selfCall and action=="SetAction" and a[3]=="Run" and typeof(a[4])=="boolean" then
 							local snap={n=a.n,remote=self.Name,instance=self,identity=__gg.MH_identityKey}; for i=1,a.n do snap[i]=a[i] end
 							__gg.MH_runPacket=snap; __gg.MH_nativeRunActive=a[4]
 							if CFG.InfStam then
 								local held=UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift) or ((__gg.MH_autoHitHeld or {}).LeftShift==true)
-								__gg.MH_stamRunRequested=a[4] or held; __gg.MH_runShielded=(__gg.MH_runShielded or 0)+1
-								-- Ignore only an exhaustion-generated Run=false while Shift is still held. A real key release
-								-- remains false, so Infinite Stamina never creates continued movement after the player lets go.
-								if held and a[4]==false then a[4]=true; snap[4]=true; __gg.MH_nativeRunActive=true; __gg.MH_stamReportState="blocked exhausted Run=false"; return oldNC(self,table.unpack(a,1,a.n)) end
-								__gg.MH_stamReportState=a[4] and "native sprint; waiting for exact stamina packet" or "native Run released"
+								__gg.MH_stamRunRequested=held; __gg.MH_runShielded=(__gg.MH_runShielded or 0)+1
+								if a[4]~=false then
+									a[4]=false; snap[4]=false; __gg.MH_nativeRunActive=false; __gg.MH_stamReportState="Run=false shield + speed 16"
+									return oldNC(self,table.unpack(a,1,a.n))
+								end
+								__gg.MH_nativeRunActive=false; __gg.MH_stamReportState=held and "Run held false; speed drive ready" or "Run released"
 							end
 						end
 						if selfCall and action=="SetAction" and typeof(a[3])=="string" and a[4]==false then
@@ -1478,7 +1496,7 @@ local function installHook()
 								elseif nl:find("stam",1,true) or nl=="energy" or nl=="sp" or nl:find("endur",1,true) or nl:find("vigor",1,true) then nk="stamina" end
 							end
 							-- Some PE builds report a nested Stamina.Delta simply as SetProperty("Delta", value). Learn that
-							-- generic key only after two consecutive decreases while native Run is active, then scope it to this
+							-- generic key only after consecutive decreases while Shift movement is requested, then scope it to this
 							-- dinosaur identity. This catches the real drain without turning Growth.Delta into stamina.
 							local generic=normalized=="delta" or normalized=="current" or normalized=="value" or normalized=="amount" or normalized=="level"
 							if not nk and CFG.InfStam and generic and __gg.MH_stamRunRequested then
@@ -2262,6 +2280,54 @@ function MHNEED.current(kind,force)
 	end
 	return best
 end
+-- Write only the current-value references already classified by MHNEED. Capacity/max/rate fields never enter this
+-- list, so Drain Food cannot corrupt the dinosaur's maximum food stat while emptying the visible/current bar.
+function MHNEED.setCurrent(kind,target)
+	MHNEED.refresh(true); target=math.max(0,tonumber(target) or 0); local changed=0
+	for _,ref in ipairs(MHNEED.refs[kind] or {}) do
+		if ref.mode=="table" and ref.tb and type(ref.tb[ref.key])=="number" then
+			if math.abs(ref.tb[ref.key]-target)>1e-6 then local ok=pcall(function() ref.tb[ref.key]=target end); if ok then changed+=1 end end
+		elseif ref.mode=="attr" and ref.inst and ref.inst.Parent then
+			local ok,value=pcall(function() return ref.inst:GetAttribute(ref.key) end)
+			if ok and type(value)=="number" and math.abs(value-target)>1e-6 and pcall(function() ref.inst:SetAttribute(ref.key,target) end) then changed+=1 end
+		elseif ref.mode=="value" and ref.inst and ref.inst.Parent then
+			local ok,value=pcall(function() return ref.inst.Value end)
+			if ok and type(value)=="number" and math.abs(value-target)>1e-6 and pcall(function() ref.inst.Value=target end) then changed+=1 end
+		end
+	end
+	return changed
+end
+-- Report a deliberate current need value through the exact owner packet when available. If this PE build has not
+-- emitted that packet yet, use at most two concrete property names discovered from the same live food references.
+function MHNEED.reportValue(kind,target,force)
+	target=math.max(0,tonumber(target) or 0); MHNEED.refresh(); local id=MHNEED.replicaId(); if not id then return false end
+	local stamp=tostring(kind)..":manual"; local now=tick(); if not force and now-(__gg.MH_needReportAt[stamp] or 0)<0.22 then return false end
+	__gg.MH_needReportAt[stamp]=now
+	local packet=__gg.MH_needPackets and __gg.MH_needPackets[kind]
+	if type(packet)=="table" and packet.n and packet.n>=4 and packet[1]==id and (not packet.identity or packet.identity==__gg.MH_identityKey) then
+		local remote=(packet.instance and packet.instance.Parent and packet.instance) or (RS:FindFirstChild("RemoteEvents") and RS.RemoteEvents:FindFirstChild(packet.remote or "ReplicaSignal"))
+		if remote then local args={n=packet.n}; for i=1,packet.n do args[i]=packet[i] end; args[4]=target
+			if pcall(function() remote:FireServer(table.unpack(args,1,args.n)) end) then return true end
+		end
+	end
+	local replica=csReplica(); if not (replica and replica.FireServer) then return false end
+	local properties={}; local used={}
+	local function add(name)
+		if type(name)~="string" or name=="" then return end; local normalized=MHNEED.norm(name); local low=name:lower()
+		if used[normalized] or low:find("max",1,true) or low:find("rate",1,true) or low:find("drain",1,true) or low:find("capacity",1,true) then return end
+		used[normalized]=true; properties[#properties+1]=name
+	end
+	for _,ref in ipairs(MHNEED.refs[kind] or {}) do
+		local key=ref.key or (ref.inst and ref.inst.Name); local normalized=MHNEED.norm(key); local path=tostring(ref.path or ""):lower()
+		local generic=normalized=="current" or normalized=="cur" or normalized=="value" or normalized=="amount" or normalized=="level" or normalized=="delta"
+		if generic and kind=="food" and (path:find("food",1,true) or path:find("hunger",1,true)) then add(path:find("hunger",1,true) and "Hunger" or "Food")
+		elseif MHNEED.kindFor(key,ref.path)==kind then add(key) end
+		if #properties>=2 then break end
+	end
+	if #properties==0 and kind=="food" then add("Food") end
+	local sent=0; for index,property in ipairs(properties) do if index>2 then break end; if pcall(function() replica:FireServer("SetProperty",property,target) end) then sent+=1 end end
+	return sent>0
+end
 function MHNEED.maxForProperty(kind,property)
 	MHNEED.refresh(); local want=MHNEED.norm(property)
 	for _,ref in ipairs(MHNEED.refs[kind] or {}) do
@@ -2460,7 +2526,7 @@ __gg.MH_restoreAfterEating=function()
 	repairOnce()
 	local shift=UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift) or ((__gg.MH_autoHitHeld or {}).LeftShift==true)
 	__gg.MH_stamInputHeld=shift; __gg.MH_stamRunRequested=shift
-	pcall(__gg.MH_syncRun,shift)
+	pcall(__gg.MH_syncRun,CFG.InfStam and false or shift)
 	pcall(__gg.MH_restoreMovementState)
 	-- PE can apply the interaction multiplier one or two frames after the animation ends. Repair the exact learned
 	-- property for two seconds; this is bounded and stops immediately if a new manual E interaction begins.
@@ -2471,7 +2537,7 @@ __gg.MH_restoreAfterEating=function()
 			repairOnce()
 		end
 		local heldShift=UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift) or ((__gg.MH_autoHitHeld or {}).LeftShift==true)
-		pcall(__gg.MH_syncRun,heldShift)
+		pcall(__gg.MH_syncRun,CFG.InfStam and false or heldShift)
 	end)
 	return true
 end
@@ -3778,7 +3844,7 @@ do local p=Pages["Combat"]
 	__gg.MH_autoHitStatusLabel=mkStatus(a,"Auto Hit target",12)
 	mkDropdown(a,"Aim Part", function() return {"Hitbox","Head","Spine","Neck","Hip","Body","Leg","Tail"} end, function() return CFG.AimPart~="" and CFG.AimPart or "Hitbox" end, function(opt) CFG.AimPart=opt; saveCfg() end, 13)
 	mkSlider(a,"Aim Smoothness","AimSmooth",0,1,14)
-	mkLabel(a,"Auto Hit keeps Shift + forward/steering input on the selected live bone and keeps clicking until that target is gone. It never owns S or a physics glide mover.",15)
+	mkLabel(a,"Auto Hit follows only the selected live bone and keeps clicking until that target is gone. If you pass the bone it holds the real S key to walk back—never a glide or teleport.",15)
 end
 do local p=Pages["PvP"]
 	local _,d=mkSec(p,"Damage",1)
@@ -3812,7 +3878,7 @@ do local p=Pages["Survival"]
 	-- (Pro Food / multiplier / INF Water / Carnivore Meat TP / Teleport Back live in Growth.) Stamina stays here.
 	local _,f=mkSec(p,"Stamina",1)
 	mkToggle(f,"INF Stamina","InfStam",1)
-	mkLabel(f,"Keeps native Run active, blocks the learned stamina drain, and restores sprint speed only if PE applies exhausted slow-walk.",2)
+	mkLabel(f,"While Shift is held: keeps Run false, pins stamina, and applies an input-only speed of 16. Releasing movement keys never leaves a glide.",2)
 	local _,pr=mkSec(p,"Protection",2)
 		-- Death Bug Fix = the spawn rescue (void/under-map/ocean spawns). It mutes ITSELF during any hub teleport
 		-- (map/biome/corpse/fossil TP) so it can never yank you around mid-teleport — and you can kill it here.
@@ -3891,8 +3957,10 @@ do local p=Pages["Growth"]
 		local _,fw=mkSec(p,"Food & Water",2)
 		mkToggle(fw,"Food Multiplier (learn my Bite)","FoodMultiplier",2)
 		mkTextbox(fw,"Food multiplier (1-10M)","FoodMultiplierX",3,true)
-		mkLabel(fw,"Type 1-10000000, then press E normally near food. Each Bite uses a short capped pulse so high values cannot leave an endless worker or slow-walk lock.")
-		mkDropdown(fw,"Pro Food diet",function() return {"Auto","Herbivore","Carnivore"} end,function() return CFG.InfFoodDiet or "Auto" end,function(opt) CFG.InfFoodDiet=opt; __gg.MH_foodProbeCursor=0; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_infFoodTargetsCache=nil; __gg.MH_foodDietReplicaState=nil; saveCfg() end,4)
+		mkLabel(fw,"Type 1-10000000, then press E normally near food. Each Bite uses a guarded 48-call pulse plus movement recovery so eating cannot leave a slow-walk lock.")
+		mkToggle(fw,"Drain Food (fast)","DrainFood",4)
+		mkLabel(fw,"Quickly empties only the current food bar for testing. Turn it off before eating.",5)
+		mkDropdown(fw,"Pro Food diet",function() return {"Auto","Herbivore","Carnivore"} end,function() return CFG.InfFoodDiet or "Auto" end,function(opt) CFG.InfFoodDiet=opt; __gg.MH_foodProbeCursor=0; __gg.MH_foodReplicaState={preferred={},fallback={},at=0}; __gg.MH_infFoodTargetsCache=nil; __gg.MH_foodDietReplicaState=nil; saveCfg() end,6)
 		mkToggle(fw,"INF Water","InfWater",7)
 		mkBtn(fw,"Instant Corpse TP",function() if __gg.MH_corpseClick then __gg.MH_corpseClick() else notify("Corpse TP","Corpse scanner is still loading.") end end,8)
 		mkBtn(fw,"Teleport Back",function() if __gg.MH_corpseBack then __gg.MH_corpseBack() end end,9)
@@ -4501,6 +4569,27 @@ task.spawn(function()
 	end
 end)
 
+-- DRAIN FOOD: a separate test tool for the Growth tab. It reduces only the resolved current food references and
+-- reports the same decreasing value at a bounded rate; max food/capacity and every stamina field stay untouched.
+task.spawn(function() while RUNNING do
+	if CFG.DrainFood and alive() then
+		local ok,err=pcall(function()
+			local current=MHNEED.current("food",true); local maximum=MHNEED.maxFor("food")
+			if current==nil then __gg.MH_drainFoodState="waiting for live food bar"; return end
+			if current<=0.01 then __gg.MH_drainFoodState="food empty"; return end
+			local step=math.max(1,(tonumber(maximum) or math.max(current,10))*0.12)
+			local target=math.max(0,math.floor((current-step)*10+0.5)/10)
+			local refs=MHNEED.setCurrent("food",target); local reported=MHNEED.reportValue("food",target,false)
+			__gg.MH_drainFoodState=string.format("%.1f -> %.1f | %d ref(s)%s",current,target,refs,reported and " + server" or "")
+		end)
+		if not ok then __gg.MH_drainFoodState="error: "..tostring(err):sub(1,80) end
+		task.wait(0.12)
+	else
+		if not CFG.DrainFood then __gg.MH_drainFoodState="off" end
+		task.wait(0.35)
+	end
+end end)
+
 -- ═══ E EAT ASSIST — the definitive "E doesn't work" fix ═══ When you PRESS E, the hub makes the eat land for
 -- you: it finds the nearest eat/consume ProximityPrompt within reach (meat chunks, corpses, plants — the game's
 -- MeatController tags meat with HintType="Corpse"), removes its line-of-sight requirement, and FIRES it directly.
@@ -4763,54 +4852,83 @@ local function startFly()
 		local hh=hum(); if hh then pcall(function() hh:ChangeState(Enum.HumanoidStateType.Physics) end) end
 	end)
 end
--- SPEED HACK ONLY drives the body by velocity. INF Stamina never enters this path and leaves native movement alone.
+-- Speed Hack is independent. Infinite Stamina has its own capped speed-16 path below and never uses this slider.
 conn(RunService.Heartbeat:Connect(function() if CFG.SpeedHack and alive() and not CFG.Fly then local r=hrp(); if r then local spd=CFG.SpeedVal; local dir=Vector3.zero; local cf=workspace.CurrentCamera and workspace.CurrentCamera.CFrame or CFrame.new() if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end if dir.Magnitude<=0 then local hh=hum(); local md=hh and hh.MoveDirection; if md and md.Magnitude>0 then dir=md end end if dir.Magnitude>0 then dir=Vector3.new(dir.X,0,dir.Z).Unit*spd; r.AssemblyLinearVelocity=Vector3.new(dir.X,r.AssemblyLinearVelocity.Y,dir.Z) end end end end))
--- INF STAMINA speed resolver. Prefer a live Run/SprintSpeed field, then this dinosaur's speed observed before the
--- toggle was enabled, then Humanoid WalkSpeed. It is cached and never exposes a separate speed slider.
-__gg.MH_stamResolveSpeed=function()
-	if (__gg.MH_stamSpeedAt or 0)+0.75>tick() and (__gg.MH_stamResolvedSpeed or 0)>0 then return __gg.MH_stamResolvedSpeed end
-	local best=tonumber(__gg.MH_nativeRunSpeed) or 0
-	local h=hum(); if h and tonumber(h.WalkSpeed) and h.WalkSpeed>0 then best=math.max(best,h.WalkSpeed*1.5) end
-	local rep=csReplica(); local root=rep and rep.Data; local seen={}; local scanned=0
-	local function walk(tb,depth)
-		if type(tb)~="table" or seen[tb] or depth>5 or scanned>900 then return end; seen[tb]=true
-		for key,value in pairs(tb) do scanned+=1; if scanned>900 then break end
-			local name=tostring(key):lower():gsub("[^%w]","")
-			if type(value)=="number" and value>=4 and value<=180 and ((name:find("run",1,true) or name:find("sprint",1,true) or name:find("trot",1,true)) and name:find("speed",1,true)) then best=math.max(best,value)
-			elseif type(value)=="table" then walk(value,depth+1) end
-		end
-	end
-	pcall(function() walk(root,0); walk(CharacterState,0) end)
-	best=math.clamp(best>0 and best or 24,8,180); __gg.MH_stamResolvedSpeed=best; __gg.MH_stamSpeedAt=tick(); return best
+-- INF STAMINA v8.13: the user's requested model is explicit and bounded. Shift keeps PE's Run action FALSE, while
+-- actual movement input receives a horizontal speed of exactly 16. No CFrame is assigned, no BodyMover is created,
+-- and a one-shot stop removes owned horizontal momentum as soon as movement input ends.
+__gg.MH_stamRestoreWalkSpeed=function()
+	local savedHumanoid=__gg.MH_stamSavedHumanoid; local savedSpeed=__gg.MH_stamSavedWalkSpeed
+	if savedHumanoid and savedHumanoid.Parent and tonumber(savedSpeed) then pcall(function() savedHumanoid.WalkSpeed=savedSpeed end) end
+	__gg.MH_stamSavedHumanoid=nil; __gg.MH_stamSavedWalkSpeed=nil
+end
+__gg.MH_stamKeyDown=function(name)
+	local key=Enum.KeyCode[name]; local physical=false
+	if key then pcall(function() physical=UIS:IsKeyDown(key) end) end
+	return physical or ((__gg.MH_autoHitHeld or {})[name]==true)
+end
+__gg.MH_stamDirection=function()
+	local cam=workspace.CurrentCamera; local cf=cam and cam.CFrame or CFrame.new(); local dir=Vector3.zero
+	if __gg.MH_stamKeyDown("W") then dir+=cf.LookVector end
+	if __gg.MH_stamKeyDown("S") then dir-=cf.LookVector end
+	if __gg.MH_stamKeyDown("A") then dir-=cf.RightVector end
+	if __gg.MH_stamKeyDown("D") then dir+=cf.RightVector end
+	dir=Vector3.new(dir.X,0,dir.Z)
+	if dir.Magnitude<=0 then local h=hum(); local move=h and h.MoveDirection; if move and move.Magnitude>0 then dir=Vector3.new(move.X,0,move.Z) end end
+	return dir.Magnitude>0.05 and dir.Unit or Vector3.zero
+end
+__gg.MH_stamStopOwnedVelocity=function()
+	if not __gg.MH_stamWasMoving then return end; __gg.MH_stamWasMoving=false
+	local r=hrp(); local root=r and (r.AssemblyRootPart or r)
+	if root then pcall(function() local velocity=root.AssemblyLinearVelocity; root.AssemblyLinearVelocity=Vector3.new(0,velocity.Y,0) end) end
 end
 conn(UIS.InputBegan:Connect(function(input,gp)
 	if gp or (input.KeyCode~=Enum.KeyCode.LeftShift and input.KeyCode~=Enum.KeyCode.RightShift) then return end
 	__gg.MH_stamInputHeld=true
-	if CFG.InfStam then __gg.MH_stamRunRequested=true; pcall(__gg.MH_syncRun,true) end
+	if CFG.InfStam then __gg.MH_stamRunRequested=true; pcall(__gg.MH_syncRun,false) end
 end))
 conn(UIS.InputEnded:Connect(function(input)
 	if input.KeyCode~=Enum.KeyCode.LeftShift and input.KeyCode~=Enum.KeyCode.RightShift then return end
-	__gg.MH_stamInputHeld=false; __gg.MH_stamRunRequested=false
-	if CFG.InfStam then task.defer(function() pcall(__gg.MH_syncRun,false) end) end
+	local stillHeld=UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift) or ((__gg.MH_autoHitHeld or {}).LeftShift==true)
+	__gg.MH_stamInputHeld=stillHeld; __gg.MH_stamRunRequested=stillHeld
+	if CFG.InfStam then task.defer(function() pcall(__gg.MH_syncRun,false); if not stillHeld then pcall(__gg.MH_stamStopOwnedVelocity); pcall(__gg.MH_stamRestoreWalkSpeed) end end) end
 end))
--- Native sprint stays authoritative. Infinite Stamina never creates a BodyVelocity/CFrame mover: those fought PE's
--- species controller and were the direct cause of slow walking and snapback. This heartbeat only preserves the exact
--- native Run=true lifecycle while Shift is held; the packet/local stamina controller above owns the actual drain.
+-- The server receives the current, already-simulated body CFrame only through PE's verified physics replica at a
+-- five-Hz ceiling. This does not teleport the local model; it confirms ordinary movement so correction cannot undo
+-- the capped speed. If the physics id has not been learned from PE's own CFrame traffic, the sync simply fails closed.
 conn(RunService.Heartbeat:Connect(function()
 	__gg.MH_stamDriveSpeed=0; __gg.MH_stamBoostSpeed=0
 	if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end
-	if not alive() then return end
+	if not alive() then pcall(__gg.MH_stamRestoreWalkSpeed); __gg.MH_stamWasMoving=false; return end
 	pcall(function()
-		local shift=UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift) or ((__gg.MH_autoHitHeld or {}).LeftShift==true)
+		local shift=__gg.MH_stamKeyDown("LeftShift") or UIS:IsKeyDown(Enum.KeyCode.RightShift)
 		local r=hrp(); local root=r and (r.AssemblyRootPart or r)
 		local speed=0; if root then local v=root.AssemblyLinearVelocity; speed=Vector3.new(v.X,0,v.Z).Magnitude end
 		if shift and root and not CFG.InfStam and not CFG.SpeedHack and not CFG.Fly and speed>=4 and speed<=180 then
 			__gg.MH_nativeRunSpeed=math.max(tonumber(__gg.MH_nativeRunSpeed) or 0,speed)
 		end
-		if CFG.InfStam then local mx,changed=MHNEED.pinStamina(); __gg.MH_stamPinState=mx and ("max "..tostring(mx)..(changed and " pinned" or " held")) or "no stamina field/max found"; if tick()-(__gg.MH_stamHardReportAt or 0)>=0.18 then __gg.MH_stamHardReportAt=tick(); MHNEED.report("stamina",false); MHNEED.reportStaminaAll(false) end end
-		if not (CFG.InfStam and shift and root) then __gg.MH_stamRunBegan=nil; return end
-		__gg.MH_stamRunRequested=true
-		if tick()-(__gg.MH_stamSyncAt or 0)>=0.22 then __gg.MH_stamSyncAt=tick(); pcall(__gg.MH_syncRun,true); __gg.MH_stamReportState="native Run shield + exact stamina pin" end
+		if CFG.InfStam and tick()-(__gg.MH_stamLocalPinAt or 0)>=0.05 then
+			__gg.MH_stamLocalPinAt=tick(); local mx,changed=MHNEED.pinStamina(); __gg.MH_stamPinState=mx and ("max "..tostring(mx)..(changed and " pinned" or " held")) or "no stamina field/max found"
+			if tick()-(__gg.MH_stamHardReportAt or 0)>=0.18 then __gg.MH_stamHardReportAt=tick(); MHNEED.report("stamina",false); MHNEED.reportStaminaAll(false) end
+		end
+		if not (CFG.InfStam and shift and root and not CFG.SpeedHack and not CFG.Fly) then
+			__gg.MH_stamRunBegan=nil; pcall(__gg.MH_stamStopOwnedVelocity); pcall(__gg.MH_stamRestoreWalkSpeed); return
+		end
+		__gg.MH_stamRunRequested=true; __gg.MH_nativeRunActive=false
+		if tick()-(__gg.MH_stamSyncAt or 0)>=0.2 then __gg.MH_stamSyncAt=tick(); pcall(__gg.MH_syncRun,false) end
+		local h=hum(); if h then
+			if __gg.MH_stamSavedHumanoid~=h then pcall(__gg.MH_stamRestoreWalkSpeed); __gg.MH_stamSavedHumanoid=h; __gg.MH_stamSavedWalkSpeed=h.WalkSpeed end
+			if math.abs((tonumber(h.WalkSpeed) or 0)-16)>0.01 then h.WalkSpeed=16 end
+		end
+		local direction=__gg.MH_stamDirection()
+		if direction.Magnitude>0 then
+			local velocity=root.AssemblyLinearVelocity; local driven=direction*16; root.AssemblyLinearVelocity=Vector3.new(driven.X,velocity.Y,driven.Z)
+			__gg.MH_stamWasMoving=true; __gg.MH_stamDriveSpeed=16; __gg.MH_stamBoostSpeed=16
+			if tick()-(__gg.MH_stamPhysicsSyncAt or 0)>=0.2 then
+				__gg.MH_stamPhysicsSyncAt=tick(); local re=RS:FindFirstChild("RemoteEvents"); re=re and re:FindFirstChild("ReplicaSignalUnreliable"); local id=__gg.MH_physicsReplicaId
+				if re and id then pcall(function() re:FireServer(id,"CFrame",r.CFrame) end); __gg.MH_stamReportState="Run=false + speed 16 + verified sync" else __gg.MH_stamReportState="Run=false + speed 16; learning physics id" end
+			end
+		else pcall(__gg.MH_stamStopOwnedVelocity); __gg.MH_stamReportState="Run=false + stamina pinned; waiting for movement input" end
 	end)
 end))
 -- FLOAT: a Y-only BodyVelocity HOLDS you in the air — plain velocity writes don't hold a CFrame-driven PE dino
@@ -5931,18 +6049,20 @@ __gg.MH_autoHitDriveMovement=function(target)
 	if not (me and position) then if not __gg.MH_autoHitLastHeadPos then __gg.MH_autoHitReleaseMovement() end; return end
 	local delta=Vector3.new(position.X-me.Position.X,0,position.Z-me.Position.Z); local distance=delta.Magnitude
 	local rel=me.CFrame:PointToObjectSpace(position); local deadZone=math.max(0.45,math.min(2,distance*0.08))
-	-- Keyboard-only pursuit: always hold forward + sprint and steer with A/D toward the live bone. S and every
-	-- BodyVelocity/BodyGyro fallback are deliberately absent, so Auto Hit cannot reverse-glide or fight PE physics.
-	local desired={W=true,A=false,S=false,D=false,LeftShift=true}
-	if rel.Z>0.2 then desired.A=rel.X<=0; desired.D=rel.X>0
-	elseif rel.X< -deadZone then desired.A=true elseif rel.X>deadZone then desired.D=true end
+	-- Keyboard-only pursuit with hysteresis. Roblox forward is -Z, so +Z means this dinosaur has passed the selected
+	-- bone. Enter reverse at +0.65 and remain on S until the bone is clearly forward again; this prevents W/S flicker.
+	local reverse=__gg.MH_autoHitReverseActive==true
+	if reverse then if rel.Z< -0.35 then reverse=false end elseif rel.Z>0.65 then reverse=true end
+	__gg.MH_autoHitReverseActive=reverse
+	local desired={W=not reverse,A=false,S=reverse,D=false,LeftShift=true}
+	if rel.X< -deadZone then desired.A=true elseif rel.X>deadZone then desired.D=true end
 	__gg.MH_autoHitHeld=__gg.MH_autoHitHeld or {}
 	for _,name in ipairs({"W","A","S","D","LeftShift"}) do local down=desired[name]==true
 		if (__gg.MH_autoHitHeld[name]==true)~=down then __gg.MH_autoHitHeld[name]=down or nil; pcall(__gg.MH_autoHitSetKey,name,down)
 		end
 	end
 	pcall(function() if __gg.MH_autoHitDriveBV then __gg.MH_autoHitDriveBV:Destroy() end; if __gg.MH_autoHitDriveBG then __gg.MH_autoHitDriveBG:Destroy() end end)
-	__gg.MH_autoHitDriveBV=nil; __gg.MH_autoHitDriveBG=nil; __gg.MH_autoHitReverseActive=false; __gg.MH_autoHitLastDistance=distance
+	__gg.MH_autoHitDriveBV=nil; __gg.MH_autoHitDriveBG=nil; __gg.MH_autoHitLastDistance=distance
 	__gg.MH_autoHitTrackBone=bone; __gg.MH_autoHitTrackUntil=tick()+0.2
 end
 __gg.MH_autoHitDrop=function()
@@ -8190,6 +8310,8 @@ G.__PRIOR_EXT_HUB = function()
 	RUNNING=false
 	pcall(function() if type(__gg.MH_syncRun)=="function" then __gg.MH_syncRun(UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift)) end end)
 	__gg.MH_stamRunRequested=false; __gg.MH_stamDriveSpeed=0
+	pcall(function() if type(__gg.MH_stamStopOwnedVelocity)=="function" then __gg.MH_stamStopOwnedVelocity() end end)
+	pcall(function() if type(__gg.MH_stamRestoreWalkSpeed)=="function" then __gg.MH_stamRestoreWalkSpeed() end end)
 	pcall(function() if __gg.MH_stamBV then __gg.MH_stamBV:Destroy(); __gg.MH_stamBV=nil end end)
 	pcall(function() if __gg.MH_autoHitDrop then __gg.MH_autoHitDrop() end end)
 	pcall(function() if __gg.MH_autoHitReleaseMovement then __gg.MH_autoHitReleaseMovement() end end)
@@ -8216,4 +8338,4 @@ end
 MS("5 DONE - all tabs built, menu ready")
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
-print("[Dream Hub · Prior Extinction v8.12 PE-v4] Loaded — forward-only Auto Hit, bounded food recovery, hardened stamina pin, Sandbox tab")
+print("[Dream Hub · Prior Extinction v8.13 PE-v4] Loaded — Run=false stamina drive, guarded food multiplier, Drain Food, keyboard bone reverse")
