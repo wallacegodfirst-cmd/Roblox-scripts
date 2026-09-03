@@ -18,6 +18,7 @@ __gg.MH_releaseSyntheticMovement=function()
 end
 pcall(__gg.MH_releaseSyntheticMovement)
 pcall(function() if type(__gg.MH_restoreIncomingNeedGuard)=="function" then __gg.MH_restoreIncomingNeedGuard() end end)
+pcall(function() if type(__gg.MH_disconnectStamWatchers)=="function" then __gg.MH_disconnectStamWatchers() end end)
 if __gg.__PRIOR_EXT_HUB then pcall(__gg.__PRIOR_EXT_HUB) end
 pcall(__gg.MH_releaseSyntheticMovement)
 __gg.MH_botReleaseKeys=nil; __gg.MH_stopProFood=nil; __gg.MH_botInputOwned=false
@@ -34,13 +35,17 @@ __gg.MH_infFoodTargetsCache=nil; __gg.MH_foodTargetCount=0; __gg.MH_foodTargetKi
 __gg.MH_foodSourceRevision=0; __gg.MH_foodSourceKinds="none"; __gg.MH_foodResolvedDiet="unresolved"; __gg.MH_foodBufferMode="none"; __gg.MH_foodVisibleBefore=nil; __gg.MH_foodVisibleAfter=nil; __gg.MH_foodVisibleDelta=nil; __gg.MH_foodAcceptance="unobserved"; __gg.MH_foodLastFailure="not run"
 __gg.MH_growthState="waiting"; __gg.MH_growthValue=nil; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_growthBase=nil; __gg.MH_stamBoostSpeed=0; __gg.MH_stamPinState="waiting"; __gg.MH_stamReportState="waiting"
 __gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_stamInputHeld=false; __gg.MH_stamRunRequested=false; __gg.MH_stamDriveSpeed=0; __gg.MH_stamForcedSpeed=16; __gg.MH_stamSyncAt=0; __gg.MH_stamPhysicsSyncAt=0; __gg.MH_stamMaskCount=0; __gg.MH_nativeRunSpeed=0; __gg.MH_stamObservedCurrent=nil; __gg.MH_stamObservedAt=0; __gg.MH_stamGenericProperty=nil; __gg.MH_stamGenericCandidates={}; __gg.MH_stamSavedHumanoid=nil; __gg.MH_stamSavedWalkSpeed=nil; __gg.MH_stamSpeedModel=nil; __gg.MH_stamSpeedHumanoid=nil; __gg.MH_stamLearnedRunSpeed=nil; __gg.MH_stamSpeedAttrs={}; __gg.MH_stamSpeedValues={}; __gg.MH_stamSpeedFixes=0; __gg.MH_incomingNeedWraps={}; __gg.MH_incomingNeedInstalled=false; __gg.MH_incomingNeedState="waiting"; __gg.MH_incomingReplicaId=nil; __gg.MH_incomingReplicaRoot=nil; __gg.MH_incomingStamPin=nil; __gg.MH_eatRecoveryAt=0; __gg.MH_eatRecoveryUntil=0; __gg.MH_eatRecoveryGen=(__gg.MH_eatRecoveryGen or 0)+1; __gg.MH_moveMultiplierPackets={}; __gg.MH_moveMultiplierBaseline={}; __gg.MH_moveIncomingPaths={}; __gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_healthPacket=nil; __gg.MH_guardLastHP=nil
+__gg.MH_stamRuntimeAttrs={}; __gg.MH_stamRuntimeValues={}; __gg.MH_stamExhaustRefs={}; __gg.MH_stamWatchConns={}; __gg.MH_stamWatchModel=nil; __gg.MH_stamWatchAt=0; __gg.MH_stamWatchWriting=false; __gg.MH_stamZeroRecoveryUntil=0; __gg.MH_stamZeroTrips=0; __gg.MH_stamLowestCurrent=nil
+__gg.MH_stamLearnedWalkSpeed=nil; __gg.MH_autoLockDamageAt=0; __gg.MH_autoLockOwnedTarget=nil
 pcall(function() if __gg.MH_autoHitHighlight then __gg.MH_autoHitHighlight:Destroy() end; if __gg.MH_autoHitDriveBV then __gg.MH_autoHitDriveBV:Destroy() end; if __gg.MH_autoHitDriveBG then __gg.MH_autoHitDriveBG:Destroy() end; if __gg.MH_stamBV then __gg.MH_stamBV:Destroy() end end)
-__gg.MH_runPacket=nil; __gg.MH_nativeRunActive=false; __gg.MH_runShielded=0; __gg.MH_autoHitClicking=false; __gg.MH_autoHitLocked=nil; __gg.MH_autoHitHighlight=nil; __gg.MH_autoHitSelect=false; __gg.MH_autoHitQuery=nil; __gg.MH_autoHitManualClear=false; __gg.MH_autoHitStatus="No target"; __gg.MH_autoHitTrackBone=nil; __gg.MH_autoHitTrackUntil=0; __gg.MH_autoHitLastHeadPos=nil; __gg.MH_autoHitHeadBone=nil; __gg.MH_autoHitHeadModel=nil; __gg.MH_autoHitHeadAt=0; __gg.MH_autoHitDriveBV=nil; __gg.MH_autoHitDriveBG=nil; __gg.MH_autoHitHeld={}; __gg.MH_autoHitGen=(__gg.MH_autoHitGen or 0)+1; __gg.MH_autoHitNativeReportAt=0; __gg.MH_autoHitNativeReportTarget=nil; __gg.MH_autoHitInputRoute=1; __gg.MH_autoHitClickMethod="waiting"; __gg.MH_autoLockLastHealth=nil; __gg.MH_autoLockStatus="waiting for damage"
+__gg.MH_runPacket=nil; __gg.MH_nativeRunActive=false; __gg.MH_runShielded=0; __gg.MH_autoHitClicking=false; __gg.MH_autoHitLocked=nil; __gg.MH_autoHitHighlight=nil; __gg.MH_autoHitSelect=false; __gg.MH_autoHitQuery=nil; __gg.MH_autoHitManualClear=false; __gg.MH_autoHitStatus="No target"; __gg.MH_autoHitTrackBone=nil; __gg.MH_autoHitTrackUntil=0; __gg.MH_autoHitLastHeadPos=nil; __gg.MH_autoHitLastHeadAt=0; __gg.MH_autoHitHeadBone=nil; __gg.MH_autoHitHeadModel=nil; __gg.MH_autoHitHeadAt=0; __gg.MH_autoHitHeadSamplePos=nil; __gg.MH_autoHitHeadSampleAt=0; __gg.MH_autoHitHeadVelocity=Vector3.zero; __gg.MH_autoHitDriveBV=nil; __gg.MH_autoHitDriveBG=nil; __gg.MH_autoHitHeld={}; __gg.MH_autoHitGen=(__gg.MH_autoHitGen or 0)+1; __gg.MH_autoHitNativeReportAt=0; __gg.MH_autoHitNativeReportTarget=nil; __gg.MH_autoHitInputRoute=1; __gg.MH_autoHitClickMethod="waiting"; __gg.MH_autoLockLastHealth=nil; __gg.MH_autoLockStatus="waiting for damage"
+__gg.MH_autoHitOutlineSuppressed=false
 __gg.MH_releasePacket=nil; __gg.MH_escapeLastBlocked=0; __gg.MH_escapeState=nil; __gg.MH_escapeStatus="waiting"
 __gg.MH_tpSeq=(__gg.MH_tpSeq or 0)+1; __gg.MH_tpOrigin=nil; __gg.MH_foodGen=(__gg.MH_foodGen or 0)+1
 -- Every captured packet below is valid only for one playable dinosaur. Character, species, or verified replica
 -- changes invalidate food-source ids, combat/sound templates, need reports, and protection high-water state together.
 __gg.MH_clearDinoCaches=function(identityKey)
+	if type(__gg.MH_disconnectStamWatchers)=="function" then pcall(__gg.MH_disconnectStamWatchers) end
 	if type(__gg.MH_stamStopOwnedVelocity)=="function" then pcall(__gg.MH_stamStopOwnedVelocity) end
 	if type(__gg.MH_stamRestoreWalkSpeed)=="function" then pcall(__gg.MH_stamRestoreWalkSpeed) end
 	__gg.MH_identityKey=identityKey; __gg.MH_dietCache=nil
@@ -54,8 +59,11 @@ __gg.MH_clearDinoCaches=function(identityKey)
 	__gg.MH_foodSourceRevision=(__gg.MH_foodSourceRevision or 0)+1; __gg.MH_foodSourceKinds="none"; __gg.MH_foodResolvedDiet="unresolved"; __gg.MH_foodBufferMode="none"; __gg.MH_foodVisibleBefore=nil; __gg.MH_foodVisibleAfter=nil; __gg.MH_foodVisibleDelta=nil; __gg.MH_foodAcceptance="unobserved"; __gg.MH_foodLastFailure="identity changed"
 	__gg.MH_growthState="waiting"; __gg.MH_growthValue=nil; __gg.MH_growthDelta=nil; __gg.MH_growthMass=nil; __gg.MH_growthBase=nil; __gg.MH_stamBoostSpeed=0; __gg.MH_stamPinState="waiting"; __gg.MH_stamReportState="waiting"
 	__gg.MH_physicsReplicaId=nil; __gg.MH_physicsSeenAt=0; __gg.MH_stamShiftHeld=false; __gg.MH_stamInputHeld=false; __gg.MH_stamRunRequested=false; __gg.MH_stamDriveSpeed=0; __gg.MH_stamForcedSpeed=16; __gg.MH_stamSyncAt=0; __gg.MH_stamPhysicsSyncAt=0; __gg.MH_stamMaskCount=0; __gg.MH_nativeRunSpeed=0; __gg.MH_stamObservedCurrent=nil; __gg.MH_stamObservedAt=0; __gg.MH_stamGenericProperty=nil; __gg.MH_stamGenericCandidates={}; __gg.MH_stamSavedHumanoid=nil; __gg.MH_stamSavedWalkSpeed=nil; __gg.MH_stamSpeedModel=nil; __gg.MH_stamSpeedHumanoid=nil; __gg.MH_stamLearnedRunSpeed=nil; __gg.MH_stamSpeedAttrs={}; __gg.MH_stamSpeedValues={}; __gg.MH_stamSpeedFixes=0; if identityKey==nil then __gg.MH_incomingReplicaId=nil; __gg.MH_incomingReplicaRoot=nil; __gg.MH_incomingStamPin=nil end; __gg.MH_eatRecoveryAt=0; __gg.MH_eatRecoveryUntil=0; __gg.MH_eatRecoveryGen=(__gg.MH_eatRecoveryGen or 0)+1; __gg.MH_moveMultiplierPackets={}; __gg.MH_moveMultiplierBaseline={}; __gg.MH_moveIncomingPaths={}; __gg.MH_healthPacket=nil; __gg.MH_healthReportAt=nil
+	__gg.MH_stamRuntimeAttrs={}; __gg.MH_stamRuntimeValues={}; __gg.MH_stamExhaustRefs={}; __gg.MH_stamWatchConns={}; __gg.MH_stamWatchModel=nil; __gg.MH_stamWatchAt=0; __gg.MH_stamWatchWriting=false; __gg.MH_stamZeroRecoveryUntil=0; __gg.MH_stamLowestCurrent=nil
+	__gg.MH_stamLearnedWalkSpeed=nil; __gg.MH_autoLockDamageAt=0; __gg.MH_autoLockOwnedTarget=nil
 	pcall(function() if __gg.MH_autoHitHighlight then __gg.MH_autoHitHighlight:Destroy() end end)
-	__gg.MH_runPacket=nil; __gg.MH_nativeRunActive=false; __gg.MH_runShielded=0; __gg.MH_autoHitClicking=false; __gg.MH_autoHitLocked=nil; __gg.MH_autoHitHighlight=nil; __gg.MH_autoHitSelect=false; __gg.MH_autoHitQuery=nil; __gg.MH_autoHitManualClear=false; __gg.MH_autoHitStatus="No target"; __gg.MH_autoHitTrackBone=nil; __gg.MH_autoHitTrackUntil=0; __gg.MH_autoHitLastHeadPos=nil; __gg.MH_autoHitHeadBone=nil; __gg.MH_autoHitHeadModel=nil; __gg.MH_autoHitHeadAt=0; __gg.MH_autoHitGen=(__gg.MH_autoHitGen or 0)+1; __gg.MH_autoHitNativeReportAt=0; __gg.MH_autoHitNativeReportTarget=nil; __gg.MH_autoHitInputRoute=1; __gg.MH_autoHitClickMethod="waiting"; __gg.MH_autoLockLastHealth=nil; __gg.MH_autoLockStatus="waiting for damage"
+	__gg.MH_runPacket=nil; __gg.MH_nativeRunActive=false; __gg.MH_runShielded=0; __gg.MH_autoHitClicking=false; __gg.MH_autoHitLocked=nil; __gg.MH_autoHitHighlight=nil; __gg.MH_autoHitSelect=false; __gg.MH_autoHitQuery=nil; __gg.MH_autoHitManualClear=false; __gg.MH_autoHitStatus="No target"; __gg.MH_autoHitTrackBone=nil; __gg.MH_autoHitTrackUntil=0; __gg.MH_autoHitLastHeadPos=nil; __gg.MH_autoHitLastHeadAt=0; __gg.MH_autoHitHeadBone=nil; __gg.MH_autoHitHeadModel=nil; __gg.MH_autoHitHeadAt=0; __gg.MH_autoHitHeadSamplePos=nil; __gg.MH_autoHitHeadSampleAt=0; __gg.MH_autoHitHeadVelocity=Vector3.zero; __gg.MH_autoHitGen=(__gg.MH_autoHitGen or 0)+1; __gg.MH_autoHitNativeReportAt=0; __gg.MH_autoHitNativeReportTarget=nil; __gg.MH_autoHitInputRoute=1; __gg.MH_autoHitClickMethod="waiting"; __gg.MH_autoLockLastHealth=nil; __gg.MH_autoLockStatus="waiting for damage"
+	__gg.MH_autoHitOutlineSuppressed=false
 	__gg.MH_releasePacket=nil; __gg.MH_escapeLastBlocked=0; __gg.MH_escapeState=nil; __gg.MH_escapeStatus="waiting"
 	if type(__gg.MH_autoHitReleaseMovement)=="function" then pcall(__gg.MH_autoHitReleaseMovement) else __gg.MH_autoHitHeld={} end
 	__gg.MH_bloodMax=nil; __gg.MH_bloodReplica=nil; __gg.MH_guardLastHP=nil; __gg.MH_guardMax=nil
@@ -920,8 +928,8 @@ loadCfg()
 -- reactivate its former background controller. Pro Food and the passive Bite multiplier are the supported paths.
 CFG.InfFood=false
 CFG.AfkEat=false
--- InfStamSpeed is retained only so older config files still decode. v8.15 learns the dinosaur's native sprint speed
--- and uses 16 only as a last-resort Humanoid fallback; it never drives CFrame or assembly velocity.
+-- InfStamSpeed is retained only so older config files still decode. v8.17 learns the dinosaur's native sprint speed
+-- and uses 16 only as a minimum Humanoid run fallback while W is held; it never drives CFrame or assembly velocity.
 CFG.InfStamSpeed=16
 CFG.FoodMultiplierX=math.clamp(math.floor(tonumber(CFG.FoodMultiplierX) or 10),1,10000000)
 CFG.ProFoodEatAt=math.clamp(math.floor(tonumber(CFG.ProFoodEatAt) or 40),1,100)
@@ -984,17 +992,23 @@ __gg.MH_featureToggleChanged=function(key,value)
 	end
 	if key=="InfStam" then
 		__gg.MH_stamShiftHeld=false
+		__gg.MH_stamZeroRecoveryUntil=0
 		local physicalShift=UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift)
-		__gg.MH_stamInputHeld=physicalShift; __gg.MH_stamRunRequested=value and physicalShift or false
+		local nativeDemand=physicalShift or ((__gg.MH_autoHitHeld or {}).LeftShift==true)
+		local runDemand=nativeDemand or UIS:IsKeyDown(Enum.KeyCode.W) or ((__gg.MH_autoHitHeld or {}).W==true)
+		__gg.MH_stamInputHeld=runDemand; __gg.MH_stamRunRequested=value and runDemand or false
 		if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end
 		task.defer(function()
 			if value and type(__gg.MH_installIncomingNeedGuard)=="function" then pcall(__gg.MH_installIncomingNeedGuard) end
 			if value and MHNEED then pcall(function() MHNEED.refresh(true); MHNEED.pinStamina(); MHNEED.report("stamina",true); if MHNEED.reportStaminaAll then MHNEED.reportStaminaAll(true) else MHNEED.reportKnownStamina(true) end end) end
-			-- Preserve PE's native sprint lifecycle. While Shift is held the guarded state is Run=true; disabling returns
+			if value and type(__gg.MH_refreshStamSpeedRefs)=="function" then pcall(__gg.MH_refreshStamSpeedRefs,true) end
+			if value and type(__gg.MH_refreshStamWatchers)=="function" then pcall(__gg.MH_refreshStamWatchers,true) end
+			-- Preserve PE's native sprint lifecycle. While W (or Shift/Auto Hit) is held the guarded state is Run=true; disabling returns
 			-- control to the physical key state without leaving a synthetic movement owner behind.
-			if type(__gg.MH_syncRun)=="function" then pcall(__gg.MH_syncRun,physicalShift) end
+			if type(__gg.MH_syncRun)=="function" then pcall(__gg.MH_syncRun,value and runDemand or nativeDemand) end
 			if not value and type(__gg.MH_stamStopOwnedVelocity)=="function" then pcall(__gg.MH_stamStopOwnedVelocity) end
 			if not value and type(__gg.MH_stamRestoreWalkSpeed)=="function" then pcall(__gg.MH_stamRestoreWalkSpeed) end
+			if not value and type(__gg.MH_disconnectStamWatchers)=="function" then pcall(__gg.MH_disconnectStamWatchers) end
 			if __gg.MH_restoreMovementState then pcall(__gg.MH_restoreMovementState) end
 		end)
 	end
@@ -1003,7 +1017,7 @@ __gg.MH_featureToggleChanged=function(key,value)
 		elseif type(__gg.MH_autoHitClear)=="function" then pcall(__gg.MH_autoHitClear,false) end
 		if not value then __gg.MH_autoHitGen=(__gg.MH_autoHitGen or 0)+1; __gg.MH_autoHitClicking=false; if type(__gg.MH_autoHitReleaseMovement)=="function" then pcall(__gg.MH_autoHitReleaseMovement) end; if type(__gg.MH_autoHitReleaseClicks)=="function" then pcall(__gg.MH_autoHitReleaseClicks) end end
 	end
-	if key=="AutoLockAttacker" and not value then __gg.MH_autoLockTarget=nil; __gg.MH_autoLockLastHealth=nil; __gg.MH_autoLockStatus="off" end
+	if key=="AutoLockAttacker" and not value then __gg.MH_autoLockTarget=nil; __gg.MH_autoLockOwnedTarget=nil; __gg.MH_autoLockLastHealth=nil; __gg.MH_autoLockStatus="off" end
 	if key=="AutoHitFollow" and not value and type(__gg.MH_autoHitReleaseMovement)=="function" then
 		pcall(__gg.MH_autoHitReleaseMovement)
 	end
@@ -1450,12 +1464,12 @@ local function installHook()
 							end
 						end
 						-- Capture PE's exact native Run lifecycle. Infinite Stamina keeps the game's own Run=true state while
-						-- Shift/Auto Hit requests sprint; it never substitutes velocity or CFrame movement.
+						-- W/Shift/Auto Hit requests sprint; it never substitutes velocity or CFrame movement.
 						if selfCall and action=="SetAction" and a[3]=="Run" and typeof(a[4])=="boolean" then
 							local snap={n=a.n,remote=self.Name,instance=self,identity=__gg.MH_identityKey}; for i=1,a.n do snap[i]=a[i] end
 							__gg.MH_runPacket=snap; __gg.MH_nativeRunActive=a[4]
 							if CFG.InfStam then
-								local held=UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift) or ((__gg.MH_autoHitHeld or {}).LeftShift==true)
+								local held=UIS:IsKeyDown(Enum.KeyCode.W) or UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift) or ((__gg.MH_autoHitHeld or {}).W==true) or ((__gg.MH_autoHitHeld or {}).LeftShift==true)
 								__gg.MH_stamRunRequested=held; __gg.MH_runShielded=(__gg.MH_runShielded or 0)+1
 								if held and a[4]==false then
 									a[4]=true; snap[4]=true; __gg.MH_nativeRunActive=true; __gg.MH_stamReportState="Run=true guard"
@@ -1519,6 +1533,7 @@ local function installHook()
 								local target=MHNEED and MHNEED.maxForProperty and MHNEED.maxForProperty(nk,a[3])
 								if not target and nk=="stamina" and generic and __gg.MH_stamGenericProperty==normalized then target=MHNEED and MHNEED.maxFor and MHNEED.maxFor("stamina") end
 								if ((nk=="food" and CFG.InfFood) or (nk=="stamina" and CFG.InfStam)) and target and target>0 then
+									if nk=="stamina" and type(__gg.MH_stamObserveLow)=="function" then __gg.MH_stamObserveLow(a[4],target,"outgoing SetProperty") end
 									a[4]=target; snap[4]=target; return oldNC(self,table.unpack(a,1,a.n))
 								end
 							end
@@ -2288,6 +2303,31 @@ function MHNEED.current(kind,force)
 	end
 	return best
 end
+-- `current()` intentionally returns the highest mirror so HUD/reporting stays stable, but stamina exhaustion is
+-- triggered by the LOWEST live mirror. A stale full mirror previously hid the controlling value reaching zero.
+function MHNEED.lowest(kind,force)
+	MHNEED.refresh(force)
+	local lowest
+	for _,ref in ipairs(MHNEED.refs[kind] or {}) do
+		local value
+		if ref.mode=="table" and ref.tb then value=tonumber(ref.tb[ref.key])
+		elseif ref.mode=="attr" and ref.inst and ref.inst.Parent then local ok,v=pcall(function() return ref.inst:GetAttribute(ref.key) end); if ok then value=tonumber(v) end
+		elseif ref.mode=="value" and ref.inst and ref.inst.Parent then local ok,v=pcall(function() return ref.inst.Value end); if ok then value=tonumber(v) end end
+		if value and value>=0 and (lowest==nil or value<lowest) then lowest=value end
+	end
+	return lowest
+end
+function MHNEED.lowestFast(kind)
+	local lowest
+	for _,ref in ipairs(MHNEED.refs[kind] or {}) do
+		local value
+		if ref.mode=="table" and ref.tb then value=tonumber(ref.tb[ref.key])
+		elseif ref.mode=="attr" and ref.inst and ref.inst.Parent then local ok,v=pcall(function() return ref.inst:GetAttribute(ref.key) end); if ok then value=tonumber(v) end
+		elseif ref.mode=="value" and ref.inst and ref.inst.Parent then local ok,v=pcall(function() return ref.inst.Value end); if ok then value=tonumber(v) end end
+		if value and value>=0 and (lowest==nil or value<lowest) then lowest=value end
+	end
+	return lowest
+end
 -- Write only the current-value references already classified by MHNEED. Capacity/max/rate fields never enter this
 -- list, so deliberate local current-value repairs cannot corrupt the dinosaur's maximum need stats.
 function MHNEED.setCurrent(kind,target)
@@ -2391,6 +2431,25 @@ function MHNEED.pinStamina()
 	__gg.MH_stamAuthoritativeMax=mx
 	return mx,changed
 end
+-- Per-frame fast path: writes only already-resolved current-value references plus the verified ReplicaCreate pin.
+-- The slower deep discovery remains on its bounded worker; this path is cheap enough to run before every physics step.
+function MHNEED.pinStaminaFast()
+	local incoming=__gg.MH_incomingStamPin
+	local mx=tonumber(MHNEED.max and MHNEED.max.stamina) or (incoming and tonumber(incoming.max)) or tonumber(__gg.MH_needHighWater and __gg.MH_needHighWater.stamina)
+	if not (mx and mx>0) then return nil,false end
+	local changed=false
+	for _,ref in ipairs(MHNEED.refs.stamina or {}) do
+		local target=tonumber(ref.max) or mx
+		if target and target>0 then
+			if ref.mode=="table" and ref.tb and type(ref.tb[ref.key])=="number" and ref.tb[ref.key]<target then ref.tb[ref.key]=target; changed=true
+			elseif ref.mode=="attr" and ref.inst and ref.inst.Parent then local ok,value=pcall(function() return ref.inst:GetAttribute(ref.key) end); if ok and type(value)=="number" and value<target then pcall(function() ref.inst:SetAttribute(ref.key,target) end); changed=true end
+			elseif ref.mode=="value" and ref.inst and ref.inst.Parent then local ok,value=pcall(function() return ref.inst.Value end); if ok and type(value)=="number" and value<target then pcall(function() ref.inst.Value=target end); changed=true end end
+		end
+	end
+	if incoming and incoming.tb and incoming.key~=nil and type(incoming.tb[incoming.key])=="number" and incoming.tb[incoming.key]<mx then incoming.tb[incoming.key]=mx; changed=true end
+	__gg.MH_stamAuthoritativeMax=mx
+	return mx,changed
+end
 function MHNEED.report(kind, force)
 	local packet=__gg.MH_needPackets and __gg.MH_needPackets[kind]; local mx=packet and MHNEED.maxForProperty(kind,packet[3]); local id=MHNEED.replicaId()
 	if not mx and packet and packet.kind==kind then mx=MHNEED.maxFor(kind) end
@@ -2471,8 +2530,8 @@ __gg.MH_restoreIncomingNeedGuard=function()
 	__gg.MH_incomingNeedWraps={}; __gg.MH_incomingNeedInstalled=false; __gg.MH_incomingNeedState="restored"
 end
 local function MH_incomingHeldRun()
-	local held=false; pcall(function() held=UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift) end)
-	return held or ((__gg.MH_autoHitHeld or {}).LeftShift==true)
+	local held=false; pcall(function() held=UIS:IsKeyDown(Enum.KeyCode.W) or UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift) end)
+	return held or ((__gg.MH_autoHitHeld or {}).W==true) or ((__gg.MH_autoHitHeld or {}).LeftShift==true)
 end
 local function MH_incomingPathKind(path)
 	if type(path)~="table" then return nil end
@@ -2555,6 +2614,24 @@ __gg.MH_motionPathKind=function(text)
 	if n:find("walkspeed",1,true) or n:find("movespeed",1,true) or n:find("runspeed",1,true) or n:find("sprintspeed",1,true) or n=="speed" then return "speed" end
 	return nil
 end
+-- A low value is recorded BEFORE it is replaced so the locomotion guard can repair the exhaustion transition in
+-- the same frame. This does not guess stamina: callers pass only fields already classified as this dino's stamina.
+__gg.MH_stamObserveLow=function(value,maximum,source)
+	value=tonumber(value); maximum=tonumber(maximum)
+	if not (RUNNING and CFG.InfStam and value and maximum and maximum>0 and value<=math.max(0.5,maximum*0.15)) then return false end
+	__gg.MH_stamLowestCurrent=value; __gg.MH_stamZeroRecoveryUntil=math.max(tonumber(__gg.MH_stamZeroRecoveryUntil) or 0,tick()+2.5)
+	if tick()-(__gg.MH_stamZeroTripAt or 0)>0.08 then
+		__gg.MH_stamZeroTripAt=tick(); __gg.MH_stamZeroTrips=(__gg.MH_stamZeroTrips or 0)+1
+		__gg.MH_stamReportState="zero transition blocked: "..tostring(source or "stamina")
+		task.defer(function()
+			if not (RUNNING and CFG.InfStam) then return end
+			pcall(function() if MHNEED.pinStaminaFast then MHNEED.pinStaminaFast() else MHNEED.pinStamina() end end)
+			pcall(function() if type(__gg.MH_stamRepairMotionNow)=="function" then __gg.MH_stamRepairMotionNow(true) end end)
+			pcall(function() if MH_incomingHeldRun() and type(__gg.MH_syncRun)=="function" then __gg.MH_syncRun(true) end end)
+		end)
+	end
+	return true
+end
 local function MH_rewriteIncomingNeed(ap)
 	local n=ap.n or #ap
 	-- ReplicaCreate shape: ({[replicaId]={token,refs,data,version}, ...}). Prefer an explicit LocalPlayer ref;
@@ -2589,7 +2666,7 @@ local function MH_rewriteIncomingNeed(ap)
 		local kind=MHNEED.kindFor(ap[3],"")
 		if kind=="stamina" then
 			if ap[4]>0 then __gg.MH_needHighWater.stamina=math.max(tonumber(__gg.MH_needHighWater.stamina) or 0,ap[4]) end
-			if CFG.InfStam then local target=MHNEED.maxForProperty("stamina",ap[3]) or MHNEED.maxFor("stamina") or __gg.MH_needHighWater.stamina; if target and target>0 then ap[4]=target; __gg.MH_stamObservedCurrent=target; __gg.MH_stamReportState="incoming stamina property pinned" end end
+			if CFG.InfStam then local target=MHNEED.maxForProperty("stamina",ap[3]) or MHNEED.maxFor("stamina") or __gg.MH_needHighWater.stamina; if target and target>0 then __gg.MH_stamObserveLow(ap[4],target,"incoming property"); ap[4]=target; __gg.MH_stamObservedCurrent=target; __gg.MH_stamReportState="incoming stamina property pinned" end end
 		end
 		return
 	end
@@ -2614,7 +2691,7 @@ local function MH_rewriteIncomingNeed(ap)
 		if kind=="stamina" and CFG.InfStam then
 			if value>0 then __gg.MH_needHighWater.stamina=math.max(tonumber(__gg.MH_needHighWater.stamina) or 0,value) end
 			local pin=__gg.MH_incomingStamPin; local target=(pin and tonumber(pin.max)) or MHNEED.maxFor("stamina") or __gg.MH_needHighWater.stamina
-			if target and target>0 then ap[n]=target; value=target; __gg.MH_stamObservedCurrent=target; __gg.MH_stamObservedAt=tick(); __gg.MH_stamReportState="incoming ReplicaSet pinned before exhaustion" end
+			if target and target>0 then __gg.MH_stamObserveLow(value,target,"incoming ReplicaSet"); ap[n]=target; value=target; __gg.MH_stamObservedCurrent=target; __gg.MH_stamObservedAt=tick(); __gg.MH_stamReportState="incoming ReplicaSet pinned before exhaustion" end
 		end
 		if kind then MH_applyIncomingPath(path,value) end
 	end
@@ -2749,9 +2826,11 @@ __gg.MH_restoreAfterEating=function()
 		end)
 	end
 	repairOnce()
-	local shift=UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift) or ((__gg.MH_autoHitHeld or {}).LeftShift==true)
-	__gg.MH_stamInputHeld=shift; __gg.MH_stamRunRequested=shift
-	pcall(__gg.MH_syncRun,shift)
+	local physicalShift=UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift)
+	local nativeDemand=physicalShift or ((__gg.MH_autoHitHeld or {}).LeftShift==true)
+	local runHeld=nativeDemand or (CFG.InfStam and (UIS:IsKeyDown(Enum.KeyCode.W) or ((__gg.MH_autoHitHeld or {}).W==true)))
+	__gg.MH_stamInputHeld=runHeld; __gg.MH_stamRunRequested=CFG.InfStam and runHeld or false
+	pcall(__gg.MH_syncRun,runHeld)
 	pcall(__gg.MH_restoreMovementState)
 	-- PE can apply the interaction multiplier one or two frames after the animation ends. Repair the exact learned
 	-- property for two seconds; this is bounded and stops immediately if a new manual E interaction begins.
@@ -2761,8 +2840,9 @@ __gg.MH_restoreAfterEating=function()
 			local heldE=false; pcall(function() heldE=UIS:IsKeyDown(Enum.KeyCode.E) end); if heldE then break end
 			repairOnce()
 		end
-		local heldShift=UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift) or ((__gg.MH_autoHitHeld or {}).LeftShift==true)
-		pcall(__gg.MH_syncRun,heldShift)
+		local nativeDemand=UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift) or ((__gg.MH_autoHitHeld or {}).LeftShift==true)
+		local runHeld=nativeDemand or (CFG.InfStam and (UIS:IsKeyDown(Enum.KeyCode.W) or ((__gg.MH_autoHitHeld or {}).W==true)))
+		pcall(__gg.MH_syncRun,runHeld)
 	end)
 	return true
 end
@@ -4069,7 +4149,7 @@ do local p=Pages["Combat"]
 	__gg.MH_autoHitStatusLabel=mkStatus(a,"Auto Hit target",12)
 	mkDropdown(a,"Aim Part", function() return {"Hitbox","Head","Spine","Neck","Hip","Body","Leg","Tail"} end, function() return CFG.AimPart~="" and CFG.AimPart or "Hitbox" end, function(opt) CFG.AimPart=opt; saveCfg() end, 13)
 	mkSlider(a,"Aim Smoothness","AimSmooth",0,1,14)
-	mkLabel(a,"Auto Hit faces the selected live bone, holds real W + Shift until jaw contact, then clicks that exact bone until the target is gone. No S, glide, or teleport.",15)
+	mkLabel(a,"Auto Hit is Head-only: it predicts the live Head while chasing with real W + Shift, then clicks and reports that exact Head until the target is gone. No S, glide, or teleport.",15)
 end
 do local p=Pages["PvP"]
 	local _,d=mkSec(p,"Damage",1)
@@ -4078,7 +4158,7 @@ do local p=Pages["PvP"]
 		mkSlider(d,"Damage Range","DamageRange",30,400,3,10)
 		mkSlider(d,"Hits / sec","DamageRate",1,15,4,1)
 		mkToggle(d,"No Grab Weight Limit","NoGrabLimit",5)
-		mkToggle(d,"Auto Lock Attacker (when bitten)","AutoLockAttacker",6)
+		mkToggle(d,"Auto Lock Attacker (invisible, on hit)","AutoLockAttacker",6)
 	local _,h=mkSec(p,"Hitbox",2)
 	mkToggle(h,"Hitbox Expander","HitboxExpand",1)
 	mkToggle(h,"Show Hitbox","HitboxVisible",2)
@@ -4104,7 +4184,7 @@ do local p=Pages["Survival"]
 	-- (Pro Food / multiplier / INF Water / Carnivore Meat TP / Teleport Back live in Growth.) Stamina stays here.
 	local _,f=mkSec(p,"Stamina",1)
 	mkToggle(f,"INF Stamina","InfStam",1)
-	mkLabel(f,"While Shift is held: keeps Run false, pins stamina, and applies an input-only speed of 16. Releasing movement keys never leaves a glide.",2)
+	mkLabel(f,"Hold W to keep PE's native Run speed active. Stamina and exhaustion are repaired before physics; no CFrame, glide, velocity, or teleport movement.",2)
 	local _,pr=mkSec(p,"Protection",2)
 		-- Death Bug Fix = the spawn rescue (void/under-map/ocean spawns). It mutes ITSELF during any hub teleport
 		-- (map/biome/corpse/fossil TP) so it can never yank you around mid-teleport — and you can kill it here.
@@ -4767,7 +4847,7 @@ end))
 task.spawn(function() while RUNNING do
 	if alive() and CFG.InfStam then
 		pcall(function()
-			local observed=MHNEED.current("stamina",false); if observed~=nil then __gg.MH_stamObservedCurrent=observed; __gg.MH_stamObservedAt=tick() end
+			local observed=MHNEED.lowest("stamina",false); if observed~=nil then __gg.MH_stamObservedCurrent=observed; __gg.MH_stamLowestCurrent=observed; __gg.MH_stamObservedAt=tick(); local known=MHNEED.maxFor("stamina"); if known then __gg.MH_stamObserveLow(observed,known,"fast pin") end end
 			local maximum,changed=MHNEED.pinStamina(); __gg.MH_stamPinState=maximum and ("max "..tostring(maximum)..(changed and " pinned" or " held")) or "waiting for stamina max"
 			local rep=csReplica(); local data=(rep and rep.Data) or __gg.MH_incomingReplicaRoot; local seen={}
 			local function clearExhaustion(tb,depth)
@@ -5049,7 +5129,7 @@ local function startFly()
 end
 -- Speed Hack is independent. Infinite Stamina never uses this slider or writes assembly velocity.
 conn(RunService.Heartbeat:Connect(function() if CFG.SpeedHack and alive() and not CFG.Fly then local r=hrp(); if r then local spd=CFG.SpeedVal; local dir=Vector3.zero; local cf=workspace.CurrentCamera and workspace.CurrentCamera.CFrame or CFrame.new() if UIS:IsKeyDown(Enum.KeyCode.W) then dir+=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.S) then dir-=cf.LookVector end if UIS:IsKeyDown(Enum.KeyCode.A) then dir-=cf.RightVector end if UIS:IsKeyDown(Enum.KeyCode.D) then dir+=cf.RightVector end if dir.Magnitude<=0 then local hh=hum(); local md=hh and hh.MoveDirection; if md and md.Magnitude>0 then dir=md end end if dir.Magnitude>0 then dir=Vector3.new(dir.X,0,dir.Z).Unit*spd; r.AssemblyLinearVelocity=Vector3.new(dir.X,r.AssemblyLinearVelocity.Y,dir.Z) end end end end))
--- INF STAMINA v8.15 — native ALWAYS RUN. PE keeps Run=true, incoming stamina drain is corrected before its movement
+-- INF STAMINA v8.17 — W-driven native ALWAYS RUN. PE keeps Run=true, incoming stamina drain is corrected before movement
 -- listeners execute, and exhaustion slowdowns are restored to this dinosaur's own learned run speed. There is no
 -- CFrame/velocity/body-mover drive, no synthetic Shift, and no HUD ∞ text replacement.
 __gg.MH_stamRestoreWalkSpeed=function()
@@ -5067,7 +5147,11 @@ end
 __gg.MH_refreshStamSpeedRefs=function(force)
 	local model=getMyModel(); if not model then return end
 	local changed=__gg.MH_stamSpeedModel~=model
-	if changed then __gg.MH_stamSpeedModel=model; __gg.MH_stamSpeedHumanoid=nil; __gg.MH_stamLearnedRunSpeed=nil; __gg.MH_stamLearnedWalkSpeed=nil; __gg.MH_stamSpeedAttrs={}; __gg.MH_stamSpeedValues={} end
+	if changed then
+		if type(__gg.MH_disconnectStamWatchers)=="function" then pcall(__gg.MH_disconnectStamWatchers) end
+		__gg.MH_stamSpeedModel=model; __gg.MH_stamSpeedHumanoid=nil; __gg.MH_stamLearnedRunSpeed=nil; __gg.MH_stamLearnedWalkSpeed=nil
+		__gg.MH_stamSpeedAttrs={}; __gg.MH_stamSpeedValues={}; __gg.MH_stamRuntimeAttrs={}; __gg.MH_stamRuntimeValues={}; __gg.MH_stamExhaustRefs={}
+	end
 	if not force and not changed and tick()-(__gg.MH_stamSpeedScanAt or 0)<2 then return end; __gg.MH_stamSpeedScanAt=tick()
 	local h=hum(); if h and h.Parent then __gg.MH_stamSpeedHumanoid=h end
 	local targets,seen={},{ }
@@ -5079,63 +5163,164 @@ __gg.MH_refreshStamSpeedRefs=function(force)
 		if name:find("attack",1,true) or name:find("animation",1,true) or name:find("turn",1,true) or name:find("rotation",1,true) or name:find("swim",1,true) or name:find("fly",1,true) then return false end
 		return name:find("walkspeed",1,true) or name:find("movespeed",1,true) or name:find("runspeed",1,true) or name:find("sprintspeed",1,true) or name=="speed" or name=="speedmultiplier" or name=="movementmultiplier" or name=="locomotionmultiplier"
 	end
+	local function staminaNameOf(key,context)
+		local name=tostring(key):lower():gsub("[^%w]",""); local where=tostring(context or ""):lower():gsub("[^%w]","")
+		if name:find("max",1,true) or name:find("capacity",1,true) or name:find("drain",1,true) or name:find("rate",1,true) or name:find("regen",1,true) or name:find("cost",1,true) or name:find("mult",1,true) then return false end
+		if name=="stamina" or name=="stam" or name=="energy" or name=="endurance" or name=="vigor" or name=="currentstamina" or name=="staminacurrent" or name=="currentenergy" then return true end
+		return (name=="current" or name=="value" or name=="amount" or name=="level" or name=="delta") and (where:find("stam",1,true) or where:find("energy",1,true) or where:find("endurance",1,true))
+	end
+	local function contextOf(inst)
+		local names={}; local p=inst
+		for _=1,5 do if not p or p==model.Parent then break end; names[#names+1]=p.Name; p=p.Parent end
+		return table.concat(names,".")
+	end
 	local existing={}; for _,row in ipairs(__gg.MH_stamSpeedAttrs or {}) do if row.inst and row.inst.Parent then existing[row.inst]=existing[row.inst] or {}; existing[row.inst][row.key]=row end end
 	local rows={}; for _,inst in ipairs(targets) do local ok,attrs=pcall(function() return inst:GetAttributes() end); if ok and type(attrs)=="table" then for key,value in pairs(attrs) do
-		if speedNameOf(key) and type(value)=="number" and value>0 and value<500 then local row=(existing[inst] and existing[inst][key]) or {inst=inst,key=key,run=nil,walk=nil}; row.current=value; rows[#rows+1]=row end
+		if speedNameOf(key) and type(value)=="number" and value>0 and value<500 then
+			local row=(existing[inst] and existing[inst][key]) or {inst=inst,key=key,run=nil,walk=nil}; local normalized=tostring(key):lower():gsub("[^%w]","")
+			row.current=value; row.high=math.max(tonumber(row.high) or 0,value); row.multiplier=normalized:find("multiplier",1,true)~=nil or normalized:find("modifier",1,true)~=nil
+			if (normalized:find("run",1,true) or normalized:find("sprint",1,true)) and not row.run then row.run=value end
+			rows[#rows+1]=row
+		end
 	end end end
 	__gg.MH_stamSpeedAttrs=rows
 	local oldValues={}; for _,row in ipairs(__gg.MH_stamSpeedValues or {}) do if row.inst and row.inst.Parent then oldValues[row.inst]=row end end
 	local valueRows={}; for _,inst in ipairs(targets) do if (inst:IsA("NumberValue") or inst:IsA("IntValue")) and speedNameOf(inst.Name) then
-		local value=tonumber(inst.Value); if value and value>0 and value<500 then local row=oldValues[inst] or {inst=inst,run=nil,walk=nil}; row.current=value; valueRows[#valueRows+1]=row end
+		local value=tonumber(inst.Value); if value and value>0 and value<500 then local row=oldValues[inst] or {inst=inst,run=nil,walk=nil}; local normalized=inst.Name:lower():gsub("[^%w]",""); row.current=value; row.high=math.max(tonumber(row.high) or 0,value); row.multiplier=normalized:find("multiplier",1,true)~=nil or normalized:find("modifier",1,true)~=nil; if (normalized:find("run",1,true) or normalized:find("sprint",1,true)) and not row.run then row.run=value end; valueRows[#valueRows+1]=row end
 	end end
 	__gg.MH_stamSpeedValues=valueRows
+	local oldRuntimeAttrs={}; for _,row in ipairs(__gg.MH_stamRuntimeAttrs or {}) do if row.inst and row.inst.Parent then oldRuntimeAttrs[row.inst]=oldRuntimeAttrs[row.inst] or {}; oldRuntimeAttrs[row.inst][row.key]=row end end
+	local runtimeAttrs={}; local exhaustRefs={}
+	for _,inst in ipairs(targets) do local context=contextOf(inst); local ok,attrs=pcall(function() return inst:GetAttributes() end); if ok and type(attrs)=="table" then for key,value in pairs(attrs) do
+		local normalized=tostring(key):lower():gsub("[^%w]","")
+		if type(value)=="number" and staminaNameOf(key,context) then local row=(oldRuntimeAttrs[inst] and oldRuntimeAttrs[inst][key]) or {inst=inst,key=key,high=0}; row.high=math.max(tonumber(row.high) or 0,value); runtimeAttrs[#runtimeAttrs+1]=row
+		elseif (type(value)=="boolean" or type(value)=="number") and (normalized:find("exhaust",1,true) or normalized:find("fatigu",1,true) or normalized=="tired" or normalized=="canrun" or normalized=="cansprint") then exhaustRefs[#exhaustRefs+1]={mode="attr",inst=inst,key=key,positive=normalized=="canrun" or normalized=="cansprint"} end
+	end end end
+	__gg.MH_stamRuntimeAttrs=runtimeAttrs
+	local oldRuntimeValues={}; for _,row in ipairs(__gg.MH_stamRuntimeValues or {}) do if row.inst and row.inst.Parent then oldRuntimeValues[row.inst]=row end end
+	local runtimeValues={}; for _,inst in ipairs(targets) do if inst:IsA("NumberValue") or inst:IsA("IntValue") then local context=contextOf(inst.Parent); local value=tonumber(inst.Value)
+		if value and staminaNameOf(inst.Name,context) then local row=oldRuntimeValues[inst] or {inst=inst,high=0}; row.high=math.max(tonumber(row.high) or 0,value); runtimeValues[#runtimeValues+1]=row
+		else local normalized=inst.Name:lower():gsub("[^%w]",""); if normalized:find("exhaust",1,true) or normalized:find("fatigu",1,true) or normalized=="tired" then exhaustRefs[#exhaustRefs+1]={mode="value",inst=inst,positive=false} end end
+	end end
+	__gg.MH_stamRuntimeValues=runtimeValues; __gg.MH_stamExhaustRefs=exhaustRefs
+end
+__gg.MH_disconnectStamWatchers=function()
+	for _,connection in ipairs(__gg.MH_stamWatchConns or {}) do pcall(function() connection:Disconnect() end) end
+	__gg.MH_stamWatchConns={}; __gg.MH_stamWatchModel=nil; __gg.MH_stamWatchAt=0
+end
+__gg.MH_stamRepairMotionNow=function(force)
+	if not (RUNNING and CFG.InfStam and alive()) or __gg.MH_stamWatchWriting then return end
+	__gg.MH_stamWatchWriting=true
+	pcall(function()
+		local runHeld=__gg.MH_stamKeyDown("W") or __gg.MH_stamKeyDown("LeftShift") or UIS:IsKeyDown(Enum.KeyCode.RightShift)
+		local recovering=force or tick()<(__gg.MH_stamZeroRecoveryUntil or 0) or tick()<(__gg.MH_eatRecoveryUntil or 0)
+		-- W is the run demand. Restore the speed nearly immediately even before a zero-stamina event, so a stale
+		-- exhaustion value such as 13/16 cannot remain just above the older 80% repair threshold.
+		local restoreRatio=(runHeld or recovering) and 0.98 or 0.8
+		local maximum=tonumber(MHNEED.max and MHNEED.max.stamina) or tonumber(__gg.MH_stamAuthoritativeMax) or tonumber(__gg.MH_needHighWater and __gg.MH_needHighWater.stamina)
+		for _,row in ipairs(__gg.MH_stamRuntimeAttrs or {}) do if row.inst and row.inst.Parent then local value=row.inst:GetAttribute(row.key); if type(value)=="number" then row.high=math.max(tonumber(row.high) or 0,value); local target=maximum or row.high; if target and target>0 and value<target then __gg.MH_stamObserveLow(value,target,"dino attribute"); row.inst:SetAttribute(row.key,target) end end end end
+		for _,row in ipairs(__gg.MH_stamRuntimeValues or {}) do if row.inst and row.inst.Parent then local value=tonumber(row.inst.Value); if value then row.high=math.max(tonumber(row.high) or 0,value); local target=maximum or row.high; if target and target>0 and value<target then __gg.MH_stamObserveLow(value,target,"dino value"); row.inst.Value=target end end end end
+		if MHNEED.pinStaminaFast then MHNEED.pinStaminaFast() end
+		for _,row in ipairs(__gg.MH_stamExhaustRefs or {}) do if row.inst and row.inst.Parent then
+			if row.mode=="attr" then local value=row.inst:GetAttribute(row.key); if type(value)=="boolean" then row.inst:SetAttribute(row.key,row.positive==true) elseif type(value)=="number" and value~=0 then row.inst:SetAttribute(row.key,0) end
+			elseif row.mode=="value" and tonumber(row.inst.Value)~=0 then row.inst.Value=0 end
+		end end
+		if not (runHeld or recovering) then return end
+		local runFallback=math.max(tonumber(__gg.MH_stamLearnedRunSpeed) or 0,tonumber(CFG.InfStamSpeed) or 16)
+		local h=__gg.MH_stamSpeedHumanoid; if h and h.Parent then local current=tonumber(h.WalkSpeed); local target=runHeld and runFallback or tonumber(__gg.MH_stamLearnedWalkSpeed); if current and target and target>0 and current<target*restoreRatio then h.WalkSpeed=target; __gg.MH_stamSpeedFixes=(__gg.MH_stamSpeedFixes or 0)+1 end end
+		for _,row in ipairs(__gg.MH_stamSpeedAttrs or {}) do if row.inst and row.inst.Parent then local value=row.inst:GetAttribute(row.key); if type(value)=="number" then local target=row.multiplier and math.max(1,tonumber(row.run) or tonumber(row.walk) or tonumber(row.high) or 1) or (runHeld and (row.run or row.high) or row.walk); if target and value<target*restoreRatio then row.inst:SetAttribute(row.key,target); __gg.MH_stamSpeedFixes=(__gg.MH_stamSpeedFixes or 0)+1 end end end end
+		for _,row in ipairs(__gg.MH_stamSpeedValues or {}) do if row.inst and row.inst.Parent then local value=tonumber(row.inst.Value); if value then local target=row.multiplier and math.max(1,tonumber(row.run) or tonumber(row.walk) or tonumber(row.high) or 1) or (runHeld and (row.run or row.high) or row.walk); if target and value<target*restoreRatio then row.inst.Value=target; __gg.MH_stamSpeedFixes=(__gg.MH_stamSpeedFixes or 0)+1 end end end end
+		for _,row in pairs(__gg.MH_moveIncomingPaths or {}) do local baseline=tonumber(row.baseline); if baseline and type(row.path)=="table" then MH_applyIncomingPath(row.path,baseline) end end
+	end)
+	__gg.MH_stamWatchWriting=false
+end
+__gg.MH_refreshStamWatchers=function(force)
+	local model=getMyModel(); if not model then return end
+	if not force and __gg.MH_stamWatchModel==model and tick()-(__gg.MH_stamWatchAt or 0)<2.1 then return end
+	__gg.MH_disconnectStamWatchers(); __gg.MH_stamWatchModel=model; __gg.MH_stamWatchAt=tick()
+	local watched={}; local function addConnection(signal)
+		local ok,connection=pcall(function() return signal:Connect(function()
+			if not (RUNNING and CFG.InfStam) or __gg.MH_stamWatchWriting then return end
+			local low=MHNEED.lowestFast and MHNEED.lowestFast("stamina"); local maximum=tonumber(MHNEED.max and MHNEED.max.stamina) or tonumber(__gg.MH_stamAuthoritativeMax) or tonumber(__gg.MH_needHighWater and __gg.MH_needHighWater.stamina)
+			if low and maximum then __gg.MH_stamObserveLow(low,maximum,"change signal") end
+			__gg.MH_stamRepairMotionNow(false)
+		end) end)
+		if ok and connection then __gg.MH_stamWatchConns[#__gg.MH_stamWatchConns+1]=connection end
+	end
+	local function watchAttr(inst,key) if not (inst and inst.Parent) then return end; local bucket=watched[inst] or {}; watched[inst]=bucket; if bucket[key] then return end; bucket[key]=true; pcall(function() addConnection(inst:GetAttributeChangedSignal(key)) end) end
+	local function watchValue(inst) if not (inst and inst.Parent) then return end; local bucket=watched[inst] or {}; watched[inst]=bucket; if bucket.__value then return end; bucket.__value=true; addConnection(inst.Changed) end
+	local h=__gg.MH_stamSpeedHumanoid; if h and h.Parent then pcall(function() addConnection(h:GetPropertyChangedSignal("WalkSpeed")) end) end
+	for _,ref in ipairs(MHNEED.refs.stamina or {}) do if ref.mode=="attr" then watchAttr(ref.inst,ref.key) elseif ref.mode=="value" then watchValue(ref.inst) end end
+	for _,row in ipairs(__gg.MH_stamRuntimeAttrs or {}) do watchAttr(row.inst,row.key) end
+	for _,row in ipairs(__gg.MH_stamRuntimeValues or {}) do watchValue(row.inst) end
+	for _,row in ipairs(__gg.MH_stamSpeedAttrs or {}) do watchAttr(row.inst,row.key) end
+	for _,row in ipairs(__gg.MH_stamSpeedValues or {}) do watchValue(row.inst) end
+	for _,row in ipairs(__gg.MH_stamExhaustRefs or {}) do if row.mode=="attr" then watchAttr(row.inst,row.key) else watchValue(row.inst) end end
 end
 conn(UIS.InputBegan:Connect(function(input,gp)
-	if gp or (input.KeyCode~=Enum.KeyCode.LeftShift and input.KeyCode~=Enum.KeyCode.RightShift) then return end
+	if gp or (input.KeyCode~=Enum.KeyCode.W and input.KeyCode~=Enum.KeyCode.LeftShift and input.KeyCode~=Enum.KeyCode.RightShift) then return end
 	__gg.MH_stamInputHeld=true
 	if CFG.InfStam then __gg.MH_stamRunRequested=true; pcall(__gg.MH_syncRun,true) end
 end))
 conn(UIS.InputEnded:Connect(function(input)
-	if input.KeyCode~=Enum.KeyCode.LeftShift and input.KeyCode~=Enum.KeyCode.RightShift then return end
-	local stillHeld=UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift) or ((__gg.MH_autoHitHeld or {}).LeftShift==true)
-	__gg.MH_stamInputHeld=stillHeld; __gg.MH_stamRunRequested=stillHeld
+	if input.KeyCode~=Enum.KeyCode.W and input.KeyCode~=Enum.KeyCode.LeftShift and input.KeyCode~=Enum.KeyCode.RightShift then return end
+	local stillHeld=UIS:IsKeyDown(Enum.KeyCode.W) or UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift) or ((__gg.MH_autoHitHeld or {}).W==true) or ((__gg.MH_autoHitHeld or {}).LeftShift==true)
+	__gg.MH_stamInputHeld=stillHeld; __gg.MH_stamRunRequested=CFG.InfStam and stillHeld or false
 	if CFG.InfStam then task.defer(function() pcall(__gg.MH_syncRun,stillHeld); if not stillHeld then pcall(__gg.MH_stamStopOwnedVelocity) end end) end
+end))
+-- Run before physics so a direct local stamina Value/attribute cannot sit at zero long enough for PE to enter its
+-- exhausted locomotion state. This path touches only already-resolved stamina references and owns no movement force.
+conn(RunService.Stepped:Connect(function()
+	if not (CFG.InfStam and alive()) then return end
+	pcall(function()
+		local low=MHNEED.lowestFast("stamina"); local maximum=tonumber(MHNEED.max and MHNEED.max.stamina) or tonumber(__gg.MH_stamAuthoritativeMax) or tonumber(__gg.MH_needHighWater and __gg.MH_needHighWater.stamina)
+		if low~=nil then __gg.MH_stamLowestCurrent=low; if maximum then __gg.MH_stamObserveLow(low,maximum,"pre-physics") end end
+		MHNEED.pinStaminaFast()
+		__gg.MH_stamRepairMotionNow(tick()<(__gg.MH_stamZeroRecoveryUntil or 0))
+	end)
 end))
 conn(RunService.Heartbeat:Connect(function()
 	__gg.MH_stamDriveSpeed=0; __gg.MH_stamBoostSpeed=0
 	if __gg.MH_stamBV then pcall(function() __gg.MH_stamBV:Destroy() end); __gg.MH_stamBV=nil end
 	if not alive() then __gg.MH_stamWasMoving=false; return end
 	pcall(function()
-		local shift=__gg.MH_stamKeyDown("LeftShift") or UIS:IsKeyDown(Enum.KeyCode.RightShift)
+		local nativeDemand=__gg.MH_stamKeyDown("LeftShift") or UIS:IsKeyDown(Enum.KeyCode.RightShift)
+		local runHeld=nativeDemand or (CFG.InfStam and __gg.MH_stamKeyDown("W"))
 		local r=hrp(); local root=r and (r.AssemblyRootPart or r)
 		local speed=0; if root then local v=root.AssemblyLinearVelocity; speed=Vector3.new(v.X,0,v.Z).Magnitude end
-		if shift and root and speed>=4 and speed<=180 then __gg.MH_nativeRunSpeed=math.max(tonumber(__gg.MH_nativeRunSpeed) or 0,speed) end
-		__gg.MH_refreshStamSpeedRefs(false)
-		local current=MHNEED.current("stamina",false); local maximum=MHNEED.maxFor("stamina"); local healthy=not maximum or not current or current>maximum*0.15
+		if runHeld and root and speed>=4 and speed<=180 then __gg.MH_nativeRunSpeed=math.max(tonumber(__gg.MH_nativeRunSpeed) or 0,speed) end
+		__gg.MH_refreshStamSpeedRefs(false); if CFG.InfStam then __gg.MH_refreshStamWatchers(false) end
+		local current=MHNEED.lowest("stamina",false); local maximum=MHNEED.maxFor("stamina"); __gg.MH_stamLowestCurrent=current
+		if current~=nil and maximum then __gg.MH_stamObserveLow(current,maximum,"heartbeat") end
+		local healthy=not maximum or current==nil or current>maximum*0.15
 		local recovering=tick()<(__gg.MH_eatRecoveryUntil or 0)
 		local h=__gg.MH_stamSpeedHumanoid
 		if h and h.Parent then local walk=tonumber(h.WalkSpeed)
-			if shift and walk and walk>0 and walk<500 and (healthy or not CFG.InfStam or not __gg.MH_stamLearnedRunSpeed or walk>__gg.MH_stamLearnedRunSpeed) then __gg.MH_stamLearnedRunSpeed=math.max(tonumber(__gg.MH_stamLearnedRunSpeed) or 0,walk) end
-			if not shift and not recovering and walk and walk>0 and walk<500 then __gg.MH_stamLearnedWalkSpeed=math.max(tonumber(__gg.MH_stamLearnedWalkSpeed) or 0,walk) end
-			local learned=(CFG.InfStam and shift and tonumber(__gg.MH_stamLearnedRunSpeed)) or (recovering and tonumber(__gg.MH_stamLearnedWalkSpeed))
+			if runHeld and walk and walk>0 and walk<500 and (healthy or not CFG.InfStam) then __gg.MH_stamLearnedRunSpeed=math.max(tonumber(__gg.MH_stamLearnedRunSpeed) or 0,walk) end
+			if not runHeld and not recovering and walk and walk>0 and walk<500 then __gg.MH_stamLearnedWalkSpeed=math.max(tonumber(__gg.MH_stamLearnedWalkSpeed) or 0,walk) end
+			local learned=(CFG.InfStam and runHeld and tonumber(__gg.MH_stamLearnedRunSpeed)) or (recovering and tonumber(__gg.MH_stamLearnedWalkSpeed))
 			if learned and walk and walk<learned*0.8 then h.WalkSpeed=learned; __gg.MH_stamSpeedFixes=(__gg.MH_stamSpeedFixes or 0)+1 end
 		end
 		for _,row in ipairs(__gg.MH_stamSpeedAttrs or {}) do if row.inst and row.inst.Parent then local value=row.inst:GetAttribute(row.key); if type(value)=="number" then
-			if shift and value>0 and value<500 and (healthy or not CFG.InfStam or not row.run or value>row.run) then row.run=math.max(tonumber(row.run) or 0,value) end
-			if not shift and not recovering and value>0 and value<500 then row.walk=math.max(tonumber(row.walk) or 0,value) end
-			local target=(CFG.InfStam and shift and row.run) or (recovering and (row.walk or row.run)); if target and value<target*0.8 then row.inst:SetAttribute(row.key,target); __gg.MH_stamSpeedFixes=(__gg.MH_stamSpeedFixes or 0)+1 end
+			if value>0 and value<500 and healthy then row.high=math.max(tonumber(row.high) or 0,value) end
+			if runHeld and value>0 and value<500 and (healthy or not CFG.InfStam) then row.run=math.max(tonumber(row.run) or 0,value) end
+			if not runHeld and not recovering and value>0 and value<500 then row.walk=math.max(tonumber(row.walk) or 0,value) end
+			local target=(CFG.InfStam and runHeld and (row.run or row.high)) or (recovering and (row.walk or row.run or row.high)); if target and value<target*0.8 then row.inst:SetAttribute(row.key,target); __gg.MH_stamSpeedFixes=(__gg.MH_stamSpeedFixes or 0)+1 end
 		end end end
 		for _,row in ipairs(__gg.MH_stamSpeedValues or {}) do if row.inst and row.inst.Parent then local value=tonumber(row.inst.Value); if value then
-			if shift and value>0 and value<500 and (healthy or not CFG.InfStam or not row.run or value>row.run) then row.run=math.max(tonumber(row.run) or 0,value) end
-			if not shift and not recovering and value>0 and value<500 then row.walk=math.max(tonumber(row.walk) or 0,value) end
-			local target=(CFG.InfStam and shift and row.run) or (recovering and (row.walk or row.run)); if target and value<target*0.8 then row.inst.Value=target; __gg.MH_stamSpeedFixes=(__gg.MH_stamSpeedFixes or 0)+1 end
+			if value>0 and value<500 and healthy then row.high=math.max(tonumber(row.high) or 0,value) end
+			if runHeld and value>0 and value<500 and (healthy or not CFG.InfStam) then row.run=math.max(tonumber(row.run) or 0,value) end
+			if not runHeld and not recovering and value>0 and value<500 then row.walk=math.max(tonumber(row.walk) or 0,value) end
+			local target=(CFG.InfStam and runHeld and (row.run or row.high)) or (recovering and (row.walk or row.run or row.high)); if target and value<target*0.8 then row.inst.Value=target; __gg.MH_stamSpeedFixes=(__gg.MH_stamSpeedFixes or 0)+1 end
 		end end end
 		if not CFG.InfStam then __gg.MH_stamRunRequested=false; return end
+		MHNEED.pinStaminaFast(); __gg.MH_stamRepairMotionNow(tick()<(__gg.MH_stamZeroRecoveryUntil or 0))
 		if not __gg.MH_incomingNeedInstalled and tick()-(__gg.MH_incomingNeedTryAt or 0)>2 then __gg.MH_incomingNeedTryAt=tick(); pcall(__gg.MH_installIncomingNeedGuard) end
 		if tick()-(__gg.MH_stamHardReportAt or 0)>=0.18 then __gg.MH_stamHardReportAt=tick(); MHNEED.pinStamina(); MHNEED.report("stamina",false); MHNEED.reportStaminaAll(false) end
-		__gg.MH_stamRunRequested=shift
-		if shift and tick()-(__gg.MH_stamSyncAt or 0)>=0.45 then __gg.MH_stamSyncAt=tick(); pcall(__gg.MH_syncRun,true) end
-		if shift then __gg.MH_nativeRunActive=true; __gg.MH_stamWasMoving=true; __gg.MH_stamDriveSpeed=tonumber(__gg.MH_stamLearnedRunSpeed) or tonumber(__gg.MH_nativeRunSpeed) or 16; __gg.MH_stamBoostSpeed=__gg.MH_stamDriveSpeed; __gg.MH_stamReportState="native Run=true | incoming pin | speed guard"
+		__gg.MH_stamRunRequested=runHeld
+		local syncEvery=tick()<(__gg.MH_stamZeroRecoveryUntil or 0) and 0.12 or 0.45
+		if runHeld and tick()-(__gg.MH_stamSyncAt or 0)>=syncEvery then __gg.MH_stamSyncAt=tick(); pcall(__gg.MH_syncRun,true) end
+		if runHeld then __gg.MH_nativeRunActive=true; __gg.MH_stamWasMoving=true; __gg.MH_stamDriveSpeed=tonumber(__gg.MH_stamLearnedRunSpeed) or tonumber(__gg.MH_nativeRunSpeed) or 16; __gg.MH_stamBoostSpeed=__gg.MH_stamDriveSpeed; __gg.MH_stamReportState="W Run=true | incoming pin | speed guard"
 		else __gg.MH_stamWasMoving=false end
 	end)
 end))
@@ -6195,13 +6380,17 @@ __gg.MH_autoHitHead=function(model)
 	local best,bestScore=nil,-1; local scanned=0
 	local function consider(item)
 		if not (item:IsA("BasePart") or item:IsA("Bone") or item:IsA("Attachment")) then return end
-		local name=item.Name:lower():gsub("[^%w]",""); if name~="head" and name:sub(1,4)~="head" then return end
+		local name=item.Name:lower():gsub("[^%w]",""); local anatomy
+		if name=="head" then anatomy=900
+		elseif name:match("^head%d+$") or name:find("headbone",1,true) or name:find("headhitbox",1,true) then anatomy=700
+		elseif name:find("skull",1,true) or name:find("crani",1,true) or name:find("jaw",1,true) then anatomy=300
+		else return end
 		local position=partPos(item); if not position then return end
-		local score=(name=="head" and 500 or 320)+((item:IsA("Bone") or item:IsA("Attachment")) and 220 or 40)
+		local score=anatomy+((item:IsA("Bone") or item:IsA("Attachment")) and 260 or 60)
 		local parent=item.Parent; if parent and parent.Name:lower()=="head" then score+=100 end
-		local p=item.Parent; local inMesh=false; local inHitbox=false
-		for _=1,8 do if not p or p==model.Parent then break end; local n=p.Name:lower(); if n=="meshmodel" then inMesh=true elseif n=="hitbox" or n=="hitboxpart" then inHitbox=true end; p=p.Parent end
-		if inMesh then score+=90 end; if inHitbox then score+=500 end
+		local p=item.Parent; local inMesh=false; local inHitbox=false; local inPhysics=false
+		for _=1,8 do if not p or p==model.Parent then break end; local n=p.Name:lower(); if n=="meshmodel" then inMesh=true elseif n=="hitbox" or n=="hitboxpart" then inHitbox=true elseif n=="physics" then inPhysics=true end; p=p.Parent end
+		if inMesh then score+=120 end; if inPhysics then score+=180 end; if inHitbox then score+=650 end
 		if item:IsA("BasePart") and item:FindFirstChild(item.Name) then score-=260 end
 		if score>bestScore then best,bestScore=item,score end
 	end
@@ -6210,18 +6399,12 @@ __gg.MH_autoHitHead=function(model)
 	if best then __gg.MH_autoHitHeadModel=model; __gg.MH_autoHitHeadBone=best; __gg.MH_autoHitHeadAt=tick() end
 	return best
 end
--- Auto Hit uses the same Aim Part selector as the visible aim tools. Resolve the real animated bone on each
--- dinosaur (names differ by rig) and preserve the server's canonical combat group for the outgoing hit report.
+-- Auto Hit is deliberately head-only. Other aim tools still honor their dropdowns, but this feature never falls
+-- back to a body/root hit while a newly streamed rig is missing its Head; it waits for the live Head instead.
 __gg.MH_autoHitAim=function(model)
-	local want=tostring(CFG.AimPart or "Head"); if want=="" or want=="Hitbox" then want="Head" end
-	local list=ATK_GROUPS[want] or ATK_GROUPS.Head or ATK_GROUPS.Auto
-	for _,row in ipairs(list) do local bone=_findIn(model,row.n); if bone and _bonePos(bone) then return bone end end
 	return __gg.MH_autoHitHead(model)
 end
-__gg.MH_autoHitGroup=function(bone)
-	local want=tostring(CFG.AimPart or "Head"); if want=="" or want=="Hitbox" then want="Head" end
-	return (ATK_GROUPS[want] and ATK_GROUPS[want][1] and ATK_GROUPS[want][1].g) or (bone and boneGroupFor(bone.Name)) or "Head"
-end
+__gg.MH_autoHitGroup=function() return "Head" end
 __gg.MH_autoHitSetStatus=function(value)
 	value=tostring(value or "No target")
 	if __gg.MH_autoHitStatus==value then return end
@@ -6259,20 +6442,31 @@ end
 __gg.MH_autoHitDriveMovement=function(target)
 	if not (CFG.AutoHit and alive() and target and target.Parent) then __gg.MH_autoHitReleaseMovement(); return end
 	if __gg.MH_autoHitDead(target) then __gg.MH_autoHitSetStatus("Target died: "..target.Name); __gg.MH_autoHitDrop(); return end
-	local me=hrp(); local bone=__gg.MH_autoHitAim(target); local position=partPos(bone)
-	if position then __gg.MH_autoHitLastHeadPos=position else position=__gg.MH_autoHitLastHeadPos end
-	-- A brief stream gap keeps chasing the last exact selected-bone sample. Movement is released only when the target
-	-- dies, Auto Hit is disabled/cleared, or this target has never exposed a usable bone.
-	if not (me and position) then if not __gg.MH_autoHitLastHeadPos then __gg.MH_autoHitReleaseMovement() end; return end
+	local me=hrp(); local bone=__gg.MH_autoHitAim(target); local position=partPos(bone); local now=tick()
+	if position then
+		local oldPosition=__gg.MH_autoHitHeadSamplePos; local oldAt=tonumber(__gg.MH_autoHitHeadSampleAt) or 0; local elapsed=now-oldAt
+		if oldPosition and elapsed>0.015 and elapsed<0.35 then
+			local raw=(position-oldPosition)/elapsed
+			if raw.Magnitude<220 then local previous=__gg.MH_autoHitHeadVelocity; __gg.MH_autoHitHeadVelocity=(typeof(previous)=="Vector3" and previous or Vector3.zero):Lerp(raw,0.35) else __gg.MH_autoHitHeadVelocity=Vector3.zero end
+		end
+		__gg.MH_autoHitHeadSamplePos=position; __gg.MH_autoHitHeadSampleAt=now; __gg.MH_autoHitLastHeadPos=position; __gg.MH_autoHitLastHeadAt=now
+	elseif now-(__gg.MH_autoHitLastHeadAt or 0)<=0.75 then position=__gg.MH_autoHitLastHeadPos
+	else __gg.MH_autoHitSetStatus("Locked: "..target.Name.." | waiting for live Head"); __gg.MH_autoHitReleaseMovement(); return end
+	-- A short stream gap may follow the last exact Head sample, but attacks remain disabled until the live Head returns.
+	if not (me and position) then __gg.MH_autoHitReleaseMovement(); return end
 	local myJaw=_findIn(getMyModel(),"Head") or _findIn(getMyModel(),"Jaw"); local origin=partPos(myJaw) or me.Position
-	local delta=Vector3.new(position.X-origin.X,0,position.Z-origin.Z); local distance=(position-origin).Magnitude
-	local contact=math.max(7,(tonumber(CFG.AutoHitFollowDistance) or 4)+3); local close=distance<=contact
+	local distance=(position-origin).Magnitude; local contact=math.max(7,(tonumber(CFG.AutoHitFollowDistance) or 4)+3)
+	local close=__gg.MH_autoHitInContact and distance<=contact+1.35 or distance<=contact
+	local velocity=__gg.MH_autoHitHeadVelocity; local lead=close and 0 or math.clamp(distance/240,0.035,0.18)
+	local steerPosition=position
+	if typeof(velocity)=="Vector3" and velocity.Magnitude<220 then steerPosition=position+Vector3.new(velocity.X,0,velocity.Z)*lead end
+	local delta=Vector3.new(steerPosition.X-origin.X,0,steerPosition.Z-origin.Z)
 	-- PE resolves W from the active camera heading, while the old root-local A/D steering could strafe or circle away.
-	-- Face the exact selected bone every frame and own only real W+Shift until jaw contact. No S, glide, CFrame, body
-	-- mover, or velocity is used; turning remains PE's normal keyboard/camera movement path.
+	-- Face a tiny prediction of the moving Head while travelling, then the exact Head at contact. Own only real W+Shift:
+	-- no S, glide, root CFrame, body mover, or velocity is used, so PE keeps its native anti-rubber-band movement.
 	local cam=workspace.CurrentCamera
 	if cam and delta.Magnitude>0.05 then pcall(function()
-		local eye=cam.CFrame.Position; local look=close and position or Vector3.new(position.X,eye.Y,position.Z)
+		local eye=cam.CFrame.Position; local look=close and position or Vector3.new(steerPosition.X,eye.Y,steerPosition.Z)
 		if (look-eye).Magnitude>0.05 then cam.CFrame=CFrame.lookAt(eye,look,Vector3.yAxis) end
 	end) end
 	local desired={W=not close,A=false,S=false,D=false,LeftShift=not close}
@@ -6283,12 +6477,12 @@ __gg.MH_autoHitDriveMovement=function(target)
 	end
 	pcall(function() if __gg.MH_autoHitDriveBV then __gg.MH_autoHitDriveBV:Destroy() end; if __gg.MH_autoHitDriveBG then __gg.MH_autoHitDriveBG:Destroy() end end)
 	__gg.MH_autoHitDriveBV=nil; __gg.MH_autoHitDriveBG=nil; __gg.MH_autoHitLastDistance=distance; __gg.MH_autoHitInContact=close
-	__gg.MH_autoHitTrackBone=bone; __gg.MH_autoHitTrackUntil=tick()+0.2
+	__gg.MH_autoHitTrackBone=bone; __gg.MH_autoHitTrackUntil=now+0.2
 end
 __gg.MH_autoHitDrop=function()
 	__gg.MH_autoHitGen=(__gg.MH_autoHitGen or 0)+1
 	pcall(function() if __gg.MH_autoHitHighlight then __gg.MH_autoHitHighlight:Destroy() end end)
-	__gg.MH_autoHitHighlight=nil; __gg.MH_autoHitLocked=nil; __gg.MH_autoHitTrackBone=nil; __gg.MH_autoHitTrackUntil=0; __gg.MH_autoHitLastHeadPos=nil; __gg.MH_autoHitHeadBone=nil; __gg.MH_autoHitHeadModel=nil; __gg.MH_autoHitHeadAt=0; __gg.MH_autoHitNativeReportAt=0; __gg.MH_autoHitNativeReportTarget=nil
+	__gg.MH_autoHitHighlight=nil; __gg.MH_autoHitOutlineSuppressed=false; __gg.MH_autoHitLocked=nil; __gg.MH_autoHitTrackBone=nil; __gg.MH_autoHitTrackUntil=0; __gg.MH_autoHitLastHeadPos=nil; __gg.MH_autoHitLastHeadAt=0; __gg.MH_autoHitHeadBone=nil; __gg.MH_autoHitHeadModel=nil; __gg.MH_autoHitHeadAt=0; __gg.MH_autoHitHeadSamplePos=nil; __gg.MH_autoHitHeadSampleAt=0; __gg.MH_autoHitHeadVelocity=Vector3.zero; __gg.MH_autoHitNativeReportAt=0; __gg.MH_autoHitNativeReportTarget=nil
 	if __gg.MH_autoHitReleaseMovement then __gg.MH_autoHitReleaseMovement() end; if __gg.MH_autoHitReleaseClicks then __gg.MH_autoHitReleaseClicks() end
 end
 __gg.MH_autoHitClear=function(clearName)
@@ -6296,13 +6490,17 @@ __gg.MH_autoHitClear=function(clearName)
 	if clearName then CFG.AutoHitTargetName=""; __gg.MH_autoHitQuery=""; __gg.MH_autoHitManualClear=true; saveCfg() end
 	__gg.MH_autoHitSetStatus(clearName and "Target cleared — select a new target" or "No target")
 end
-__gg.MH_autoHitLock=function(model,persistName)
+__gg.MH_autoHitLock=function(model,persistName,showOutline)
 	if not (model and model:IsA("Model") and model.Parent and model~=getMyModel()) then return false end
 	local changed=__gg.MH_autoHitLocked~=model
 	if changed then __gg.MH_autoHitDrop() end
 	__gg.MH_autoHitLocked=model; __gg.MH_autoHitManualClear=false
 	if persistName then CFG.AutoHitTargetName=model.Name; __gg.MH_autoHitQuery=model.Name:lower(); saveCfg() end
-	if not (__gg.MH_autoHitHighlight and __gg.MH_autoHitHighlight.Parent==model) then
+	if persistName then showOutline=true end
+	if showOutline~=nil then __gg.MH_autoHitOutlineSuppressed=showOutline==false elseif changed then __gg.MH_autoHitOutlineSuppressed=false end
+	if __gg.MH_autoHitOutlineSuppressed then
+		pcall(function() if __gg.MH_autoHitHighlight then __gg.MH_autoHitHighlight:Destroy() end end); __gg.MH_autoHitHighlight=nil
+	elseif not (__gg.MH_autoHitHighlight and __gg.MH_autoHitHighlight.Parent==model) then
 		pcall(function() if __gg.MH_autoHitHighlight then __gg.MH_autoHitHighlight:Destroy() end end)
 		local outline=Instance.new("Highlight"); outline.Name="MH_AutoHitTarget"; outline.FillTransparency=1
 		outline.OutlineColor=__gg.MH_autoHitColor3(); outline.OutlineTransparency=0; outline.DepthMode=Enum.HighlightDepthMode.AlwaysOnTop
@@ -6358,8 +6556,8 @@ __gg.MH_autoHitTarget=function()
 		end end
 		target=best; if target then __gg.MH_autoHitLock(target,false) else __gg.MH_autoHitSetStatus("No streamed dinosaur found"); return nil end
 	end
-	local aim=target and __gg.MH_autoHitAim(target); local position=partPos(aim); if not position then __gg.MH_autoHitSetStatus("Locked, waiting for rig: "..target.Name); return nil end
-	local distance=dist(me.Position,position); local screen,visible=cam:WorldToViewportPoint(position); local boneName=aim and aim.Name or tostring(CFG.AimPart)
+	local aim=target and __gg.MH_autoHitAim(target); local position=partPos(aim); if not position then __gg.MH_autoHitSetStatus("Locked, waiting for live Head: "..target.Name); return nil end
+	local distance=dist(me.Position,position); local screen,visible=cam:WorldToViewportPoint(position); local boneName=aim and aim.Name or "Head"
 	if not visible or screen.Z<=0 then __gg.MH_autoHitSetStatus("Locked: "..target.Name.." | chasing "..boneName.." off screen"); return target end
 	__gg.MH_autoHitLock(target,false); __gg.MH_autoHitSetStatus("Locked: "..target.Name.." | "..boneName.." | "..math.floor(distance).." studs")
 	return target
@@ -6467,7 +6665,7 @@ task.spawn(function() while RUNNING do
 	else task.wait(0.15) end
 end end)
 -- AUTO HIT: chase one locked target at any streamed distance, but do not click empty space while travelling. A real
--- M1 (and optional M2) is issued only when this dinosaur's jaw is in contact range of the selected animated bone.
+-- M1 (and optional M2) is issued only when this dinosaur's jaw is in contact range of the live animated Head.
 task.spawn(function() while RUNNING do
 	if CFG.AutoHit and alive() then
 		local okTarget,target=pcall(__gg.MH_autoHitTarget); if not okTarget then __gg.MH_autoHitSetStatus("Target error: "..tostring(target):sub(1,90)); task.wait(0.15); continue end
@@ -6475,7 +6673,7 @@ task.spawn(function() while RUNNING do
 			local aim=__gg.MH_autoHitAim(target); local position=partPos(aim); local me=hrp()
 			local localJaw=_findIn(getMyModel(),"Head") or _findIn(getMyModel(),"Jaw"); local jawPos=partPos(localJaw) or (me and me.Position)
 			local contact=math.max(7,(tonumber(CFG.AutoHitFollowDistance) or 4)+3); local inContact=position and jawPos and dist(jawPos,position)<=contact
-			local boneName=tostring(aim and aim.Name or CFG.AimPart)
+			local boneName=tostring(aim and aim.Name or "Head")
 			if not inContact then
 				local gap=position and jawPos and math.floor(dist(jawPos,position)) or "?"; __gg.MH_autoHitSetStatus("Locked: "..target.Name.." | following "..boneName.." | "..tostring(gap).." studs")
 				task.wait(0.08); continue
@@ -6748,9 +6946,8 @@ end end)
 
 -- AIMBOT + SILENT AIM + LOCK ON (camera assist only — NO metamethod hook; targets the BODY)
 local aimTarget, aimRoot, aimPart
--- AUTO LOCK ATTACKER: a bite must put the attacker's jaw/body near this dinosaur at the exact moment local health
--- drops. Select the closest live creature at that moment, prefer one currently playing an attack/bite animation,
--- and feed that same model into both camera lock and Auto Hit's persistent target lock.
+-- AUTO LOCK ATTACKER: lock only on an actual local health drop and only to a creature whose live Head/Jaw is within
+-- plausible bite reach at that instant. The lock is intentionally invisible and never becomes a saved manual target.
 task.spawn(function()
 	while RUNNING do task.wait(0.04)
 		if not (CFG.AutoLockAttacker and alive()) then __gg.MH_autoLockLastHealth=nil; continue end
@@ -6758,21 +6955,26 @@ task.spawn(function()
 			local mine=getMyModel(); local hp=deathPointHealth(mine); if not hp then return end
 			local last=tonumber(__gg.MH_autoLockLastHealth); __gg.MH_autoLockLastHealth=hp
 			if not last or hp>=last-0.01 then return end
-			local myBone=hrp() or _findIn(mine,"Spine") or _findIn(mine,"Head"); local myPosition=partPos(myBone) or (hrp() and hrp().Position)
-			if not myPosition then return end
+			if tick()-(__gg.MH_autoLockDamageAt or 0)<0.08 then return end; __gg.MH_autoLockDamageAt=tick()
+			local myPoints={}; for _,part in ipairs({__gg.MH_autoHitHead(mine),_findIn(mine,"Spine"),hrp()}) do local position=partPos(part); if position then myPoints[#myPoints+1]=position end end
+			if #myPoints==0 then return end
+			local mySize=8; pcall(function() local size=mine:GetExtentsSize(); mySize=math.max(size.X,size.Z) end)
 			local best,bestScore=nil,math.huge
 			for _,model in ipairs(charModels()) do if model~=mine and not __gg.MH_autoHitDead(model) then
-				local jaw=_findIn(model,"Head") or _findIn(model,"Jaw") or getHitbox(model) or rootOf(model); local position=partPos(jaw)
-				if position then local gap=dist(myPosition,position); if gap<=120 then
+				local jaw=__gg.MH_autoHitHead(model); local position=partPos(jaw)
+				if position then local gap=math.huge; for _,minePosition in ipairs(myPoints) do gap=math.min(gap,dist(minePosition,position)) end
+					local theirSize=8; pcall(function() local size=model:GetExtentsSize(); theirSize=math.max(size.X,size.Z) end)
+					local reach=math.clamp(12+(mySize+theirSize)*0.32,18,72)
+					if gap<=reach then
 					local attacking=false; pcall(function() local animator=model:FindFirstChildWhichIsA("Animator",true); if animator then for _,track in ipairs(animator:GetPlayingAnimationTracks()) do local name=tostring(track.Name or ""):lower(); if name:find("attack",1,true) or name:find("bite",1,true) or name:find("claw",1,true) then attacking=true; break end end end end)
-					local score=gap-(attacking and 35 or 0); if score<bestScore then best,bestScore=model,score end
+					local score=gap-(attacking and math.min(18,reach*0.35) or 0); if score<bestScore then best,bestScore=model,score end
 				end end
 			end end
 			if best then
-				__gg.MH_autoLockTarget=best; __gg.MH_autoLockStatus="retaliation lock: "..best.Name
-				aimTarget=best; aimRoot=getHitbox(best) or rootOf(best); aimPart=getAimPart(best)
-				if type(__gg.MH_autoHitLock)=="function" then __gg.MH_autoHitLock(best,true) end
-			else __gg.MH_autoLockStatus="damage seen; attacker not streamed" end
+				__gg.MH_autoLockTarget=best; __gg.MH_autoLockOwnedTarget=best; __gg.MH_autoLockStatus="retaliation lock: "..best.Name
+				aimTarget=best; aimRoot=getHitbox(best) or rootOf(best); aimPart=__gg.MH_autoHitHead(best) or getAimPart(best)
+				if CFG.AutoHit and type(__gg.MH_autoHitLock)=="function" then __gg.MH_autoHitLock(best,false,false) end
+			else __gg.MH_autoLockStatus="damage seen; attacker not in bite reach" end
 		end)
 	end
 end)
@@ -6784,7 +6986,7 @@ task.spawn(function()
 			local choice=tostring(CFG.HitboxBone or "All").."|"..tostring(CFG.AimPart or "Hitbox")
 			local keep=false
 			local retaliate=CFG.AutoLockAttacker and __gg.MH_autoLockTarget
-			if retaliate and retaliate.Parent and not __gg.MH_autoHitDead(retaliate) then aimTarget=retaliate; aimRoot=getHitbox(retaliate) or rootOf(retaliate); aimPart=getAimPart(retaliate); keep=aimRoot~=nil
+			if retaliate and retaliate.Parent and not __gg.MH_autoHitDead(retaliate) then aimTarget=retaliate; aimRoot=getHitbox(retaliate) or rootOf(retaliate); aimPart=__gg.MH_autoHitHead(retaliate) or getAimPart(retaliate); keep=aimRoot~=nil
 			elseif retaliate then __gg.MH_autoLockTarget=nil end
 			-- LOCK ON / AUTO TARGET: STICK to the enemy you're already fighting if it's still valid + roughly in front
 			-- (within 60°). So it focuses ONE enemy — the one you're facing — instead of flickering between many.
@@ -8002,6 +8204,7 @@ task.spawn(function() while RUNNING do task.wait(0.3); pcall(function()
 		lines[#lines+1]="Stamina frame pin: "..tostring(__gg.MH_stamPinState or "waiting").." | report "..tostring(__gg.MH_stamReportState or "waiting")
 		lines[#lines+1]="Incoming need guard: "..tostring(__gg.MH_incomingNeedState or "waiting")
 		lines[#lines+1]="Stamina generic property: "..tostring(__gg.MH_stamGenericProperty or "learning")
+		lines[#lines+1]="Stamina zero guard: lowest "..tostring(__gg.MH_stamLowestCurrent or "?").." | blocked "..tostring(__gg.MH_stamZeroTrips or 0).." | runtime "..tostring(#(__gg.MH_stamRuntimeAttrs or {})+#(__gg.MH_stamRuntimeValues or {})).." | watches "..tostring(#(__gg.MH_stamWatchConns or {}))
 		lines[#lines+1]="Auto Escape: "..tostring(__gg.MH_escapeStatus or "waiting")
 	lines[#lines+1]="Sound: "..(getSoundRemote() and "found" or "MISSING")
 	local tg=nearestTarget(300,true); lines[#lines+1]="Target: "..(tg and tg.Name or "none")
@@ -8568,6 +8771,7 @@ end) end end)
 G.__PRIOR_EXT_HUB = function()
 	RUNNING=false
 	pcall(function() if type(__gg.MH_restoreIncomingNeedGuard)=="function" then __gg.MH_restoreIncomingNeedGuard() end end)
+	pcall(function() if type(__gg.MH_disconnectStamWatchers)=="function" then __gg.MH_disconnectStamWatchers() end end)
 	pcall(function() if type(__gg.MH_syncRun)=="function" then __gg.MH_syncRun(UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift)) end end)
 	__gg.MH_stamRunRequested=false; __gg.MH_stamDriveSpeed=0
 	pcall(function() if type(__gg.MH_stamStopOwnedVelocity)=="function" then __gg.MH_stamStopOwnedVelocity() end end)
@@ -8602,4 +8806,4 @@ pcall(function() if type(__gg.MH_installIncomingNeedGuard)=="function" then __gg
 MS("5 DONE - all tabs built, menu ready")
 pcall(function() if _G.__DreamFinishLoad then _G.__DreamFinishLoad() end end)
 notify("Dream Hub", "Prior Extinction loaded (everything OFF) — RightShift to toggle.")
-print("[Dream Hub · Prior Extinction v8.15 PE-v4] Loaded — ReplicaCreate stamina pin, food slowdown cleanup, retaliation lock, camera-forward bone pursuit")
+print("[Dream Hub · Prior Extinction v8.17 PE-v4] Loaded — W-run stamina guard, invisible retaliation lock, predictive Head-only pursuit")
